@@ -37,8 +37,8 @@ const AuthenticatedApp = () => {
 
   return (
     <Routes>
-      <Route path="/" element={<Onboarding />} />
-      <Route path="/home" element={<Home />} />
+      <Route path="/" element={<Home />} />
+      <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/chat/:characterId" element={<Chat />} />
       <Route path="/groups" element={<Groups />} />
       <Route path="/group-chat" element={<GroupChat />} />
