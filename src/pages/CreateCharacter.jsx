@@ -104,6 +104,36 @@ export default function CreateCharacter() {
     return next;
   });
 
+  const toggleEthnicity = (e) => setData(prev => {
+    const next = {
+      ...prev,
+      ethnicities: prev.ethnicities.includes(e) ? prev.ethnicities.filter(x => x !== e) : [...prev.ethnicities, e]
+    };
+    saveDraft(next, step, avatarUrl, referenceUrls);
+    return next;
+  });
+
+  const generateName = async () => {
+    setIsGeneratingName(true);
+    const result = await base44.integrations.Core.InvokeLLM({
+      prompt: `Generate a realistic name for a ${data.age_range || "adult"} ${data.ethnicities.join(" / ") || ""} ${data.gender || "person"}. Return ONLY a JSON object with fields: first_name, middle_name (can be empty string), last_name. No explanation.`,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          first_name: { type: "string" },
+          middle_name: { type: "string" },
+          last_name: { type: "string" },
+        }
+      }
+    });
+    setData(prev => {
+      const next = { ...prev, first_name: result.first_name || "", middle_name: result.middle_name || "", last_name: result.last_name || "" };
+      saveDraft(next, step, avatarUrl, referenceUrls);
+      return next;
+    });
+    setIsGeneratingName(false);
+  };
+
   const toggleVibe = (v) => setData(prev => {
     const next = {
       ...prev,
