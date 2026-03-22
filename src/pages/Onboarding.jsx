@@ -1,6 +1,7 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +12,20 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [characterName, setCharacterName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { data: userSettings } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: async () => {
+      const settings = await base44.entities.UserSettings.list();
+      return settings[0];
+    },
+  });
+
+  useEffect(() => {
+    if (userSettings?.has_completed_onboarding) {
+      navigate("/home");
+    }
+  }, [userSettings, navigate]);
 
   const handleCreate = async () => {
     if (!characterName.trim()) return;
