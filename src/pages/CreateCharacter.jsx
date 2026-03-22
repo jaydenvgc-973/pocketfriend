@@ -402,7 +402,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       </div>
     </div>,
 
-    // Step 5: Vibes + backstory
+    // Step 5: Vibes + backstory + overrides
     <div key="vibes" className="space-y-5">
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Their vibe (pick up to 4)</label>
@@ -413,8 +413,19 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         </div>
       </div>
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Backstory (optional)</label>
-        <Textarea value={data.background} onChange={e => update("background", e.target.value)} placeholder="Anything specific about their past, job, family..." className="rounded-xl min-h-[100px] text-sm resize-none" />
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Backstory (optional)</label>
+        <p className="text-xs text-muted-foreground mb-2">Write freely — this shapes who they are. The AI will blend it in.</p>
+        <Textarea value={data.background} onChange={e => update("background", e.target.value)} placeholder="Anything about their past, family, where they came from..." className="rounded-xl min-h-[90px] text-sm resize-none" />
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Personality notes (optional)</label>
+        <p className="text-xs text-muted-foreground mb-2">Override or add to the generated personality. Write it raw — exactly how you'd describe them.</p>
+        <Textarea value={data.personality_override} onChange={e => update("personality_override", e.target.value)} placeholder="e.g. She holds grudges but never admits it. Laughs loudly then goes quiet when something actually matters to her..." className="rounded-xl min-h-[90px] text-sm resize-none" />
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Current situation (optional)</label>
+        <p className="text-xs text-muted-foreground mb-2">What's going on in their life right now — job situation, housing, something they're dealing with.</p>
+        <Textarea value={data.situation_override} onChange={e => update("situation_override", e.target.value)} placeholder="e.g. Just got out of a 3-year relationship. Moved back to her hometown. Working two jobs to save up..." className="rounded-xl min-h-[80px] text-sm resize-none" />
       </div>
     </div>,
 
