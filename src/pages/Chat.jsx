@@ -111,7 +111,7 @@ export default function Chat() {
       ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs. React like you would in a real text conversation."
       : "";
 
-    const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nRespond as ${character.name} only. Just the response — nothing else. No labels, no tags, no formatting.`;
+    const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Do NOT sound like a motivational quote. Just say what you'd actually say — short, unpolished, real.`;
 
     // Simulate typing delay for phone mode
     if (isPhone) {
