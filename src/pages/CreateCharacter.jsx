@@ -51,30 +51,55 @@ const MEMORY_PRESETS = [
   { title: "A secret they've never told anyone", description: "Something they carry alone. No one knows. Maybe they'll tell you." },
 ];
 
+const DRAFT_KEY = "create_character_draft";
+
+const defaultData = {
+  name: "",
+  gender: "",
+  age_range: "",
+  ethnicity: "",
+  living_situation: "",
+  vibes: [],
+  background: "",
+  archetype: "",
+  social_energy: "",
+  sexual_orientation: "",
+  memories: [],
+};
+
+function loadDraft() {
+  try {
+    const saved = localStorage.getItem(DRAFT_KEY);
+    return saved ? JSON.parse(saved) : null;
+  } catch { return null; }
+}
+
 export default function CreateCharacter() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0);
+  const draft = loadDraft();
+  const [step, setStep] = useState(draft?.step || 0);
   const [isCreating, setIsCreating] = useState(false);
-  const [avatarUrl, setAvatarUrl] = useState(null);
-  const [referenceUrls, setReferenceUrls] = useState([]);
+  const [avatarUrl, setAvatarUrl] = useState(draft?.avatarUrl || null);
+  const [referenceUrls, setReferenceUrls] = useState(draft?.referenceUrls || []);
   const [newMemory, setNewMemory] = useState({ title: "", description: "" });
   const [showMemoryForm, setShowMemoryForm] = useState(false);
 
-  const [data, setData] = useState({
-    name: "",
-    gender: "",
-    age_range: "",
-    ethnicity: "",
-    living_situation: "",
-    vibes: [],
-    background: "",
-    archetype: "",
-    social_energy: "",
-    sexual_orientation: "",
-    memories: [],
-  });
+  const [data, setData] = useState(draft?.data || defaultData);
 
-  const update = (field, value) => setData(prev => ({ ...prev, [field]: value }));
+  const saveDraft = (newData, newStep, newAvatarUrl, newReferenceUrls) => {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({
+      data: newData,
+      step: newStep,
+      avatarUrl: newAvatarUrl,
+      referenceUrls: newReferenceUrls,
+    }));
+  };
+
+  const update = (field, value) => setData(prev => {
+    const next = { ...prev, [field]: value };
+    saveDraft(next, step, avatarUrl, referenceUrls);
+    return next;
+  });
 
   const toggleVibe = (v) => setData(prev => ({
     ...prev,
