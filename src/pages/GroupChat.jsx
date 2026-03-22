@@ -62,6 +62,28 @@ export default function GroupChat() {
     }
   }, [messagesData, selectedConversation?.id]);
 
+  useEffect(() => {
+    if (!selectedConversation) return;
+
+    const unsubscribe = base44.entities.Message.subscribe((event) => {
+      if (event.data?.conversation_id === selectedConversation.id && event.data?.sender_type === 'character') {
+        setTypingUsers(prev => {
+          const isTyping = prev.find(u => u.character_id === event.data.character_id);
+          if (!isTyping && event.type === 'create') {
+            const newTyping = [...prev, { character_id: event.data.character_id, name: event.data.character_name }];
+            setTimeout(() => {
+              setTypingUsers(p => p.filter(u => u.character_id !== event.data.character_id));
+            }, 2000);
+            return newTyping;
+          }
+          return prev;
+        });
+      }
+    });
+
+    return unsubscribe;
+  }, [selectedConversation?.id]);
+
   const handleSendMessage = async () => {
     if (!messageText.trim() || !selectedConversation) return;
 
