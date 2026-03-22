@@ -99,11 +99,24 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               </button>
             </Link>
             {character.is_default ? (
-              <Link to="/edit-default">
-                <button className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors">
-                  <Pencil className="w-4 h-4" />
-                </button>
-              </Link>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors">
+                    <MoreVertical className="w-4 h-4" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
+                    <Pencil className="w-4 h-4" /> Edit name
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link to="/edit-default" className="flex items-center gap-2 text-muted-foreground">
+                      <Pencil className="w-4 h-4" /> Edit photos
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (onDelete || onMoveAway) && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
