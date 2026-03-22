@@ -171,7 +171,7 @@ export default function Chat() {
           {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
         </AnimatePresence>
         <AnimatePresence>
-          {isTyping && character && <TypingIndicator name={character.name} />}
+          {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}
         </AnimatePresence>
         <div ref={bottomRef} />
       </div>
