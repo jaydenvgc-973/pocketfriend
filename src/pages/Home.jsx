@@ -12,6 +12,7 @@ import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacte
 export default function Home() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const [pendingDelete, setPendingDelete] = useState(null); // character being removed
 
   const { data: settings = [] } = useQuery({
     queryKey: ["userSettings"],
