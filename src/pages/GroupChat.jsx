@@ -108,7 +108,7 @@ export default function GroupChat() {
     );
   }
 
-  const activeCharacters = characters.filter(c => c.status === 'active' || !c.status);
+  const activeCharacters = characters.filter(c => c.status === 'active' || c.status === 'moved_away' || !c.status);
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background">
