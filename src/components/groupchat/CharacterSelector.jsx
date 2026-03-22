@@ -30,7 +30,7 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
       transition={{ type: "spring", damping: 30, stiffness: 300 }}
       className="fixed inset-x-0 bottom-[60px] z-40 border-t border-border bg-card/95 backdrop-blur-sm shadow-lg"
     >
-      <div className="max-w-lg mx-auto h-full flex flex-col">
+      <div className="max-w-lg mx-auto h-full flex flex-col px-4 py-3">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold">Select characters</h2>
           <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
@@ -38,7 +38,7 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
           </button>
         </div>
 
-        <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
+        <div className="space-y-2 mb-3 overflow-y-auto flex-1">
           {characters.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-sm text-muted-foreground">No active characters available</p>
