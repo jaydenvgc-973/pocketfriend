@@ -125,13 +125,6 @@ export default function Chat() {
     let responseText = response;
     let emotionalState = character.emotional_state || "calm";
 
-    // Extract emotional state
-    const stateMatch = responseText.match(/EMOTIONAL_STATE:\s*(calm|irritated|defensive|reflective|closed-off)/i);
-    if (stateMatch) {
-      emotionalState = stateMatch[1].toLowerCase();
-      responseText = responseText.replace(/\n?EMOTIONAL_STATE:.*$/i, "").trim();
-    }
-
     setIsTyping(false);
 
     const charMsg = await base44.entities.Message.create({
