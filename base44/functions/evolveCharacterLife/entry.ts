@@ -144,8 +144,10 @@ Ground everything in real time. This person's life moves like real life — not 
         transient_encounters: update.transient_encounters || [],
         current_life_event: update.current_life_event || "",
         emotional_state: update.emotional_state || character.emotional_state || "calm",
+        health_status: update.health_status || character.health_status || "healthy",
+        health_habits: update.health_habits || character.health_habits || "",
         life_last_updated: new Date().toISOString(),
-        departed_characters: [], // Clear after processing — departure is a one-time injection
+        departed_characters: [],
       });
 
       results.push({ id: character.id, name, status: "updated" });
