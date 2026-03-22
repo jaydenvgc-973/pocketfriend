@@ -162,32 +162,33 @@ export default function CreateCharacter() {
 
   const handleCreate = async () => {
     setIsCreating(true);
-    const fullName = [data.first_name, data.middle_name, data.last_name].filter(Boolean).join(" ");
-    const ethnicityStr = data.ethnicities.join(" / ");
+    try {
+      const fullName = [data.first_name, data.middle_name, data.last_name].filter(Boolean).join(" ");
+      const ethnicityStr = data.ethnicities.join(" / ");
 
-    // Build known-characters context for the prompt
-    const knownChars = existingCharacters.filter(c => data.known_character_ids.includes(c.id));
-    const knownContext = knownChars.length > 0
-      ? `They personally know these people: ${knownChars.map(c => `${c.name} (${c.personality_summary?.split(".")[0] || ""})`).join("; ")}.`
-      : "";
+      // Build known-characters context for the prompt
+      const knownChars = existingCharacters.filter(c => data.known_character_ids.includes(c.id));
+      const knownContext = knownChars.length > 0
+        ? `They personally know these people: ${knownChars.map(c => `${c.name} (${c.personality_summary?.split(".")[0] || ""})`).join("; ")}.`
+        : "";
 
-    const charProfile = `Name: ${fullName}. Age: ${data.age_range}. Background: ${ethnicityStr}. Gender: ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background story: ${data.background || "not specified"}. ${knownContext}`;
+      const charProfile = `Name: ${fullName}. Age: ${data.age_range}. Background: ${ethnicityStr}. Gender: ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background story: ${data.background || "not specified"}. ${knownContext}`;
 
-    // Run personality + memory generation in parallel
-    const memoryThemes = data.memories.length > 0
-      ? data.memories.map(m => `"${m.title}": ${m.description}`).join("; ")
-      : "first heartbreak, a betrayal, a moment of unexpected loss or failure, a win that proved something, a secret";
+      // Run personality + memory generation in parallel
+      const memoryThemes = data.memories.length > 0
+        ? data.memories.map(m => `"${m.title}": ${m.description}`).join("; ")
+        : "first heartbreak, a betrayal, a moment of unexpected loss or failure, a win that proved something, a secret";
 
-    const personalityOverrideNote = data.personality_override
-      ? ` IMPORTANT: The creator also wrote this about them directly — incorporate this and let it shape the result: "${data.personality_override}"`
-      : "";
+      const personalityOverrideNote = data.personality_override
+        ? ` IMPORTANT: The creator also wrote this about them directly — incorporate this and let it shape the result: "${data.personality_override}"`
+        : "";
 
-    const [personality, generatedMemories] = await Promise.all([
-      base44.integrations.Core.InvokeLLM({
-        prompt: `Create a personality summary (2-3 sentences, raw and real, written about this person in third person) for: ${charProfile}.${personalityOverrideNote} Make it feel like a real person, not a description. No flowery language.`
-      }),
-      base44.integrations.Core.InvokeLLM({
-        prompt: `You are building the internal memory bank of a fictional person for a character simulation. Generate 4-6 specific, vivid, predated memories for this character that permanently shaped who they are.
+      const [personality, generatedMemories] = await Promise.all([
+        base44.integrations.Core.InvokeLLM({
+          prompt: `Create a personality summary (2-3 sentences, raw and real, written about this person in third person) for: ${charProfile}.${personalityOverrideNote} Make it feel like a real person, not a description. No flowery language.`
+        }),
+        base44.integrations.Core.InvokeLLM({
+          prompt: `You are building the internal memory bank of a fictional person for a character simulation. Generate 4-6 specific, vivid, predated memories for this character that permanently shaped who they are.
 
 CHARACTER: ${charProfile}
 
@@ -204,59 +205,63 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
 - description: 3-5 sentences. Specific scene, what happened, who was involved.
 - emotional_impact: 1-2 sentences. What it did to them internally. How it affects them now.
 - lesson_learned: 1 sentence. The thing they took away — spoken like them, not a therapist.`,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            memories: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  description: { type: "string" },
-                  emotional_impact: { type: "string" },
-                  lesson_learned: { type: "string" }
+          response_json_schema: {
+            type: "object",
+            properties: {
+              memories: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    description: { type: "string" },
+                    emotional_impact: { type: "string" },
+                    lesson_learned: { type: "string" }
+                  }
                 }
               }
             }
           }
-        }
-      })
-    ]);
+        })
+      ]);
 
-    const finalMemories = generatedMemories?.memories?.length > 0
-      ? generatedMemories.memories
-      : data.memories.length > 0 ? data.memories : undefined;
+      const finalMemories = generatedMemories?.memories?.length > 0
+        ? generatedMemories.memories
+        : data.memories.length > 0 ? data.memories : undefined;
 
-    const charData = {
-      name: fullName,
-      gender: data.gender?.toLowerCase(),
-      archetype: data.archetype || undefined,
-      social_energy: data.social_energy || undefined,
-      sexual_orientation: (data.sexual_orientation && data.sexual_orientation !== "Prefer not to say") ? data.sexual_orientation : undefined,
-      personality_summary: personality,
-      personality_traits: data.vibes,
-      communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
-      background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
-      current_situation: data.situation_override || data.living_situation,
-      emotional_state: "calm",
-      avatar_url: avatarUrl || null,
-      reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
-      memories: finalMemories,
-      work_details: (data.job_title || data.workplace_type) ? {
-        job_title: data.job_title,
-        workplace_type: data.workplace_type,
-        work_environment: data.work_environment,
-      } : undefined,
-      frequented_places: data.frequented_places.length > 0 ? data.frequented_places : undefined,
-      status: "active",
-      is_finalized: true,
-    };
-    charData.system_prompt = buildSystemPrompt(charData, knownChars);
+      const charData = {
+        name: fullName,
+        gender: data.gender?.toLowerCase(),
+        archetype: data.archetype || undefined,
+        social_energy: data.social_energy || undefined,
+        sexual_orientation: (data.sexual_orientation && data.sexual_orientation !== "Prefer not to say") ? data.sexual_orientation : undefined,
+        personality_summary: personality,
+        personality_traits: data.vibes,
+        communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
+        background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
+        current_situation: data.situation_override || data.living_situation,
+        emotional_state: "calm",
+        avatar_url: avatarUrl || null,
+        reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
+        memories: finalMemories,
+        work_details: (data.job_title || data.workplace_type) ? {
+          job_title: data.job_title,
+          workplace_type: data.workplace_type,
+          work_environment: data.work_environment,
+        } : undefined,
+        frequented_places: data.frequented_places.length > 0 ? data.frequented_places : undefined,
+        status: "active",
+        is_finalized: true,
+      };
+      charData.system_prompt = buildSystemPrompt(charData, knownChars);
 
-    await base44.entities.Character.create(charData);
-    localStorage.removeItem(DRAFT_KEY);
-    navigate("/home");
+      await base44.entities.Character.create(charData);
+      localStorage.removeItem(DRAFT_KEY);
+      navigate("/home");
+    } catch (error) {
+      setIsCreating(false);
+      alert("Failed to create character. Please check your connection and try again.");
+    }
   };
 
   const chipClass = (selected) =>
