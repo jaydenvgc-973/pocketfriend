@@ -155,7 +155,7 @@ export default function Chat() {
   };
 
   return (
-    <div className={`h-screen flex flex-col bg-background ${isPhone ? "max-w-lg mx-auto" : ""}`}>
+    <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
       <div className={`flex items-center gap-3 px-4 py-3 border-b border-border ${isPhone ? "bg-card" : "bg-background/80 backdrop-blur-xl"}`}>
         <Link to="/home" className="text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="w-5 h-5" />
