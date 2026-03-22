@@ -106,6 +106,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
+                    <Pencil className="w-4 h-4" /> Edit name
+                  </DropdownMenuItem>
+                  {onMoveAway && <DropdownMenuSeparator />}
                   {onMoveAway && (
                     <DropdownMenuItem onClick={() => onMoveAway(character.id)} className="gap-2 text-muted-foreground">
                       <MapPin className="w-4 h-4" /> They moved away
