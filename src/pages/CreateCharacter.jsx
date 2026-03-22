@@ -195,8 +195,22 @@ export default function CreateCharacter() {
     // Step 0: Basic info
     <div key="basic" className="space-y-5">
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Name</label>
-        <Input value={data.name} onChange={e => update("name", e.target.value)} placeholder="What's their name?" className="h-12 rounded-xl text-base" />
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Name</label>
+          <button
+            onClick={generateName}
+            disabled={isGeneratingName}
+            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
+          >
+            <Sparkles className="w-3 h-3" />
+            {isGeneratingName ? "Generating..." : "Auto-generate"}
+          </button>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Input value={data.first_name} onChange={e => update("first_name", e.target.value)} placeholder="First name" className="h-12 rounded-xl text-base" />
+          <Input value={data.last_name} onChange={e => update("last_name", e.target.value)} placeholder="Last name" className="h-12 rounded-xl text-base" />
+        </div>
+        <Input value={data.middle_name} onChange={e => update("middle_name", e.target.value)} placeholder="Middle name (optional)" className="h-11 rounded-xl text-base mt-2" />
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Gender</label>
