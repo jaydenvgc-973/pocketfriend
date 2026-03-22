@@ -27,7 +27,7 @@ export default function GroupChat() {
     initialData: [],
   });
 
-  const characters = allCharacters.filter(c => c.status !== "deleted");
+  const characters = allCharacters.filter(c => c.status === "active");
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -38,8 +38,6 @@ export default function GroupChat() {
   };
 
   const selectedCharacters = characters.filter(c => selectedIds.includes(c.id));
-  const [deletedIds, setDeletedIds] = useState([]);
-  const availableCharacters = characters.filter(c => !deletedIds.includes(c.id));
 
   const sendMessage = async (text) => {
     if (selectedCharacters.length === 0) return;
@@ -77,7 +75,7 @@ export default function GroupChat() {
         <div className="max-w-lg mx-auto px-6 py-6">
           <p className="text-sm text-muted-foreground mb-4">Select characters to include:</p>
           <div className="space-y-3">
-            {availableCharacters.map(c => (
+            {characters.map(c => (
               <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"}`}>
                 <Checkbox checked={selectedIds.includes(c.id)} onClick={() => toggleCharacter(c.id)} />
                 <CharacterAvatar character={c} size="sm" />
@@ -85,8 +83,8 @@ export default function GroupChat() {
                   <p className="text-sm font-medium text-foreground">{c.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                 </div>
-                {!c.is_default && (
-                  <button onClick={() => setDeletedIds(prev => [...prev, c.id])} className="text-muted-foreground hover:text-destructive transition-colors p-1">
+                {!c.is_default && selectedIds.includes(c.id) && (
+                  <button onClick={() => setSelectedIds(prev => prev.filter(id => id !== c.id))} className="text-muted-foreground hover:text-destructive transition-colors p-1">
                     <X className="w-4 h-4" />
                   </button>
                 )}
