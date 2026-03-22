@@ -11,7 +11,7 @@ import Home from './pages/Home';
 import Chat from './pages/Chat';
 import GroupChat from './pages/GroupChat';
 import Groups from './pages/Groups';
-import CreateCharacter from './pages/CreateCharacter.jsx';
+import CreateCharacter from './pages/CreateCharacter';
 import Settings from './pages/Settings';
 import EditDefaultCharacter from './pages/EditDefaultCharacter';
 
