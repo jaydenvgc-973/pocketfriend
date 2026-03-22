@@ -20,11 +20,13 @@ export default function GroupChat() {
   const [typingName, setTypingName] = useState("");
   const bottomRef = useRef(null);
 
-  const { data: characters = [] } = useQuery({
+  const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters"],
     queryFn: () => base44.entities.Character.list(),
     initialData: [],
   });
+
+  const characters = allCharacters.filter(c => c.status !== "deleted" && c.status !== "moved_away");
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
