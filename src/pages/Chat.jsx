@@ -126,6 +126,16 @@ export default function Chat() {
     let responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
     let emotionalState = character.emotional_state || "calm";
 
+    // Check if the character wants to send an image
+    const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/i);
+    let imageUrl = null;
+    if (imageMatch) {
+      const imagePrompt = imageMatch[1];
+      responseText = responseText.replace(imageMatch[0], "").trim();
+      const imgResult = await base44.integrations.Core.GenerateImage({ prompt: imagePrompt });
+      imageUrl = imgResult.url;
+    }
+
     setIsTyping(false);
 
     const charMsg = await base44.entities.Message.create({
