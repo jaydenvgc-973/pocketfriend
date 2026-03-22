@@ -116,7 +116,7 @@ export default function GroupChat() {
              <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"} ${c.status === "moved_away" ? "opacity-60" : ""}`}>
                <Checkbox checked={selectedIds.includes(c.id)} onChange={() => toggleCharacter(c.id)} />
                <CharacterAvatar character={c} size="sm" />
-               <div className="flex-1 min-w-0" onClick={() => !c.is_default && c.status === "active" && toggleCharacter(c.id)} style={{ cursor: !c.is_default && c.status === "active" ? "pointer" : "default" }}>
+               <div className="flex-1 min-w-0" onClick={() => c.status === "active" && toggleCharacter(c.id)} style={{ cursor: c.status === "active" ? "pointer" : "default" }}>
                  <div className="flex items-center gap-2">
                    <p className="text-sm font-medium text-foreground">{c.name}</p>
                    {c.status === "moved_away" && (
@@ -125,7 +125,7 @@ export default function GroupChat() {
                  </div>
                  <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                </div>
-               {!c.is_default && c.status === "active" && (
+               {c.status === "active" && (
                  <DropdownMenu>
                    <DropdownMenuTrigger asChild>
                      <button onClick={(e) => e.stopPropagation()} className="p-1 rounded text-muted-foreground hover:text-foreground">
