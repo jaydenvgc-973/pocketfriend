@@ -22,11 +22,46 @@ const stateDots = {
 
 export default function CharacterCard({ character, onDelete }) {
   const state = character.emotional_state || "calm";
+  const [showPhoto, setShowPhoto] = useState(false);
 
   return (
+    <>
+      <AnimatePresence>
+        {showPhoto && character.avatar_url && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/90"
+            onClick={() => setShowPhoto(false)}
+          >
+            <button
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+              onClick={() => setShowPhoto(false)}
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <motion.img
+              initial={{ scale: 0.85, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.85, opacity: 0 }}
+              src={character.avatar_url}
+              alt={character.name}
+              className="max-w-full max-h-full w-screen h-screen object-contain"
+              onClick={e => e.stopPropagation()}
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     <motion.div whileTap={{ scale: 0.99 }} className="bg-card border border-border rounded-2xl p-4">
       <div className="flex items-start gap-3">
-        <CharacterAvatar character={character} size="lg" />
+        <div
+          className={character.avatar_url ? "cursor-pointer" : ""}
+          onClick={() => character.avatar_url && setShowPhoto(true)}
+        >
+          <CharacterAvatar character={character} size="lg" />
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-foreground">{character.name}</h3>
