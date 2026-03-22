@@ -370,7 +370,7 @@ export default function CreateCharacter() {
 
         <div className="flex gap-3 mt-8">
           {step > 0 && (
-            <Button variant="outline" onClick={() => setStep(s => s - 1)} className="flex-1 h-12 rounded-xl">Back</Button>
+            <Button variant="outline" onClick={() => { const s = step - 1; setStep(s); saveDraft(data, s, avatarUrl, referenceUrls); }} className="flex-1 h-12 rounded-xl">Back</Button>
           )}
           {step < steps.length - 1 ? (
             <Button onClick={() => { const s = step + 1; setStep(s); saveDraft(data, s, avatarUrl, referenceUrls); }} disabled={!canNext} className="flex-1 h-12 rounded-xl gap-2">
