@@ -43,7 +43,7 @@ export default function EditDefaultCharacter() {
 
   if (!defaultChar) return null;
 
-  const hasChanges = avatarUrl || referenceUrls.length > 0;
+  const hasChanges = avatarUrl || referenceUrls.length > 0 || (defaultChar?.reference_image_urls?.length > 0);
 
   return (
     <div className="min-h-screen bg-background">
