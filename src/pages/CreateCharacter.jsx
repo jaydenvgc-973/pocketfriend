@@ -333,7 +333,7 @@ export default function CreateCharacter() {
       </div>
       <ReferencePhotoUploader
         descriptor={`a ${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality`}
-        onAvatarGenerated={(url, refs) => { setAvatarUrl(url); setReferenceUrls(refs); }}
+        onAvatarGenerated={(url, refs) => { setAvatarUrl(url); setReferenceUrls(refs); saveDraft(data, step, url, refs); }}
         existingReferenceUrls={referenceUrls}
         existingAvatarUrl={avatarUrl}
       />
