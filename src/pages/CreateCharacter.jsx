@@ -101,10 +101,14 @@ export default function CreateCharacter() {
     return next;
   });
 
-  const toggleVibe = (v) => setData(prev => ({
-    ...prev,
-    vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes
-  }));
+  const toggleVibe = (v) => setData(prev => {
+    const next = {
+      ...prev,
+      vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes
+    };
+    saveDraft(next, step, avatarUrl, referenceUrls);
+    return next;
+  });
 
   const addPresetMemory = (preset) => {
     if (data.memories.find(m => m.title === preset.title)) return;
