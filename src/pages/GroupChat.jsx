@@ -127,14 +127,6 @@ export default function GroupChat() {
             {/* Header */}
             <div className="p-4 border-b border-border flex items-center justify-between bg-card/50">
               <div className="flex items-center gap-3">
-                <Button 
-                  variant="ghost" 
-                  size="icon"
-                  onClick={() => setSelectedConversation(null)}
-                  className="text-muted-foreground hover:text-foreground"
-                >
-                  <ArrowLeft className="w-5 h-5" />
-                </Button>
                 <div>
                   <h1 className="text-lg font-semibold text-foreground">{selectedConversation.title}</h1>
                   <p className="text-xs text-muted-foreground">{selectedConversation.character_ids?.length || 0} participants</p>
@@ -203,7 +195,39 @@ export default function GroupChat() {
             <p className="text-sm text-muted-foreground mt-2">Choose from your existing chats to start messaging</p>
           </div>
         )}
+
+        {/* Conversations Panel - Bottom */}
+        <div className="border-t border-border bg-card/50 p-4">
+          <div className="max-w-lg mx-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold">Conversations</h2>
+              <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+            <ScrollArea className="h-24">
+              <div className="flex gap-2 pr-4">
+                {conversationsData.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No conversations yet</p>
+                ) : (
+                  conversationsData.map(conv => (
+                    <button
+                      key={conv.id}
+                      onClick={() => setSelectedConversation(conv)}
+                      className={`flex-shrink-0 px-3 py-2 rounded-lg transition-all text-sm whitespace-nowrap ${
+                        selectedConversation?.id === conv.id
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-secondary text-foreground hover:bg-secondary/80'
+                      }`}
+                    >
+                      {conv.title}
+                    </button>
+                  ))
+                )}
+              </div>
+            </ScrollArea>
           </div>
+        </div>
         </div>
       </div>
 
