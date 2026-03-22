@@ -24,19 +24,12 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 pointer-events-auto"
-      onClick={onCancel}
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 10 }}
+      className="bg-card border-t border-border p-4"
     >
-      <motion.div
-        initial={{ scale: 0.95, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        exit={{ scale: 0.95, opacity: 0 }}
-        className="bg-card rounded-2xl w-full max-w-md max-h-[85vh] flex flex-col border border-border pointer-events-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="max-w-lg mx-auto">
         <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-lg font-semibold">Select characters for group chat</h2>
           <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
