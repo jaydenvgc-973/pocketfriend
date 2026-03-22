@@ -25,6 +25,7 @@ const stateDots = {
 export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
+  const [showEditName, setShowEditName] = useState(false);
   const isMovedAway = character.status === "moved_away";
 
   return (
