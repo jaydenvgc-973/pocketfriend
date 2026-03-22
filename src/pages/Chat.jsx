@@ -144,6 +144,7 @@ export default function Chat() {
       character_id: characterId,
       character_name: character.name,
       content: responseText,
+      image_url: imageUrl || undefined,
       emotional_state: emotionalState,
       timestamp: new Date().toISOString(),
     });
