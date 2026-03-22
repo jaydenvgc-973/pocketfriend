@@ -111,7 +111,7 @@ export default function Chat() {
       ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs. React like you would in a real text conversation."
       : "";
 
-    const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nRespond as ${character.name}. Also, at the end of your response, on a new line starting with "EMOTIONAL_STATE:", indicate your current emotional state as one of: calm, irritated, defensive, reflective, closed-off`;
+    const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nRespond as ${character.name} only. Just the response — nothing else. No labels, no tags, no formatting.`;
 
     // Simulate typing delay for phone mode
     if (isPhone) {
