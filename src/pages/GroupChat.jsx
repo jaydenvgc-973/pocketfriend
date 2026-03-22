@@ -215,6 +215,7 @@ export default function GroupChat() {
             <p className="text-sm text-muted-foreground mt-2">Choose from your existing chats to start messaging</p>
           </div>
         )}
+        </div>
       </div>
       <AnimatePresence>
         {showCharacterSelector && (
