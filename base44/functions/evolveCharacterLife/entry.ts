@@ -35,9 +35,31 @@ Deno.serve(async (req) => {
         .map(r => `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}`)
         .join("\n");
 
-      const departedNames = (character.departed_characters || []);
-      const departedContext = departedNames.length > 0
-        ? `\nPEOPLE WHO HAVE RECENTLY DISAPPEARED OR MOVED ON FROM THIS CHARACTER'S LIFE:\n${departedNames.map(n => n.includes("(moved away)") ? `- ${n.replace(" (moved away)", "")} — they moved away. ${character.name} doesn't fully know why, just that they're gone.` : `- ${n} — they just disappeared. No explanation. ${character.name} doesn't know what happened to them.`).join("\n")}\nIMPORTANT: Weave these disappearances naturally into the current_life_event or relationships where appropriate. ${character.name} doesn't know these people were "removed" — only that they're no longer around. React the way this character would — with their personality, their way of processing loss or absence.`
+      const departedPeople = (character.departed_characters || []);
+      const departedContext = departedPeople.length > 0
+        ? `\nPEOPLE WHO HAVE RECENTLY LEFT THIS CHARACTER'S LIFE:\n${departedPeople.map(d => {
+            const name = typeof d === "string" ? d.replace(" (moved away)", "") : d.name;
+            const cause = typeof d === "string" ? (d.includes("(moved away)") ? "moved_away" : "unknown") : (d.cause || "unknown");
+            const closeness = typeof d === "string" ? "acquaintance" : (d.relationship_closeness || "acquaintance");
+
+            const causeText = {
+              moved_away: `${name} moved away. ${character.name} knows this but not the full reason why.`,
+              disappeared: `${name} just stopped being around. No explanation. ${character.name} doesn't know what happened.`,
+              unknown: `${name} is just gone. No explanation given.`,
+              drifted: `${name} and ${character.name} drifted apart. It wasn't one thing, just distance accumulating.`,
+              falling_out: `Things ended badly between ${character.name} and ${name}. There was a falling out.`,
+              died: `${name} died. ${character.name} has to process this now.`,
+            }[cause] || `${name} is gone.`;
+
+            const closenessGuide = {
+              close: `They were close. This hits hard — even if ${character.name} doesn't show it openly. Let the grief or shock surface in their behavior, their current life event, or how they're carrying themselves.`,
+              complicated: `The relationship was complicated — maybe unresolved feelings, maybe a history of tension. The loss is real but messy. ${character.name} may not even know how to feel about it.`,
+              acquaintance: `They weren't that close. ${character.name} notices, maybe feels something briefly, but it doesn't stop their life. React proportionally.`,
+              distant: `Barely in each other's lives. ${character.name} hears about it and moves on. Minimal emotional disruption.`,
+            }[closeness] || `React in proportion to who they were to ${character.name}.`;
+
+            return `- ${causeText}\n  Closeness: ${closenessGuide}`;
+          }).join("\n\n")}\n\nIMPORTANT: Weave these into the character's life naturally. ${character.name} does NOT know they were "removed" — they only know what their reality gives them. How they process loss or absence is entirely shaped by who they are — their personality, their archetype, their emotional baggage. Some people grieve openly. Some go quiet. Some feel nothing. Some feel things they don't expect. Let this character be themselves.`
         : "";
 
       const now = new Date();
