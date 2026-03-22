@@ -1,12 +1,15 @@
-import React from "react";
+import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
+import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 
 export default function Settings() {
   const queryClient = useQueryClient();
