@@ -391,8 +391,8 @@ export default function CreateCharacter() {
   ];
 
   const canNext = [
-    data.name.trim() && data.gender && data.age_range,
-    data.ethnicity && data.living_situation,
+    data.first_name.trim() && data.last_name.trim() && data.gender && data.age_range,
+    data.ethnicities.length > 0 && data.living_situation,
     data.archetype && data.social_energy,   // archetype + energy required
     data.vibes.length > 0,
     true, // memories optional
