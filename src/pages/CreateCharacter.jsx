@@ -177,9 +177,13 @@ export default function CreateCharacter() {
       ? data.memories.map(m => `"${m.title}": ${m.description}`).join("; ")
       : "first heartbreak, a betrayal, a moment of unexpected loss or failure, a win that proved something, a secret";
 
+    const personalityOverrideNote = data.personality_override
+      ? ` IMPORTANT: The creator also wrote this about them directly — incorporate this and let it shape the result: "${data.personality_override}"`
+      : "";
+
     const [personality, generatedMemories] = await Promise.all([
       base44.integrations.Core.InvokeLLM({
-        prompt: `Create a personality summary (2-3 sentences, raw and real, written about this person in third person) for: ${charProfile}. Make it feel like a real person, not a description. No flowery language.`
+        prompt: `Create a personality summary (2-3 sentences, raw and real, written about this person in third person) for: ${charProfile}.${personalityOverrideNote} Make it feel like a real person, not a description. No flowery language.`
       }),
       base44.integrations.Core.InvokeLLM({
         prompt: `You are building the internal memory bank of a fictional person for a character simulation. Generate 4-6 specific, vivid, predated memories for this character that permanently shaped who they are.
@@ -233,7 +237,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       personality_traits: data.vibes,
       communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
       background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
-      current_situation: data.living_situation,
+      current_situation: data.situation_override || data.living_situation,
       emotional_state: "calm",
       avatar_url: avatarUrl || null,
       reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
@@ -244,6 +248,8 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         work_environment: data.work_environment,
       } : undefined,
       frequented_places: data.frequented_places.length > 0 ? data.frequented_places : undefined,
+      status: "active",
+      is_finalized: true,
     };
     charData.system_prompt = buildSystemPrompt(charData, knownChars);
 
