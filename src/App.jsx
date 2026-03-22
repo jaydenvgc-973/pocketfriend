@@ -13,6 +13,7 @@ import GroupChat from './pages/GroupChat';
 import Groups from './pages/Groups';
 import CreateCharacter from './pages/CreateCharacter';
 import Settings from './pages/Settings';
+import EditDefaultCharacter from './pages/EditDefaultCharacter';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -43,6 +44,7 @@ const AuthenticatedApp = () => {
       <Route path="/group-chat" element={<GroupChat />} />
       <Route path="/create" element={<CreateCharacter />} />
       <Route path="/settings" element={<Settings />} />
+      <Route path="/edit-default" element={<EditDefaultCharacter />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
