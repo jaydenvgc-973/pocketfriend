@@ -125,10 +125,10 @@ export default function GroupChat() {
         <h2 className="text-sm font-semibold text-foreground">Group Chats</h2>
       </div>
 
-      {/* Main Content - Two Column Layout */}
-      <div className="flex-1 overflow-hidden flex gap-4 p-4 min-h-0">
-        {/* Conversations Sidebar */}
-        <div className="w-48 flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden flex-shrink-0">
+      {/* Main Content - Vertical Layout */}
+      <div className="flex-1 overflow-hidden flex flex-col gap-4 p-4 min-h-0">
+        {/* Conversations List */}
+        <div className="flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden flex-shrink-0 h-24">
           <div className="p-3 border-b border-border flex items-center justify-between flex-shrink-0">
             <h3 className="text-xs font-semibold uppercase tracking-wide">Conversations</h3>
             <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
@@ -136,22 +136,21 @@ export default function GroupChat() {
             </button>
           </div>
           <ScrollArea className="flex-1">
-            <div className="space-y-1 p-2">
+            <div className="flex gap-2 p-2">
               {conversationsData.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">No conversations yet</p>
+                <p className="text-xs text-muted-foreground">No conversations yet</p>
               ) : (
                 conversationsData.map(conv => (
                   <button
                     key={conv.id}
                     onClick={() => setSelectedConversation(conv)}
-                    className={`w-full text-left px-3 py-2 rounded-lg transition-all text-xs ${
+                    className={`flex-shrink-0 px-3 py-2 rounded-lg transition-all text-xs whitespace-nowrap ${
                       selectedConversation?.id === conv.id
                         ? 'bg-primary text-primary-foreground'
                         : 'text-foreground hover:bg-secondary'
                     }`}
                   >
-                    <p className="truncate font-medium">{conv.title}</p>
-                    <p className="text-xs opacity-70">{conv.character_ids?.length || 0} people</p>
+                    {conv.title}
                   </button>
                 ))
               )}
