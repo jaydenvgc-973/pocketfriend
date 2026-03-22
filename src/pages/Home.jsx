@@ -65,6 +65,13 @@ export default function Home() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
   });
 
+  const moveBackMutation = useMutation({
+    mutationFn: async (id) => {
+      return base44.entities.Character.update(id, { status: "active" });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+  });
+
   useEffect(() => {
     const defaultChar = characters.find(c => c.is_default);
     if (!defaultChar) return;
@@ -96,6 +103,7 @@ export default function Home() {
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
   // Slot opens when a character moves away (they still exist) or is deleted
   const canCreate = activeCustomChars.length < 4;
+  const canMoveBack = movedAwayChars.length > 0 && activeCustomChars.length < 4;
 
   return (
     <div className="min-h-screen bg-background">
@@ -163,7 +171,7 @@ export default function Home() {
                 />
               ))}
               {movedAwayChars.map(c => (
-                <CharacterCard key={c.id} character={c} />
+                <CharacterCard key={c.id} character={c} onMoveAway={() => canMoveBack && moveBackMutation.mutate(c.id)} />
               ))}
               {canCreate && (
                 <Link to="/create">
