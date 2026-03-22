@@ -126,7 +126,7 @@ export default function Home() {
               </Link>
             )}
           </div>
-          {customChars.length === 0 ? (
+          {activeCustomChars.length === 0 && movedAwayChars.length === 0 ? (
             <Link to="/create">
               <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors">
                 <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
@@ -138,8 +138,14 @@ export default function Home() {
             </Link>
           ) : (
             <div className="grid gap-3">
-              {customChars.map(c => (
-                <CharacterCard key={c.id} character={c} onDelete={(id) => deleteMutation.mutate(id)} />
+              {activeCustomChars.map(c => (
+                <CharacterCard key={c.id} character={c}
+                  onDelete={(id) => deleteMutation.mutate(id)}
+                  onMoveAway={(id) => moveAwayMutation.mutate(id)}
+                />
+              ))}
+              {movedAwayChars.map(c => (
+                <CharacterCard key={c.id} character={c} />
               ))}
               {canCreate && (
                 <Link to="/create">
