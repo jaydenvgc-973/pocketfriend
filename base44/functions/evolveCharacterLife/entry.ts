@@ -62,6 +62,7 @@ Places they frequent: ${places}
 
 EXISTING ONGOING RELATIONSHIPS:
 ${existingRelationships || "None yet."}
+${departedContext}
 
 TODAY'S TASK:
 It is currently ${dayOfWeek} at ${timeOfDay}. Generate realistic updates for this character's life right now, grounded in the actual current time and day. A Monday morning feels different than a Friday night. A Sunday afternoon is different from a Tuesday at work. Let the time of day and day of week shape what's happening.
