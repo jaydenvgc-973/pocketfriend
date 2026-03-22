@@ -103,15 +103,20 @@ export default function Chat() {
     if (imageMatch) {
       const imagePrompt = imageMatch[1];
       responseText = responseText.replace(imageMatch[0], "").trim();
-      // Use reference photos (uploaded real photos) if available, otherwise fall back to avatar
+      // Use ALL reference photos first (uploaded real photos), then fall back to avatar_url.
+      // These act as strict style anchors so the character always looks the same.
       const refImages = character.reference_image_urls?.length
         ? character.reference_image_urls
         : character.avatar_url
           ? [character.avatar_url]
           : null;
+      // Prepend a strong look-lock instruction so the model doesn't deviate from the real photos
+      const lockedPrompt = refImages
+        ? `MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same face, same skin tone, same features. Do NOT alter their look. ${imagePrompt}`
+        : imagePrompt;
       const imgResult = refImages
-        ? await base44.integrations.Core.GenerateImage({ prompt: imagePrompt, existing_image_urls: refImages })
-        : await base44.integrations.Core.GenerateImage({ prompt: imagePrompt });
+        ? await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
+        : await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt });
       imageUrl = imgResult.url;
     }
 
