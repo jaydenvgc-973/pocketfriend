@@ -104,7 +104,7 @@ export default function GroupChat() {
   return (
     <div className="h-screen flex flex-col bg-background max-w-lg mx-auto">
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl">
-        <button onClick={() => navigate("/home")} className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></button>
+        <button type="button" onClick={() => navigate("/home")} className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></button>
         <div className="flex -space-x-2">{selectedCharacters.slice(0, 3).map(c => <CharacterAvatar key={c.id} character={c} size="sm" />)}</div>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-foreground truncate">{selectedCharacters.map(c => c.name).join(", ")}</h2>
