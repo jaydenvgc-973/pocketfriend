@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Send, Plus, MessageCircle } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import BottomNav from '@/components/BottomNav';
 import CharacterSelector from '@/components/groupchat/CharacterSelector';
 
