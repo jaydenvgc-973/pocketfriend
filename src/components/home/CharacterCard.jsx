@@ -50,6 +50,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {showEditName && (
+          <EditCharacterNameDialog character={character} onClose={() => setShowEditName(false)} />
+        )}
+      </AnimatePresence>
+
       <motion.div whileTap={{ scale: 0.99 }} className={`bg-card border border-border rounded-2xl p-4 ${isMovedAway ? "opacity-60" : ""}`}>
         <div className="flex items-start gap-3">
           <div className={character.avatar_url ? "cursor-pointer" : ""} onClick={() => character.avatar_url && setShowPhoto(true)}>
