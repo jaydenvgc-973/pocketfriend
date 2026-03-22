@@ -37,6 +37,8 @@ export default function GroupChat() {
   };
 
   const selectedCharacters = characters.filter(c => selectedIds.includes(c.id));
+  const [deletedIds, setDeletedIds] = useState([]);
+  const availableCharacters = characters.filter(c => !deletedIds.includes(c.id));
 
   const sendMessage = async (text) => {
     if (selectedCharacters.length === 0) return;
