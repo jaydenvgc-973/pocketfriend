@@ -30,14 +30,14 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
       className="bg-card border-t border-border p-4"
     >
       <div className="max-w-lg mx-auto">
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <h2 className="text-lg font-semibold">Select characters for group chat</h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold">Select characters</h2>
           <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+        <div className="space-y-2 mb-3 max-h-48 overflow-y-auto">
           {characters.length === 0 ? (
             <div className="text-center py-8">
               <p className="text-sm text-muted-foreground">No active characters available</p>
