@@ -26,7 +26,7 @@ export default function GroupChat() {
     initialData: [],
   });
 
-  const characters = allCharacters.filter(c => !c.is_default && (c.status === "active" || !c.status) && c.status !== "deleted" && c.status !== "moved_away");
+  const characters = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
