@@ -97,5 +97,6 @@ export default function CharacterCard({ character, onDelete }) {
         )}
       </div>
     </motion.div>
+    </>
   );
 }
