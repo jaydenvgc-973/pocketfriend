@@ -132,7 +132,9 @@ Ground everything in real time. This person's life moves like real life — not 
             fictional_relationships: { type: "array", items: { type: "object" } },
             transient_encounters: { type: "array", items: { type: "object" } },
             current_life_event: { type: "string" },
-            emotional_state: { type: "string" }
+            emotional_state: { type: "string" },
+            health_status: { type: "string" },
+            health_habits: { type: "string" }
           }
         }
       });
