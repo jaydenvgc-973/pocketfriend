@@ -11,6 +11,7 @@ import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import BottomNav from "@/components/BottomNav";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -106,10 +107,9 @@ export default function GroupChat() {
     return (
       <div className="min-h-screen bg-background">
         <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
-          <button onClick={() => navigate("/home")} className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></button>
           <h2 className="text-sm font-semibold">Create Group Chat</h2>
         </div>
-        <div className="max-w-lg mx-auto px-6 py-6">
+          <div className="max-w-lg mx-auto px-6 py-6 pb-28">
           <p className="text-sm text-muted-foreground mb-4">Select characters to include:</p>
           <div className="space-y-3">
             {characters.map(c => (
@@ -185,6 +185,7 @@ export default function GroupChat() {
         <div ref={bottomRef} />
       </div>
       <ChatInput onSend={sendMessage} disabled={isTyping} />
+      <BottomNav />
     </div>
   );
 }
