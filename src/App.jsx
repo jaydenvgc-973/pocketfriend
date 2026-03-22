@@ -41,7 +41,7 @@ const AuthenticatedApp = () => {
       <Route path="/home" element={<Home />} />
       <Route path="/chat/:characterId" element={<Chat />} />
       <Route path="/groups" element={<Groups />} />
-      <Route path="/group-chat/:conversationId" element={<GroupChat />} />
+      <Route path="/group-chat" element={<GroupChat />} />
       <Route path="/create" element={<CreateCharacter />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/edit-default" element={<EditDefaultCharacter />} />
