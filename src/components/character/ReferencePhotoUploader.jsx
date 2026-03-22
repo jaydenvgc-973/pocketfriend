@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { Upload, X, Sparkles, RefreshCw, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,7 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
   const [initialized, setInitialized] = useState(false);
 
   // Re-sync when the parent's async data arrives (e.g. character loads after mount)
-  React.useEffect(() => {
+  useEffect(() => {
     if (!initialized && (existingReferenceUrls.length > 0 || existingAvatarUrl)) {
       setReferenceUrls(existingReferenceUrls);
       setGeneratedUrl(existingAvatarUrl);
