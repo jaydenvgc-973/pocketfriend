@@ -169,9 +169,58 @@ export default function CreateCharacter() {
       ? `They personally know these people: ${knownChars.map(c => `${c.name} (${c.personality_summary?.split(".")[0] || ""})`).join("; ")}.`
       : "";
 
-    const personality = await base44.integrations.Core.InvokeLLM({
-      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${ethnicityStr} ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background: ${data.background || "not specified"}. ${knownContext} Make it feel like a real person, not a description.`
-    });
+    const charProfile = `Name: ${fullName}. Age: ${data.age_range}. Background: ${ethnicityStr}. Gender: ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background story: ${data.background || "not specified"}. ${knownContext}`;
+
+    // Run personality + memory generation in parallel
+    const memoryThemes = data.memories.length > 0
+      ? data.memories.map(m => `"${m.title}": ${m.description}`).join("; ")
+      : "first heartbreak, a betrayal, a moment of unexpected loss or failure, a win that proved something, a secret";
+
+    const [personality, generatedMemories] = await Promise.all([
+      base44.integrations.Core.InvokeLLM({
+        prompt: `Create a personality summary (2-3 sentences, raw and real, written about this person in third person) for: ${charProfile}. Make it feel like a real person, not a description. No flowery language.`
+      }),
+      base44.integrations.Core.InvokeLLM({
+        prompt: `You are building the internal memory bank of a fictional person for a character simulation. Generate 4-6 specific, vivid, predated memories for this character that permanently shaped who they are.
+
+CHARACTER: ${charProfile}
+
+MEMORY THEMES TO COVER (use these as seeds, not scripts): ${memoryThemes}
+
+Each memory must:
+- Be a specific, grounded scene — not vague. Include real names, places, situations.
+- Feel like a real human experience, not a movie moment.
+- Have real emotional weight that still affects how they behave today.
+- Use informal, real language in the descriptions — not polished.
+
+Return ONLY a JSON object with a "memories" array. Each memory object: { title, description, emotional_impact, lesson_learned }
+- title: short (3-6 words), real, lowercase
+- description: 3-5 sentences. Specific scene, what happened, who was involved.
+- emotional_impact: 1-2 sentences. What it did to them internally. How it affects them now.
+- lesson_learned: 1 sentence. The thing they took away — spoken like them, not a therapist.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            memories: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  description: { type: "string" },
+                  emotional_impact: { type: "string" },
+                  lesson_learned: { type: "string" }
+                }
+              }
+            }
+          }
+        }
+      })
+    ]);
+
+    const finalMemories = generatedMemories?.memories?.length > 0
+      ? generatedMemories.memories
+      : data.memories.length > 0 ? data.memories : undefined;
 
     const charData = {
       name: fullName,
@@ -187,7 +236,7 @@ export default function CreateCharacter() {
       emotional_state: "calm",
       avatar_url: avatarUrl || null,
       reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
-      memories: data.memories.length > 0 ? data.memories : undefined,
+      memories: finalMemories,
       work_details: (data.job_title || data.workplace_type) ? {
         job_title: data.job_title,
         workplace_type: data.workplace_type,
