@@ -54,10 +54,12 @@ const MEMORY_PRESETS = [
 const DRAFT_KEY = "create_character_draft";
 
 const defaultData = {
-  name: "",
+  first_name: "",
+  middle_name: "",
+  last_name: "",
   gender: "",
   age_range: "",
-  ethnicity: "",
+  ethnicities: [],
   living_situation: "",
   vibes: [],
   background: "",
