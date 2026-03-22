@@ -1,12 +1,13 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight, Sparkles, RefreshCw, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
@@ -18,9 +19,8 @@ export default function CreateCharacter() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
-  const [generatedImages, setGeneratedImages] = useState([]);
-  const [isGeneratingImages, setIsGeneratingImages] = useState(false);
-  const [selectedImageUrl, setSelectedImageUrl] = useState(null);
+  const [avatarUrl, setAvatarUrl] = useState(null);
+  const [referenceUrls, setReferenceUrls] = useState([]);
 
   const [data, setData] = useState({
     name: "",
@@ -39,19 +39,6 @@ export default function CreateCharacter() {
     vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes
   }));
 
-  const generateImages = async () => {
-    setIsGeneratingImages(true);
-    setGeneratedImages([]);
-    const prompt = `Realistic portrait photo of a ${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality, ${data.living_situation?.toLowerCase()}. Candid, natural lighting, authentic. Not a stock photo.`;
-    const results = await Promise.all([
-      base44.integrations.Core.GenerateImage({ prompt }),
-      base44.integrations.Core.GenerateImage({ prompt: prompt + " Street style, urban setting." }),
-      base44.integrations.Core.GenerateImage({ prompt: prompt + " Indoor, relaxed at home." }),
-    ]);
-    setGeneratedImages(results.map(r => r.url));
-    setIsGeneratingImages(false);
-  };
-
   const handleCreate = async () => {
     setIsCreating(true);
     const personality = await base44.integrations.Core.InvokeLLM({
@@ -67,7 +54,8 @@ export default function CreateCharacter() {
       background_story: data.background || `${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
       current_situation: data.living_situation,
       emotional_state: "calm",
-      avatar_url: selectedImageUrl || null,
+      avatar_url: avatarUrl || null,
+      reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
     };
     charData.system_prompt = buildSystemPrompt(charData);
 
@@ -144,31 +132,15 @@ export default function CreateCharacter() {
     // Step 3: Pick a photo
     <div key="photo" className="space-y-4">
       <div>
-        <p className="text-sm text-muted-foreground mb-3">Generate photos based on their description, or skip.</p>
-        <Button onClick={generateImages} disabled={isGeneratingImages} variant="outline" className="w-full rounded-xl gap-2">
-          {isGeneratingImages ? <><RefreshCw className="w-4 h-4 animate-spin" /> Generating...</> : <><Sparkles className="w-4 h-4" /> Generate photos</>}
-        </Button>
+        <h2 className="text-sm font-semibold text-foreground mb-1">Photo</h2>
+        <p className="text-xs text-muted-foreground mb-4">Upload real photos of the character to generate a consistent avatar, or skip.</p>
       </div>
-      {generatedImages.length > 0 && (
-        <div className="grid grid-cols-3 gap-2">
-          {generatedImages.map((url, i) => (
-            <div key={i} onClick={() => setSelectedImageUrl(selectedImageUrl === url ? null : url)} className={`relative aspect-square rounded-xl overflow-hidden cursor-pointer border-2 transition-all ${selectedImageUrl === url ? "border-primary" : "border-transparent"}`}>
-              <img src={url} alt={`option ${i + 1}`} className="w-full h-full object-cover" />
-              {selectedImageUrl === url && (
-                <div className="absolute inset-0 bg-primary/20 flex items-center justify-center">
-                  <Check className="w-6 h-6 text-white" />
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {generatedImages.length > 0 && (
-        <Button onClick={generateImages} disabled={isGeneratingImages} variant="ghost" size="sm" className="w-full gap-2 text-muted-foreground">
-          <RefreshCw className="w-3.5 h-3.5" /> Regenerate
-        </Button>
-      )}
-      <p className="text-xs text-muted-foreground text-center">Or skip — they'll use initials instead</p>
+      <ReferencePhotoUploader
+        descriptor={`a ${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality`}
+        onAvatarGenerated={(url, refs) => { setAvatarUrl(url); setReferenceUrls(refs); }}
+        existingReferenceUrls={referenceUrls}
+        existingAvatarUrl={avatarUrl}
+      />
     </div>,
   ];
 
