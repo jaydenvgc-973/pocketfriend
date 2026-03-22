@@ -149,7 +149,7 @@ export default function Home() {
             <div className="grid gap-3">
               {activeCustomChars.map(c => (
                 <CharacterCard key={c.id} character={c}
-                  onDelete={(id) => deleteMutation.mutate(id)}
+                  onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
                   onMoveAway={(id) => moveAwayMutation.mutate(id)}
                 />
               ))}
