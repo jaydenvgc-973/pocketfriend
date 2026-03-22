@@ -24,12 +24,13 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: 20 }}
-      className="border-t border-border bg-card/50 p-4"
+      initial={{ y: "100%" }}
+      animate={{ y: 0 }}
+      exit={{ y: "100%" }}
+      transition={{ type: "spring", damping: 30, stiffness: 300 }}
+      className="fixed inset-x-0 bottom-[60px] z-40 border-t border-border bg-card/95 backdrop-blur-sm shadow-lg"
     >
-      <div className="max-w-lg mx-auto">
+      <div className="max-w-lg mx-auto h-full flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold">Select characters</h2>
           <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
