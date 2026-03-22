@@ -23,7 +23,36 @@ export default function Home() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.Character.delete(id),
+    mutationFn: async (id) => {
+      // Before deleting, inject "disappeared" memory into other active characters
+      const activeOthers = characters.filter(c => c.id !== id && c.status !== "deleted");
+      const departed = characters.find(c => c.id === id);
+      if (departed) {
+        await Promise.all(activeOthers.map(c =>
+          base44.entities.Character.update(c.id, {
+            departed_characters: [...(c.departed_characters || []), departed.name]
+          })
+        ));
+      }
+      return base44.entities.Character.delete(id);
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+  });
+
+  const moveAwayMutation = useMutation({
+    mutationFn: async (id) => {
+      // Inject "moved away" note into other active characters
+      const activeOthers = characters.filter(c => c.id !== id && c.status !== "deleted" && c.status !== "moved_away");
+      const mover = characters.find(c => c.id === id);
+      if (mover) {
+        await Promise.all(activeOthers.map(c =>
+          base44.entities.Character.update(c.id, {
+            departed_characters: [...(c.departed_characters || []), `${mover.name} (moved away)`]
+          })
+        ));
+      }
+      return base44.entities.Character.update(id, { status: "moved_away" });
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
   });
 
@@ -53,8 +82,11 @@ export default function Home() {
   }, [isLoading, settings]);
 
   const defaultChar = characters.find(c => c.is_default);
-  const customChars = characters.filter(c => !c.is_default);
-  const canCreate = customChars.length < 4;
+  const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
+  const activeCustomChars = customChars.filter(c => c.status === "active" || !c.status);
+  const movedAwayChars = customChars.filter(c => c.status === "moved_away");
+  // Slot opens when a character moves away (they still exist) or is deleted
+  const canCreate = activeCustomChars.length < 4;
 
   return (
     <div className="min-h-screen bg-background">
