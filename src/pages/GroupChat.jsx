@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Send, Plus, MessageCircle } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { AnimatePresence } from 'framer-motion';
 import BottomNav from '@/components/BottomNav';
+import CharacterSelector from '@/components/groupchat/CharacterSelector';
 
 export default function GroupChat() {
   const navigate = useNavigate();
