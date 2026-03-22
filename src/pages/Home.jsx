@@ -25,31 +25,38 @@ export default function Home() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id) => {
-      // Before deleting, inject "disappeared" memory into other active characters
+    mutationFn: async ({ id, cause, closeness }) => {
       const activeOthers = characters.filter(c => c.id !== id && c.status !== "deleted");
       const departed = characters.find(c => c.id === id);
       if (departed) {
         await Promise.all(activeOthers.map(c =>
           base44.entities.Character.update(c.id, {
-            departed_characters: [...(c.departed_characters || []), departed.name]
+            departed_characters: [
+              ...(c.departed_characters || []),
+              { name: departed.name, cause, relationship_closeness: closeness }
+            ]
           })
         ));
       }
       return base44.entities.Character.delete(id);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+    onSuccess: () => {
+      setPendingDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+    },
   });
 
   const moveAwayMutation = useMutation({
     mutationFn: async (id) => {
-      // Inject "moved away" note into other active characters
       const activeOthers = characters.filter(c => c.id !== id && c.status !== "deleted" && c.status !== "moved_away");
       const mover = characters.find(c => c.id === id);
       if (mover) {
         await Promise.all(activeOthers.map(c =>
           base44.entities.Character.update(c.id, {
-            departed_characters: [...(c.departed_characters || []), `${mover.name} (moved away)`]
+            departed_characters: [
+              ...(c.departed_characters || []),
+              { name: mover.name, cause: "moved_away", relationship_closeness: "acquaintance" }
+            ]
           })
         ));
       }
