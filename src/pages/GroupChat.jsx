@@ -86,16 +86,19 @@ export default function GroupChat() {
   const activeCharacters = characters.filter(c => c.status === 'active' || !c.status);
 
   return (
-    <div className="flex w-full h-full bg-background overflow-hidden flex-col">
+    <>
       <AnimatePresence>
-        {showCharacterSelector && (
-          <CharacterSelector
-            characters={activeCharacters}
-            onConfirm={(selectedIds) => createGroupMutation.mutate(selectedIds)}
-            onCancel={() => setShowCharacterSelector(false)}
-          />
-        )}
+        {showCharacterSelector &&
+          createPortal(
+            <CharacterSelector
+              characters={activeCharacters}
+              onConfirm={(selectedIds) => createGroupMutation.mutate(selectedIds)}
+              onCancel={() => setShowCharacterSelector(false)}
+            />,
+            document.body
+          )}
       </AnimatePresence>
+    <div className="flex w-full h-full bg-background overflow-hidden flex-col">
       {/* Header */}
       <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/home" className="text-muted-foreground hover:text-foreground">
