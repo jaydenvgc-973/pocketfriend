@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import { ArrowLeft, ArrowRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,12 +15,50 @@ const AGES = ["Early 20s", "Mid 20s", "Late 20s", "Early 30s", "Mid 30s", "Late 
 const LIVING = ["Lives alone", "Lives with roommates", "Lives with partner", "Lives with family", "Between places"];
 const VIBES = ["Laid back", "Intense", "Sarcastic", "Warm", "Blunt", "Mysterious", "Chaotic", "Grounded"];
 
+const ARCHETYPES = [
+  { label: "The Protector", desc: "Puts others first. Loyal to a fault." },
+  { label: "The Rebel", desc: "Questions everything. Lives on their own terms." },
+  { label: "The Caretaker", desc: "Nurturing, empathetic, always there for people." },
+  { label: "The Achiever", desc: "Driven, focused, always leveling up." },
+  { label: "The Seeker", desc: "Restless, curious, always chasing something." },
+  { label: "The Loner", desc: "Self-contained, guarded, doesn't need much." },
+  { label: "The Charmer", desc: "Magnetic, reads rooms well, socially fluid." },
+  { label: "The Realist", desc: "Blunt, grounded, calls it like it is." },
+];
+
+const ENERGY_SCALE = [
+  { value: "introvert", label: "Introvert", desc: "Recharges alone. Private. Selective." },
+  { value: "mostly_introvert", label: "Mostly Introvert", desc: "Prefers small circles but can engage." },
+  { value: "ambivert", label: "Ambivert", desc: "Reads the room. Adapts to the situation." },
+  { value: "mostly_extrovert", label: "Mostly Extrovert", desc: "Energized by people. Fairly social." },
+  { value: "extrovert", label: "Extrovert", desc: "Thrives with people. Always in the mix." },
+];
+
+const SEXUAL_ORIENTATIONS = [
+  "Straight", "Gay", "Bisexual", "Pansexual", "Queer", "Asexual", "Prefer not to say"
+];
+
+const MEMORY_PRESETS = [
+  { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not." },
+  { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot." },
+  { title: "A moment they lost control", description: "A situation where they went further than they meant to — emotionally or otherwise." },
+  { title: "A loss they haven't processed", description: "Someone or something they lost that still sits with them quietly." },
+  { title: "A time they were humiliated", description: "A public or private moment where they felt small. It hardened something in them." },
+  { title: "A decision they regret", description: "A fork in the road they took wrong. They know it. They don't talk about it much." },
+  { title: "A moment of unexpected kindness", description: "Someone showed up for them when they didn't expect it. It stayed." },
+  { title: "A falling out with family", description: "A rupture with someone in their family — said or unsaid. Still complicated." },
+  { title: "Their first real win", description: "The moment they proved something to themselves. The thing they hold onto." },
+  { title: "A secret they've never told anyone", description: "Something they carry alone. No one knows. Maybe they'll tell you." },
+];
+
 export default function CreateCharacter() {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [referenceUrls, setReferenceUrls] = useState([]);
+  const [newMemory, setNewMemory] = useState({ title: "", description: "" });
+  const [showMemoryForm, setShowMemoryForm] = useState(false);
 
   const [data, setData] = useState({
     name: "",
@@ -30,19 +68,37 @@ export default function CreateCharacter() {
     living_situation: "",
     vibes: [],
     background: "",
-    personality_summary: "",
+    archetype: "",
+    social_energy: "",
+    sexual_orientation: "",
+    memories: [],
   });
 
   const update = (field, value) => setData(prev => ({ ...prev, [field]: value }));
+
   const toggleVibe = (v) => setData(prev => ({
     ...prev,
     vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes
   }));
 
+  const addPresetMemory = (preset) => {
+    if (data.memories.find(m => m.title === preset.title)) return;
+    update("memories", [...data.memories, { title: preset.title, description: preset.description, emotional_impact: "", lesson_learned: "" }]);
+  };
+
+  const addCustomMemory = () => {
+    if (!newMemory.title.trim()) return;
+    update("memories", [...data.memories, { title: newMemory.title, description: newMemory.description, emotional_impact: "", lesson_learned: "" }]);
+    setNewMemory({ title: "", description: "" });
+    setShowMemoryForm(false);
+  };
+
+  const removeMemory = (title) => update("memories", data.memories.filter(m => m.title !== title));
+
   const handleCreate = async () => {
     setIsCreating(true);
     const personality = await base44.integrations.Core.InvokeLLM({
-      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${data.ethnicity} ${data.gender}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Background: ${data.background || "not specified"}. Make it feel like a real person, not a description.`
+      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${data.ethnicity} ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Background: ${data.background || "not specified"}. Make it feel like a real person, not a description.`
     });
 
     const charData = {
@@ -50,18 +106,26 @@ export default function CreateCharacter() {
       gender: data.gender?.toLowerCase(),
       personality_summary: personality,
       personality_traits: data.vibes,
-      communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
+      communication_style: `${data.archetype ? data.archetype + ". " : ""}${data.social_energy ? data.social_energy + ". " : ""}${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
       background_story: data.background || `${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
       current_situation: data.living_situation,
       emotional_state: "calm",
       avatar_url: avatarUrl || null,
       reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
+      memories: data.memories.length > 0 ? data.memories : undefined,
+      // Store extra fields in background_story context
+      ...(data.sexual_orientation && data.sexual_orientation !== "Prefer not to say"
+        ? { background_story: `${data.background || `${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}. ${data.living_situation}.`} Sexual orientation: ${data.sexual_orientation}.` }
+        : {}),
     };
     charData.system_prompt = buildSystemPrompt(charData);
 
     await base44.entities.Character.create(charData);
     navigate("/home");
   };
+
+  const chipClass = (selected) =>
+    `py-2.5 px-3 rounded-xl text-sm border transition-colors text-left cursor-pointer ${selected ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`;
 
   const steps = [
     // Step 0: Basic info
@@ -74,7 +138,7 @@ export default function CreateCharacter() {
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Gender</label>
         <div className="grid grid-cols-3 gap-2">
           {GENDERS.map(g => (
-            <button key={g} onClick={() => update("gender", g)} className={`py-2.5 rounded-xl text-sm font-medium border transition-colors ${data.gender === g ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground"}`}>{g}</button>
+            <button key={g} onClick={() => update("gender", g)} className={chipClass(data.gender === g)}>{g}</button>
           ))}
         </div>
       </div>
@@ -82,7 +146,7 @@ export default function CreateCharacter() {
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Age Range</label>
         <div className="grid grid-cols-3 gap-2">
           {AGES.map(a => (
-            <button key={a} onClick={() => update("age_range", a)} className={`py-2.5 rounded-xl text-sm border transition-colors ${data.age_range === a ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground"}`}>{a}</button>
+            <button key={a} onClick={() => update("age_range", a)} className={chipClass(data.age_range === a)}>{a}</button>
           ))}
         </div>
       </div>
@@ -94,7 +158,7 @@ export default function CreateCharacter() {
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Ethnicity / Background</label>
         <div className="grid grid-cols-2 gap-2">
           {ETHNICITIES.map(e => (
-            <button key={e} onClick={() => update("ethnicity", e)} className={`py-2.5 px-3 rounded-xl text-sm border transition-colors text-left ${data.ethnicity === e ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground"}`}>{e}</button>
+            <button key={e} onClick={() => update("ethnicity", e)} className={chipClass(data.ethnicity === e)}>{e}</button>
           ))}
         </div>
       </div>
@@ -102,13 +166,51 @@ export default function CreateCharacter() {
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Living Situation</label>
         <div className="grid grid-cols-2 gap-2">
           {LIVING.map(l => (
-            <button key={l} onClick={() => update("living_situation", l)} className={`py-2.5 px-3 rounded-xl text-sm border transition-colors text-left ${data.living_situation === l ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground"}`}>{l}</button>
+            <button key={l} onClick={() => update("living_situation", l)} className={chipClass(data.living_situation === l)}>{l}</button>
           ))}
         </div>
       </div>
     </div>,
 
-    // Step 2: Vibes + backstory
+    // Step 2: Archetype + social energy + orientation
+    <div key="archetype" className="space-y-6">
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Archetype</label>
+        <p className="text-xs text-muted-foreground mb-3">Who are they at their core?</p>
+        <div className="grid grid-cols-2 gap-2">
+          {ARCHETYPES.map(a => (
+            <button key={a.label} onClick={() => update("archetype", a.label)}
+              className={`p-3 rounded-xl border transition-colors text-left ${data.archetype === a.label ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
+              <div className="text-sm font-medium">{a.label}</div>
+              <div className={`text-xs mt-0.5 ${data.archetype === a.label ? "text-primary-foreground/70" : "text-muted-foreground"}`}>{a.desc}</div>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Social Energy</label>
+        <p className="text-xs text-muted-foreground mb-3">Introvert, extrovert, or somewhere in between?</p>
+        <div className="space-y-2">
+          {ENERGY_SCALE.map(e => (
+            <button key={e.value} onClick={() => update("social_energy", e.value)}
+              className={`w-full p-3 rounded-xl border transition-colors text-left flex items-center justify-between ${data.social_energy === e.value ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
+              <span className="text-sm font-medium">{e.label}</span>
+              <span className={`text-xs ${data.social_energy === e.value ? "text-primary-foreground/70" : "text-muted-foreground"}`}>{e.desc}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Sexual Orientation (optional)</label>
+        <div className="grid grid-cols-2 gap-2">
+          {SEXUAL_ORIENTATIONS.map(o => (
+            <button key={o} onClick={() => update("sexual_orientation", o)} className={chipClass(data.sexual_orientation === o)}>{o}</button>
+          ))}
+        </div>
+      </div>
+    </div>,
+
+    // Step 3: Vibes + backstory
     <div key="vibes" className="space-y-5">
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Their vibe (pick up to 4)</label>
@@ -129,7 +231,72 @@ export default function CreateCharacter() {
       </div>
     </div>,
 
-    // Step 3: Pick a photo
+    // Step 4: Memories
+    <div key="memories" className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground mb-1">Core Memories</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          These shape how they think, react, and what they carry. Pick from the presets or write your own — the more real these are, the more real they'll feel in conversation.
+        </p>
+      </div>
+
+      {/* Selected memories */}
+      {data.memories.length > 0 && (
+        <div className="space-y-2">
+          {data.memories.map(m => (
+            <div key={m.title} className="flex items-start gap-2 bg-primary/10 border border-primary/20 rounded-xl px-3 py-2.5">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">{m.title}</p>
+                {m.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{m.description}</p>}
+              </div>
+              <button onClick={() => removeMemory(m.title)} className="text-muted-foreground hover:text-destructive flex-shrink-0 mt-0.5"><X className="w-4 h-4" /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Presets */}
+      <div>
+        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Pick from presets</p>
+        <div className="space-y-2">
+          {MEMORY_PRESETS.filter(p => !data.memories.find(m => m.title === p.title)).map(preset => (
+            <button key={preset.title} onClick={() => addPresetMemory(preset)}
+              className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
+              <p className="text-sm font-medium text-foreground">{preset.title}</p>
+              <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Custom memory */}
+      {showMemoryForm ? (
+        <div className="space-y-2 border border-border rounded-xl p-3">
+          <Input
+            value={newMemory.title}
+            onChange={e => setNewMemory(prev => ({ ...prev, title: e.target.value }))}
+            placeholder="Memory title..."
+            className="h-10 rounded-lg text-sm"
+          />
+          <Textarea
+            value={newMemory.description}
+            onChange={e => setNewMemory(prev => ({ ...prev, description: e.target.value }))}
+            placeholder="What happened? How did it affect them? (optional)"
+            className="rounded-lg min-h-[80px] text-sm resize-none"
+          />
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setShowMemoryForm(false); setNewMemory({ title: "", description: "" }); }} className="flex-1 rounded-lg">Cancel</Button>
+            <Button size="sm" onClick={addCustomMemory} disabled={!newMemory.title.trim()} className="flex-1 rounded-lg">Add</Button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowMemoryForm(true)} className="w-full flex items-center gap-2 justify-center py-3 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-sm">
+          <Plus className="w-4 h-4" /> Write your own memory
+        </button>
+      )}
+    </div>,
+
+    // Step 5: Pick a photo
     <div key="photo" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">Photo</h2>
@@ -147,8 +314,10 @@ export default function CreateCharacter() {
   const canNext = [
     data.name.trim() && data.gender && data.age_range,
     data.ethnicity && data.living_situation,
+    data.archetype && data.social_energy,   // archetype + energy required
     data.vibes.length > 0,
-    true, // photo is optional
+    true, // memories optional
+    true, // photo optional
   ][step];
 
   return (
