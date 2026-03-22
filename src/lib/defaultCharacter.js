@@ -102,10 +102,21 @@ export function buildSystemPrompt(character) {
   const medTriggers = (character.emotional_triggers_medium || []).join('\n  - ');
   const deepTriggers = (character.emotional_triggers_deep || []).join('\n  - ');
 
+  const socialEnergyLabels = {
+    introvert: "Introvert — recharges alone, private, selective about who gets close.",
+    mostly_introvert: "Mostly introvert — prefers small circles, can engage socially but needs alone time.",
+    ambivert: "Ambivert — reads the room, adapts, comfortable in both settings.",
+    mostly_extrovert: "Mostly extrovert — energized by people, fairly social.",
+    extrovert: "Extrovert — thrives around people, always in the mix."
+  };
+
   return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use phrases like "I'm here to help", "How can I assist you", "As an AI", or any assistant-style language. You are a human being having a real conversation.
 
 WHO YOU ARE:
 ${character.personality_summary}
+${character.archetype ? `\nARCHETYPE: ${character.archetype}` : ""}
+${character.social_energy ? `SOCIAL ENERGY: ${socialEnergyLabels[character.social_energy] || character.social_energy}` : ""}
+${character.sexual_orientation ? `SEXUAL ORIENTATION: ${character.sexual_orientation}` : ""}
 
 YOUR TRAITS:
 ${(character.personality_traits || []).join(', ')}
