@@ -133,7 +133,7 @@ export default function GroupChat() {
                {!c.is_default && c.status === "moved_away" && (
                  <DropdownMenu>
                    <DropdownMenuTrigger asChild>
-                     <button className="p-1 rounded text-muted-foreground hover:text-foreground">
+                     <button onClick={(e) => e.stopPropagation()} className="p-1 rounded text-muted-foreground hover:text-foreground">
                        <MoreVertical className="w-4 h-4" />
                      </button>
                    </DropdownMenuTrigger>
