@@ -138,7 +138,7 @@ function buildRelationshipsContext(character) {
   return section;
 }
 
-export function buildSystemPrompt(character) {
+export function buildSystemPrompt(character, knownCharacters = []) {
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
