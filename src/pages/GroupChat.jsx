@@ -210,8 +210,10 @@ export default function GroupChat() {
             <p className="text-sm text-muted-foreground mt-2">Choose from your existing chats to start messaging</p>
           </div>
         )}
+          </div>
         </div>
       </div>
+
       <AnimatePresence>
         {showCharacterSelector && (
           <CharacterSelector
@@ -219,57 +221,6 @@ export default function GroupChat() {
             onConfirm={(selectedIds) => createGroupMutation.mutate(selectedIds)}
             onCancel={() => setShowCharacterSelector(false)}
           />
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {showConversationsList && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="bg-card border-t border-border p-4 mb-20"
-          >
-            <div className="max-w-lg mx-auto">
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold">Conversations</h2>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
-                    <Plus className="w-4 h-4" />
-                  </button>
-                  <button onClick={() => setShowConversationsList(false)} className="text-muted-foreground hover:text-foreground">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {conversationsData.length === 0 ? (
-                  <div className="text-center py-4">
-                    <p className="text-sm text-muted-foreground">No conversations yet</p>
-                  </div>
-                ) : (
-                  conversationsData.map(conv => (
-                    <button
-                      key={conv.id}
-                      onClick={() => {
-                        setSelectedConversation(conv);
-                        setShowConversationsList(false);
-                      }}
-                      className={`w-full text-left p-3 rounded-lg transition-all ${
-                        selectedConversation?.id === conv.id
-                          ? 'bg-primary text-primary-foreground'
-                          : 'text-foreground hover:bg-secondary'
-                      }`}
-                    >
-                      <p className="font-medium text-sm truncate">{conv.title}</p>
-                      <p className="text-xs opacity-75 truncate mt-1">{conv.last_message_preview || 'No messages'}</p>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-          </motion.div>
         )}
       </AnimatePresence>
 
