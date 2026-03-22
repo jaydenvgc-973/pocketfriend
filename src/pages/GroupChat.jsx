@@ -242,7 +242,7 @@ export default function GroupChat() {
           <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-border rounded-2xl">
             <MessageCircle className="w-12 h-12 text-muted-foreground mb-3" />
             <p className="text-sm font-medium text-foreground">Select a conversation</p>
-            <p className="text-xs text-muted-foreground mt-1">Pick one from the left to start chatting</p>
+            <p className="text-xs text-muted-foreground mt-1">Pick one from above to start chatting</p>
           </div>
         )}
       </div>
