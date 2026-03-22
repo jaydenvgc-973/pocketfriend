@@ -111,9 +111,9 @@ export default function GroupChat() {
   const activeCharacters = characters.filter(c => c.status === 'active' || !c.status);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-background pb-[60px]">
+    <div className="fixed inset-0 flex flex-col bg-background">
       {/* Header */}
-      <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 flex-shrink-0">
         <Link to="/home" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
@@ -121,7 +121,7 @@ export default function GroupChat() {
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-hidden flex flex-col">
+      <div className="flex-1 overflow-hidden flex flex-col min-h-0">
         {selectedConversation ? (
           <div className="flex flex-col h-full flex-1">
             {/* Conversation Header */}
@@ -177,23 +177,7 @@ export default function GroupChat() {
               </div>
             </ScrollArea>
 
-            {/* Input */}
-            <div className="p-4 border-t border-border bg-card/50 flex gap-2 flex-shrink-0">
-              <Input
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                placeholder="Type a message..."
-                disabled={!selectedConversation}
-              />
-              <Button 
-                onClick={handleSendMessage}
-                size="icon"
-                disabled={!messageText.trim() || !selectedConversation}
-              >
-                <Send className="w-4 h-4" />
-              </Button>
-            </div>
+
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full">
@@ -204,16 +188,16 @@ export default function GroupChat() {
         )}
       </div>
 
-      {/* Conversations Panel */}
-      <div className="border-t border-border bg-card/50 p-4 flex-shrink-0">
+      {/* Conversations Panel + Input */}
+      <div className="border-t border-border bg-card/50 p-4 flex-shrink-0 mb-[60px]">
         <div className="max-w-lg mx-auto">
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold">Conversations</h2>
             <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
               <Plus className="w-4 h-4" />
             </button>
           </div>
-          <ScrollArea className="h-24">
+          <ScrollArea className="h-24 mb-3">
             <div className="flex gap-2 pr-4">
               {conversationsData.length === 0 ? (
                 <p className="text-sm text-muted-foreground">No conversations yet</p>
@@ -234,13 +218,29 @@ export default function GroupChat() {
               )}
             </div>
           </ScrollArea>
+
+          {/* Input */}
+          <div className="flex gap-2">
+            <Input
+              value={messageText}
+              onChange={(e) => setMessageText(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
+              placeholder="Type a message..."
+              disabled={!selectedConversation}
+            />
+            <Button 
+              onClick={handleSendMessage}
+              size="icon"
+              disabled={!messageText.trim() || !selectedConversation}
+            >
+              <Send className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </div>
 
       {/* Bottom Navigation - Fixed */}
-      <div className="flex-shrink-0">
-        <BottomNav />
-      </div>
+      <BottomNav />
 
       <AnimatePresence>
         {showCharacterSelector && (
