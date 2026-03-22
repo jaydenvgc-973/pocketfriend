@@ -135,7 +135,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto px-6 py-6 pb-28 space-y-6">
+      <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
         {defaultChar && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
