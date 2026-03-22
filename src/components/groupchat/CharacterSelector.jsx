@@ -1,0 +1,87 @@
+import React, { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { X, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import CharacterAvatar from '@/components/chat/CharacterAvatar';
+
+export default function CharacterSelector({ characters, onConfirm, onCancel }) {
+  const [selected, setSelected] = useState([]);
+
+  const toggleCharacter = (id) => {
+    setSelected(prev =>
+      prev.includes(id)
+        ? prev.filter(cid => cid !== id)
+        : [...prev, id]
+    );
+  };
+
+  const handleConfirm = () => {
+    if (selected.length > 0) {
+      onConfirm(selected);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        className="bg-card rounded-2xl w-full max-w-md max-h-[80vh] flex flex-col border border-border"
+      >
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h2 className="text-lg font-semibold">Select characters for group chat</h2>
+          <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2">
+          {characters.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-sm text-muted-foreground">No active characters available</p>
+            </div>
+          ) : (
+            characters.map(char => (
+              <button
+                key={char.id}
+                onClick={() => toggleCharacter(char.id)}
+                className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left ${
+                  selected.includes(char.id)
+                    ? 'bg-primary/10 border-primary/40'
+                    : 'bg-background border-border hover:border-primary/30'
+                }`}
+              >
+                <CharacterAvatar character={char} size="md" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground">{char.name}</p>
+                  <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split('.')[0]}</p>
+                </div>
+                {selected.includes(char.id) && (
+                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                    <Check className="w-3 h-3 text-primary-foreground" />
+                  </div>
+                )}
+              </button>
+            ))
+          )}
+        </div>
+
+        <div className="border-t border-border p-4 flex gap-2">
+          <Button variant="outline" onClick={onCancel} className="flex-1">
+            Cancel
+          </Button>
+          <Button onClick={handleConfirm} disabled={selected.length === 0} className="flex-1">
+            Create Group ({selected.length})
+          </Button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
