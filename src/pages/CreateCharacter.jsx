@@ -159,12 +159,14 @@ export default function CreateCharacter() {
 
   const handleCreate = async () => {
     setIsCreating(true);
+    const fullName = [data.first_name, data.middle_name, data.last_name].filter(Boolean).join(" ");
+    const ethnicityStr = data.ethnicities.join(" / ");
     const personality = await base44.integrations.Core.InvokeLLM({
-      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${data.ethnicity} ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Background: ${data.background || "not specified"}. Make it feel like a real person, not a description.`
+      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${ethnicityStr} ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Background: ${data.background || "not specified"}. Make it feel like a real person, not a description.`
     });
 
     const charData = {
-      name: data.name,
+      name: fullName,
       gender: data.gender?.toLowerCase(),
       archetype: data.archetype || undefined,
       social_energy: data.social_energy || undefined,
@@ -172,7 +174,7 @@ export default function CreateCharacter() {
       personality_summary: personality,
       personality_traits: data.vibes,
       communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
-      background_story: data.background || `${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
+      background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
       current_situation: data.living_situation,
       emotional_state: "calm",
       avatar_url: avatarUrl || null,
