@@ -27,9 +27,9 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: 20 }}
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 bg-card border border-border rounded-xl p-4 w-full max-w-lg mx-4 z-50"
+      className="border-t border-border bg-card/50 p-4"
     >
-      <div>
+      <div className="max-w-lg mx-auto">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold">Select characters</h2>
           <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
