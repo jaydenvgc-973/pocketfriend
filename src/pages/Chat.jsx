@@ -122,7 +122,8 @@ export default function Chat() {
       prompt: fullPrompt,
     });
 
-    let responseText = response;
+    // Strip any leading "Name:" or "Name: " prefix the LLM might add
+    let responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
     let emotionalState = character.emotional_state || "calm";
 
     setIsTyping(false);
