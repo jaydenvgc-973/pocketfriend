@@ -95,8 +95,12 @@ export const DEFAULT_CHARACTER_DATA = {
 
 export function buildSystemPrompt(character) {
   const memories = (character.memories || []).map(m =>
-    `- ${m.title}: ${m.description} | Emotional impact: ${m.emotional_impact} | What he learned: ${m.lesson_learned}`
+    `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
+
+  const archetypeBlock = character.communication_style?.includes("Protector") || character.communication_style?.includes("Rebel") || character.communication_style?.includes("Caretaker") || character.communication_style?.includes("Achiever") || character.communication_style?.includes("Seeker") || character.communication_style?.includes("Loner") || character.communication_style?.includes("Charmer") || character.communication_style?.includes("Realist")
+    ? `\nARCHETYPE: ${character.communication_style.split(".")[0]}.`
+    : "";
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
   const medTriggers = (character.emotional_triggers_medium || []).join('\n  - ');
