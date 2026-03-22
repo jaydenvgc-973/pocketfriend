@@ -76,14 +76,17 @@ export default function GroupChat() {
         <div className="max-w-lg mx-auto px-6 py-6">
           <p className="text-sm text-muted-foreground mb-4">Select characters to include:</p>
           <div className="space-y-3">
-            {characters.map(c => (
-              <div key={c.id} onClick={() => toggleCharacter(c.id)} className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"}`}>
-                <Checkbox checked={selectedIds.includes(c.id)} />
+            {availableCharacters.map(c => (
+              <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"}`}>
+                <Checkbox checked={selectedIds.includes(c.id)} onClick={() => toggleCharacter(c.id)} />
                 <CharacterAvatar character={c} size="sm" />
-                <div>
+                <div className="flex-1 min-w-0" onClick={() => toggleCharacter(c.id)} style={{ cursor: "pointer" }}>
                   <p className="text-sm font-medium text-foreground">{c.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                 </div>
+                <button onClick={() => setDeletedIds(prev => [...prev, c.id])} className="text-muted-foreground hover:text-destructive transition-colors p-1">
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             ))}
           </div>
