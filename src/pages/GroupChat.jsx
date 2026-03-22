@@ -113,42 +113,42 @@ export default function GroupChat() {
           <p className="text-sm text-muted-foreground mb-4">Select characters to include:</p>
           <div className="space-y-3">
             {characters.map(c => (
-              <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"} ${c.status === "moved_away" ? "opacity-60" : ""}`}>
-                <Checkbox checked={selectedIds.includes(c.id)} onClick={() => toggleCharacter(c.id)} />
-                <CharacterAvatar character={c} size="sm" />
-                <div className="flex-1 min-w-0" onClick={() => !c.is_default && toggleCharacter(c.id)} style={{ cursor: !c.is_default ? "pointer" : "default" }}>
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-foreground">{c.name}</p>
-                    {c.status === "moved_away" && (
-                      <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">moved away</span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
-                </div>
-                {!c.is_default && selectedIds.includes(c.id) && c.status === "active" && (
-                  <button onClick={() => setSelectedIds(prev => prev.filter(id => id !== c.id))} className="text-muted-foreground hover:text-destructive transition-colors p-1">
-                    <X className="w-4 h-4" />
-                  </button>
-                )}
-                {!c.is_default && c.status === "moved_away" && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="p-1 rounded text-muted-foreground hover:text-foreground">
-                        <MoreVertical className="w-4 h-4" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-40">
-                      <DropdownMenuItem onClick={() => moveBackMutation.mutate(c.id)} className="gap-2 text-muted-foreground">
-                        <MapPin className="w-4 h-4" /> Move back
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem onClick={() => deleteMutation.mutate(c.id)} className="gap-2 text-destructive focus:text-destructive">
-                        <Trash2 className="w-4 h-4" /> Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </div>
+             <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"} ${c.status === "moved_away" ? "opacity-60" : ""}`}>
+               <Checkbox checked={selectedIds.includes(c.id)} onChange={() => toggleCharacter(c.id)} />
+               <CharacterAvatar character={c} size="sm" />
+               <div className="flex-1 min-w-0" onClick={() => !c.is_default && c.status === "active" && toggleCharacter(c.id)} style={{ cursor: !c.is_default && c.status === "active" ? "pointer" : "default" }}>
+                 <div className="flex items-center gap-2">
+                   <p className="text-sm font-medium text-foreground">{c.name}</p>
+                   {c.status === "moved_away" && (
+                     <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">moved away</span>
+                   )}
+                 </div>
+                 <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
+               </div>
+               {!c.is_default && selectedIds.includes(c.id) && c.status === "active" && (
+                 <button onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => prev.filter(id => id !== c.id)); }} className="text-muted-foreground hover:text-destructive transition-colors p-1">
+                   <X className="w-4 h-4" />
+                 </button>
+               )}
+               {!c.is_default && c.status === "moved_away" && (
+                 <DropdownMenu>
+                   <DropdownMenuTrigger asChild>
+                     <button className="p-1 rounded text-muted-foreground hover:text-foreground">
+                       <MoreVertical className="w-4 h-4" />
+                     </button>
+                   </DropdownMenuTrigger>
+                   <DropdownMenuContent align="end" className="w-40">
+                     <DropdownMenuItem onClick={() => moveBackMutation.mutate(c.id)} className="gap-2 text-muted-foreground">
+                       <MapPin className="w-4 h-4" /> Move back
+                     </DropdownMenuItem>
+                     <DropdownMenuSeparator />
+                     <DropdownMenuItem onClick={() => deleteMutation.mutate(c.id)} className="gap-2 text-destructive focus:text-destructive">
+                       <Trash2 className="w-4 h-4" /> Delete
+                     </DropdownMenuItem>
+                   </DropdownMenuContent>
+                 </DropdownMenu>
+               )}
+             </div>
             ))}
           </div>
           <Button onClick={() => setIsSetup(true)} disabled={selectedIds.length < 2} className="w-full mt-6 h-12 rounded-xl">
