@@ -105,46 +105,7 @@ export default function GroupChat() {
             <MessageCircle className="w-4 h-4" />
           </Button>
         </div>
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">Conversations</h2>
-            <p className="text-xs text-muted-foreground">{conversationsData.length} chats</p>
-          </div>
-          <Button 
-            size="icon" 
-            variant="ghost" 
-            onClick={() => setShowCharacterSelector(true)}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            <Plus className="w-4 h-4" />
-          </Button>
-        </div>
-        
-        <ScrollArea className="flex-1">
-          <div className="p-3 space-y-2">
-            {conversationsData.length === 0 ? (
-              <div className="text-center py-8">
-                <p className="text-sm text-muted-foreground">No conversations yet</p>
-              </div>
-            ) : (
-              conversationsData.map(conv => (
-                <button
-                  key={conv.id}
-                  onClick={() => setSelectedConversation(conv)}
-                  className={`w-full text-left p-3 rounded-lg transition-all ${
-                    selectedConversation?.id === conv.id
-                      ? 'bg-primary text-primary-foreground'
-                      : 'text-foreground hover:bg-secondary'
-                  }`}
-                >
-                  <p className="font-medium text-sm truncate">{conv.title}</p>
-                  <p className="text-xs opacity-75 truncate mt-1">{conv.last_message_preview || 'No messages'}</p>
-                </button>
-              ))
-            )}
-          </div>
-        </ScrollArea>
-      </div>
+
 
         {/* Chat Area */}
         <div className="flex-1 flex flex-col bg-background">
