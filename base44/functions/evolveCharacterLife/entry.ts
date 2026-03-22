@@ -118,6 +118,10 @@ Return a JSON object with:
 
 4. "emotional_state": One of: calm, irritated, defensive, reflective, closed-off — based on everything going on right now, including the time of day and day of week.
 
+5. "health_status": A short phrase describing their physical health right now. E.g. "healthy", "tired, fighting off a cold", "recovering from a minor injury", "stressed and not sleeping well", "seriously ill — in and out of doctor's appointments". Evolve this naturally over time based on their habits, stress level, and anything happening in their life. Characters who take poor care of themselves get sick more often and recover slower. Characters who are health-conscious stay generally well but can still have off weeks. Health can also be affected by grief, stress, or major life events. Rarely (maybe 1 in 10 updates if their habits are bad and stress is high): flag something more serious. Never manufacture a crisis — let it emerge from the character's actual state.
+
+6. "health_habits": Only update this if something happened in their life that would genuinely shift their habits — new job, breakup, death of someone close, etc. Otherwise keep it stable. Return the current value or a refined version of it if the character's life has given us more to work with.
+
 Ground everything in real time. This person's life moves like real life — not accelerated.`;
 
       const update = await base44.asServiceRole.integrations.Core.InvokeLLM({
