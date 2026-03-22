@@ -18,6 +18,7 @@ export default function GroupChat() {
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const [showCharacterSelector, setShowCharacterSelector] = useState(false);
+  const [showConversationsList, setShowConversationsList] = useState(false);
 
   const { data: conversationsData = [], isLoading: conversationsLoading } = useQuery({
     queryKey: ['conversations'],
