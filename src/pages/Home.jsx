@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
 import { Link } from "react-router-dom";
+import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -29,8 +30,29 @@ export default function Home() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
   });
 
+  // Auto-refresh default character's profile data when loaded
+  useEffect(() => {
+    const defaultChar = characters.find(c => c.is_default);
+    if (!defaultChar) return;
+
+    // Rebuild with full updated profile data (preserving name and avatar)
+    const updated = {
+      ...DEFAULT_CHARACTER_DATA,
+      name: defaultChar.name,
+      avatar_url: defaultChar.avatar_url,
+      emotional_state: defaultChar.emotional_state || "calm",
+    };
+    updated.system_prompt = buildSystemPrompt(updated);
+
+    // Only update if profile fields are stale (missing new fields)
+    if (!defaultChar.current_situation?.includes("Elmwood Park")) {
+      base44.entities.Character.update(defaultChar.id, updated).then(() => {
+        queryClient.invalidateQueries({ queryKey: ["characters"] });
+      });
+    }
+  }, [characters]);
+
   // Redirect to onboarding if not completed
-  const userSettings = settings?.[0];
   if (!isLoading && settings.length === 0) {
     navigate("/");
     return null;
