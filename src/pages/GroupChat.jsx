@@ -194,6 +194,72 @@ export default function GroupChat() {
           />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showConversationsList && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowConversationsList(false)}
+            className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center sm:justify-center"
+          >
+            <motion.div
+              initial={{ y: 100 }}
+              animate={{ y: 0 }}
+              exit={{ y: 100 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full sm:w-96 bg-card rounded-t-2xl sm:rounded-2xl border border-border shadow-lg"
+            >
+              <div className="p-4 border-b border-border flex items-center justify-between sticky top-0 bg-card rounded-t-2xl">
+                <h2 className="text-lg font-semibold text-foreground">Conversations</h2>
+                <div className="flex items-center gap-2">
+                  <Button 
+                    size="icon" 
+                    variant="ghost" 
+                    onClick={() => setShowCharacterSelector(true)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                  <button onClick={() => setShowConversationsList(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+              
+              <ScrollArea className="h-96">
+                <div className="p-3 space-y-2">
+                  {conversationsData.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-muted-foreground">No conversations yet</p>
+                    </div>
+                  ) : (
+                    conversationsData.map(conv => (
+                      <button
+                        key={conv.id}
+                        onClick={() => {
+                          setSelectedConversation(conv);
+                          setShowConversationsList(false);
+                        }}
+                        className={`w-full text-left p-3 rounded-lg transition-all ${
+                          selectedConversation?.id === conv.id
+                            ? 'bg-primary text-primary-foreground'
+                            : 'text-foreground hover:bg-secondary'
+                        }`}
+                      >
+                        <p className="font-medium text-sm truncate">{conv.title}</p>
+                        <p className="text-xs opacity-75 truncate mt-1">{conv.last_message_preview || 'No messages'}</p>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </ScrollArea>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <BottomNav />
     </div>
   );
