@@ -72,23 +72,13 @@ export default function GroupChat() {
     if (!selectedConversation) return;
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      if (event.data?.conversation_id === selectedConversation.id && event.data?.sender_type === 'character') {
-        setTypingUsers(prev => {
-          const isTyping = prev.find(u => u.character_id === event.data.character_id);
-          if (!isTyping && event.type === 'create') {
-            const newTyping = [...prev, { character_id: event.data.character_id, name: event.data.character_name }];
-            setTimeout(() => {
-              setTypingUsers(p => p.filter(u => u.character_id !== event.data.character_id));
-            }, 2000);
-            return newTyping;
-          }
-          return prev;
-        });
+      if (event.data?.conversation_id === selectedConversation.id) {
+        queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.id] });
       }
     });
 
     return unsubscribe;
-  }, [selectedConversation?.id]);
+  }, [selectedConversation?.id, queryClient]);
 
   const handleSendMessage = async () => {
     if (!messageText.trim() || !selectedConversation) return;
@@ -100,6 +90,7 @@ export default function GroupChat() {
         content: messageText,
       });
       setMessageText('');
+      queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.id] });
     } catch (error) {
       console.error('Error sending message:', error);
     }
@@ -199,13 +190,6 @@ export default function GroupChat() {
                       </div>
                     </div>
                   ))
-                )}
-                {typingUsers.length > 0 && (
-                  <div className="flex justify-start">
-                    <div className="text-xs text-muted-foreground italic">
-                      {typingUsers.map(u => u.name).join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
-                    </div>
-                  </div>
                 )}
                 <div ref={scrollRef} />
               </div>
