@@ -103,12 +103,14 @@ export default function Chat() {
     if (imageMatch) {
       const imagePrompt = imageMatch[1];
       responseText = responseText.replace(imageMatch[0], "").trim();
-      // If the character has a reference photo, use it so the generated image matches their look
-      const imgResult = character.avatar_url
-        ? await base44.integrations.Core.GenerateImage({
-            prompt: imagePrompt,
-            existing_image_urls: [character.avatar_url],
-          })
+      // Use reference photos (uploaded real photos) if available, otherwise fall back to avatar
+      const refImages = character.reference_image_urls?.length
+        ? character.reference_image_urls
+        : character.avatar_url
+          ? [character.avatar_url]
+          : null;
+      const imgResult = refImages
+        ? await base44.integrations.Core.GenerateImage({ prompt: imagePrompt, existing_image_urls: refImages })
         : await base44.integrations.Core.GenerateImage({ prompt: imagePrompt });
       imageUrl = imgResult.url;
     }
