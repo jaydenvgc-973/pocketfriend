@@ -96,7 +96,7 @@ export default function GroupChat() {
       </div>
 
       {/* Sidebar */}
-      <div className="w-64 bg-card border-r border-border flex flex-col hidden sm:flex">
+      <div className="w-full sm:w-64 bg-card border-r border-border flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Conversations</h2>
