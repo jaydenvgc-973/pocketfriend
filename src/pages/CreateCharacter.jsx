@@ -104,19 +104,18 @@ export default function CreateCharacter() {
     const charData = {
       name: data.name,
       gender: data.gender?.toLowerCase(),
+      archetype: data.archetype || undefined,
+      social_energy: data.social_energy || undefined,
+      sexual_orientation: (data.sexual_orientation && data.sexual_orientation !== "Prefer not to say") ? data.sexual_orientation : undefined,
       personality_summary: personality,
       personality_traits: data.vibes,
-      communication_style: `${data.archetype ? data.archetype + ". " : ""}${data.social_energy ? data.social_energy + ". " : ""}${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
+      communication_style: `${data.vibes.join(", ")} communication style. Real, unpolished speech.`,
       background_story: data.background || `${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
       current_situation: data.living_situation,
       emotional_state: "calm",
       avatar_url: avatarUrl || null,
       reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
       memories: data.memories.length > 0 ? data.memories : undefined,
-      // Store extra fields in background_story context
-      ...(data.sexual_orientation && data.sexual_orientation !== "Prefer not to say"
-        ? { background_story: `${data.background || `${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}. ${data.living_situation}.`} Sexual orientation: ${data.sexual_orientation}.` }
-        : {}),
     };
     charData.system_prompt = buildSystemPrompt(charData);
 
