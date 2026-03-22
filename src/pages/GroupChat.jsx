@@ -96,10 +96,15 @@ export default function GroupChat() {
             <ArrowLeft className="w-5 h-5" />
           </Link>
           <h2 className="text-sm font-semibold text-foreground">Group Chat</h2>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => setShowConversationsList(true)}
+            className="ml-auto text-muted-foreground hover:text-foreground"
+          >
+            <MessageCircle className="w-4 h-4" />
+          </Button>
         </div>
-
-      {/* Sidebar */}
-      <div className="w-full sm:w-64 bg-card border-r border-border flex flex-col flex-shrink-0">
         <div className="p-4 border-b border-border flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">Conversations</h2>
