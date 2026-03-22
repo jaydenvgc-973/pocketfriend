@@ -83,10 +83,19 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         </div>
 
         {isMovedAway ? (
-          <div className="mt-4 px-3 py-2 rounded-xl bg-secondary text-xs text-muted-foreground text-center">
-            They moved on. Still out there somewhere.
-          </div>
-        ) : (
+           <div className="mt-4 flex gap-2">
+             {onMoveAway && (
+               <button onClick={() => onMoveAway()} className="flex-1 px-3 py-2 rounded-xl bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors">
+                 They can move back
+               </button>
+             )}
+             {!onMoveAway && (
+               <div className="flex-1 px-3 py-2 rounded-xl bg-secondary text-xs text-muted-foreground text-center">
+                 They moved on. Still out there somewhere.
+               </div>
+             )}
+           </div>
+         ) : (
           <div className="flex items-center gap-2 mt-4">
             <Link to={`/chat/${character.id}`} className="flex-1">
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors">
