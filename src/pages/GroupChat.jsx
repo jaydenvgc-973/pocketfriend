@@ -111,7 +111,7 @@ export default function GroupChat() {
   const activeCharacters = characters.filter(c => c.status === 'active' || !c.status);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-background">
+    <div className="fixed inset-0 flex flex-col bg-background pb-[60px]">
       {/* Header */}
       <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/home" className="text-muted-foreground hover:text-foreground">
@@ -121,11 +121,11 @@ export default function GroupChat() {
       </div>
 
       {/* Messages Area */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden flex flex-col">
         {selectedConversation ? (
-          <div className="flex flex-col h-full">
+          <div className="flex flex-col h-full flex-1">
             {/* Conversation Header */}
-            <div className="p-4 border-b border-border flex items-center justify-between bg-card/50">
+            <div className="p-4 border-b border-border flex items-center justify-between bg-card/50 flex-shrink-0">
               <div className="flex items-center gap-3">
                 <div>
                   <h1 className="text-lg font-semibold text-foreground">{selectedConversation.title}</h1>
@@ -135,7 +135,7 @@ export default function GroupChat() {
             </div>
 
             {/* Messages */}
-            <ScrollArea className="flex-1">
+            <ScrollArea className="flex-1 min-h-0">
               <div className="space-y-4 p-4">
                 {messages.length === 0 ? (
                   <div className="flex items-center justify-center h-64">
