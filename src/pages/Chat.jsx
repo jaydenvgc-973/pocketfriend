@@ -180,6 +180,11 @@ export default function Chat() {
         <AnimatePresence>
           {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}
         </AnimatePresence>
+        {sendError && (
+          <div className="text-center px-4 py-2">
+            <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-4 py-2 inline-block">{sendError} <button className="underline ml-1" onClick={() => setSendError(null)}>Dismiss</button></p>
+          </div>
+        )}
         <div ref={bottomRef} />
       </div>
       <ChatInput onSend={sendMessage} disabled={isTyping} />
