@@ -79,7 +79,9 @@ export default function Chat() {
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
-    const recentMsgs = [...messages.slice(-20), userMsg];
+    let recentMsgs, response, responseText, emotionalState, imageUrl;
+    try {
+    recentMsgs = [...messages.slice(-20), userMsg];
     const chatHistory = recentMsgs.map(m => ({
       role: m.sender_type === "user" ? "user" : "assistant",
       content: m.content,
