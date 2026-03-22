@@ -70,7 +70,7 @@ export default function GroupChat() {
   if (!isSetup) {
     return (
       <div className="min-h-screen bg-background">
-        <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+        <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
           <button onClick={() => navigate("/home")} className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></button>
           <h2 className="text-sm font-semibold">Create Group Chat</h2>
         </div>
