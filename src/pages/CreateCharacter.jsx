@@ -382,7 +382,7 @@ export default function CreateCharacter() {
         <p className="text-xs text-muted-foreground mb-4">Upload real photos of the character to generate a consistent avatar, or skip.</p>
       </div>
       <ReferencePhotoUploader
-        descriptor={`a ${data.age_range} ${data.ethnicity} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality`}
+        descriptor={`a ${data.age_range} ${data.ethnicities.join(" / ")} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality`}
         onAvatarGenerated={(url, refs) => { setAvatarUrl(url); setReferenceUrls(refs); saveDraft(data, step, url, refs); }}
         existingReferenceUrls={referenceUrls}
         existingAvatarUrl={avatarUrl}
