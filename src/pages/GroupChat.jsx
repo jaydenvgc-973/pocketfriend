@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Users, X } from "lucide-react";
+import { ArrowLeft, Users, X, Trash2, MapPin, MoreVertical } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
@@ -11,9 +11,17 @@ import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export default function GroupChat() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedIds, setSelectedIds] = useState([]);
   const [isSetup, setIsSetup] = useState(false);
   const [messages, setMessages] = useState([]);
@@ -27,7 +35,36 @@ export default function GroupChat() {
     initialData: [],
   });
 
-  const characters = allCharacters.filter(c => c.status === "active");
+  const characters = allCharacters.filter(c => c.status === "active" || c.status === "moved_away");
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id) => {
+      const activeOthers = allCharacters.filter(c => c.id !== id && c.status !== "deleted");
+      const deleted = allCharacters.find(c => c.id === id);
+      if (deleted) {
+        await Promise.all(activeOthers.map(c =>
+          base44.entities.Character.update(c.id, {
+            departed_characters: [
+              ...(c.departed_characters || []),
+              { name: deleted.name, cause: "deleted", relationship_closeness: "acquaintance" }
+            ]
+          })
+        ));
+      }
+      return base44.entities.Character.delete(id);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      setSelectedIds(prev => prev.filter(id => id !== prev[0]));
+    },
+  });
+
+  const moveBackMutation = useMutation({
+    mutationFn: async (id) => {
+      return base44.entities.Character.update(id, { status: "active" });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -76,17 +113,40 @@ export default function GroupChat() {
           <p className="text-sm text-muted-foreground mb-4">Select characters to include:</p>
           <div className="space-y-3">
             {characters.map(c => (
-              <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"}`}>
+              <div key={c.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${selectedIds.includes(c.id) ? "border-primary bg-primary/5" : "border-border bg-card"} ${c.status === "moved_away" ? "opacity-60" : ""}`}>
                 <Checkbox checked={selectedIds.includes(c.id)} onClick={() => toggleCharacter(c.id)} />
                 <CharacterAvatar character={c} size="sm" />
-                <div className="flex-1 min-w-0" onClick={() => toggleCharacter(c.id)} style={{ cursor: "pointer" }}>
-                  <p className="text-sm font-medium text-foreground">{c.name}</p>
+                <div className="flex-1 min-w-0" onClick={() => !c.is_default && toggleCharacter(c.id)} style={{ cursor: !c.is_default ? "pointer" : "default" }}>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-foreground">{c.name}</p>
+                    {c.status === "moved_away" && (
+                      <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">moved away</span>
+                    )}
+                  </div>
                   <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                 </div>
-                {!c.is_default && selectedIds.includes(c.id) && (
+                {!c.is_default && selectedIds.includes(c.id) && c.status === "active" && (
                   <button onClick={() => setSelectedIds(prev => prev.filter(id => id !== c.id))} className="text-muted-foreground hover:text-destructive transition-colors p-1">
                     <X className="w-4 h-4" />
                   </button>
+                )}
+                {!c.is_default && c.status === "moved_away" && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <button className="p-1 rounded text-muted-foreground hover:text-foreground">
+                        <MoreVertical className="w-4 h-4" />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-40">
+                      <DropdownMenuItem onClick={() => moveBackMutation.mutate(c.id)} className="gap-2 text-muted-foreground">
+                        <MapPin className="w-4 h-4" /> Move back
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => deleteMutation.mutate(c.id)} className="gap-2 text-destructive focus:text-destructive">
+                        <Trash2 className="w-4 h-4" /> Delete
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 )}
               </div>
             ))}
