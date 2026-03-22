@@ -1,14 +1,14 @@
-import { motion } from "framer-motion";
-import CharacterAvatar from "@/components/chat/CharacterAvatar";
-import { MessageCircle, Phone, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion";
+import { MessageCircle, Phone, Trash2, Pencil } from "lucide-react";
+import CharacterAvatar from "@/components/chat/CharacterAvatar";
 
 const stateLabels = {
-  calm: "Calm",
-  irritated: "Irritated",
-  defensive: "Defensive",
-  reflective: "Reflective",
-  "closed-off": "Closed off"
+  calm: "calm",
+  irritated: "irritated",
+  defensive: "defensive",
+  reflective: "reflective",
+  "closed-off": "closed off"
 };
 
 const stateDots = {
@@ -20,40 +20,44 @@ const stateDots = {
 };
 
 export default function CharacterCard({ character, onDelete }) {
+  const state = character.emotional_state || "calm";
+
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="bg-card border border-border rounded-2xl p-4 hover:border-primary/30 transition-all"
-    >
+    <motion.div whileTap={{ scale: 0.99 }} className="bg-card border border-border rounded-2xl p-4">
       <div className="flex items-start gap-3">
         <CharacterAvatar character={character} size="lg" />
         <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-foreground truncate">{character.name}</h3>
-          <div className="flex items-center gap-1.5 mt-1">
-            <div className={`w-2 h-2 rounded-full ${stateDots[character.emotional_state] || stateDots.calm}`} />
-            <span className="text-xs text-muted-foreground">{stateLabels[character.emotional_state] || "Calm"}</span>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-foreground">{character.name}</h3>
+            <div className="flex items-center gap-1.5">
+              <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state]}`} />
+              <span className="text-xs text-muted-foreground">{stateLabels[state]}</span>
+            </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-2 line-clamp-2">{character.personality_summary}</p>
+          <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{character.personality_summary}</p>
         </div>
       </div>
       <div className="flex items-center gap-2 mt-4">
-        <Link to={`/chat/${character.id}?type=direct`} className="flex-1">
-          <motion.button whileTap={{ scale: 0.97 }} className="w-full flex items-center justify-center gap-2 bg-primary/10 hover:bg-primary/20 text-primary rounded-xl py-2.5 text-sm font-medium transition-colors">
-            <MessageCircle className="w-4 h-4" />
-            Talk
-          </motion.button>
+        <Link to={`/chat/${character.id}`} className="flex-1">
+          <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors">
+            <MessageCircle className="w-4 h-4" /> Chat
+          </button>
         </Link>
         <Link to={`/chat/${character.id}?type=phone`} className="flex-1">
-          <motion.button whileTap={{ scale: 0.97 }} className="w-full flex items-center justify-center gap-2 bg-secondary hover:bg-secondary/80 text-foreground rounded-xl py-2.5 text-sm font-medium transition-colors">
-            <Phone className="w-4 h-4" />
-            Text
-          </motion.button>
+          <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium hover:bg-secondary/80 transition-colors">
+            <Phone className="w-4 h-4" /> Text
+          </button>
         </Link>
-        {!character.is_default && onDelete && (
-          <motion.button whileTap={{ scale: 0.9 }} onClick={() => onDelete(character.id)} className="p-2.5 rounded-xl bg-destructive/10 hover:bg-destructive/20 text-destructive transition-colors">
+        {character.is_default ? (
+          <Link to="/edit-default">
+            <button className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors">
+              <Pencil className="w-4 h-4" />
+            </button>
+          </Link>
+        ) : onDelete && (
+          <button onClick={() => onDelete(character.id)} className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-destructive transition-colors">
             <Trash2 className="w-4 h-4" />
-          </motion.button>
+          </button>
         )}
       </div>
     </motion.div>
