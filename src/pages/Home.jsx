@@ -99,6 +99,15 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background">
+      <AnimatePresence>
+        {pendingDelete && (
+          <DeleteCharacterDialog
+            character={pendingDelete}
+            onConfirm={({ cause, closeness }) => deleteMutation.mutate({ id: pendingDelete.id, cause, closeness })}
+            onCancel={() => setPendingDelete(null)}
+          />
+        )}
+      </AnimatePresence>
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4">
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
