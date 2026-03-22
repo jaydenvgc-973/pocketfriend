@@ -1,28 +1,25 @@
 import React, { useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, Link } from "react-router-dom";
 import { Plus, Users, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
-import { Link } from "react-router-dom";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: settings } = useQuery({
+  const { data: settings = [] } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
-    initialData: [],
   });
 
-  const { data: characters, isLoading } = useQuery({
+  const { data: characters = [], isLoading } = useQuery({
     queryKey: ["characters"],
     queryFn: () => base44.entities.Character.list("-created_date"),
-    initialData: [],
   });
 
   const deleteMutation = useMutation({
@@ -30,29 +27,18 @@ export default function Home() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
   });
 
-  // Auto-refresh default character's profile data when loaded
   useEffect(() => {
     const defaultChar = characters.find(c => c.is_default);
     if (!defaultChar) return;
-
-    // Rebuild with full updated profile data (preserving name and avatar)
-    const updated = {
-      ...DEFAULT_CHARACTER_DATA,
-      name: defaultChar.name,
-      avatar_url: defaultChar.avatar_url,
-      emotional_state: defaultChar.emotional_state || "calm",
-    };
-    updated.system_prompt = buildSystemPrompt(updated);
-
-    // Only update if profile fields are stale (missing new fields)
     if (!defaultChar.family_history?.includes("Marisol")) {
+      const updated = { ...DEFAULT_CHARACTER_DATA, name: defaultChar.name, avatar_url: defaultChar.avatar_url, emotional_state: defaultChar.emotional_state || "calm" };
+      updated.system_prompt = buildSystemPrompt(updated);
       base44.entities.Character.update(defaultChar.id, updated).then(() => {
         queryClient.invalidateQueries({ queryKey: ["characters"] });
       });
     }
   }, [characters]);
 
-  // Redirect to onboarding if not completed
   if (!isLoading && settings.length === 0) {
     navigate("/");
     return null;
@@ -64,7 +50,6 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4">
         <div className="max-w-lg mx-auto flex items-center justify-between">
           <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
@@ -84,20 +69,15 @@ export default function Home() {
       </div>
 
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
-        {/* Default character */}
         {defaultChar && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
             <CharacterCard character={defaultChar} />
           </div>
         )}
-
-        {/* Custom characters */}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-              Custom characters {customChars.length}/4
-            </p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {customChars.length}/4</p>
             {canCreate && (
               <Link to="/create">
                 <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
@@ -108,10 +88,7 @@ export default function Home() {
           </div>
           {customChars.length === 0 ? (
             <Link to="/create">
-              <motion.div
-                whileTap={{ scale: 0.98 }}
-                className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors"
-              >
+              <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors">
                 <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
                   <Plus className="w-5 h-5 text-primary" />
                 </div>
@@ -126,10 +103,7 @@ export default function Home() {
               ))}
               {canCreate && (
                 <Link to="/create">
-                  <motion.div
-                    whileTap={{ scale: 0.98 }}
-                    className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors"
-                  >
+                  <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
                     <Plus className="w-4 h-4 text-muted-foreground mr-2" />
                     <span className="text-sm text-muted-foreground">Add another</span>
                   </motion.div>
