@@ -56,15 +56,15 @@ export default function GroupChat() {
   }
 
   return (
-    <div className="flex w-full h-full bg-slate-900 overflow-hidden flex-col">
+    <div className="flex w-full h-full bg-background overflow-hidden flex-col">
       {/* Sidebar */}
-      <div className="w-64 bg-slate-800 border-r border-slate-700 flex flex-col hidden sm:flex">
-        <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+      <div className="w-64 bg-card border-r border-border flex flex-col hidden sm:flex">
+        <div className="p-4 border-b border-border flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-white">Conversations</h2>
-            <p className="text-xs text-slate-400">{conversationsData.length} chats</p>
+            <h2 className="text-lg font-semibold text-foreground">Conversations</h2>
+            <p className="text-xs text-muted-foreground">{conversationsData.length} chats</p>
           </div>
-          <Button size="icon" variant="ghost" className="text-slate-400 hover:text-white">
+          <Button size="icon" variant="ghost" className="text-muted-foreground hover:text-foreground">
             <Plus className="w-4 h-4" />
           </Button>
         </div>
@@ -73,7 +73,7 @@ export default function GroupChat() {
           <div className="p-3 space-y-2">
             {conversationsData.length === 0 ? (
               <div className="text-center py-8">
-                <p className="text-sm text-slate-400">No conversations yet</p>
+                <p className="text-sm text-muted-foreground">No conversations yet</p>
               </div>
             ) : (
               conversationsData.map(conv => (
@@ -82,8 +82,8 @@ export default function GroupChat() {
                   onClick={() => setSelectedConversation(conv)}
                   className={`w-full text-left p-3 rounded-lg transition-all ${
                     selectedConversation?.id === conv.id
-                      ? 'bg-blue-600 text-white'
-                      : 'text-slate-300 hover:bg-slate-700'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-foreground hover:bg-secondary'
                   }`}
                 >
                   <p className="font-medium text-sm truncate">{conv.title}</p>
@@ -96,23 +96,23 @@ export default function GroupChat() {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col bg-slate-900">
+      <div className="flex-1 flex flex-col bg-background">
         {selectedConversation ? (
           <>
             {/* Header */}
-            <div className="p-4 border-b border-slate-700 flex items-center justify-between bg-slate-800/50">
+            <div className="p-4 border-b border-border flex items-center justify-between bg-card/50">
               <div className="flex items-center gap-3">
                 <Button 
                   variant="ghost" 
                   size="icon"
                   onClick={() => setSelectedConversation(null)}
-                  className="text-slate-400 hover:text-white"
+                  className="text-muted-foreground hover:text-foreground"
                 >
                   <ArrowLeft className="w-5 h-5" />
                 </Button>
                 <div>
-                  <h1 className="text-lg font-semibold text-white">{selectedConversation.title}</h1>
-                  <p className="text-xs text-slate-400">{selectedConversation.character_ids?.length || 0} participants</p>
+                  <h1 className="text-lg font-semibold text-foreground">{selectedConversation.title}</h1>
+                  <p className="text-xs text-muted-foreground">{selectedConversation.character_ids?.length || 0} participants</p>
                 </div>
               </div>
             </div>
@@ -122,7 +122,7 @@ export default function GroupChat() {
               <div className="space-y-4 pr-4">
                 {messages.length === 0 ? (
                   <div className="flex items-center justify-center h-full min-h-64">
-                    <p className="text-slate-400">No messages yet. Start the conversation!</p>
+                    <p className="text-muted-foreground">No messages yet. Start the conversation!</p>
                   </div>
                 ) : (
                   messages.map(msg => (
@@ -133,13 +133,13 @@ export default function GroupChat() {
                       <Card
                         className={`max-w-xs ${
                           msg.sender_type === 'user'
-                            ? 'bg-blue-600 border-blue-700'
-                            : 'bg-slate-700 border-slate-600'
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-secondary text-secondary-foreground'
                         }`}
                       >
                         <CardContent className="p-3">
                           <p className="text-xs font-medium mb-1 opacity-75">{msg.character_name || 'You'}</p>
-                          <p className="text-sm text-white break-words">{msg.content}</p>
+                          <p className="text-sm break-words">{msg.content}</p>
                         </CardContent>
                       </Card>
                     </div>
@@ -149,18 +149,16 @@ export default function GroupChat() {
             </ScrollArea>
 
             {/* Input */}
-            <div className="p-4 border-t border-slate-700 bg-slate-800/50 flex gap-2">
+            <div className="p-4 border-t border-border bg-card/50 flex gap-2">
               <Input
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 placeholder="Type a message..."
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-400"
               />
               <Button 
                 onClick={handleSendMessage} 
                 size="icon"
-                className="bg-blue-600 hover:bg-blue-700"
               >
                 <Send className="w-4 h-4" />
               </Button>
@@ -168,9 +166,9 @@ export default function GroupChat() {
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center">
-            <MessageCircle className="w-16 h-16 text-slate-700 mb-4" />
-            <p className="text-xl font-medium text-slate-300">Select a conversation</p>
-            <p className="text-sm text-slate-400 mt-2">Choose from your existing chats to start messaging</p>
+            <MessageCircle className="w-16 h-16 text-muted-foreground mb-4" />
+            <p className="text-xl font-medium text-foreground">Select a conversation</p>
+            <p className="text-sm text-muted-foreground mt-2">Choose from your existing chats to start messaging</p>
           </div>
         )}
       </div>
