@@ -219,23 +219,7 @@ export default function GroupChat() {
             </div>
           </ScrollArea>
 
-          {/* Input */}
-          <div className="flex gap-2">
-            <Input
-              value={messageText}
-              onChange={(e) => setMessageText(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-              placeholder="Type a message..."
-              disabled={!selectedConversation}
-            />
-            <Button 
-              onClick={handleSendMessage}
-              size="icon"
-              disabled={!messageText.trim() || !selectedConversation}
-            >
-              <Send className="w-4 h-4" />
-            </Button>
-          </div>
+
         </div>
       </div>
 
