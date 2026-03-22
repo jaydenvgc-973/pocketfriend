@@ -207,6 +207,13 @@ export default function GroupChat() {
                     </div>
                   ))
                 )}
+                {typingUsers.length > 0 && (
+                  <div className="flex justify-start">
+                    <div className="text-xs text-muted-foreground italic">
+                      {typingUsers.map(u => u.name).join(', ')} {typingUsers.length === 1 ? 'is' : 'are'} typing...
+                    </div>
+                  </div>
+                )}
               </div>
             </ScrollArea>
 
