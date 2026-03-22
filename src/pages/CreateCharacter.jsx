@@ -149,6 +149,7 @@ export default function CreateCharacter() {
     charData.system_prompt = buildSystemPrompt(charData);
 
     await base44.entities.Character.create(charData);
+    localStorage.removeItem(DRAFT_KEY);
     navigate("/home");
   };
 
