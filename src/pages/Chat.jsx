@@ -167,14 +167,6 @@ export default function Chat() {
         </div>
       </div>
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
-        {messages.length === 0 && character && (
-          <div className="text-center py-16 px-6">
-            <CharacterAvatar character={character} size="xl" />
-            <p className="text-sm text-muted-foreground mt-4">
-              {isPhone ? `Start texting ${character.name}` : `Start talking to ${character.name}`}
-            </p>
-          </div>
-        )}
         <AnimatePresence>
           {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
         </AnimatePresence>
