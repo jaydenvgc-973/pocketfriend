@@ -506,7 +506,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
   return (
     <div className="min-h-screen bg-background">
       <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
-        <Link to="/home" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></Link>
+        <button onClick={() => navigate("/home")} className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></button>
         <h2 className="text-sm font-semibold">Create Character</h2>
         <div className="ml-auto flex items-center gap-1">
           {steps.map((_, i) => (
