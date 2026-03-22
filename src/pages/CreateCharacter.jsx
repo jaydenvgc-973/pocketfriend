@@ -233,10 +233,11 @@ export default function CreateCharacter() {
     // Step 1: Background
     <div key="background" className="space-y-5">
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Ethnicity / Background</label>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Cultural Background</label>
+        <p className="text-xs text-muted-foreground mb-2">Select all that apply</p>
         <div className="grid grid-cols-2 gap-2">
           {ETHNICITIES.map(e => (
-            <button key={e} onClick={() => update("ethnicity", e)} className={chipClass(data.ethnicity === e)}>{e}</button>
+            <button key={e} onClick={() => toggleEthnicity(e)} className={chipClass(data.ethnicities.includes(e))}>{e}</button>
           ))}
         </div>
       </div>
