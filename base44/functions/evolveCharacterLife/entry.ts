@@ -35,6 +35,11 @@ Deno.serve(async (req) => {
         .map(r => `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}`)
         .join("\n");
 
+      const departedNames = (character.departed_characters || []);
+      const departedContext = departedNames.length > 0
+        ? `\nPEOPLE WHO HAVE RECENTLY DISAPPEARED OR MOVED ON FROM THIS CHARACTER'S LIFE:\n${departedNames.map(n => n.includes("(moved away)") ? `- ${n.replace(" (moved away)", "")} — they moved away. ${character.name} doesn't fully know why, just that they're gone.` : `- ${n} — they just disappeared. No explanation. ${character.name} doesn't know what happened to them.`).join("\n")}\nIMPORTANT: Weave these disappearances naturally into the current_life_event or relationships where appropriate. ${character.name} doesn't know these people were "removed" — only that they're no longer around. React the way this character would — with their personality, their way of processing loss or absence.`
+        : "";
+
       const now = new Date();
       const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long", timeZone: "America/New_York" });
       const timeOfDay = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" });
