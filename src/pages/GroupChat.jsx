@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -57,6 +57,14 @@ export default function GroupChat() {
 
   return (
     <div className="flex w-full h-full bg-background overflow-hidden flex-col">
+      {/* Header */}
+      <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+        <Link to="/home" className="text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="w-5 h-5" />
+        </Link>
+        <h2 className="text-sm font-semibold text-foreground">Group Chat</h2>
+      </div>
+
       {/* Sidebar */}
       <div className="w-64 bg-card border-r border-border flex flex-col hidden sm:flex">
         <div className="p-4 border-b border-border flex items-center justify-between">
