@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ArrowLeft, Send, Plus, MessageCircle, X } from 'lucide-react';
+import { ArrowLeft, Send, Plus, MessageCircle } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AnimatePresence } from 'framer-motion';
 import { motion } from 'framer-motion';
@@ -110,21 +110,20 @@ export default function GroupChat() {
   const activeCharacters = characters.filter(c => c.status === 'active' || !c.status);
 
   return (
-    <div className="flex w-full h-full bg-background overflow-hidden">
-      <div className="flex flex-col w-full">
-        {/* Header */}
-        <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
-          <Link to="/home" className="text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <h2 className="text-sm font-semibold text-foreground">Group Chat</h2>
-        </div>
+    <div className="fixed inset-0 flex flex-col bg-background">
+      {/* Header */}
+      <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+        <Link to="/home" className="text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="w-5 h-5" />
+        </Link>
+        <h2 className="text-sm font-semibold text-foreground">Group Chat</h2>
+      </div>
 
-        {/* Main Content Area */}
-        <div className="flex-1 flex flex-col min-h-0 bg-background">
+      {/* Messages Area */}
+      <div className="flex-1 overflow-hidden">
         {selectedConversation ? (
-          <>
-            {/* Header */}
+          <div className="flex flex-col h-full">
+            {/* Conversation Header */}
             <div className="p-4 border-b border-border flex items-center justify-between bg-card/50">
               <div className="flex items-center gap-3">
                 <div>
@@ -135,10 +134,10 @@ export default function GroupChat() {
             </div>
 
             {/* Messages */}
-            <ScrollArea className="flex-1 p-4">
-              <div className="space-y-4 pr-4">
+            <ScrollArea className="flex-1">
+              <div className="space-y-4 p-4">
                 {messages.length === 0 ? (
-                  <div className="flex items-center justify-center h-full min-h-64">
+                  <div className="flex items-center justify-center h-64">
                     <p className="text-muted-foreground">No messages yet. Start the conversation!</p>
                   </div>
                 ) : (
@@ -173,62 +172,68 @@ export default function GroupChat() {
             </ScrollArea>
 
             {/* Input */}
-            <div className="p-4 border-t border-border bg-card/50 flex gap-2">
+            <div className="p-4 border-t border-border bg-card/50 flex gap-2 flex-shrink-0">
               <Input
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
                 onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                 placeholder="Type a message..."
+                disabled={!selectedConversation}
               />
               <Button 
-                onClick={handleSendMessage} 
+                onClick={handleSendMessage}
                 size="icon"
+                disabled={!messageText.trim() || !selectedConversation}
               >
                 <Send className="w-4 h-4" />
               </Button>
             </div>
-          </>
+          </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center">
+          <div className="flex flex-col items-center justify-center h-full">
             <MessageCircle className="w-16 h-16 text-muted-foreground mb-4" />
             <p className="text-xl font-medium text-foreground">Select a conversation</p>
             <p className="text-sm text-muted-foreground mt-2">Choose from your existing chats to start messaging</p>
           </div>
         )}
+      </div>
 
-        {/* Conversations Panel - Bottom */}
-        <div className="border-t border-border bg-card/50 p-6 pt-8">
-          <div className="max-w-lg mx-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold">Conversations</h2>
-              <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-            <ScrollArea className="h-32">
-              <div className="flex gap-2 pr-4">
-                {conversationsData.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No conversations yet</p>
-                ) : (
-                  conversationsData.map(conv => (
-                    <button
-                      key={conv.id}
-                      onClick={() => setSelectedConversation(conv)}
-                      className={`flex-shrink-0 px-3 py-2 rounded-lg transition-all text-sm whitespace-nowrap ${
-                        selectedConversation?.id === conv.id
-                          ? 'bg-primary text-primary-foreground'
-                          : 'bg-secondary text-foreground hover:bg-secondary/80'
-                      }`}
-                    >
-                      {conv.title}
-                    </button>
-                  ))
-                )}
-              </div>
-            </ScrollArea>
+      {/* Conversations Panel */}
+      <div className="border-t border-border bg-card/50 p-4 flex-shrink-0">
+        <div className="max-w-lg mx-auto">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold">Conversations</h2>
+            <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
+              <Plus className="w-4 h-4" />
+            </button>
           </div>
+          <ScrollArea className="h-24">
+            <div className="flex gap-2 pr-4">
+              {conversationsData.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No conversations yet</p>
+              ) : (
+                conversationsData.map(conv => (
+                  <button
+                    key={conv.id}
+                    onClick={() => setSelectedConversation(conv)}
+                    className={`flex-shrink-0 px-3 py-2 rounded-lg transition-all text-sm whitespace-nowrap ${
+                      selectedConversation?.id === conv.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-secondary text-foreground hover:bg-secondary/80'
+                    }`}
+                  >
+                    {conv.title}
+                  </button>
+                ))
+              )}
+            </div>
+          </ScrollArea>
         </div>
-        </div>
+      </div>
+
+      {/* Bottom Navigation - Fixed */}
+      <div className="flex-shrink-0">
+        <BottomNav />
       </div>
 
       <AnimatePresence>
@@ -240,8 +245,6 @@ export default function GroupChat() {
           />
         )}
       </AnimatePresence>
-
-      <BottomNav />
     </div>
   );
 }
