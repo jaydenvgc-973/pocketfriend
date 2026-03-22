@@ -98,10 +98,6 @@ export function buildSystemPrompt(character) {
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
 
-  const archetypeBlock = character.communication_style?.includes("Protector") || character.communication_style?.includes("Rebel") || character.communication_style?.includes("Caretaker") || character.communication_style?.includes("Achiever") || character.communication_style?.includes("Seeker") || character.communication_style?.includes("Loner") || character.communication_style?.includes("Charmer") || character.communication_style?.includes("Realist")
-    ? `\nARCHETYPE: ${character.communication_style.split(".")[0]}.`
-    : "";
-
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
   const medTriggers = (character.emotional_triggers_medium || []).join('\n  - ');
   const deepTriggers = (character.emotional_triggers_deep || []).join('\n  - ');
