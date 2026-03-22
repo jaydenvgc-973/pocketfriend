@@ -45,7 +45,7 @@ export default function Home() {
     updated.system_prompt = buildSystemPrompt(updated);
 
     // Only update if profile fields are stale (missing new fields)
-    if (!defaultChar.current_situation?.includes("Elmwood Park")) {
+    if (!defaultChar.family_history?.includes("Marisol")) {
       base44.entities.Character.update(defaultChar.id, updated).then(() => {
         queryClient.invalidateQueries({ queryKey: ["characters"] });
       });
