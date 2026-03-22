@@ -87,6 +87,7 @@ export default function CreateCharacter() {
   const [showMemoryForm, setShowMemoryForm] = useState(false);
 
   const [data, setData] = useState(draft?.data || defaultData);
+  const [isGeneratingName, setIsGeneratingName] = useState(false);
 
   const saveDraft = (newData, newStep, newAvatarUrl, newReferenceUrls) => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
