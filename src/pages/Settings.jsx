@@ -13,10 +13,16 @@ import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 
 export default function Settings() {
   const queryClient = useQueryClient();
+  const [pendingDelete, setPendingDelete] = useState(null);
 
   const { data: settingsList = [] } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const { data: characters = [] } = useQuery({
+    queryKey: ["characters"],
+    queryFn: () => base44.entities.Character.list("-created_date"),
   });
 
   const settings = settingsList[0] || {};
@@ -28,6 +34,37 @@ export default function Settings() {
         : base44.entities.UserSettings.create(data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["userSettings"] }),
   });
+
+  const deleteMutation = useMutation({
+    mutationFn: async ({ id, cause, closeness }) => {
+      const activeOthers = characters.filter(c => c.id !== id && c.status !== "deleted");
+      const departed = characters.find(c => c.id === id);
+      if (departed) {
+        await Promise.all(activeOthers.map(c =>
+          base44.entities.Character.update(c.id, {
+            departed_characters: [
+              ...(c.departed_characters || []),
+              { name: departed.name, cause, relationship_closeness: closeness }
+            ]
+          })
+        ));
+      }
+      return base44.entities.Character.delete(id);
+    },
+    onSuccess: () => {
+      setPendingDelete(null);
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+    },
+  });
+
+  const moveBackMutation = useMutation({
+    mutationFn: async (id) => {
+      return base44.entities.Character.update(id, { status: "active" });
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+  });
+
+  const movedAwayChars = characters.filter(c => c.status === "moved_away");
 
   return (
     <div className="min-h-screen bg-background">
