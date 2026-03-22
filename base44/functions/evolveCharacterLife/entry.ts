@@ -12,7 +12,10 @@ Deno.serve(async (req) => {
     // Scheduled automation — no user token, use service role only
   }
 
-  const characters = await base44.asServiceRole.entities.Character.list();
+  const allCharacters = await base44.asServiceRole.entities.Character.list();
+  // Only evolve active characters. Moved-away characters exist in the world but don't get active life updates.
+  // Deleted characters are fully excluded.
+  const characters = allCharacters.filter(c => !c.status || c.status === "active");
 
   const results = [];
 
