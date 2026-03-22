@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -65,6 +65,10 @@ export default function GroupChat() {
   }, [messagesData, selectedConversation?.id]);
 
   useEffect(() => {
+    scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  useEffect(() => {
     if (!selectedConversation) return;
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
@@ -112,35 +116,64 @@ export default function GroupChat() {
   const activeCharacters = characters.filter(c => c.status === 'active' || c.status === 'moved_away' || !c.status);
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-background">
+    <div className="fixed inset-0 flex flex-col bg-background pb-[60px]">
       {/* Header */}
       <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 flex-shrink-0">
         <Link to="/home" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
-        <h2 className="text-sm font-semibold text-foreground">Group Chat</h2>
+        <h2 className="text-sm font-semibold text-foreground">Group Chats</h2>
       </div>
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+      {/* Main Content - Two Column Layout */}
+      <div className="flex-1 overflow-hidden flex gap-4 p-4 min-h-0">
+        {/* Conversations Sidebar */}
+        <div className="w-48 flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden flex-shrink-0">
+          <div className="p-3 border-b border-border flex items-center justify-between flex-shrink-0">
+            <h3 className="text-xs font-semibold uppercase tracking-wide">Conversations</h3>
+            <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
+              <Plus className="w-4 h-4" />
+            </button>
+          </div>
+          <ScrollArea className="flex-1">
+            <div className="space-y-1 p-2">
+              {conversationsData.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-4">No conversations yet</p>
+              ) : (
+                conversationsData.map(conv => (
+                  <button
+                    key={conv.id}
+                    onClick={() => setSelectedConversation(conv)}
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-all text-xs ${
+                      selectedConversation?.id === conv.id
+                        ? 'bg-primary text-primary-foreground'
+                        : 'text-foreground hover:bg-secondary'
+                    }`}
+                  >
+                    <p className="truncate font-medium">{conv.title}</p>
+                    <p className="text-xs opacity-70">{conv.character_ids?.length || 0} people</p>
+                  </button>
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+
+        {/* Chat Area */}
         {selectedConversation ? (
-          <div className="flex flex-col h-full flex-1">
+          <div className="flex-1 flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden min-w-0">
             {/* Conversation Header */}
-            <div className="p-4 border-b border-border flex items-center justify-between bg-card/50 flex-shrink-0">
-              <div className="flex items-center gap-3">
-                <div>
-                  <h1 className="text-lg font-semibold text-foreground">{selectedConversation.title}</h1>
-                  <p className="text-xs text-muted-foreground">{selectedConversation.character_ids?.length || 0} participants</p>
-                </div>
-              </div>
+            <div className="p-4 border-b border-border flex-shrink-0">
+              <h1 className="text-sm font-semibold text-foreground">{selectedConversation.title}</h1>
+              <p className="text-xs text-muted-foreground mt-0.5">{selectedConversation.character_ids?.length || 0} participants</p>
             </div>
 
             {/* Messages */}
             <ScrollArea className="flex-1 min-h-0">
-              <div className="space-y-4 p-4">
+              <div className="space-y-3 p-4">
                 {messages.length === 0 ? (
-                  <div className="flex items-center justify-center h-64">
-                    <p className="text-muted-foreground">No messages yet. Start the conversation!</p>
+                  <div className="flex items-center justify-center h-full">
+                    <p className="text-xs text-muted-foreground">No messages yet</p>
                   </div>
                 ) : (
                   messages.map(msg => (
@@ -148,7 +181,7 @@ export default function GroupChat() {
                       key={msg.id}
                       className={`flex ${msg.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
-                      <div className="flex flex-col gap-1 max-w-xs">
+                      <div className="flex flex-col gap-0.5 max-w-xs">
                         <Card
                           className={`${
                             msg.sender_type === 'user'
@@ -156,9 +189,9 @@ export default function GroupChat() {
                               : 'bg-secondary text-secondary-foreground'
                           }`}
                         >
-                          <CardContent className="p-3">
-                            <p className="text-xs font-medium mb-1 opacity-75">{msg.character_name || 'You'}</p>
-                            <p className="text-sm break-words">{msg.content}</p>
+                          <CardContent className="p-2">
+                            <p className="text-xs font-medium mb-0.5 opacity-75">{msg.character_name || 'You'}</p>
+                            <p className="text-xs break-words">{msg.content}</p>
                           </CardContent>
                         </Card>
                         <p className={`text-xs opacity-60 ${msg.sender_type === 'user' ? 'text-right' : 'text-left'}`}>
@@ -175,53 +208,44 @@ export default function GroupChat() {
                     </div>
                   </div>
                 )}
+                <div ref={scrollRef} />
               </div>
             </ScrollArea>
 
-
+            {/* Input Area */}
+            <div className="p-3 border-t border-border bg-card/50 flex-shrink-0">
+              <div className="flex items-end gap-2">
+                <input
+                  type="text"
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault();
+                      handleSendMessage();
+                    }
+                  }}
+                  placeholder="Say something..."
+                  className="flex-1 bg-transparent text-foreground text-xs border border-border rounded-lg px-2 py-1.5 outline-none focus:border-primary placeholder:text-muted-foreground"
+                />
+                <Button
+                  size="icon"
+                  onClick={handleSendMessage}
+                  disabled={!messageText.trim()}
+                  className="h-8 w-8 bg-primary hover:bg-primary/90"
+                >
+                  <Send className="w-3 h-3" />
+                </Button>
+              </div>
+            </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full">
-            <MessageCircle className="w-16 h-16 text-muted-foreground mb-4" />
-            <p className="text-xl font-medium text-foreground">Select a conversation</p>
-            <p className="text-sm text-muted-foreground mt-2">Choose from your existing chats to start messaging</p>
+          <div className="flex-1 flex flex-col items-center justify-center border border-dashed border-border rounded-2xl">
+            <MessageCircle className="w-12 h-12 text-muted-foreground mb-3" />
+            <p className="text-sm font-medium text-foreground">Select a conversation</p>
+            <p className="text-xs text-muted-foreground mt-1">Pick one from the left to start chatting</p>
           </div>
         )}
-      </div>
-
-      {/* Conversations Panel + Input */}
-      <div className="border-t border-border bg-card/50 p-4 flex-shrink-0 mb-[60px]">
-        <div className="max-w-lg mx-auto">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-semibold">Conversations</h2>
-            <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
-              <Plus className="w-4 h-4" />
-            </button>
-          </div>
-          <ScrollArea className="h-24 mb-3">
-            <div className="flex gap-2 pr-4">
-              {conversationsData.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No conversations yet</p>
-              ) : (
-                conversationsData.map(conv => (
-                  <button
-                    key={conv.id}
-                    onClick={() => setSelectedConversation(conv)}
-                    className={`flex-shrink-0 px-3 py-2 rounded-lg transition-all text-sm whitespace-nowrap ${
-                      selectedConversation?.id === conv.id
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-secondary text-foreground hover:bg-secondary/80'
-                    }`}
-                  >
-                    {conv.title}
-                  </button>
-                ))
-              )}
-            </div>
-          </ScrollArea>
-
-
-        </div>
       </div>
 
       {/* Bottom Navigation - Fixed */}
