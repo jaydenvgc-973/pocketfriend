@@ -31,7 +31,13 @@ export default function Home() {
     const defaultChar = characters.find(c => c.is_default);
     if (!defaultChar) return;
     if (!defaultChar.family_history?.includes("Marisol")) {
-      const updated = { ...DEFAULT_CHARACTER_DATA, name: defaultChar.name, avatar_url: defaultChar.avatar_url, emotional_state: defaultChar.emotional_state || "calm" };
+      const updated = {
+        ...DEFAULT_CHARACTER_DATA,
+        name: defaultChar.name,
+        avatar_url: defaultChar.avatar_url || undefined,
+        reference_image_urls: defaultChar.reference_image_urls || undefined,
+        emotional_state: defaultChar.emotional_state || "calm",
+      };
       updated.system_prompt = buildSystemPrompt(updated);
       base44.entities.Character.update(defaultChar.id, updated).then(() => {
         queryClient.invalidateQueries({ queryKey: ["characters"] });

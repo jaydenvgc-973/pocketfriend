@@ -17,6 +17,16 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedUrl, setGeneratedUrl] = useState(existingAvatarUrl);
+  const [initialized, setInitialized] = useState(false);
+
+  // Re-sync when the parent's async data arrives (e.g. character loads after mount)
+  React.useEffect(() => {
+    if (!initialized && (existingReferenceUrls.length > 0 || existingAvatarUrl)) {
+      setReferenceUrls(existingReferenceUrls);
+      setGeneratedUrl(existingAvatarUrl);
+      setInitialized(true);
+    }
+  }, [existingReferenceUrls, existingAvatarUrl, initialized]);
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
