@@ -69,6 +69,7 @@ const defaultData = {
   first_name: "", middle_name: "", last_name: "",
   gender: "", age_range: "", ethnicities: [], living_situation: "",
   vibes: [], background: "", archetype: "", social_energy: "", sexual_orientation: "",
+  personality_override: "", situation_override: "",
   memories: [],
   job_title: "", workplace_type: "", work_environment: "",
   frequented_places: [],
