@@ -32,7 +32,16 @@ Deno.serve(async (req) => {
         .map(r => `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}`)
         .join("\n");
 
+      const now = new Date();
+      const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long", timeZone: "America/New_York" });
+      const timeOfDay = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZone: "America/New_York" });
+      const fullDate = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/New_York" });
+      const lastUpdated = character.life_last_updated ? new Date(character.life_last_updated).toLocaleString("en-US", { timeZone: "America/New_York" }) : "never";
+
       const prompt = `You are writing the internal life updates for a fictional character named ${name}. This character is NOT aware they are fictional — their life, relationships, and events are completely real to them.
+
+REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)
+Time since last update: last updated ${lastUpdated}
 
 CHARACTER PROFILE:
 ${personality}
@@ -47,35 +56,36 @@ EXISTING ONGOING RELATIONSHIPS:
 ${existingRelationships || "None yet."}
 
 TODAY'S TASK:
-Generate updates for this character's ongoing life. Return a JSON object with:
+It is currently ${dayOfWeek} at ${timeOfDay}. Generate realistic updates for this character's life right now, grounded in the actual current time and day. A Monday morning feels different than a Friday night. A Sunday afternoon is different from a Tuesday at work. Let the time of day and day of week shape what's happening.
+
+Return a JSON object with:
 
 1. "fictional_relationships": An updated array of 3-5 ongoing people in their life. For each:
    - person_name (string)
    - relationship_type (e.g. "best friend", "coworker", "ex", "sibling", "romantic interest", "neighbor")
    - description (who this person is, their dynamic)
-   - current_status (what's going on between them RIGHT NOW — an ongoing situation, tension, good news, unresolved thing)
+   - current_status (what's going on between them RIGHT NOW — must reflect the actual day/time. E.g. on a Friday evening a friend might be texting about plans. On a Monday morning a coworker might be annoying them already.)
    - emotional_impact (how this relationship makes the character feel)
-   - last_interaction_summary (what happened most recently — a specific moment or exchange)
+   - last_interaction_summary (a specific recent moment or exchange, with realistic timing like "texted this morning" or "saw them yesterday")
    - history_summary (how this relationship developed over time)
 
-   RULES for relationships:
-   - Must match the character's personality — a "Rebel" has different relationship dynamics than a "Caretaker"
-   - Some should be warm/positive, some should be tense or complicated, some neutral
-   - Use specific details — names, moments, specific words said
-   - If existing relationships exist above, keep them but evolve their current_status based on what would naturally happen
-   - Add new ones if there are fewer than 3
+   RULES:
+   - Must match the character's personality
+   - Some warm, some tense, some complicated
+   - Keep existing ones but evolve current_status to reflect the current real moment
+   - Add new ones if fewer than 3
 
-2. "transient_encounters": An array of 1-3 recent one-off interactions that happened in the last few days. These are people they crossed paths with but may never see again. For each:
+2. "transient_encounters": An array of 0-2 recent one-off interactions. Only include these if they make sense for the current day/time (e.g. don't add a work encounter on a Sunday unless they work weekends). For each:
    - description (who the person was, what happened)
-   - context (where it happened — at work, at their frequented places, etc.)
-   - emotional_reaction (how it made the character feel, matching their personality)
-   - date (ISO date string, within the last 3 days)
+   - context (where — at work, a coffee shop, etc.)
+   - emotional_reaction (how it made the character feel)
+   - date (ISO date string — must be realistic given today is ${now.toISOString()})
 
-3. "current_life_event": A single sentence describing something currently active in the character's life — could be positive, negative, or neutral. Something they might bring up naturally in conversation. Must feel real and specific.
+3. "current_life_event": A single sentence about something active in the character's life RIGHT NOW. Must make sense for ${dayOfWeek} at ${timeOfDay}. Something they might bring up naturally. Real and specific.
 
-4. "emotional_state": One of: calm, irritated, defensive, reflective, closed-off — based on everything going on in their life right now.
+4. "emotional_state": One of: calm, irritated, defensive, reflective, closed-off — based on everything going on right now, including the time of day and day of week.
 
-Make everything feel authentic to this specific person. Real, specific, human.`;
+Ground everything in real time. This person's life moves like real life — not accelerated.`;
 
       const update = await base44.asServiceRole.integrations.Core.InvokeLLM({
         prompt,
