@@ -197,15 +197,15 @@ export default function GroupChat() {
         )}
 
         {/* Conversations Panel - Bottom */}
-        <div className="border-t border-border bg-card/50 p-4">
+        <div className="border-t border-border bg-card/50 p-6 pt-8">
           <div className="max-w-lg mx-auto">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-4">
               <h2 className="text-sm font-semibold">Conversations</h2>
               <button onClick={() => setShowCharacterSelector(true)} className="text-muted-foreground hover:text-foreground">
                 <Plus className="w-4 h-4" />
               </button>
             </div>
-            <ScrollArea className="h-24">
+            <ScrollArea className="h-32">
               <div className="flex gap-2 pr-4">
                 {conversationsData.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No conversations yet</p>
