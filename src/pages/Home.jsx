@@ -117,7 +117,7 @@ export default function Home() {
         )}
         <div>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {customChars.length}/4</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/4</p>
             {canCreate && (
               <Link to="/create">
                 <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
