@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 
 export default function GroupChat() {
+  const navigate = useNavigate();
   const [selectedIds, setSelectedIds] = useState([]);
   const [isSetup, setIsSetup] = useState(false);
   const [messages, setMessages] = useState([]);
