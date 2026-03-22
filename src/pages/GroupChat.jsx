@@ -216,8 +216,16 @@ export default function GroupChat() {
           </div>
         )}
       </div>
+      <AnimatePresence>
+        {showCharacterSelector && (
+          <CharacterSelector
+            characters={activeCharacters}
+            onConfirm={(selectedIds) => createGroupMutation.mutate(selectedIds)}
+            onCancel={() => setShowCharacterSelector(false)}
+          />
+        )}
+      </AnimatePresence>
       <BottomNav />
     </div>
-    </>
   );
 }
