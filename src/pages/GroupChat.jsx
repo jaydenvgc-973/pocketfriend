@@ -27,7 +27,7 @@ export default function GroupChat() {
     initialData: [],
   });
 
-  const characters = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
+  const characters = allCharacters.filter(c => c.status !== "deleted");
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
