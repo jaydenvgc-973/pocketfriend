@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 
@@ -72,6 +73,8 @@ export default function EditDefaultCharacter() {
           {isSaving ? "Saving..." : "Save"}
         </Button>
       </div>
+      <div className="pb-28" />
+      <BottomNav />
     </div>
   );
 }

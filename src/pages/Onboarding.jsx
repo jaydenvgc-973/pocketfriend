@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import BottomNav from "@/components/BottomNav";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Onboarding() {
@@ -92,6 +93,7 @@ export default function Onboarding() {
           )}
         </AnimatePresence>
       </div>
+      <BottomNav />
     </div>
   );
 }
