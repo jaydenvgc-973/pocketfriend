@@ -139,8 +139,8 @@ export default function GroupChat() {
         </ScrollArea>
       </div>
 
-      {/* Chat Area */}
-      <div className="flex-1 flex flex-col bg-background">
+        {/* Chat Area */}
+        <div className="flex-1 flex flex-col bg-background">
         {selectedConversation ? (
           <>
             {/* Header */}
