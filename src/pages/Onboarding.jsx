@@ -62,7 +62,7 @@ export default function Onboarding() {
               <Input
                 value={characterName}
                 onChange={e => setCharacterName(e.target.value)}
-                placeholder="e.g. Quadree"
+                placeholder="e.g. Kelvin"
                 className="h-12 rounded-xl text-base"
                 onKeyDown={e => e.key === "Enter" && characterName.trim() && handleCreate()}
               />
