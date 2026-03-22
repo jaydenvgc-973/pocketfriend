@@ -13,13 +13,39 @@ import CharacterSelector from '@/components/groupchat/CharacterSelector';
 
 export default function GroupChat() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
+  const [showCharacterSelector, setShowCharacterSelector] = useState(false);
 
   const { data: conversationsData = [], isLoading: conversationsLoading } = useQuery({
     queryKey: ['conversations'],
     queryFn: () => base44.entities.Conversation.list(),
+  });
+
+  const { data: characters = [] } = useQuery({
+    queryKey: ['characters'],
+    queryFn: () => base44.entities.Character.list('-created_date'),
+  });
+
+  const createGroupMutation = useMutation({
+    mutationFn: async (characterIds) => {
+      const selectedCharacters = characters.filter(c => characterIds.includes(c.id));
+      const characterNames = selectedCharacters.map(c => c.name).join(', ');
+      
+      const conversation = await base44.entities.Conversation.create({
+        title: characterNames,
+        type: 'group',
+        character_ids: characterIds,
+      });
+      return conversation;
+    },
+    onSuccess: (conversation) => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      setShowCharacterSelector(false);
+      setSelectedConversation(conversation);
+    },
   });
 
   const { data: messagesData = [] } = useQuery({
