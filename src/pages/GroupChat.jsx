@@ -25,7 +25,7 @@ export default function GroupChat() {
 
   const { data: conversationsData = [], isLoading: conversationsLoading } = useQuery({
     queryKey: ['conversations'],
-    queryFn: () => base44.entities.Conversation.list(),
+    queryFn: () => base44.entities.Conversation.filter({ type: 'group' }),
   });
 
   const { data: characters = [] } = useQuery({
@@ -136,15 +136,15 @@ export default function GroupChat() {
             </button>
           </div>
           <ScrollArea className="flex-1">
-            <div className="flex gap-2 p-2">
+            <div className="flex flex-col gap-2 p-2">
               {conversationsData.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No conversations yet</p>
+                <p className="text-xs text-muted-foreground">No group chats yet</p>
               ) : (
                 conversationsData.map(conv => (
                   <button
                     key={conv.id}
                     onClick={() => setSelectedConversation(conv)}
-                    className={`flex-shrink-0 px-3 py-2 rounded-lg transition-all text-xs whitespace-nowrap ${
+                    className={`w-full text-left px-3 py-2 rounded-lg transition-all text-xs ${
                       selectedConversation?.id === conv.id
                         ? 'bg-primary text-primary-foreground'
                         : 'text-foreground hover:bg-secondary'
