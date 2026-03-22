@@ -81,6 +81,8 @@ How they react when upset: ${upset_reaction}
 Things that trigger them: ${emotional_triggers}
 Work/life context: ${work}
 Places they frequent: ${places}
+Health habits: ${character.health_habits || "not established — infer from their personality and lifestyle"}
+Current health status: ${character.health_status || "healthy"}
 
 EXISTING ONGOING RELATIONSHIPS:
 ${existingRelationships || "None yet."}
