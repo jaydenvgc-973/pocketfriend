@@ -45,10 +45,11 @@ export default function Home() {
     }
   }, [characters]);
 
-  if (!isLoading && settings.length === 0) {
-    navigate("/");
-    return null;
-  }
+  useEffect(() => {
+    if (!isLoading && settings.length === 0) {
+      navigate("/");
+    }
+  }, [isLoading, settings]);
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default);

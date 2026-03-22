@@ -53,8 +53,11 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
+  const [sendError, setSendError] = useState(null);
+
   const sendMessage = async (text) => {
     if (!character) return;
+    setSendError(null);
 
     let convoId = conversationId;
     if (!convoId) {
