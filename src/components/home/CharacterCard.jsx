@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { motion } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { MessageCircle, Phone, Trash2, Pencil, X } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 
 const stateLabels = {
