@@ -85,9 +85,11 @@ export default function GroupChat() {
                   <p className="text-sm font-medium text-foreground">{c.name}</p>
                   <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                 </div>
-                <button onClick={() => setDeletedIds(prev => [...prev, c.id])} className="text-muted-foreground hover:text-destructive transition-colors p-1">
-                  <X className="w-4 h-4" />
-                </button>
+                {!c.is_default && (
+                  <button onClick={() => setDeletedIds(prev => [...prev, c.id])} className="text-muted-foreground hover:text-destructive transition-colors p-1">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
             ))}
           </div>
