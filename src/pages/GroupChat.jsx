@@ -125,10 +125,19 @@ export default function GroupChat() {
                  </div>
                  <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                </div>
-               {!c.is_default && selectedIds.includes(c.id) && c.status === "active" && (
-                 <button onClick={(e) => { e.stopPropagation(); setSelectedIds(prev => prev.filter(id => id !== c.id)); }} className="text-muted-foreground hover:text-destructive transition-colors p-1">
-                   <X className="w-4 h-4" />
-                 </button>
+               {!c.is_default && c.status === "active" && (
+                 <DropdownMenu>
+                   <DropdownMenuTrigger asChild>
+                     <button onClick={(e) => e.stopPropagation()} className="p-1 rounded text-muted-foreground hover:text-foreground">
+                       <MoreVertical className="w-4 h-4" />
+                     </button>
+                   </DropdownMenuTrigger>
+                   <DropdownMenuContent align="end" className="w-40">
+                     <DropdownMenuItem onClick={() => deleteMutation.mutate(c.id)} className="gap-2 text-destructive focus:text-destructive">
+                       <Trash2 className="w-4 h-4" /> Delete
+                     </DropdownMenuItem>
+                   </DropdownMenuContent>
+                 </DropdownMenu>
                )}
                {!c.is_default && c.status === "moved_away" && (
                  <DropdownMenu>
