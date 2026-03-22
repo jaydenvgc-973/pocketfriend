@@ -88,6 +88,27 @@ EXISTING ONGOING RELATIONSHIPS:
 ${existingRelationships || "None yet."}
 ${departedContext}
 
+CURRENT WORLD CONTEXT (2026):
+Health & Mortality:
+- Heart disease and cancer remain the leading causes of death in the US (combined ~1.29M deaths annually).
+- Unintentional injuries, stroke, chronic respiratory diseases, and Alzheimer's are also significant causes.
+- Diabetes, kidney disease, liver disease, and COVID-19 remain persistent health concerns.
+
+Crime & Safety:
+- Larceny and theft are by far the most common reported crimes (~60% of reports).
+- Burglary and motor vehicle theft remain widespread but have trended downward.
+- Aggravated assault is the most common violent crime (~7% of reports).
+- Drug crime saw a +7% increase recently. DUI, fraud, and domestic violence remain serious issues.
+- Overall crime rates are currently decreasing (2024-2025), with homicide down 17-21% in major cities.
+
+IMPORTANT: ${character.name} only thinks about or is affected by these realities if:
+1. They personally experience or are directly exposed to it (e.g. a health scare, witnessing crime, a friend/family member affected).
+2. They work in a field that deals with these issues (healthcare, law enforcement, social work, etc.).
+3. They have a personality trait or cause they care deeply about that connects to it (e.g. a caretaker worried about elderly relatives, an activist concerned with drug policy, someone health-conscious tracking wellness).
+4. They are in a community or demographic where these issues are more prevalent or salient.
+
+Do NOT invent awareness of these things unless it fits naturally into their life and personality. ${character.name}'s world is their immediate reality — work, relationships, daily struggles, the people they know.
+
 TODAY'S TASK:
 It is currently ${dayOfWeek} at ${timeOfDay}. Generate realistic updates for this character's life right now, grounded in the actual current time and day. A Monday morning feels different than a Friday night. A Sunday afternoon is different from a Tuesday at work. Let the time of day and day of week shape what's happening.
 
