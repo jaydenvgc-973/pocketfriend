@@ -68,15 +68,15 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
           )}
         </div>
 
-        <div className="border-t border-border p-4 flex gap-2">
-          <Button variant="outline" onClick={onCancel} className="flex-1">
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onCancel} size="sm" className="flex-1">
             Cancel
           </Button>
-          <Button onClick={handleConfirm} disabled={selected.length === 0} className="flex-1">
-            Create Group ({selected.length})
+          <Button onClick={handleConfirm} disabled={selected.length === 0} size="sm" className="flex-1">
+            Create ({selected.length})
           </Button>
         </div>
-      </motion.div>
+      </div>
     </motion.div>
   );
 }
