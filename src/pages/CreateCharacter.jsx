@@ -421,45 +421,40 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
     // Step 6: Memories
     <div key="memories" className="space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-foreground mb-1">Core Memories</h2>
-        <p className="text-xs text-muted-foreground mb-4">These shape how they think, react, and what they carry.</p>
+        <h2 className="text-sm font-semibold text-foreground mb-1">What have they been through?</h2>
+        <p className="text-xs text-muted-foreground mb-1">Pick the types of experiences that shaped them.</p>
+        <p className="text-xs text-muted-foreground/60 mb-4">The AI will write the actual memories — specific, named, real-feeling scenes — when you create. Skip this step and they'll still get a full past.</p>
       </div>
       {data.memories.length > 0 && (
-        <div className="space-y-2">
+        <div className="flex flex-wrap gap-2 mb-2">
           {data.memories.map(m => (
-            <div key={m.title} className="flex items-start gap-2 bg-primary/10 border border-primary/20 rounded-xl px-3 py-2.5">
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-foreground">{m.title}</p>
-                {m.description && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{m.description}</p>}
-              </div>
-              <button onClick={() => removeMemory(m.title)} className="text-muted-foreground hover:text-destructive flex-shrink-0 mt-0.5"><X className="w-4 h-4" /></button>
+            <div key={m.title} className="flex items-center gap-1.5 bg-primary/10 border border-primary/20 rounded-full px-3 py-1.5">
+              <span className="text-xs font-medium text-primary">{m.title}</span>
+              <button onClick={() => removeMemory(m.title)} className="text-primary/50 hover:text-destructive transition-colors"><X className="w-3 h-3" /></button>
             </div>
           ))}
         </div>
       )}
-      <div>
-        <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Pick from presets</p>
-        <div className="space-y-2">
-          {MEMORY_PRESETS.filter(p => !data.memories.find(m => m.title === p.title)).map(preset => (
-            <button key={preset.title} onClick={() => addPresetMemory(preset)} className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
-              <p className="text-sm font-medium text-foreground">{preset.title}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
-            </button>
-          ))}
-        </div>
+      <div className="space-y-2">
+        {MEMORY_PRESETS.filter(p => !data.memories.find(m => m.title === p.title)).map(preset => (
+          <button key={preset.title} onClick={() => addPresetMemory(preset)} className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
+            <p className="text-sm font-medium text-foreground">{preset.title}</p>
+            <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
+          </button>
+        ))}
       </div>
       {showMemoryForm ? (
         <div className="space-y-2 border border-border rounded-xl p-3">
-          <Input value={newMemory.title} onChange={e => setNewMemory(prev => ({ ...prev, title: e.target.value }))} placeholder="Memory title..." className="h-10 rounded-lg text-sm" />
-          <Textarea value={newMemory.description} onChange={e => setNewMemory(prev => ({ ...prev, description: e.target.value }))} placeholder="What happened? How did it affect them?" className="rounded-lg min-h-[80px] text-sm resize-none" />
+          <Input value={newMemory.title} onChange={e => setNewMemory(prev => ({ ...prev, title: e.target.value }))} placeholder="Describe the experience type..." className="h-10 rounded-lg text-sm" />
+          <Textarea value={newMemory.description} onChange={e => setNewMemory(prev => ({ ...prev, description: e.target.value }))} placeholder="Any specific details to include? (optional)" className="rounded-lg min-h-[70px] text-sm resize-none" />
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => { setShowMemoryForm(false); setNewMemory({ title: "", description: "" }); }} className="flex-1 rounded-lg">Cancel</Button>
-            <Button size="sm" onClick={addCustomMemory} disabled={!newMemory.title.trim()} className="flex-1 rounded-lg">Add</Button>
+            <Button size="sm" onClick={addCustomMemory} disabled={!newMemory.title.trim()} className="flex-1 rounded-lg">Add theme</Button>
           </div>
         </div>
       ) : (
         <button onClick={() => setShowMemoryForm(true)} className="w-full flex items-center gap-2 justify-center py-3 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-sm">
-          <Plus className="w-4 h-4" /> Write your own memory
+          <Plus className="w-4 h-4" /> Add a custom experience
         </button>
       )}
     </div>,
