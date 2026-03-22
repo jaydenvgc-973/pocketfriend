@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
+import BottomNav from "@/components/BottomNav";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
@@ -134,7 +135,7 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
+      <div className="max-w-lg mx-auto px-6 py-6 pb-28 space-y-6">
         {defaultChar && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
@@ -185,6 +186,7 @@ export default function Home() {
           )}
         </div>
       </div>
+      <BottomNav />
     </div>
   );
 }
