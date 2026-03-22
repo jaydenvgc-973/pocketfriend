@@ -1,41 +1,33 @@
 import React, { useState } from "react";
+import { base44 } from "@/api/base44Client";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ArrowRight } from "lucide-react";
-import { base44 } from "@/api/base44Client";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
-import { useNavigate } from "react-router-dom";
 
 export default function Onboarding() {
-  const [step, setStep] = useState(0);
-  const [name, setName] = useState("");
-  const [isCreating, setIsCreating] = useState(false);
   const navigate = useNavigate();
+  const [step, setStep] = useState(0);
+  const [characterName, setCharacterName] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleCreate = async () => {
-    if (!name.trim()) return;
-    setIsCreating(true);
-
-    const charData = {
+    if (!characterName.trim()) return;
+    setIsSubmitting(true);
+    const data = {
       ...DEFAULT_CHARACTER_DATA,
-      name: name.trim(),
+      name: characterName.trim(),
     };
-    charData.system_prompt = buildSystemPrompt(charData);
-
-    const character = await base44.entities.Character.create(charData);
-
-    await base44.entities.UserSettings.create({
-      has_completed_onboarding: true,
-      default_character_id: character.id,
-    });
-
+    data.system_prompt = buildSystemPrompt(data);
+    await base44.entities.Character.create(data);
+    await base44.entities.UserSettings.create({ has_completed_onboarding: true });
     navigate("/home");
   };
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-background flex items-center justify-center px-6">
+      <div className="max-w-sm w-full">
         <AnimatePresence mode="wait">
           {step === 0 && (
             <motion.div
@@ -43,65 +35,43 @@ export default function Onboarding() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="text-center"
+              className="text-center space-y-6"
             >
-              <div className="w-20 h-20 rounded-full bg-primary/20 mx-auto mb-8 flex items-center justify-center">
-                <div className="w-8 h-8 rounded-full bg-primary/60" />
+              <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center mx-auto">
+                <span className="text-3xl">👤</span>
               </div>
-              <h1 className="text-2xl font-bold text-foreground mb-3">
-                You're about to meet your first character.
-              </h1>
-              <div className="bg-card border border-border rounded-2xl p-6 mt-8 text-left space-y-4">
-                <p className="text-sm text-muted-foreground leading-relaxed italic">
-                  "He's direct, observant, and emotionally aware. He values respect, notices everything, and doesn't respond well to being minimized. He's not always easy—but he's real."
-                </p>
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {["Male", "Conversational", "Emotionally reactive", "Memory-driven"].map(t => (
-                    <span key={t} className="text-xs bg-primary/10 text-primary px-3 py-1.5 rounded-full font-medium">{t}</span>
-                  ))}
-                </div>
+              <div>
+                <h1 className="text-2xl font-bold text-foreground">Pocketfriend</h1>
+                <p className="text-muted-foreground mt-2 text-sm">A character that feels real. Built to push back, not just agree.</p>
               </div>
-              <Button onClick={() => setStep(1)} className="mt-8 w-full h-12 rounded-xl text-base gap-2">
-                Continue <ArrowRight className="w-4 h-4" />
-              </Button>
+              <Button onClick={() => setStep(1)} className="w-full h-12 rounded-xl">Get started</Button>
             </motion.div>
           )}
-
           {step === 1 && (
             <motion.div
               key="name"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
-              className="text-center"
+              className="space-y-6"
             >
-              <div className="w-20 h-20 rounded-full bg-primary/20 mx-auto mb-8 flex items-center justify-center">
-                {name ? (
-                  <span className="text-2xl font-bold text-primary">{name[0].toUpperCase()}</span>
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-primary/60" />
-                )}
+              <div>
+                <h2 className="text-xl font-bold text-foreground">Name your character</h2>
+                <p className="text-muted-foreground text-sm mt-1">What do you want to call them?</p>
               </div>
-              <h2 className="text-xl font-bold text-foreground mb-2">What would you like to name him?</h2>
-              <p className="text-sm text-muted-foreground mb-8">This changes only the display name. His personality stays the same.</p>
               <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Enter a name..."
-                className="h-12 text-center text-lg bg-card border-border rounded-xl"
-                autoFocus
-                onKeyDown={(e) => e.key === "Enter" && handleCreate()}
+                value={characterName}
+                onChange={e => setCharacterName(e.target.value)}
+                placeholder="e.g. Quadree"
+                className="h-12 rounded-xl text-base"
+                onKeyDown={e => e.key === "Enter" && characterName.trim() && handleCreate()}
               />
               <Button
                 onClick={handleCreate}
-                disabled={!name.trim() || isCreating}
-                className="mt-6 w-full h-12 rounded-xl text-base gap-2"
+                disabled={!characterName.trim() || isSubmitting}
+                className="w-full h-12 rounded-xl"
               >
-                {isCreating ? (
-                  <div className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <>Meet {name || "them"} <ArrowRight className="w-4 h-4" /></>
-                )}
+                {isSubmitting ? "Creating..." : "Create character"}
               </Button>
             </motion.div>
           )}

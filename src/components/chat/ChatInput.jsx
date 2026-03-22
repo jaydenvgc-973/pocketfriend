@@ -22,31 +22,23 @@ export default function ChatInput({ onSend, disabled }) {
   };
 
   const toggleVoice = () => {
-    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-      return;
-    }
-
+    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) return;
     if (isRecording) {
       recognitionRef.current?.stop();
       setIsRecording(false);
       return;
     }
-
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = "en-US";
-
     recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      setText(prev => prev + transcript);
+      setText(prev => prev + event.results[0][0].transcript);
       setIsRecording(false);
     };
-
     recognition.onerror = () => setIsRecording(false);
     recognition.onend = () => setIsRecording(false);
-
     recognitionRef.current = recognition;
     recognition.start();
     setIsRecording(true);
