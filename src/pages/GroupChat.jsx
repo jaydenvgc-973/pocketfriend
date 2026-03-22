@@ -9,6 +9,7 @@ import { ArrowLeft, Send, Plus, MessageCircle } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AnimatePresence } from 'framer-motion';
 import { motion } from 'framer-motion';
+import { formatDistanceToNow } from 'date-fns';
 import BottomNav from '@/components/BottomNav';
 import CharacterSelector from '@/components/groupchat/CharacterSelector';
 
@@ -146,18 +147,23 @@ export default function GroupChat() {
                       key={msg.id}
                       className={`flex ${msg.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
-                      <Card
-                        className={`max-w-xs ${
-                          msg.sender_type === 'user'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-secondary text-secondary-foreground'
-                        }`}
-                      >
-                        <CardContent className="p-3">
-                          <p className="text-xs font-medium mb-1 opacity-75">{msg.character_name || 'You'}</p>
-                          <p className="text-sm break-words">{msg.content}</p>
-                        </CardContent>
-                      </Card>
+                      <div className="flex flex-col gap-1 max-w-xs">
+                        <Card
+                          className={`${
+                            msg.sender_type === 'user'
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-secondary text-secondary-foreground'
+                          }`}
+                        >
+                          <CardContent className="p-3">
+                            <p className="text-xs font-medium mb-1 opacity-75">{msg.character_name || 'You'}</p>
+                            <p className="text-sm break-words">{msg.content}</p>
+                          </CardContent>
+                        </Card>
+                        <p className={`text-xs opacity-60 ${msg.sender_type === 'user' ? 'text-right' : 'text-left'}`}>
+                          {msg.timestamp ? formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true }) : ''}
+                        </p>
+                      </div>
                     </div>
                   ))
                 )}
