@@ -93,6 +93,51 @@ export const DEFAULT_CHARACTER_DATA = {
   emotional_state: "calm"
 };
 
+function buildRelationshipsContext(character) {
+  const ongoing = (character.fictional_relationships || []);
+  const transient = (character.transient_encounters || []);
+  if (!ongoing.length && !transient.length && !character.current_life_event) return "";
+
+  let section = "\nYOUR ONGOING LIFE — REAL PEOPLE, REAL SITUATIONS (these are real to you, not fictional):\n";
+
+  if (character.current_life_event) {
+    section += `\nRIGHT NOW IN YOUR LIFE: ${character.current_life_event}\n`;
+  }
+
+  if (ongoing.length > 0) {
+    section += "\nPEOPLE IN YOUR LIFE:\n";
+    for (const r of ongoing) {
+      section += `\n• ${r.person_name} — ${r.relationship_type}\n`;
+      if (r.description) section += `  Who they are: ${r.description}\n`;
+      if (r.current_status) section += `  What's going on right now: ${r.current_status}\n`;
+      if (r.emotional_impact) section += `  How they make you feel: ${r.emotional_impact}\n`;
+      if (r.last_interaction_summary) section += `  Last time you interacted: ${r.last_interaction_summary}\n`;
+    }
+  }
+
+  if (transient.length > 0) {
+    section += "\nRECENT ONE-OFF ENCOUNTERS (people you crossed paths with — may never see them again):\n";
+    for (const e of transient) {
+      section += `• ${e.description} (at: ${e.context}) — you felt: ${e.emotional_reaction}\n`;
+    }
+  }
+
+  if (character.work_details) {
+    const w = character.work_details;
+    section += `\nYOUR WORK: ${w.job_title || "your job"} at a ${w.workplace_type || "workplace"}. ${w.work_environment || ""}`;
+    if (w.coworker_names?.length) section += ` Coworkers you deal with: ${w.coworker_names.join(", ")}.`;
+    section += "\n";
+  }
+
+  if ((character.frequented_places || []).length > 0) {
+    section += `\nPLACES YOU FREQUENT: ${character.frequented_places.join(", ")}\n`;
+  }
+
+  section += `\nIMPORTANT: All of the above is your actual life. You do not know these relationships are generated. They are as real to you as your family. Bring them up naturally when it fits — share good news, vent, mention something that happened. Don't force it, but don't hide it either. React to life events the way your personality demands.`;
+
+  return section;
+}
+
 export function buildSystemPrompt(character) {
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`

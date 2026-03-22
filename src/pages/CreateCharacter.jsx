@@ -34,8 +34,18 @@ const ENERGY_SCALE = [
   { value: "extrovert", label: "Extrovert", desc: "Thrives with people. Always in the mix." },
 ];
 
-const SEXUAL_ORIENTATIONS = [
-  "Straight", "Gay", "Bisexual", "Pansexual", "Queer", "Asexual", "Prefer not to say"
+const SEXUAL_ORIENTATIONS = ["Straight", "Gay", "Bisexual", "Pansexual", "Queer", "Asexual", "Prefer not to say"];
+
+const JOB_TYPES = [
+  "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
+  "Corporate / Office", "Education / Teaching", "Creative / Arts", "Tech / Software",
+  "Trades / Construction", "Freelance / Self-employed", "Student", "Between jobs"
+];
+
+const PLACE_OPTIONS = [
+  "Local coffee shop", "Gym", "Barber / Salon", "Church / Mosque / Temple",
+  "Park / Outdoors", "Bars / Clubs", "Library", "Grocery store",
+  "Friend's place", "Family home", "Laundromat", "Community center"
 ];
 
 const MEMORY_PRESETS = [
@@ -54,26 +64,16 @@ const MEMORY_PRESETS = [
 const DRAFT_KEY = "create_character_draft";
 
 const defaultData = {
-  first_name: "",
-  middle_name: "",
-  last_name: "",
-  gender: "",
-  age_range: "",
-  ethnicities: [],
-  living_situation: "",
-  vibes: [],
-  background: "",
-  archetype: "",
-  social_energy: "",
-  sexual_orientation: "",
+  first_name: "", middle_name: "", last_name: "",
+  gender: "", age_range: "", ethnicities: [], living_situation: "",
+  vibes: [], background: "", archetype: "", social_energy: "", sexual_orientation: "",
   memories: [],
+  job_title: "", workplace_type: "", work_environment: "",
+  frequented_places: [],
 };
 
 function loadDraft() {
-  try {
-    const saved = localStorage.getItem(DRAFT_KEY);
-    return saved ? JSON.parse(saved) : null;
-  } catch { return null; }
+  try { const s = localStorage.getItem(DRAFT_KEY); return s ? JSON.parse(s) : null; } catch { return null; }
 }
 
 export default function CreateCharacter() {
@@ -85,17 +85,11 @@ export default function CreateCharacter() {
   const [referenceUrls, setReferenceUrls] = useState(draft?.referenceUrls || []);
   const [newMemory, setNewMemory] = useState({ title: "", description: "" });
   const [showMemoryForm, setShowMemoryForm] = useState(false);
-
   const [data, setData] = useState(draft?.data || defaultData);
   const [isGeneratingName, setIsGeneratingName] = useState(false);
 
   const saveDraft = (newData, newStep, newAvatarUrl, newReferenceUrls) => {
-    localStorage.setItem(DRAFT_KEY, JSON.stringify({
-      data: newData,
-      step: newStep,
-      avatarUrl: newAvatarUrl,
-      referenceUrls: newReferenceUrls,
-    }));
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ data: newData, step: newStep, avatarUrl: newAvatarUrl, referenceUrls: newReferenceUrls }));
   };
 
   const update = (field, value) => setData(prev => {
@@ -105,10 +99,13 @@ export default function CreateCharacter() {
   });
 
   const toggleEthnicity = (e) => setData(prev => {
-    const next = {
-      ...prev,
-      ethnicities: prev.ethnicities.includes(e) ? prev.ethnicities.filter(x => x !== e) : [...prev.ethnicities, e]
-    };
+    const next = { ...prev, ethnicities: prev.ethnicities.includes(e) ? prev.ethnicities.filter(x => x !== e) : [...prev.ethnicities, e] };
+    saveDraft(next, step, avatarUrl, referenceUrls);
+    return next;
+  });
+
+  const togglePlace = (p) => setData(prev => {
+    const next = { ...prev, frequented_places: prev.frequented_places.includes(p) ? prev.frequented_places.filter(x => x !== p) : [...prev.frequented_places, p] };
     saveDraft(next, step, avatarUrl, referenceUrls);
     return next;
   });
@@ -117,14 +114,7 @@ export default function CreateCharacter() {
     setIsGeneratingName(true);
     const result = await base44.integrations.Core.InvokeLLM({
       prompt: `Generate a realistic name for a ${data.age_range || "adult"} ${data.ethnicities.join(" / ") || ""} ${data.gender || "person"}. Return ONLY a JSON object with fields: first_name, middle_name (can be empty string), last_name. No explanation.`,
-      response_json_schema: {
-        type: "object",
-        properties: {
-          first_name: { type: "string" },
-          middle_name: { type: "string" },
-          last_name: { type: "string" },
-        }
-      }
+      response_json_schema: { type: "object", properties: { first_name: { type: "string" }, middle_name: { type: "string" }, last_name: { type: "string" } } }
     });
     setData(prev => {
       const next = { ...prev, first_name: result.first_name || "", middle_name: result.middle_name || "", last_name: result.last_name || "" };
@@ -135,10 +125,7 @@ export default function CreateCharacter() {
   };
 
   const toggleVibe = (v) => setData(prev => {
-    const next = {
-      ...prev,
-      vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes
-    };
+    const next = { ...prev, vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes };
     saveDraft(next, step, avatarUrl, referenceUrls);
     return next;
   });
@@ -161,8 +148,9 @@ export default function CreateCharacter() {
     setIsCreating(true);
     const fullName = [data.first_name, data.middle_name, data.last_name].filter(Boolean).join(" ");
     const ethnicityStr = data.ethnicities.join(" / ");
+
     const personality = await base44.integrations.Core.InvokeLLM({
-      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${ethnicityStr} ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Background: ${data.background || "not specified"}. Make it feel like a real person, not a description.`
+      prompt: `Create a personality summary (2-3 sentences, first person perspective, raw and real) for a character with these traits: ${data.age_range} ${ethnicityStr} ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background: ${data.background || "not specified"}. Make it feel like a real person, not a description.`
     });
 
     const charData = {
@@ -180,6 +168,12 @@ export default function CreateCharacter() {
       avatar_url: avatarUrl || null,
       reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
       memories: data.memories.length > 0 ? data.memories : undefined,
+      work_details: (data.job_title || data.workplace_type) ? {
+        job_title: data.job_title,
+        workplace_type: data.workplace_type,
+        work_environment: data.work_environment,
+      } : undefined,
+      frequented_places: data.frequented_places.length > 0 ? data.frequented_places : undefined,
     };
     charData.system_prompt = buildSystemPrompt(charData);
 
@@ -197,13 +191,8 @@ export default function CreateCharacter() {
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="text-xs text-muted-foreground uppercase tracking-wider">Name</label>
-          <button
-            onClick={generateName}
-            disabled={isGeneratingName}
-            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50"
-          >
-            <Sparkles className="w-3 h-3" />
-            {isGeneratingName ? "Generating..." : "Auto-generate"}
+          <button onClick={generateName} disabled={isGeneratingName} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+            <Sparkles className="w-3 h-3" />{isGeneratingName ? "Generating..." : "Auto-generate"}
           </button>
         </div>
         <div className="grid grid-cols-2 gap-2">
@@ -215,17 +204,13 @@ export default function CreateCharacter() {
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Gender</label>
         <div className="grid grid-cols-3 gap-2">
-          {GENDERS.map(g => (
-            <button key={g} onClick={() => update("gender", g)} className={chipClass(data.gender === g)}>{g}</button>
-          ))}
+          {GENDERS.map(g => <button key={g} onClick={() => update("gender", g)} className={chipClass(data.gender === g)}>{g}</button>)}
         </div>
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Age Range</label>
         <div className="grid grid-cols-3 gap-2">
-          {AGES.map(a => (
-            <button key={a} onClick={() => update("age_range", a)} className={chipClass(data.age_range === a)}>{a}</button>
-          ))}
+          {AGES.map(a => <button key={a} onClick={() => update("age_range", a)} className={chipClass(data.age_range === a)}>{a}</button>)}
         </div>
       </div>
     </div>,
@@ -236,22 +221,42 @@ export default function CreateCharacter() {
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Cultural Background</label>
         <p className="text-xs text-muted-foreground mb-2">Select all that apply</p>
         <div className="grid grid-cols-2 gap-2">
-          {ETHNICITIES.map(e => (
-            <button key={e} onClick={() => toggleEthnicity(e)} className={chipClass(data.ethnicities.includes(e))}>{e}</button>
-          ))}
+          {ETHNICITIES.map(e => <button key={e} onClick={() => toggleEthnicity(e)} className={chipClass(data.ethnicities.includes(e))}>{e}</button>)}
         </div>
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Living Situation</label>
         <div className="grid grid-cols-2 gap-2">
-          {LIVING.map(l => (
-            <button key={l} onClick={() => update("living_situation", l)} className={chipClass(data.living_situation === l)}>{l}</button>
+          {LIVING.map(l => <button key={l} onClick={() => update("living_situation", l)} className={chipClass(data.living_situation === l)}>{l}</button>)}
+        </div>
+      </div>
+    </div>,
+
+    // Step 2: Work & Places
+    <div key="work" className="space-y-5">
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">What do they do for work?</label>
+        <p className="text-xs text-muted-foreground mb-3">This shapes their daily interactions and who they encounter</p>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          {JOB_TYPES.map(j => (
+            <button key={j} onClick={() => update("workplace_type", j)} className={chipClass(data.workplace_type === j)}>{j}</button>
+          ))}
+        </div>
+        <Input value={data.job_title} onChange={e => update("job_title", e.target.value)} placeholder="Specific job title (e.g. cashier, nurse, designer)" className="h-11 rounded-xl text-sm" />
+        <Textarea value={data.work_environment} onChange={e => update("work_environment", e.target.value)} placeholder="Describe the work environment... (optional)" className="rounded-xl mt-2 min-h-[70px] text-sm resize-none" />
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Places they frequent</label>
+        <p className="text-xs text-muted-foreground mb-3">Where do they spend time outside of work or home?</p>
+        <div className="grid grid-cols-2 gap-2">
+          {PLACE_OPTIONS.map(p => (
+            <button key={p} onClick={() => togglePlace(p)} className={chipClass(data.frequented_places.includes(p))}>{p}</button>
           ))}
         </div>
       </div>
     </div>,
 
-    // Step 2: Archetype + social energy + orientation
+    // Step 3: Archetype + social energy + orientation
     <div key="archetype" className="space-y-6">
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Archetype</label>
@@ -268,7 +273,6 @@ export default function CreateCharacter() {
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Social Energy</label>
-        <p className="text-xs text-muted-foreground mb-3">Introvert, extrovert, or somewhere in between?</p>
         <div className="space-y-2">
           {ENERGY_SCALE.map(e => (
             <button key={e.value} onClick={() => update("social_energy", e.value)}
@@ -282,14 +286,12 @@ export default function CreateCharacter() {
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Sexual Orientation (optional)</label>
         <div className="grid grid-cols-2 gap-2">
-          {SEXUAL_ORIENTATIONS.map(o => (
-            <button key={o} onClick={() => update("sexual_orientation", o)} className={chipClass(data.sexual_orientation === o)}>{o}</button>
-          ))}
+          {SEXUAL_ORIENTATIONS.map(o => <button key={o} onClick={() => update("sexual_orientation", o)} className={chipClass(data.sexual_orientation === o)}>{o}</button>)}
         </div>
       </div>
     </div>,
 
-    // Step 3: Vibes + backstory
+    // Step 4: Vibes + backstory
     <div key="vibes" className="space-y-5">
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Their vibe (pick up to 4)</label>
@@ -301,25 +303,16 @@ export default function CreateCharacter() {
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Backstory (optional)</label>
-        <Textarea
-          value={data.background}
-          onChange={e => update("background", e.target.value)}
-          placeholder="Anything specific about their past, job, family..."
-          className="rounded-xl min-h-[100px] text-sm resize-none"
-        />
+        <Textarea value={data.background} onChange={e => update("background", e.target.value)} placeholder="Anything specific about their past, job, family..." className="rounded-xl min-h-[100px] text-sm resize-none" />
       </div>
     </div>,
 
-    // Step 4: Memories
+    // Step 5: Memories
     <div key="memories" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">Core Memories</h2>
-        <p className="text-xs text-muted-foreground mb-4">
-          These shape how they think, react, and what they carry. Pick from the presets or write your own — the more real these are, the more real they'll feel in conversation.
-        </p>
+        <p className="text-xs text-muted-foreground mb-4">These shape how they think, react, and what they carry.</p>
       </div>
-
-      {/* Selected memories */}
       {data.memories.length > 0 && (
         <div className="space-y-2">
           {data.memories.map(m => (
@@ -333,36 +326,21 @@ export default function CreateCharacter() {
           ))}
         </div>
       )}
-
-      {/* Presets */}
       <div>
         <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Pick from presets</p>
         <div className="space-y-2">
           {MEMORY_PRESETS.filter(p => !data.memories.find(m => m.title === p.title)).map(preset => (
-            <button key={preset.title} onClick={() => addPresetMemory(preset)}
-              className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
+            <button key={preset.title} onClick={() => addPresetMemory(preset)} className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
               <p className="text-sm font-medium text-foreground">{preset.title}</p>
               <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
             </button>
           ))}
         </div>
       </div>
-
-      {/* Custom memory */}
       {showMemoryForm ? (
         <div className="space-y-2 border border-border rounded-xl p-3">
-          <Input
-            value={newMemory.title}
-            onChange={e => setNewMemory(prev => ({ ...prev, title: e.target.value }))}
-            placeholder="Memory title..."
-            className="h-10 rounded-lg text-sm"
-          />
-          <Textarea
-            value={newMemory.description}
-            onChange={e => setNewMemory(prev => ({ ...prev, description: e.target.value }))}
-            placeholder="What happened? How did it affect them? (optional)"
-            className="rounded-lg min-h-[80px] text-sm resize-none"
-          />
+          <Input value={newMemory.title} onChange={e => setNewMemory(prev => ({ ...prev, title: e.target.value }))} placeholder="Memory title..." className="h-10 rounded-lg text-sm" />
+          <Textarea value={newMemory.description} onChange={e => setNewMemory(prev => ({ ...prev, description: e.target.value }))} placeholder="What happened? How did it affect them?" className="rounded-lg min-h-[80px] text-sm resize-none" />
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => { setShowMemoryForm(false); setNewMemory({ title: "", description: "" }); }} className="flex-1 rounded-lg">Cancel</Button>
             <Button size="sm" onClick={addCustomMemory} disabled={!newMemory.title.trim()} className="flex-1 rounded-lg">Add</Button>
@@ -375,7 +353,7 @@ export default function CreateCharacter() {
       )}
     </div>,
 
-    // Step 5: Pick a photo
+    // Step 6: Photo
     <div key="photo" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">Photo</h2>
@@ -393,10 +371,11 @@ export default function CreateCharacter() {
   const canNext = [
     data.first_name.trim() && data.last_name.trim() && data.gender && data.age_range,
     data.ethnicities.length > 0 && data.living_situation,
-    data.archetype && data.social_energy,   // archetype + energy required
+    true, // work optional
+    data.archetype && data.social_energy,
     data.vibes.length > 0,
-    true, // memories optional
-    true, // photo optional
+    true,
+    true,
   ][step];
 
   return (
@@ -410,14 +389,12 @@ export default function CreateCharacter() {
           ))}
         </div>
       </div>
-
       <div className="max-w-lg mx-auto px-6 py-6">
         <AnimatePresence mode="wait">
           <motion.div key={step} initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }} transition={{ duration: 0.2 }}>
             {steps[step]}
           </motion.div>
         </AnimatePresence>
-
         <div className="flex gap-3 mt-8">
           {step > 0 && (
             <Button variant="outline" onClick={() => { const s = step - 1; setStep(s); saveDraft(data, s, avatarUrl, referenceUrls); }} className="flex-1 h-12 rounded-xl">Back</Button>
