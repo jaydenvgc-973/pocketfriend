@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import BottomNav from "@/components/BottomNav";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
@@ -535,6 +536,8 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
           )}
         </div>
       </div>
+      <div className="pb-28" />
+      <BottomNav />
     </div>
   );
 }

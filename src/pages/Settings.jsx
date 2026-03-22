@@ -6,6 +6,7 @@ import { ArrowLeft } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import BottomNav from "@/components/BottomNav";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -62,6 +63,8 @@ export default function Settings() {
           />
         </div>
       </div>
+      <div className="pb-28" />
+      <BottomNav />
     </div>
   );
 }

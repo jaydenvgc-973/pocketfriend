@@ -8,6 +8,7 @@ import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Chat() {
@@ -188,6 +189,7 @@ export default function Chat() {
         <div ref={bottomRef} />
       </div>
       <ChatInput onSend={sendMessage} disabled={isTyping} />
+      <BottomNav />
     </div>
   );
 }

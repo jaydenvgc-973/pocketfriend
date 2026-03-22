@@ -2,6 +2,7 @@ import React from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Users } from "lucide-react";
 import { motion } from "framer-motion";
+import BottomNav from "@/components/BottomNav";
 
 export default function Groups() {
   return (
@@ -26,6 +27,8 @@ export default function Groups() {
           </motion.div>
         </Link>
       </div>
+      <div className="pb-28" />
+      <BottomNav />
     </div>
   );
 }
