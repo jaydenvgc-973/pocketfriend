@@ -125,7 +125,7 @@ export default function GroupChat() {
                  </div>
                  <p className="text-xs text-muted-foreground truncate">{c.personality_summary?.substring(0, 50)}</p>
                </div>
-               {c.status === "active" && (
+               {!c.is_default && c.status === "active" && (
                  <DropdownMenu>
                    <DropdownMenuTrigger asChild>
                      <button onClick={(e) => e.stopPropagation()} className="p-1 rounded text-muted-foreground hover:text-foreground">
