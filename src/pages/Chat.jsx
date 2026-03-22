@@ -98,24 +98,21 @@ export default function Chat() {
 
     if (isPhone) await new Promise(r => setTimeout(r, 800 + Math.random() * 1500));
 
-    const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
-    let responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
-    let emotionalState = character.emotional_state || "calm";
+    response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
+    responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
+    emotionalState = character.emotional_state || "calm";
 
     // Check if the character wants to send an image
     const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/i);
-    let imageUrl = null;
+    imageUrl = null;
     if (imageMatch) {
       const imagePrompt = imageMatch[1];
       responseText = responseText.replace(imageMatch[0], "").trim();
-      // Use ALL reference photos first (uploaded real photos), then fall back to avatar_url.
-      // These act as strict style anchors so the character always looks the same.
       const refImages = character.reference_image_urls?.length
         ? character.reference_image_urls
         : character.avatar_url
           ? [character.avatar_url]
           : null;
-      // Prepend a strong look-lock instruction so the model doesn't deviate from the real photos
       const lockedPrompt = refImages
         ? `MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same face, same skin tone, same features. Do NOT alter their look. ${imagePrompt}`
         : imagePrompt;
@@ -123,6 +120,11 @@ export default function Chat() {
         ? await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
         : await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt });
       imageUrl = imgResult.url;
+    }
+    } catch (err) {
+      setIsTyping(false);
+      setSendError("Couldn't get a response. Try again.");
+      return;
     }
 
     setIsTyping(false);
