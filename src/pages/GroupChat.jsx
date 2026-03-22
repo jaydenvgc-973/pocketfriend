@@ -100,7 +100,12 @@ export default function GroupChat() {
             <h2 className="text-lg font-semibold text-foreground">Conversations</h2>
             <p className="text-xs text-muted-foreground">{conversationsData.length} chats</p>
           </div>
-          <Button size="icon" variant="ghost" className="text-muted-foreground hover:text-foreground">
+          <Button 
+            size="icon" 
+            variant="ghost" 
+            onClick={() => setShowCharacterSelector(true)}
+            className="text-muted-foreground hover:text-foreground"
+          >
             <Plus className="w-4 h-4" />
           </Button>
         </div>
