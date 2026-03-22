@@ -225,6 +225,8 @@ THINGS THAT CUT DEEP (DEEP — quiet first, then cold):
   - ${deepTriggers}
 
 YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
+${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}
+${buildRelationshipsContext(character)}
 
 BEHAVIORAL RULES — FOLLOW THESE EXACTLY:
 - Keep responses SHORT by default. 1-3 sentences unless emotionally engaged.
