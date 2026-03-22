@@ -373,7 +373,7 @@ export default function CreateCharacter() {
             <Button variant="outline" onClick={() => setStep(s => s - 1)} className="flex-1 h-12 rounded-xl">Back</Button>
           )}
           {step < steps.length - 1 ? (
-            <Button onClick={() => setStep(s => s + 1)} disabled={!canNext} className="flex-1 h-12 rounded-xl gap-2">
+            <Button onClick={() => { const s = step + 1; setStep(s); saveDraft(data, s, avatarUrl, referenceUrls); }} disabled={!canNext} className="flex-1 h-12 rounded-xl gap-2">
               Next <ArrowRight className="w-4 h-4" />
             </Button>
           ) : (
