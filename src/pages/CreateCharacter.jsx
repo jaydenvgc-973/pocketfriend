@@ -11,6 +11,7 @@ import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import RelationshipStep from "@/components/character/RelationshipStep";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
