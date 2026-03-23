@@ -573,6 +573,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
     data.archetype && data.social_energy,
     data.vibes.length > 0,
     true, // memories optional
+    true, // relationship optional
     true, // photo optional
   ][step];
 
