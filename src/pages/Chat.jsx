@@ -340,7 +340,33 @@ export default function Chat() {
       if (imageMatch) {
         const imagePrompt = imageMatch[1].trim();
         try {
-          const genRes = await base44.integrations.Core.GenerateImage({ prompt: imagePrompt });
+          // Collect reference images for consistent generation
+          const referenceImages = [];
+          
+          // Always include character's own reference images for consistency
+          if (character.reference_image_urls?.length > 0) {
+            referenceImages.push(...character.reference_image_urls);
+          } else if (character.avatar_url) {
+            referenceImages.push(character.avatar_url);
+          }
+          
+          // Check if prompt mentions other characters and include their reference images
+          const allChars = await base44.entities.Character.list();
+          for (const otherChar of allChars) {
+            if (otherChar.id !== characterId && imagePrompt.toLowerCase().includes(otherChar.name.toLowerCase())) {
+              if (otherChar.reference_image_urls?.length > 0) {
+                referenceImages.push(...otherChar.reference_image_urls);
+              } else if (otherChar.avatar_url) {
+                referenceImages.push(otherChar.avatar_url);
+              }
+              break;
+            }
+          }
+          
+          const genRes = await base44.integrations.Core.GenerateImage({ 
+            prompt: imagePrompt,
+            existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
+          });
           imageUrl = genRes.url;
           responseText = responseText.replace(/\[IMAGE:\s*.+?\]/g, "").trim();
         } catch (imgErr) {
