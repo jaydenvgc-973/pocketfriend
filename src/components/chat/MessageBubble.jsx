@@ -42,17 +42,6 @@ export default function MessageBubble({ message, showName = false, onReact }) {
             )}
           </div>
 
-          {/* Reaction picker button — shows on hover */}
-          {onReact && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                // Toggle a local picker — handled inside MessageReactions
-              }}
-              className="hidden" // handled by MessageReactions internally
-            />
-          )}
-
           {/* Reaction add button absolutely positioned on the bubble */}
           {onReact && (
             <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-10`}>
