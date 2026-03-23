@@ -28,8 +28,8 @@ export default function MessageBubble({ message, showName = false, onReact }) {
         )}
 
         {/* Message bubble with reaction trigger */}
-        <div className="relative group">
-          <div className={`${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}>
+        <div className="group">
+          <div className={`relative ${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}>
             {message.image_url && (
               <img
                 src={message.image_url}
@@ -40,25 +40,24 @@ export default function MessageBubble({ message, showName = false, onReact }) {
             {message.content && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
             )}
+
+            {/* Reaction add button on the bubble corner */}
+            {onReact && (
+              <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-10`}>
+                <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />
+              </div>
+            )}
           </div>
 
-          {/* Reaction add button absolutely positioned on the bubble */}
-          {onReact && (
-            <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-10`}>
-              <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />
-            </div>
-          )}
-
-          {/* Reactions displayed in corner of bubble */}
-          {hasReactions && (
-            <div className={`absolute -bottom-4 ${isUser ? "left-1" : "right-1"} flex gap-0.5 z-10`}>
-              <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
-            </div>
-          )}
+          {/* Reactions + picker below the bubble */}
+          <div className={`flex flex-col ${isUser ? "items-start" : "items-end"} mt-1 gap-1`}>
+            {hasReactions && (
+              <div className="flex gap-0.5 flex-wrap">
+                <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
+              </div>
+            )}
+          </div>
         </div>
-
-        {/* Spacer when there are reactions */}
-        {hasReactions && <div className="h-5" />}
 
         {time && (
           <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
