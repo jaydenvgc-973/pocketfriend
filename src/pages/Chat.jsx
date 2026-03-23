@@ -342,18 +342,19 @@ export default function Chat() {
       
       // Check for image generation tag [IMAGE: prompt]
       const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/);
+      let typingDelayMs = 0;
+      
       if (imageMatch) {
         const imagePrompt = imageMatch[1].trim();
+        typingDelayMs = 500; // Small fixed delay for image generation
+        
         try {
-          // Collect reference images for consistent generation
           const referenceImages = [];
-          
-          // Include user's reference images if prompt mentions them
-          if (imagePrompt.toLowerCase().includes("you") || imagePrompt.toLowerCase().includes("user")) {
-            const currentUser = await base44.auth.me();
-            if (currentUser?.reference_image_urls?.length > 0) {
-              referenceImages.push(...currentUser.reference_image_urls);
-            }
+          const currentUser = await base44.auth.me();
+
+          // Always include user's reference images
+          if (currentUser?.reference_image_urls?.length > 0) {
+            referenceImages.push(...currentUser.reference_image_urls);
           }
           
           // Always include character's own reference images for consistency
@@ -362,9 +363,21 @@ export default function Chat() {
           } else if (character.avatar_url) {
             referenceImages.push(character.avatar_url);
           }
-          
-          // Check if prompt mentions other characters and include their reference images
+
+          // Check for other known characters and fictional family members
           const allChars = await base44.entities.Character.list();
+          const mentionedNames = [];
+          
+          // Check fictional relationships
+          if (character.fictional_relationships) {
+            for (const rel of character.fictional_relationships) {
+              if (imagePrompt.toLowerCase().includes(rel.person_name.toLowerCase())) {
+                mentionedNames.push(rel.person_name);
+              }
+            }
+          }
+          
+          // Check other known characters
           for (const otherChar of allChars) {
             if (otherChar.id !== characterId && imagePrompt.toLowerCase().includes(otherChar.name.toLowerCase())) {
               if (otherChar.reference_image_urls?.length > 0) {
@@ -372,14 +385,36 @@ export default function Chat() {
               } else if (otherChar.avatar_url) {
                 referenceImages.push(otherChar.avatar_url);
               }
-              break;
+              mentionedNames.push(otherChar.name);
             }
           }
-          
-          // Always include user's reference images if available
-          const currentUser = await base44.auth.me();
-          if (currentUser?.reference_image_urls?.length > 0) {
-            referenceImages.push(...currentUser.reference_image_urls);
+
+          // Generate or retrieve images for fictional entities
+          for (const entityName of mentionedNames) {
+            // Skip if already added from another character
+            if (character.fictional_entity_images && character.fictional_entity_images[entityName]) {
+              referenceImages.push(character.fictional_entity_images[entityName]);
+            } else if (!allChars.some(c => c.name === entityName)) {
+              // It's a fictional entity, generate an image for it
+              try {
+                const npcGenRes = await base44.integrations.Core.GenerateImage({
+                  prompt: `A realistic portrait of ${entityName}. Focus on natural appearance and distinctive features.`,
+                  existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
+                });
+                if (npcGenRes?.url) {
+                  referenceImages.push(npcGenRes.url);
+                  // Store the generated image for consistency
+                  await base44.entities.Character.update(characterId, {
+                    fictional_entity_images: {
+                      ...(character.fictional_entity_images || {}),
+                      [entityName]: npcGenRes.url
+                    }
+                  });
+                }
+              } catch (npcErr) {
+                // Fictional entity image generation failed, continue
+              }
+            }
           }
           
           const genRes = await base44.integrations.Core.GenerateImage({ 
@@ -393,12 +428,12 @@ export default function Chat() {
         }
       } else {
         imageUrl = null;
+        // Calculate typing delay only for text messages
+        const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
+        const msPerWord = (60000 / 41); // ~1463ms per word
+        typingDelayMs = wordCount * msPerWord;
       }
       
-      // Calculate typing delay based on word count at 41 words per minute
-      const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
-      const msPerWord = (60000 / 41); // ~1463ms per word
-      const typingDelayMs = wordCount * msPerWord;
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
     } catch (err) {
