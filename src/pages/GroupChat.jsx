@@ -95,7 +95,6 @@ export default function GroupChat() {
     const text = messageText;
     setMessageText('');
 
-    // Save user message
     const userMsg = await base44.entities.Message.create({
       conversation_id: selectedConversation.id,
       sender_type: 'user',
@@ -104,31 +103,26 @@ export default function GroupChat() {
     });
     setMessages(prev => [...prev, userMsg]);
 
-    // Fetch the characters in this conversation
     const convoCharacters = characters.filter(c =>
       selectedConversation.character_ids?.includes(c.id)
     );
 
-    // Each character responds one at a time so they can "hear" each other
     const currentMessages = [...messagesRef.current, userMsg];
 
     for (const character of convoCharacters) {
-      // Realistic typing delay: longer if character is in an uncomfortable emotional state
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
       const delayMs = isUncomfortable
-        ? (60 + Math.random() * 60) * 1000  // 1–2 minutes
-        : (5 + Math.random() * 55) * 1000;   // 5–60 seconds
+        ? (60 + Math.random() * 60) * 1000
+        : (5 + Math.random() * 55) * 1000;
       await new Promise(r => setTimeout(r, delayMs));
 
       setTypingCharacter(character);
 
-      // Build the full group conversation history this character sees
       const historyLines = currentMessages
         .map(m => `${m.sender_type === 'user' ? 'User' : m.character_name}: ${m.content}`)
         .join('\n');
 
-      // Build the other participants list so the character knows who else is in the group
       const otherParticipants = convoCharacters
         .filter(c => c.id !== character.id)
         .map(c => c.name)
@@ -180,7 +174,6 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
 
     setTypingCharacter(null);
 
-    // Update conversation preview
     await base44.entities.Conversation.update(selectedConversation.id, {
       last_message_preview: text.substring(0, 100),
       last_message_date: new Date().toISOString(),
@@ -199,7 +192,6 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background pb-[60px]">
-      {/* Header */}
       <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 flex-shrink-0">
         <Link to="/home" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
@@ -207,9 +199,7 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
         <h2 className="text-sm font-semibold text-foreground">Group Chats</h2>
       </div>
 
-      {/* Main Content */}
       <div className="flex-1 overflow-hidden flex flex-col gap-4 p-4 min-h-0">
-        {/* Conversations List */}
         <div className="flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden flex-shrink-0 h-24">
           <div className="p-3 border-b border-border flex items-center justify-between flex-shrink-0">
             <h3 className="text-xs font-semibold uppercase tracking-wide">Conversations</h3>
@@ -264,7 +254,6 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
           </ScrollArea>
         </div>
 
-        {/* Chat Area */}
         {selectedConversation ? (
           <div className="flex-1 flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden min-w-0">
             <div className="p-4 border-b border-border flex-shrink-0">
@@ -303,13 +292,12 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
                     }
                   }}
                   placeholder="Say something..."
-                  disabled={!!typingCharacter}
-                  className="flex-1 bg-transparent text-foreground text-xs border border-border rounded-lg px-2 py-1.5 outline-none focus:border-primary placeholder:text-muted-foreground disabled:opacity-50"
+                  className="flex-1 bg-transparent text-foreground text-xs border border-border rounded-lg px-2 py-1.5 outline-none focus:border-primary placeholder:text-muted-foreground"
                 />
                 <Button
                   size="icon"
                   onClick={handleSendMessage}
-                  disabled={!messageText.trim() || !!typingCharacter}
+                  disabled={!messageText.trim()}
                   className="h-8 w-8 bg-primary hover:bg-primary/90"
                 >
                   <Send className="w-3 h-3" />
