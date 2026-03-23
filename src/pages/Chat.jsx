@@ -70,7 +70,11 @@ export default function Chat() {
         if (unsubscribeRef.current) unsubscribeRef.current();
         const unsubscribe = base44.entities.Message.subscribe((event) => {
           if (event.type === "create" && event.data.conversation_id === conversationIdRef.current) {
-            setMessages(prev => [...prev, event.data]);
+            setMessages(prev => {
+              // Avoid duplicates: only add if not already present
+              if (prev.some(m => m.id === event.data.id)) return prev;
+              return [...prev, event.data];
+            });
           }
         });
         unsubscribeRef.current = unsubscribe;
