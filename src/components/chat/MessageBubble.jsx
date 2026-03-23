@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
+import { X } from "lucide-react";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -10,11 +11,12 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete }) {
   const isUser = message.sender_type === "user";
   const bgColor = isUser ? "bg-primary" : (emotionalColors[message.emotional_state] || "bg-secondary");
   const time = message.timestamp ? format(new Date(message.timestamp), "h:mm a") : "";
   const hasReactions = message.reactions?.length > 0;
+  const [showDelete, setShowDelete] = useState(false);
 
   return (
     <motion.div
@@ -22,13 +24,33 @@ export default function MessageBubble({ message, showName = false, onReact }) {
       animate={{ opacity: 1, y: 0 }}
       className={`flex ${isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
     >
-      <div className={`max-w-[80%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
+      <div className={`relative max-w-[80%] ${isUser ? "items-end" : "items-start"} flex flex-col`}>
         {showName && !isUser && message.character_name && (
           <span className="text-xs text-primary/70 ml-3 mb-1 font-medium">{message.character_name}</span>
         )}
 
+        {/* Delete button */}
+        <AnimatePresence>
+          {showDelete && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              className={`absolute z-50 ${isUser ? "-right-8" : "-left-8"} top-1/2 -translate-y-1/2 flex items-center justify-center p-1.5 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors shadow-md`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(message.id);
+                setShowDelete(false);
+              }}
+              title="Delete message"
+            >
+              <X className="w-4 h-4" />
+            </motion.button>
+          )}
+        </AnimatePresence>
+
         {/* Message bubble with reaction trigger */}
-        <div className="group relative">
+        <div className="group relative" onClick={() => setShowDelete(!showDelete)}>
           <div className={`${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}>
             {message.image_url && (
               <img
