@@ -44,7 +44,7 @@ export default function Chat() {
   });
 
   useEffect(() => {
-    if (!characterId) return;
+    if (!characterId || !character) return;
     const loadConvo = async () => {
       const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] });
       let convoId = null;
@@ -96,7 +96,7 @@ export default function Chat() {
         });
       }
     };
-    if (character) loadConvo();
+    loadConvo();
   }, [characterId, chatType, character]);
 
   useEffect(() => {
@@ -312,7 +312,6 @@ export default function Chat() {
       recentMessages: recentMsgs,
     }).then(res => {
       if (res?.data?.reason) setLastChangeReason(res.data.reason);
-      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
     }).catch(() => {});
 
     await base44.entities.Conversation.update(convoId, {

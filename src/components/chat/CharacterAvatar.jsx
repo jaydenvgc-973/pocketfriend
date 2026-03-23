@@ -3,7 +3,11 @@ const stateRings = {
   irritated: "ring-orange-500/40",
   defensive: "ring-red-500/40",
   reflective: "ring-blue-500/40",
-  "closed-off": "ring-zinc-600/40"
+  "closed-off": "ring-zinc-600/40",
+  flirtatious: "ring-pink-500/40",
+  bored: "ring-slate-500/40",
+  "burnt out": "ring-orange-600/40",
+  joyful: "ring-yellow-500/40"
 };
 
 export default function CharacterAvatar({ character, size = "md" }) {
