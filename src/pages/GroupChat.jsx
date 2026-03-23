@@ -1,26 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Send, Plus, MessageCircle } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AnimatePresence } from 'framer-motion';
-import { motion } from 'framer-motion';
-import { formatDistanceToNow } from 'date-fns';
+import { buildSystemPrompt } from '@/lib/defaultCharacter';
 import BottomNav from '@/components/BottomNav';
 import CharacterSelector from '@/components/groupchat/CharacterSelector';
+import MessageBubble from '@/components/chat/MessageBubble';
+import TypingIndicator from '@/components/chat/TypingIndicator';
 
 export default function GroupChat() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const [showCharacterSelector, setShowCharacterSelector] = useState(false);
-  const [typingUsers, setTypingUsers] = useState([]);
+  const [typingCharacter, setTypingCharacter] = useState(null);
   const scrollRef = useRef(null);
 
   const { data: conversationsData = [], isLoading: conversationsLoading } = useQuery({
@@ -37,13 +35,11 @@ export default function GroupChat() {
     mutationFn: async (characterIds) => {
       const selectedCharacters = characters.filter(c => characterIds.includes(c.id));
       const characterNames = selectedCharacters.map(c => c.name).join(', ');
-      
-      const conversation = await base44.entities.Conversation.create({
+      return await base44.entities.Conversation.create({
         title: characterNames,
         type: 'group',
         character_ids: characterIds,
       });
-      return conversation;
     },
     onSuccess: (conversation) => {
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
@@ -54,52 +50,119 @@ export default function GroupChat() {
 
   const { data: messagesData = [] } = useQuery({
     queryKey: ['messages', selectedConversation?.id],
-    queryFn: () => selectedConversation ? base44.entities.Message.filter({ conversation_id: selectedConversation.id }) : [],
+    queryFn: () => selectedConversation
+      ? base44.entities.Message.filter({ conversation_id: selectedConversation.id }, 'created_date', 100)
+      : [],
     enabled: !!selectedConversation,
   });
 
   useEffect(() => {
-    if (messagesData.length > 0 || selectedConversation) {
-      setMessages(messagesData);
-    }
+    setMessages(messagesData);
   }, [messagesData, selectedConversation?.id]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, typingCharacter]);
 
   useEffect(() => {
     if (!selectedConversation) return;
-
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       if (event.data?.conversation_id === selectedConversation.id) {
         queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.id] });
       }
     });
-
     return unsubscribe;
   }, [selectedConversation?.id, queryClient]);
 
   const handleSendMessage = async () => {
     if (!messageText.trim() || !selectedConversation) return;
 
-    try {
-      await base44.entities.Message.create({
+    const text = messageText;
+    setMessageText('');
+
+    // Save user message
+    const userMsg = await base44.entities.Message.create({
+      conversation_id: selectedConversation.id,
+      sender_type: 'user',
+      content: text,
+      timestamp: new Date().toISOString(),
+    });
+    setMessages(prev => [...prev, userMsg]);
+
+    // Fetch the characters in this conversation
+    const convoCharacters = characters.filter(c =>
+      selectedConversation.character_ids?.includes(c.id)
+    );
+
+    // Each character responds one at a time so they can "hear" each other
+    const currentMessages = [...messages, userMsg];
+
+    for (const character of convoCharacters) {
+      setTypingCharacter(character);
+
+      // Build the full group conversation history this character sees
+      const historyLines = currentMessages
+        .map(m => `${m.sender_type === 'user' ? 'User' : m.character_name}: ${m.content}`)
+        .join('\n');
+
+      // Build the other participants list so the character knows who else is in the group
+      const otherParticipants = convoCharacters
+        .filter(c => c.id !== character.id)
+        .map(c => c.name)
+        .join(', ');
+
+      const systemPrompt = character.system_prompt || buildSystemPrompt(character);
+
+      const fullPrompt = `${systemPrompt}
+
+YOU ARE IN A GROUP CHAT with: ${otherParticipants || 'just you and the user'}.
+You are aware of this group conversation and all the messages in it. You can respond to anyone — the user or the other characters.
+
+Your current emotional state: ${character.emotional_state || 'calm'}.
+Your current life situation: ${character.current_situation || ''}.
+${character.current_life_event ? `What is on your mind right now: ${character.current_life_event}` : ''}
+
+Group conversation so far:
+${historyLines}
+
+Write ONLY your next reply as ${character.name}. Do NOT include your name as a label. Keep it natural, short, and in your character's voice. React to what was just said.`;
+
+      let responseText = '';
+      try {
+        const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
+        responseText = response.replace(/^[\w\s]+:\s*/i, '').trim();
+      } catch (err) {
+        setTypingCharacter(null);
+        continue;
+      }
+
+      const charMsg = await base44.entities.Message.create({
         conversation_id: selectedConversation.id,
-        sender_type: 'user',
-        content: messageText,
+        sender_type: 'character',
+        character_id: character.id,
+        character_name: character.name,
+        content: responseText,
+        emotional_state: character.emotional_state || 'calm',
+        timestamp: new Date().toISOString(),
       });
-      setMessageText('');
-      queryClient.invalidateQueries({ queryKey: ['messages', selectedConversation.id] });
-    } catch (error) {
-      console.error('Error sending message:', error);
+
+      currentMessages.push(charMsg);
+      setMessages(prev => [...prev, charMsg]);
     }
+
+    setTypingCharacter(null);
+
+    // Update conversation preview
+    await base44.entities.Conversation.update(selectedConversation.id, {
+      last_message_preview: text.substring(0, 100),
+      last_message_date: new Date().toISOString(),
+    });
   };
 
   if (conversationsLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+        <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
       </div>
     );
   }
@@ -116,7 +179,7 @@ export default function GroupChat() {
         <h2 className="text-sm font-semibold text-foreground">Group Chats</h2>
       </div>
 
-      {/* Main Content - Vertical Layout */}
+      {/* Main Content */}
       <div className="flex-1 overflow-hidden flex flex-col gap-4 p-4 min-h-0">
         {/* Conversations List */}
         <div className="flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden flex-shrink-0 h-24">
@@ -127,9 +190,9 @@ export default function GroupChat() {
             </button>
           </div>
           <ScrollArea className="flex-1">
-            <div className="flex flex-col gap-2 p-2">
+            <div className="flex flex-col gap-1 p-2">
               {conversationsData.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No group chats yet</p>
+                <p className="text-xs text-muted-foreground p-1">No group chats yet</p>
               ) : (
                 conversationsData.map(conv => (
                   <button
@@ -152,50 +215,29 @@ export default function GroupChat() {
         {/* Chat Area */}
         {selectedConversation ? (
           <div className="flex-1 flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden min-w-0">
-            {/* Conversation Header */}
             <div className="p-4 border-b border-border flex-shrink-0">
               <h1 className="text-sm font-semibold text-foreground">{selectedConversation.title}</h1>
-              <p className="text-xs text-muted-foreground mt-0.5">{selectedConversation.character_ids?.length || 0} participants</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {selectedConversation.character_ids?.length || 0} participants
+              </p>
             </div>
 
-            {/* Messages */}
             <ScrollArea className="flex-1 min-h-0">
-              <div className="space-y-3 p-4">
-                {messages.length === 0 ? (
-                  <div className="flex items-center justify-center h-full">
-                    <p className="text-xs text-muted-foreground">No messages yet</p>
-                  </div>
-                ) : (
-                  messages.map(msg => (
-                    <div
-                      key={msg.id}
-                      className={`flex ${msg.sender_type === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div className="flex flex-col gap-0.5 max-w-xs">
-                        <Card
-                          className={`${
-                            msg.sender_type === 'user'
-                              ? 'bg-primary text-primary-foreground'
-                              : 'bg-secondary text-secondary-foreground'
-                          }`}
-                        >
-                          <CardContent className="p-2">
-                            <p className="text-xs font-medium mb-0.5 opacity-75">{msg.character_name || 'You'}</p>
-                            <p className="text-xs break-words">{msg.content}</p>
-                          </CardContent>
-                        </Card>
-                        <p className={`text-xs opacity-60 ${msg.sender_type === 'user' ? 'text-right' : 'text-left'}`}>
-                          {msg.timestamp ? formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true }) : ''}
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
+              <div className="py-4 space-y-1">
+                <AnimatePresence>
+                  {messages.map(msg => (
+                    <MessageBubble key={msg.id} message={msg} showName={msg.sender_type === 'character'} />
+                  ))}
+                </AnimatePresence>
+                <AnimatePresence>
+                  {typingCharacter && (
+                    <TypingIndicator name={typingCharacter.name} avatarUrl={typingCharacter.avatar_url} />
+                  )}
+                </AnimatePresence>
                 <div ref={scrollRef} />
               </div>
             </ScrollArea>
 
-            {/* Input Area */}
             <div className="p-3 border-t border-border bg-card/50 flex-shrink-0">
               <div className="flex items-end gap-2">
                 <input
@@ -209,12 +251,13 @@ export default function GroupChat() {
                     }
                   }}
                   placeholder="Say something..."
-                  className="flex-1 bg-transparent text-foreground text-xs border border-border rounded-lg px-2 py-1.5 outline-none focus:border-primary placeholder:text-muted-foreground"
+                  disabled={!!typingCharacter}
+                  className="flex-1 bg-transparent text-foreground text-xs border border-border rounded-lg px-2 py-1.5 outline-none focus:border-primary placeholder:text-muted-foreground disabled:opacity-50"
                 />
                 <Button
                   size="icon"
                   onClick={handleSendMessage}
-                  disabled={!messageText.trim()}
+                  disabled={!messageText.trim() || !!typingCharacter}
                   className="h-8 w-8 bg-primary hover:bg-primary/90"
                 >
                   <Send className="w-3 h-3" />
@@ -231,7 +274,6 @@ export default function GroupChat() {
         )}
       </div>
 
-      {/* Bottom Navigation - Fixed */}
       <BottomNav />
 
       <AnimatePresence>
