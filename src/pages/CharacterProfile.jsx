@@ -94,13 +94,29 @@ export default function CharacterProfile() {
           </div>
         </div>
 
-        {/* Location */}
-        {(character.city || character.state) && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Location</p>
-            <p className="text-sm text-foreground font-medium">
-              {[character.city, character.state].filter(Boolean).join(", ")}
-            </p>
+        {/* Location & Background */}
+        {(character.city || character.state || character.ethnicities?.length > 0) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+            {(character.city || character.state) && (
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Location</p>
+                <p className="text-sm text-foreground font-medium">
+                  {[character.city, character.state].filter(Boolean).join(", ")}
+                </p>
+              </div>
+            )}
+            {character.ethnicities?.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Ethnic Background</p>
+                <div className="flex flex-wrap gap-2">
+                  {character.ethnicities.map(eth => (
+                    <span key={eth} className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                      {eth}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -217,6 +233,21 @@ export default function CharacterProfile() {
                   {memory.lesson_learned && (
                     <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>
                   )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Family Members */}
+        {character.family_members?.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Family</p>
+            <div className="space-y-2">
+              {character.family_members.map((member, idx) => (
+                <div key={idx} className="flex items-start justify-between">
+                  <p className="text-sm font-medium text-foreground">{member.name}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{member.relationship_type}</p>
                 </div>
               ))}
             </div>
