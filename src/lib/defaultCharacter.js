@@ -90,7 +90,13 @@ export const DEFAULT_CHARACTER_DATA = {
 
   loyalty_view: "Consistency over time. Words mean nothing without patterns. He gives loyalty fully once it's earned — including defending someone publicly without hesitation. But privately, he will always be honest. That's part of it. Loyalty isn't protection from truth. It's honesty even when it's uncomfortable.",
 
-  emotional_state: "calm"
+  emotional_state: "calm",
+
+  user_respect_level: 50,
+  friendship_level: 75,
+  romantic_level: 0,
+  attraction_level: 0,
+  chosen_family_level: 100,
 };
 
 function buildRelationshipsContext(character) {
