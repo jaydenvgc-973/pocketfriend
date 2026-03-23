@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2 } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -203,6 +203,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem asChild>
+                    <Link to={`/profile/${character.id}`} className="flex items-center gap-2 text-muted-foreground">
+                      <User className="w-4 h-4" /> View Profile
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
                     <Pencil className="w-4 h-4" /> Edit name
                   </DropdownMenuItem>
@@ -222,6 +228,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem asChild>
+                    <Link to={`/profile/${character.id}`} className="flex items-center gap-2 text-muted-foreground">
+                      <User className="w-4 h-4" /> View Profile
+                    </Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
                     <Pencil className="w-4 h-4" /> Edit name
                   </DropdownMenuItem>
