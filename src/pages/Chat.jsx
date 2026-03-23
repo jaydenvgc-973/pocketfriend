@@ -202,9 +202,39 @@ export default function Chat() {
     }
   };
 
+  const handleShareSong = async (spotifyLink) => {
+    if (!character) return;
+    try {
+      const res = await base44.functions.invoke('processSongLink', {
+        characterId,
+        spotifyLink
+      });
+      if (res?.data?.success) {
+        setMessages(prev => [...prev, {
+          id: 'system_' + Date.now(),
+          conversation_id: conversationIdRef.current,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character.name,
+          content: `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`,
+          timestamp: new Date().toISOString()
+        }]);
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+      }
+    } catch (err) {
+      setSendError("Failed to process song link. Try again.");
+    }
+  };
+
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
+
+    // Check for Spotify links in message
+    const spotifyMatch = text.match(/https?:\/\/(open\.)?spotify\.com\/track\/[a-zA-Z0-9]+/);
+    if (spotifyMatch) {
+      await handleShareSong(spotifyMatch[0]);
+    }
 
     let convoId = conversationIdRef.current || conversationId;
     if (!convoId) {
@@ -265,10 +295,16 @@ export default function Chat() {
         educationContext += `\n\nCOMPLETED EDUCATION: You have completed: ${completedList}. You have real knowledge and experience from these courses. When relevant, you can discuss what you learned and apply that knowledge naturally to conversations.`;
       }
 
+      let songsContext = "";
+      if (character.songs_heard && character.songs_heard.length > 0) {
+        const songsInfo = character.songs_heard.map(song => `"${song.title}" by ${song.artist} - key lyrics: "${song.lyrics_excerpt}"`).join("; ");
+        songsContext = `\n\nSONGS YOU KNOW: You have listened to these songs and know them well: ${songsInfo}. You can naturally reference these songs, quote lyrics, or discuss what they mean to you in conversations.`;
+      }
+
       const systemPrompt = character.system_prompt || buildSystemPrompt(character);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.`;
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
