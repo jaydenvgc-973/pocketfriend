@@ -6,8 +6,11 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, userMessage, characterReply, recentMessages } = await req.json();
-    if (!characterId || !userMessage) return Response.json({ error: 'Missing required fields' }, { status: 400 });
+    const { characterId, userMessage, characterReply, recentMessages, emojiReaction, reactedMessageContent, reactedMessageSenderType } = await req.json();
+    if (!characterId) return Response.json({ error: 'Missing required fields' }, { status: 400 });
+
+    // Either a text message or an emoji reaction must be present
+    if (!userMessage && !emojiReaction) return Response.json({ error: 'Missing required fields' }, { status: 400 });
 
     const character = await base44.asServiceRole.entities.Character.get(characterId);
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
@@ -25,15 +28,41 @@ Deno.serve(async (req) => {
       .map(m => `${m.sender_type === 'user' ? 'User' : character.name}: ${m.content}`)
       .join('\n');
 
-    const prompt = `You are a relationship dynamics analyzer. Analyze this conversation and update the relationship levels between the character and the user.
+    // Build the interaction section — either a message exchange or an emoji reaction
+    let interactionSection = '';
+    if (emojiReaction) {
+      const senderLabel = reactedMessageSenderType === 'user' ? 'the User' : `${character.name} (the character)`;
+      interactionSection = `
+EMOJI REACTION EVENT:
+The user reacted with "${emojiReaction}" to a message sent by ${senderLabel}.
+The reacted-to message content was: "${reactedMessageContent || '(image or unknown content)'}"
+
+EMOJI REACTION RULES — interpret this carefully:
+- A single emoji is NOT a full message. Its meaning is heavily shaped by context: the content of the reacted-to message, the current relationship levels, and this character's personality and emotional style.
+- ❤️ (Heart): Could mean romantic interest, strong approval, warmth, or platonic love. If romantic_level > 40, lean romantic (+2 to +4 romantic). If romantic_level < 20 and friendship_level > 50, lean platonic warmth (+2 to +3 friendship). Consider what message it was reacted to — a heart on a photo the character sent of themselves carries more weight than a heart on a random statement.
+- 😂 (Laughing): Signals the user finds the character funny or charming. Can boost friendship (+1 to +3) and attraction (+1 to +2) if the character values humor. Minimal impact otherwise.
+- 😮 (Surprised/Wow): Shows the user is impressed or caught off guard. Context-dependent — if the content was impressive, raises respect (+1 to +3). If the content was personal/vulnerable, may raise friendship (+1 to +2).
+- 😢 (Sad/Crying): If reacting to something emotional or hard the character shared, this signals empathy (+2 to +4 friendship, +1 to +2 chosen family if friendship >= 70). If reacting to something lighthearted, it may feel odd and have minimal impact.
+- 😡 (Angry): If reacting to something the character did or said that was upsetting, this signals disapproval (-2 to -4 friendship, -1 to -3 respect). If the context supports it (e.g., reacting angrily to something bad that happened to the character), it could signal protectiveness (+1 to +2 friendship).
+- 👍 (Like/Thumbs up): Neutral approval. Small boost to friendship (+1 to +2) or respect (+1) if the content was advice or an achievement. Minimal romantic/attraction impact.
+- GENERAL: If the emoji is used on a photo the character sent of themselves, DOUBLE the potential attraction/romantic impact as it signals the user is reacting to the character's appearance or presence.`;
+    } else {
+      interactionSection = `
+LATEST USER MESSAGE: "${userMessage}"
+CHARACTER'S REPLY: "${characterReply || ''}"`;
+    }
+
+    const prompt = `You are a relationship dynamics analyzer. Analyze this interaction and update the relationship levels between the character and the user.
 
 CHARACTER: ${character.name}
 CHARACTER ARCHETYPE: ${character.archetype || 'unknown'}
 CHARACTER PERSONALITY: ${character.personality_summary || ''}
+PERSONALITY TRAITS: ${(character.personality_traits || []).join(', ') || 'none specified'}
 EMOTIONAL TRIGGERS (what deeply affects this character): ${(character.emotional_triggers_deep || []).join(', ') || 'none specified'}
 COMMUNICATION STYLE: ${character.communication_style || 'unknown'}
 EMOTIONAL BAGGAGE: ${character.emotional_baggage || 'none specified'}
 SEXUAL ORIENTATION: ${character.sexual_orientation || 'not specified'}
+INTERESTS & HOBBIES: ${character.current_situation || 'not specified'}
 
 CURRENT RELATIONSHIP LEVELS (0-100):
 - Respect: ${current.user_respect_level}
@@ -44,9 +73,7 @@ CURRENT RELATIONSHIP LEVELS (0-100):
 
 RECENT CONVERSATION CONTEXT:
 ${conversationSummary || 'No prior context.'}
-
-LATEST USER MESSAGE: "${userMessage}"
-CHARACTER'S REPLY: "${characterReply || ''}"
+${interactionSection}
 
 RELATIONSHIP RULES — apply these carefully:
 
@@ -80,42 +107,39 @@ RELATIONSHIP RULES — apply these carefully:
 --- ROMANTIC ---
 3. ROMANTIC level rises more easily if the character is flirtatious by nature AND chosen_family_level < 30. If chosen_family_level >= 60, romantic stays stable/lower.
    POSITIVE triggers (+2 to +6):
-   - User flirts in a way that references or shows genuine understanding of the character's specific interests, hobbies, or passions — this signals real attention and care
+   - User flirts in a way that references or shows genuine understanding of the character's specific interests, hobbies, or passions
    - User expresses admiration that feels personal and tailored, not generic
    - User creates a moment of playful tension or vulnerability that aligns with the character's emotional style
    NEGATIVE triggers (-2 to -5):
-   - User flirts in a generic, copy-paste way that ignores or contradicts the character's known interests — this signals lack of genuine interest
+   - User flirts in a generic, copy-paste way that ignores or contradicts the character's known interests
    - User makes romantic overtures that clash with the character's values or personality
    - User pushes romantic energy when the character has signaled discomfort or disinterest
 
 --- ATTRACTION ---
-4. ATTRACTION is personal and shaped primarily by the character's archetype, but also meaningfully influenced by their individual personality traits, communication style, emotional baggage, and deep triggers. Use ALL of this context together:
-   - The CHARACTER'S ARCHETYPE is the heaviest factor — use the archetype examples below as a strong baseline:
-     * CONFIDENT or DOMINANT archetype: drawn to boldness and assertiveness, raises attraction +2 to +5.
-     * WOUNDED or PEOPLE-PLEASER archetype: drawn to softness, gentleness, or vulnerability, raises attraction +2 to +4.
-     * CHAOTIC, TOXIC, or SELF-DESTRUCTIVE archetype: may be pulled in by rudeness, coldness, or being dismissed — raises attraction +2 to +6.
-     * NURTURING or CAREGIVER archetype: drawn to emotional openness and vulnerability in the user.
-     * INTELLECTUAL or GUARDED archetype: drawn to wit, depth, or being mentally challenged.
-   - THEN layer in their specific personality traits and emotional triggers. For example: even if the archetype is CONFIDENT, if their personality shows deep insecurity or past trauma, softness might also move attraction. Or if their communication style is sarcastic, a user who matches that energy might get a boost even outside the base archetype.
-   - Think of it as: archetype sets the primary attraction pattern, personality traits and emotional baggage add personal nuance and exceptions.
-   - If NOTHING in the conversation aligns with this character's attraction profile (archetype + personality), attraction should not move.
-   - Attraction can decrease if the user consistently acts in a way that is the OPPOSITE of what this character finds appealing.
+4. ATTRACTION is personal and shaped primarily by the character's archetype, but also meaningfully influenced by their individual personality traits, communication style, emotional baggage, and deep triggers.
+   - CONFIDENT or DOMINANT archetype: drawn to boldness and assertiveness (+2 to +5).
+   - WOUNDED or PEOPLE-PLEASER archetype: drawn to softness, gentleness, or vulnerability (+2 to +4).
+   - CHAOTIC, TOXIC, or SELF-DESTRUCTIVE archetype: may be pulled in by rudeness, coldness, or being dismissed (+2 to +6).
+   - NURTURING or CAREGIVER archetype: drawn to emotional openness and vulnerability.
+   - INTELLECTUAL or GUARDED archetype: drawn to wit, depth, or being mentally challenged.
+   - Layer in personality traits and emotional triggers on top of archetype.
+   - If NOTHING aligns with this character's attraction profile, attraction should not move.
 
 --- CHOSEN FAMILY ---
-5. CHOSEN FAMILY: Only starts increasing once friendship_level >= 70. Once that threshold is met, the following actions push chosen_family up:
+5. CHOSEN FAMILY: Only starts increasing once friendship_level >= 70.
    - Giving genuine, thoughtful advice: +2 to +4
-   - Checking in on how the character feels / showing emotional concern: +2 to +5
-   - Allowing the character to vent without redirecting or dismissing: +3 to +6
-   - Showing up consistently over time with warmth: +1 to +2
-   - Demonstrating deep loyalty or unwavering support during a hard moment: +3 to +6
-   NEGATIVE triggers (can apply regardless of friendship level):
-   - User breaks a significant promise or acts in a deeply selfish way: -3 to -7
+   - Checking in on how the character feels: +2 to +5
+   - Allowing the character to vent without redirecting: +3 to +6
+   - Showing up consistently with warmth: +1 to +2
+   - Deep loyalty or unwavering support during a hard moment: +3 to +6
+   NEGATIVE triggers:
+   - User breaks a significant promise or acts deeply selfishly: -3 to -7
    - User disappears emotionally after a vulnerable moment: -2 to -5
-   If friendship_level < 70, chosen_family CANNOT increase (it may only decrease from neglect or disrespect).
+   If friendship_level < 70, chosen_family CANNOT increase.
 
 --- GENERAL ---
-6. DISRESPECT (dismissive, rude, mocking tone) generally lowers respect -3 to -8, and can lower friendship if sustained. EXCEPTION: for characters with toxic/chaotic archetypes or emotional baggage around being treated poorly, disrespect may raise attraction instead of hurting the relationship.
-7. Changes should be small and realistic — max ±10 per message unless something dramatically significant happened.
+6. DISRESPECT generally lowers respect -3 to -8. EXCEPTION: for toxic/chaotic archetypes, disrespect may raise attraction.
+7. Changes should be small and realistic — max ±10 per interaction unless something dramatically significant happened.
 8. Levels are clamped between 0 and 100.
 
 Respond with ONLY a valid JSON object in this exact format:
@@ -125,7 +149,7 @@ Respond with ONLY a valid JSON object in this exact format:
   "romantic_level": <number>,
   "attraction_level": <number>,
   "chosen_family_level": <number>,
-  "reason": "<one concise sentence explaining what changed and why>"
+  "reason": "<one concise sentence explaining what changed and why, mentioning the emoji if this was a reaction>"
 }`;
 
     const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
@@ -144,10 +168,8 @@ Respond with ONLY a valid JSON object in this exact format:
       }
     });
 
-    // Clamp all values 0-100
     const newFriendship = Math.min(100, Math.max(0, Math.round(result.friendship_level)));
     const newChosenFamily = Math.min(100, Math.max(0, Math.round(result.chosen_family_level)));
-    // Chosen family can only increase if friendship >= 70; if under threshold, cap it at current value
     const clampedChosenFamily = newFriendship >= 70
       ? newChosenFamily
       : Math.min(current.chosen_family_level, newChosenFamily);
