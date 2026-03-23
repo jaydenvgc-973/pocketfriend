@@ -270,7 +270,11 @@ export default function Chat() {
       let retries = 2;
       while (retries >= 0) {
         try {
-          response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
+          response = await base44.integrations.Core.InvokeLLM({
+            prompt: fullPrompt,
+            add_context_from_internet: true,
+            model: 'gemini_3_flash'
+          });
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
