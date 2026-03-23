@@ -3,13 +3,13 @@ import { Send, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 
-export default function ChatInput({ onSend, disabled }) {
+export default function ChatInput({ onSend }) {
   const [text, setText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const recognitionRef = useRef(null);
 
   const handleSend = () => {
-    if (!text.trim() || disabled) return;
+    if (!text.trim()) return;
     onSend(text.trim());
     setText("");
   };
@@ -69,7 +69,7 @@ export default function ChatInput({ onSend, disabled }) {
             <Button
               size="icon"
               onClick={handleSend}
-              disabled={!text.trim() || disabled}
+              disabled={!text.trim()}
               className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90"
             >
               <Send className="w-4 h-4" />
