@@ -35,57 +35,60 @@ export default function MediaGallery({ messages }) {
       </button>
 
       {/* Media modal */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center"
-            onClick={() => setIsOpen(false)}
-          >
-            <div
-              className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col"
-              onClick={e => e.stopPropagation()}
+      {createPortal(
+        <AnimatePresence>
+          {isOpen && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center"
+              onClick={() => setIsOpen(false)}
             >
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold text-foreground">Media ({images.length})</h3>
-                <button
-                  onClick={() => setIsOpen(false)}
-                  className="p-1 hover:bg-secondary rounded-lg transition-colors"
-                >
-                  <X className="w-5 h-5 text-muted-foreground" />
-                </button>
-              </div>
+              <div
+                className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col"
+                onClick={e => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-semibold text-foreground">Media ({images.length})</h3>
+                  <button
+                    onClick={() => setIsOpen(false)}
+                    className="p-1 hover:bg-secondary rounded-lg transition-colors"
+                  >
+                    <X className="w-5 h-5 text-muted-foreground" />
+                  </button>
+                </div>
 
-              <div className="flex-1 overflow-y-auto">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {images.map((img, idx) => (
-                    <motion.button
-                      key={idx}
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      onClick={() => setSelectedImage(img)}
-                      className="group relative overflow-hidden rounded-xl aspect-square"
-                    >
-                      <img
-                        src={img.url}
-                        alt={`${img.senderName}'s photo`}
-                        className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                      />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                        <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                          View
-                        </span>
-                      </div>
-                    </motion.button>
-                  ))}
+                <div className="flex-1 overflow-y-auto">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {images.map((img, idx) => (
+                      <motion.button
+                        key={idx}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        onClick={() => setSelectedImage(img)}
+                        className="group relative overflow-hidden rounded-xl aspect-square"
+                      >
+                        <img
+                          src={img.url}
+                          alt={`${img.senderName}'s photo`}
+                          className="w-full h-full object-cover group-hover:scale-110 transition-transform"
+                        />
+                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                          <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                            View
+                          </span>
+                        </div>
+                      </motion.button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Full image viewer */}
       <AnimatePresence>
