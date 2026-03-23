@@ -97,7 +97,7 @@ export default function GroupChat() {
     );
 
     // Each character responds one at a time so they can "hear" each other
-    const currentMessages = [...messages, userMsg];
+    const currentMessages = [...messagesRef.current, userMsg];
 
     for (const character of convoCharacters) {
       setTypingCharacter(character);
