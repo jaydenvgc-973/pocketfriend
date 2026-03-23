@@ -349,76 +349,84 @@ export default function Chat() {
         typingDelayMs = 500; // Small fixed delay for image generation
         
         try {
-          const referenceImages = [];
+          const characterReferenceMap = {}; // Maps character names to their reference images
           const currentUser = await base44.auth.me();
-
-          // Always include user's reference images
-          if (currentUser?.reference_image_urls?.length > 0) {
-            referenceImages.push(...currentUser.reference_image_urls);
-          }
           
-          // Always include character's own reference images for consistency
+          // Map the main character
           if (character.reference_image_urls?.length > 0) {
-            referenceImages.push(...character.reference_image_urls);
+            characterReferenceMap[character.name] = character.reference_image_urls[0];
           } else if (character.avatar_url) {
-            referenceImages.push(character.avatar_url);
+            characterReferenceMap[character.name] = character.avatar_url;
           }
 
-          // Check for other known characters and fictional family members
-          const allChars = await base44.entities.Character.list();
-          const mentionedNames = [];
-          
-          // Check fictional relationships
-          if (character.fictional_relationships) {
-            for (const rel of character.fictional_relationships) {
-              if (imagePrompt.toLowerCase().includes(rel.person_name.toLowerCase())) {
-                mentionedNames.push(rel.person_name);
-              }
-            }
+          // Map the user
+          if (currentUser?.reference_image_urls?.length > 0) {
+            characterReferenceMap["user"] = currentUser.reference_image_urls[0];
           }
-          
-          // Check other known characters
+
+          // Check for other known characters
+          const allChars = await base44.entities.Character.list();
           for (const otherChar of allChars) {
             if (otherChar.id !== characterId && imagePrompt.toLowerCase().includes(otherChar.name.toLowerCase())) {
               if (otherChar.reference_image_urls?.length > 0) {
-                referenceImages.push(...otherChar.reference_image_urls);
+                characterReferenceMap[otherChar.name] = otherChar.reference_image_urls[0];
               } else if (otherChar.avatar_url) {
-                referenceImages.push(otherChar.avatar_url);
+                characterReferenceMap[otherChar.name] = otherChar.avatar_url;
               }
-              mentionedNames.push(otherChar.name);
             }
           }
 
-          // Generate or retrieve images for fictional entities
-          for (const entityName of mentionedNames) {
-            // Skip if already added from another character
-            if (character.fictional_entity_images && character.fictional_entity_images[entityName]) {
-              referenceImages.push(character.fictional_entity_images[entityName]);
-            } else if (!allChars.some(c => c.name === entityName)) {
-              // It's a fictional entity, generate an image for it
-              try {
-                const npcGenRes = await base44.integrations.Core.GenerateImage({
-                  prompt: `A realistic portrait of ${entityName}. Focus on natural appearance and distinctive features.`,
-                  existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
-                });
-                if (npcGenRes?.url) {
-                  referenceImages.push(npcGenRes.url);
-                  // Store the generated image for consistency
-                  await base44.entities.Character.update(characterId, {
-                    fictional_entity_images: {
-                      ...(character.fictional_entity_images || {}),
-                      [entityName]: npcGenRes.url
+          // Check for fictional relationships and entities
+          if (character.fictional_relationships) {
+            for (const rel of character.fictional_relationships) {
+              if (imagePrompt.toLowerCase().includes(rel.person_name.toLowerCase())) {
+                if (character.fictional_entity_images?.[rel.person_name]) {
+                  characterReferenceMap[rel.person_name] = character.fictional_entity_images[rel.person_name];
+                } else {
+                  // Generate a new image for this fictional entity
+                  try {
+                    const npcGenRes = await base44.integrations.Core.GenerateImage({
+                      prompt: `A realistic portrait of ${rel.person_name}, ${rel.relationship_type}. ${rel.description ? `${rel.description}` : "Focus on natural appearance and distinctive features."}`,
+                      existing_image_urls: Object.values(characterReferenceMap).slice(0, 2)
+                    });
+                    if (npcGenRes?.url) {
+                      characterReferenceMap[rel.person_name] = npcGenRes.url;
+                      // Store for future consistency
+                      await base44.entities.Character.update(characterId, {
+                        fictional_entity_images: {
+                          ...(character.fictional_entity_images || {}),
+                          [rel.person_name]: npcGenRes.url
+                        }
+                      });
                     }
-                  });
+                  } catch (npcErr) {
+                    // Failed to generate, continue
+                  }
                 }
-              } catch (npcErr) {
-                // Fictional entity image generation failed, continue
               }
             }
           }
+
+          // Use only the most representative reference images (limit to 3-4 to avoid confusion)
+          const referenceImages = Object.values(characterReferenceMap).slice(0, 4);
+          
+          // Enhance the prompt to be explicit about character identities
+          let enhancedPrompt = imagePrompt;
+          const peopleInImage = Object.keys(characterReferenceMap).filter(name => 
+            imagePrompt.toLowerCase().includes(name.toLowerCase()) || name === "user" || name === character.name
+          );
+          
+          if (peopleInImage.length > 1) {
+            const characterDescriptions = peopleInImage.map(name => {
+              if (name === "user") return "the user";
+              if (name === character.name) return `${character.name} (a ${character.gender || 'person'} with ${character.personality_summary?.split(' ').slice(0, 3).join(' ') || 'distinctive features'})`;
+              return name;
+            }).join(", ");
+            enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self, not variations of each other.`;
+          }
           
           const genRes = await base44.integrations.Core.GenerateImage({ 
-            prompt: imagePrompt,
+            prompt: enhancedPrompt,
             existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
           });
           imageUrl = genRes.url;
