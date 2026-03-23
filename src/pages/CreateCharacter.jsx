@@ -154,7 +154,7 @@ export default function CreateCharacter() {
   const generateBackstory = async () => {
     setIsGeneratingBackstory(true);
     const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `Write a short, raw backstory (2-3 sentences) for a ${data.age_range || "adult"} ${data.gender || "person"} who is ${data.ethnicities.join(" / ") || "from a mixed background"}, ${data.living_situation || "living on their own"}, working in ${data.workplace_type || "some field"}. Archetype: ${data.archetype || "unknown"}. Write in third person, informal, grounded. No flowery language. Focus on upbringing, family, or a defining past experience.`
+      prompt: `Write a short, raw backstory (2-3 sentences) for a ${data.age_range || "adult"} ${data.gender || "person"} who is ${data.ethnicities.join(" / ") || "from a mixed background"}, ${data.living_situation || "living on their own"}, working in ${data.workplace_type || "some field"}. Archetype: ${data.archetype || "unknown"}. Write in third person, informal, grounded. No flowery language. Focus on upbringing, family, or a defining past experience. IMPORTANT: Do NOT use any specific names for family members or people — use generic terms only (e.g. "their mother", "an older sibling", "a childhood friend"). Do NOT reference any names from other characters or external sources.`
     });
     update("background", result);
     setIsGeneratingBackstory(false);
@@ -163,7 +163,7 @@ export default function CreateCharacter() {
   const generatePersonality = async () => {
     setIsGeneratingPersonality(true);
     const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `Write 2-3 raw, honest personality notes for a ${data.archetype || "person"} who is ${data.social_energy?.replace("_", " ") || "somewhere in the middle socially"} with these vibes: ${data.vibes.join(", ") || "hard to pin down"}. Write it like someone who knows them well is describing their quirks, habits, and how they actually act — not a therapist, not a resume. No flattery.`
+      prompt: `Write 2-3 raw, honest personality notes for a ${data.archetype || "person"} who is ${data.social_energy?.replace("_", " ") || "somewhere in the middle socially"} with these vibes: ${data.vibes.join(", ") || "hard to pin down"}. Write it like someone who knows them well is describing their quirks, habits, and how they actually act — not a therapist, not a resume. No flattery. IMPORTANT: Do NOT use any specific names — refer to the person using gender-appropriate pronouns or generic terms only.`
     });
     update("personality_override", result);
     setIsGeneratingPersonality(false);
@@ -172,7 +172,7 @@ export default function CreateCharacter() {
   const generateSituation = async () => {
     setIsGeneratingSituation(true);
     const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `Describe in 2-3 sentences what's currently going on in the life of a ${data.age_range || "adult"} ${data.gender || "person"} who works in ${data.workplace_type || "some field"} as a ${data.job_title || "worker"} and ${data.living_situation || "lives somewhere"}. Make it feel like a real slice of life — something they're dealing with, adjusting to, or navigating right now. Casual tone, third person, no drama clichés.`
+      prompt: `Describe in 2-3 sentences what's currently going on in the life of a ${data.age_range || "adult"} ${data.gender || "person"} who works in ${data.workplace_type || "some field"} as a ${data.job_title || "worker"} and ${data.living_situation || "lives somewhere"}. Make it feel like a real slice of life — something they're dealing with, adjusting to, or navigating right now. Casual tone, third person, no drama clichés. IMPORTANT: Do NOT use any specific names — use generic terms only (e.g. "their roommate", "a coworker", "their landlord").`
     });
     update("situation_override", result);
     setIsGeneratingSituation(false);
