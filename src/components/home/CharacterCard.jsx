@@ -35,10 +35,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
-    const ethnicities = character.background_story?.match(/([A-Z][a-z]+(?: \/ [A-Z][a-z]+)+)/)?.[0] || "";
-    const ethnicityPart = ethnicities ? `${ethnicities} descent, clearly reflecting their cultural background` : "";
-    const agePart = character.current_situation?.match(/\b(Early|Mid|Late) \d0s|\d0s\+/i)?.[0] || "";
-    const prompt = `Portrait photo of a real person. ${agePart || "adult"} ${ethnicityPart ? ethnicityPart + "." : ""} Gender: ${character.gender || "person"}. ${character.personality_traits?.join(", ") || ""} energy. ${character.archetype ? character.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
+    const ethnicityPart = character.ethnicities?.length > 0
+      ? `${character.ethnicities.join(" and ")} descent, clearly reflecting their cultural background`
+      : "";
+    const prompt = `Portrait photo of a real person. ${character.age_range || "adult"}${ethnicityPart ? ", " + ethnicityPart : ""}. Gender: ${character.gender || "person"}. ${character.personality_traits?.join(", ") || ""} energy. ${character.archetype ? character.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
     const result = await base44.integrations.Core.GenerateImage({ prompt });
     await base44.entities.Character.update(character.id, { avatar_url: result.url });
     queryClient.invalidateQueries({ queryKey: ["characters"] });
