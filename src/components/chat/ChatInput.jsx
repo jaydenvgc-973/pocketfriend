@@ -61,14 +61,33 @@ export default function ChatInput({ onSend }) {
 
   return (
     <div className="px-4 pb-4 pt-2">
+      {pendingImage && (
+        <div className="mb-2 ml-2 relative inline-block">
+          <img src={pendingImage} alt="pending" className="h-16 w-16 rounded-xl object-cover border border-border" />
+          <button
+            onClick={() => setPendingImage(null)}
+            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-destructive text-white text-[10px] flex items-center justify-center"
+          >✕</button>
+        </div>
+      )}
       <div className="flex items-end gap-2 bg-secondary rounded-2xl p-2">
+        <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageSelect} className="hidden" />
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isUploading}
+          className="h-9 w-9 rounded-full text-muted-foreground hover:text-foreground flex-shrink-0"
+        >
+          <ImagePlus className="w-4 h-4" />
+        </Button>
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Say something..."
           rows={1}
-          className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-3 py-2 max-h-32 placeholder:text-muted-foreground"
+          className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-2 max-h-32 placeholder:text-muted-foreground"
           style={{ minHeight: "40px" }}
         />
         <div className="flex items-center gap-1 pb-1">
@@ -84,7 +103,7 @@ export default function ChatInput({ onSend }) {
             <Button
               size="icon"
               onClick={handleSend}
-              disabled={!text.trim()}
+              disabled={!text.trim() && !pendingImage}
               className="h-9 w-9 rounded-full bg-primary hover:bg-primary/90"
             >
               <Send className="w-4 h-4" />
