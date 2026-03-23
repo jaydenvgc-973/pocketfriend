@@ -303,7 +303,7 @@ export default function Chat() {
     }).then(res => {
       if (res?.data?.reason) setLastChangeReason(res.data.reason);
       queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-    });
+    }).catch(() => {});
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
