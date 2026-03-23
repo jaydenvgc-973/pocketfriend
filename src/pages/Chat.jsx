@@ -123,7 +123,7 @@ export default function Chat() {
     return () => {
       if (unsubscribeRef.current) unsubscribeRef.current();
     };
-  }, [characterId, chatType, character]);
+  }, [characterId, chatType]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
