@@ -55,12 +55,10 @@ export default function Chat() {
         convoId = convos[0].id;
         
         // Always load messages from database for this conversation
-        if (convoId !== conversationIdRef.current) {
-          const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
-          setMessages(loadedMsgs);
-          setConversationId(convoId);
-          conversationIdRef.current = convoId;
-        }
+        const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date");
+        setMessages(loadedMsgs);
+        setConversationId(convoId);
+        conversationIdRef.current = convoId;
 
         // Subscribe to new messages in this conversation
         if (unsubscribeRef.current) unsubscribeRef.current();
