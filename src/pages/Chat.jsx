@@ -199,7 +199,24 @@ export default function Chat() {
           <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
+        {character && (
+          <button
+            onClick={() => setShowStatusPopup(true)}
+            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            title="View relationship status"
+          >
+            <BarChart2 className="w-4 h-4" />
+          </button>
+        )}
       </div>
+      {showStatusPopup && character && (
+        <CharacterStatusPopup
+          character={character}
+          onClose={() => setShowStatusPopup(false)}
+          previousLevels={previousLevels}
+          lastChangeReason={lastChangeReason}
+        />
+      )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         <AnimatePresence>
           {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
