@@ -327,7 +327,7 @@ export default function Chat() {
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         <AnimatePresence>
-          {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
+          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} />)}
         </AnimatePresence>
         <AnimatePresence>
           {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}
