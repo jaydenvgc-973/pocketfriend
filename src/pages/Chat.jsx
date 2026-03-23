@@ -348,6 +348,14 @@ export default function Chat() {
           // Collect reference images for consistent generation
           const referenceImages = [];
           
+          // Include user's reference images if prompt mentions them
+          if (imagePrompt.toLowerCase().includes("you") || imagePrompt.toLowerCase().includes("user")) {
+            const currentUser = await base44.auth.me();
+            if (currentUser?.reference_image_urls?.length > 0) {
+              referenceImages.push(...currentUser.reference_image_urls);
+            }
+          }
+          
           // Always include character's own reference images for consistency
           if (character.reference_image_urls?.length > 0) {
             referenceImages.push(...character.reference_image_urls);
