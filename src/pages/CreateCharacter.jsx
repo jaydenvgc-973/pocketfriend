@@ -490,7 +490,12 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         <Textarea value={data.background} onChange={e => update("background", e.target.value)} placeholder="Anything about their past, family, where they came from..." className="rounded-xl min-h-[90px] text-sm resize-none" />
       </div>
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Personality notes (optional)</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Personality notes (optional)</label>
+          <button onClick={generatePersonality} disabled={isGeneratingPersonality} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+            <Sparkles className="w-3 h-3" />{isGeneratingPersonality ? "Generating..." : "Auto-generate"}
+          </button>
+        </div>
         <p className="text-xs text-muted-foreground mb-2">Override or add to the generated personality. Write it raw — exactly how you'd describe them.</p>
         <Textarea value={data.personality_override} onChange={e => update("personality_override", e.target.value)} placeholder="e.g. She holds grudges but never admits it. Laughs loudly then goes quiet when something actually matters to her..." className="rounded-xl min-h-[90px] text-sm resize-none" />
       </div>
