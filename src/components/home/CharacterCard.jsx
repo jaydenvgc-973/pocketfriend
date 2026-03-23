@@ -32,8 +32,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
+  const [hasPendingMessage, setHasPendingMessage] = useState(false);
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    base44.entities.PendingMessage.filter({ character_id: character.id, delivered: false })
+      .then(msgs => setHasPendingMessage(msgs.length > 0));
+  }, [character.id]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
