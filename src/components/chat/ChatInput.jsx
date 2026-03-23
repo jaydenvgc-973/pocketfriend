@@ -7,7 +7,10 @@ import { base44 } from "@/api/base44Client";
 export default function ChatInput({ onSend }) {
   const [text, setText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [pendingImage, setPendingImage] = useState(null);
   const recognitionRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const handleSend = () => {
     if (!text.trim()) return;
