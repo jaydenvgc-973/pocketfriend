@@ -46,9 +46,12 @@ export default function Chat() {
   });
 
   useEffect(() => {
-    if (!characterId || !character) return;
+    if (!characterId) return;
     const loadConvo = async () => {
-      setMessages([]);
+      // Only clear messages if this is the first load (conversationIdRef not set)
+      const isFirstLoad = !conversationIdRef.current;
+      if (isFirstLoad) setMessages([]);
+
       const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] });
       let convoId = null;
       let loadedMsgs = [];
@@ -57,8 +60,11 @@ export default function Chat() {
         convoId = convos[0].id;
         setConversationId(convoId);
         conversationIdRef.current = convoId;
-        loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
-        setMessages(loadedMsgs);
+        
+        if (isFirstLoad) {
+          loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
+          setMessages(loadedMsgs);
+        }
 
         // Subscribe to new messages in this conversation
         if (unsubscribeRef.current) unsubscribeRef.current();
@@ -76,7 +82,7 @@ export default function Chat() {
       if (pending.length > 0) {
         const pm = pending[0];
 
-        if (!convoId) {
+        if (!convoId && character) {
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
             type: chatType,
@@ -89,18 +95,20 @@ export default function Chat() {
 
         await new Promise(r => setTimeout(r, 1200));
 
-        const charMsg = await base44.entities.Message.create({
-          conversation_id: convoId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: pm.content,
-          image_url: pm.image_url || undefined,
-          emotional_state: pm.emotional_state || "calm",
-          timestamp: new Date().toISOString(),
-        });
+        if (character) {
+          const charMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: characterId,
+            character_name: character.name,
+            content: pm.content,
+            image_url: pm.image_url || undefined,
+            emotional_state: pm.emotional_state || "calm",
+            timestamp: new Date().toISOString(),
+          });
 
-        setMessages(prev => [...prev, charMsg]);
+          setMessages(prev => [...prev, charMsg]);
+        }
 
         await base44.entities.PendingMessage.update(pm.id, { delivered: true });
         await base44.entities.Conversation.update(convoId, {
