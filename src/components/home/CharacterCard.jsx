@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2 } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
+import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
