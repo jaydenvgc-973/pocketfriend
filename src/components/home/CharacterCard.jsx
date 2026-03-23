@@ -16,13 +16,27 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const stateLabels = {
-  calm: "calm", irritated: "irritated", defensive: "defensive",
-  reflective: "reflective", "closed-off": "closed off"
+  calm: "calm",
+  irritated: "irritated",
+  defensive: "defensive",
+  reflective: "reflective",
+  "closed-off": "closed off",
+  flirtatious: "flirtatious",
+  bored: "bored",
+  "burnt out": "burnt out",
+  joyful: "joyful"
 };
 
 const stateDots = {
-  calm: "bg-emerald-400", irritated: "bg-orange-400", defensive: "bg-red-400",
-  reflective: "bg-blue-400", "closed-off": "bg-zinc-500"
+  calm: "bg-emerald-400",
+  irritated: "bg-orange-400",
+  defensive: "bg-red-400",
+  reflective: "bg-blue-400",
+  "closed-off": "bg-zinc-500",
+  flirtatious: "bg-pink-500",
+  bored: "bg-slate-500",
+  "burnt out": "bg-orange-600",
+  joyful: "bg-yellow-500"
 };
 
 export default function CharacterCard({ character, onDelete, onMoveAway }) {
