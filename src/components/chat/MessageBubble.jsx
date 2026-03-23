@@ -42,17 +42,13 @@ export default function MessageBubble({ message, showName = false, onReact }) {
             )}
           </div>
 
-          {/* Reaction add button + picker — outside overflow-hidden bubble */}
+          {/* Reactions + add button — all anchored to same bottom corner spot */}
           {onReact && (
-            <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-20`}>
+            <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-20 flex gap-0.5 items-center`}>
+              {hasReactions && (
+                <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
+              )}
               <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />
-            </div>
-          )}
-
-          {/* Reactions below the bubble */}
-          {hasReactions && (
-            <div className={`flex gap-0.5 flex-wrap mt-4 ${isUser ? "justify-start" : "justify-end"}`}>
-              <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
             </div>
           )}
         </div>
