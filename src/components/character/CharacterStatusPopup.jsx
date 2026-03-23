@@ -19,9 +19,8 @@ const stateColors = {
 };
 
 export default function CharacterStatusPopup({ character, onClose }) {
-  return (
-    <AnimatePresence>
-      <motion.div
+  return createPortal(
+    <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
