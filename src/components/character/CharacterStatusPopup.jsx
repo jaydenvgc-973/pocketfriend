@@ -81,6 +81,7 @@ export default function CharacterStatusPopup({ character, onClose }) {
           )}
         </motion.div>
       </motion.div>
-    </AnimatePresence>
+    </motion.div>,
+    document.body
   );
 }
