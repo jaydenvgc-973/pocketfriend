@@ -438,7 +438,7 @@ export default function Chat() {
         imageUrl = null;
         // Calculate typing delay only for text messages
         const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
-        const msPerWord = (60000 / 41); // ~1463ms per word
+        const msPerWord = (60000 / 81); // ~740ms per word
         typingDelayMs = wordCount * msPerWord;
       }
       
