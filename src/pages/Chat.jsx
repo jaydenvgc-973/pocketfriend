@@ -335,13 +335,27 @@ export default function Chat() {
       }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
       
+      // Check for image generation tag [IMAGE: prompt]
+      const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/);
+      if (imageMatch) {
+        const imagePrompt = imageMatch[1].trim();
+        try {
+          const genRes = await base44.integrations.Core.GenerateImage({ prompt: imagePrompt });
+          imageUrl = genRes.url;
+          responseText = responseText.replace(/\[IMAGE:\s*.+?\]/g, "").trim();
+        } catch (imgErr) {
+          // Image generation failed, continue without image
+        }
+      } else {
+        imageUrl = null;
+      }
+      
       // Calculate typing delay based on word count at 41 words per minute
       const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
       const msPerWord = (60000 / 41); // ~1463ms per word
       const typingDelayMs = wordCount * msPerWord;
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
-      imageUrl = null;
     } catch (err) {
       setIsTyping(false);
       setSendError("Couldn't get a response. Try again.");
