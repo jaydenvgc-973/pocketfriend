@@ -27,6 +27,7 @@ export default function Chat() {
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const bottomRef = useRef(null);
   const queryClient = useQueryClient();
+  const conversationIdRef = useRef(null);
 
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
@@ -52,6 +53,7 @@ export default function Chat() {
       if (convos.length > 0) {
         convoId = convos[0].id;
         setConversationId(convoId);
+        conversationIdRef.current = convoId;
         loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
         setMessages(loadedMsgs);
       }
@@ -61,7 +63,6 @@ export default function Chat() {
       if (pending.length > 0 && character) {
         const pm = pending[0];
 
-        // Ensure conversation exists
         if (!convoId) {
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
@@ -70,9 +71,9 @@ export default function Chat() {
           });
           convoId = convo.id;
           setConversationId(convoId);
+          conversationIdRef.current = convoId;
         }
 
-        // Small delay so it feels natural when opening chat
         await new Promise(r => setTimeout(r, 1200));
 
         const charMsg = await base44.entities.Message.create({
@@ -108,7 +109,7 @@ export default function Chat() {
     if (!character) return;
     setSendError(null);
 
-    let convoId = conversationId;
+    let convoId = conversationIdRef.current || conversationId;
     if (!convoId) {
       const convo = await base44.entities.Conversation.create({
         title: `${chatType} with ${character.name}`,
@@ -117,6 +118,7 @@ export default function Chat() {
       });
       convoId = convo.id;
       setConversationId(convoId);
+      conversationIdRef.current = convoId;
     }
 
     const userMsg = await base44.entities.Message.create({
@@ -130,54 +132,52 @@ export default function Chat() {
 
     let recentMsgs, response, responseText, emotionalState, imageUrl;
     try {
-    recentMsgs = [...messages.slice(-20), userMsg];
-    const chatHistory = recentMsgs.map(m => ({
-      role: m.sender_type === "user" ? "user" : "assistant",
-      content: m.content,
-    }));
+      recentMsgs = [...messages.slice(-20), userMsg];
+      const chatHistory = recentMsgs.map(m => ({
+        role: m.sender_type === "user" ? "user" : "assistant",
+        content: m.content,
+      }));
 
-    const userSettings = settings?.[0] || {};
-    const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
-    const intensityInstruction = { low: "React with mild emotional responses.", medium: "React naturally with moderate emotional responses.", high: "React with strong, intense emotional responses." }[userSettings.emotional_intensity || "medium"];
+      const userSettings = settings?.[0] || {};
+      const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
+      const intensityInstruction = { low: "React with mild emotional responses.", medium: "React naturally with moderate emotional responses.", high: "React with strong, intense emotional responses." }[userSettings.emotional_intensity || "medium"];
 
-    const systemPrompt = character.system_prompt || buildSystemPrompt(character);
-    const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
+      const systemPrompt = character.system_prompt || buildSystemPrompt(character);
+      const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-    const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.`;
+      const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.`;
 
-    // Realistic typing delay based on emotional state
-    const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
-    const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
-    const delayMs = isUncomfortable
-      ? (60 + Math.random() * 60) * 1000   // 1–2 minutes
-      : isPhone
-        ? 800 + Math.random() * 1500         // original phone delay preserved
-        : (5 + Math.random() * 55) * 1000;  // 5–60 seconds for direct chat
-    await new Promise(r => setTimeout(r, delayMs));
+      const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
+      const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
+      const delayMs = isUncomfortable
+        ? (60 + Math.random() * 60) * 1000
+        : isPhone
+          ? 800 + Math.random() * 1500
+          : (5 + Math.random() * 55) * 1000;
+      await new Promise(r => setTimeout(r, delayMs));
 
-    response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
-    responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
-    emotionalState = character.emotional_state || "calm";
+      response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
+      responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
+      emotionalState = character.emotional_state || "calm";
 
-    // Check if the character wants to send an image
-    const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/i);
-    imageUrl = null;
-    if (imageMatch) {
-      const imagePrompt = imageMatch[1];
-      responseText = responseText.replace(imageMatch[0], "").trim();
-      const refImages = character.reference_image_urls?.length
-        ? character.reference_image_urls
-        : character.avatar_url
-          ? [character.avatar_url]
-          : null;
-      const lockedPrompt = refImages
-        ? `MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same face, same skin tone, same features. Do NOT alter their look. ${imagePrompt}`
-        : imagePrompt;
-      const imgResult = refImages
-        ? await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
-        : await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt });
-      imageUrl = imgResult.url;
-    }
+      const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/i);
+      imageUrl = null;
+      if (imageMatch) {
+        const imagePrompt = imageMatch[1];
+        responseText = responseText.replace(imageMatch[0], "").trim();
+        const refImages = character.reference_image_urls?.length
+          ? character.reference_image_urls
+          : character.avatar_url
+            ? [character.avatar_url]
+            : null;
+        const lockedPrompt = refImages
+          ? `MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same face, same skin tone, same features. Do NOT alter their look. ${imagePrompt}`
+          : imagePrompt;
+        const imgResult = refImages
+          ? await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
+          : await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt });
+        imageUrl = imgResult.url;
+      }
     } catch (err) {
       setIsTyping(false);
       setSendError("Couldn't get a response. Try again.");
@@ -202,7 +202,6 @@ export default function Chat() {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
     }
 
-    // Update relationship levels in background
     const prevLevels = {
       user_respect_level: character.user_respect_level ?? 50,
       friendship_level: character.friendship_level ?? 75,
@@ -274,7 +273,7 @@ export default function Chat() {
         )}
         <div ref={bottomRef} />
       </div>
-      <ChatInput onSend={sendMessage} disabled={isTyping} />
+      <ChatInput onSend={sendMessage} />
       <BottomNav />
     </div>
   );
