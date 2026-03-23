@@ -61,13 +61,16 @@ RELATIONSHIP RULES — apply these carefully:
 5. GOOD ADVICE given by the user raises respect +2 to +5 and friendship +1 to +3.
 6. TALKING ABOUT THEIR DAY (casual sharing) raises friendship +1 to +3.
 7. LETTING THE CHARACTER VENT (user listens, validates, doesn't redirect) raises respect +3 to +6 and chosen_family +1 to +2 (only if friendship >= 70).
-8. ATTRACTION is deeply personal and archetype-driven. You MUST read the character's archetype, personality, emotional baggage, and triggers to determine what actually attracts them. Apply accordingly:
-   - A CONFIDENT or DOMINANT archetype may be drawn to boldness, assertiveness, and people who don't back down: confidence raises attraction +2 to +5.
-   - A WOUNDED or PEOPLE-PLEASER archetype may find shyness, softness, or vulnerability attractive: gentle or hesitant messages raise attraction +2 to +4.
-   - A CHAOTIC, TOXIC, or SELF-DESTRUCTIVE archetype may actually be pulled in by rudeness, dismissiveness, or even being insulted — because it mirrors what they know or find exciting. For such characters, the user being rude, cold, or mocking can raise attraction +2 to +6.
-   - A NURTURING or CAREGIVER archetype may feel attracted to someone who needs help or opens up emotionally.
-   - A INTELLECTUAL or GUARDED archetype may find wit, depth, and being challenged mentally attractive.
-   - If NOTHING in the conversation aligns with this character's specific attraction triggers, attraction should not move.
+8. ATTRACTION is personal and shaped primarily by the character's archetype, but also meaningfully influenced by their individual personality traits, communication style, emotional baggage, and deep triggers. Use ALL of this context together:
+   - The CHARACTER'S ARCHETYPE is the heaviest factor — use the archetype examples below as a strong baseline:
+     * CONFIDENT or DOMINANT archetype: drawn to boldness and assertiveness, raises attraction +2 to +5.
+     * WOUNDED or PEOPLE-PLEASER archetype: drawn to softness, gentleness, or vulnerability, raises attraction +2 to +4.
+     * CHAOTIC, TOXIC, or SELF-DESTRUCTIVE archetype: may be pulled in by rudeness, coldness, or being dismissed — raises attraction +2 to +6.
+     * NURTURING or CAREGIVER archetype: drawn to emotional openness and vulnerability in the user.
+     * INTELLECTUAL or GUARDED archetype: drawn to wit, depth, or being mentally challenged.
+   - THEN layer in their specific personality traits and emotional triggers. For example: even if the archetype is CONFIDENT, if their personality shows deep insecurity or past trauma, softness might also move attraction. Or if their communication style is sarcastic, a user who matches that energy might get a boost even outside the base archetype.
+   - Think of it as: archetype sets the primary attraction pattern, personality traits and emotional baggage add personal nuance and exceptions.
+   - If NOTHING in the conversation aligns with this character's attraction profile (archetype + personality), attraction should not move.
    - Attraction can decrease if the user consistently acts in a way that is the OPPOSITE of what this character finds appealing.
 9. DISRESPECT (dismissive, rude, mocking tone) generally lowers respect -3 to -8, and can lower friendship if sustained. EXCEPTION: for characters with toxic/chaotic archetypes or emotional baggage around being treated poorly, disrespect may raise attraction instead of hurting the relationship.
 10. Changes should be small and realistic — max ±10 per message unless something dramatically significant happened.
