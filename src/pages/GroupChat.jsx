@@ -211,17 +211,41 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
                 <p className="text-xs text-muted-foreground p-1">No group chats yet</p>
               ) : (
                 conversationsData.map(conv => (
-                  <button
-                    key={conv.id}
-                    onClick={() => setSelectedConversation(conv)}
-                    className={`w-full text-left px-3 py-2 rounded-lg transition-all text-xs ${
-                      selectedConversation?.id === conv.id
-                        ? 'bg-primary text-primary-foreground'
-                        : 'text-foreground hover:bg-secondary'
-                    }`}
-                  >
-                    {conv.title}
-                  </button>
+                  <div key={conv.id} className="group relative flex items-center gap-1">
+                    <button
+                      onClick={() => setSelectedConversation(conv)}
+                      className={`flex-1 text-left px-3 py-2 rounded-lg transition-all text-xs ${
+                        selectedConversation?.id === conv.id
+                          ? 'bg-primary text-primary-foreground'
+                          : 'text-foreground hover:bg-secondary'
+                      }`}
+                    >
+                      {conv.title}
+                    </button>
+                    {confirmDeleteId === conv.id ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => deleteGroupMutation.mutate(conv.id)}
+                          className="text-[10px] text-destructive bg-destructive/10 px-2 py-1 rounded-md hover:bg-destructive/20"
+                        >
+                          Delete
+                        </button>
+                        <button
+                          onClick={() => setConfirmDeleteId(null)}
+                          className="text-[10px] text-muted-foreground px-1 py-1 rounded-md hover:bg-secondary"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setConfirmDeleteId(conv.id); }}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 p-1 text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 ))
               )}
             </div>
