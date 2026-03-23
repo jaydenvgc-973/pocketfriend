@@ -20,6 +20,9 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
   const [conversationId, setConversationId] = useState(null);
+  const [lastChangeReason, setLastChangeReason] = useState(null);
+  const [previousLevels, setPreviousLevels] = useState(null);
+  const [showStatusPopup, setShowStatusPopup] = useState(false);
   const bottomRef = useRef(null);
   const queryClient = useQueryClient();
 

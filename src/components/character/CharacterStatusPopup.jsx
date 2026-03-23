@@ -1,6 +1,6 @@
 import { createPortal } from "react-dom";
-import { motion } from "framer-motion";
-import { X } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { X, TrendingUp, TrendingDown, Minus } from "lucide-react";
 
 const RELATIONSHIPS = [
   { key: "user_respect_level", label: "Respect", color: "bg-blue-500" },
@@ -18,7 +18,21 @@ const stateColors = {
   "closed-off": "text-zinc-400",
 };
 
-export default function CharacterStatusPopup({ character, onClose }) {
+function DeltaIndicator({ delta }) {
+  if (delta === 0 || delta === undefined) return <Minus className="w-3 h-3 text-muted-foreground" />;
+  if (delta > 0) return (
+    <span className="flex items-center gap-0.5 text-emerald-400 text-xs font-medium">
+      <TrendingUp className="w-3 h-3" />+{delta}
+    </span>
+  );
+  return (
+    <span className="flex items-center gap-0.5 text-red-400 text-xs font-medium">
+      <TrendingDown className="w-3 h-3" />{delta}
+    </span>
+  );
+}
+
+export default function CharacterStatusPopup({ character, onClose, previousLevels, lastChangeReason }) {
   return createPortal(
     <motion.div
       initial={{ opacity: 0 }}
@@ -34,6 +48,7 @@ export default function CharacterStatusPopup({ character, onClose }) {
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-5"
       >
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold text-foreground">{character.name}</h3>
@@ -49,18 +64,42 @@ export default function CharacterStatusPopup({ character, onClose }) {
           </button>
         </div>
 
+        {/* Last interaction reason */}
+        <AnimatePresence>
+          {lastChangeReason && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="bg-secondary/60 rounded-xl px-3 py-2.5 border border-border"
+            >
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                <span className="text-foreground font-medium">Last interaction: </span>
+                {lastChangeReason}
+              </p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Relationship bars */}
         <div className="space-y-4">
           {RELATIONSHIPS.map(({ key, label, color }) => {
             const value = character[key] ?? 0;
+            const prev = previousLevels?.[key];
+            const delta = prev !== undefined ? value - prev : undefined;
+
             return (
               <div key={key} className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-medium text-foreground">{label}</span>
-                  <span className="text-xs text-muted-foreground tabular-nums">{value}%</span>
+                  <div className="flex items-center gap-2">
+                    {delta !== undefined && <DeltaIndicator delta={delta} />}
+                    <span className="text-xs text-muted-foreground tabular-nums">{value}%</span>
+                  </div>
                 </div>
                 <div className="h-1.5 w-full rounded-full bg-secondary overflow-hidden">
                   <motion.div
-                    initial={{ width: 0 }}
+                    initial={{ width: prev !== undefined ? `${prev}%` : 0 }}
                     animate={{ width: `${value}%` }}
                     transition={{ duration: 0.6, ease: "easeOut" }}
                     className={`h-full rounded-full ${color}`}
