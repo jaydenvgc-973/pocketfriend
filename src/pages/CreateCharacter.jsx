@@ -77,6 +77,7 @@ const defaultData = {
   job_title: "", workplace_type: "", work_environment: "",
   frequented_places: [],
   known_character_ids: [],
+  birthday: "",
   user_respect_level: 50,
   friendship_level: 75,
   romantic_level: 0,
@@ -283,6 +284,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         emotional_state: "calm",
         avatar_url: avatarUrl || null,
         reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
+        birthday: data.birthday || undefined,
         memories: finalMemories,
         work_details: (data.job_title || data.workplace_type) ? {
           job_title: data.job_title,
@@ -341,6 +343,10 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         <div className="grid grid-cols-3 gap-2">
           {AGES.map(a => <button key={a} onClick={() => update("age_range", a)} className={chipClass(data.age_range === a)}>{a}</button>)}
         </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Birthday (optional)</label>
+        <Input type="date" value={data.birthday} onChange={e => update("birthday", e.target.value)} className="h-11 rounded-xl text-sm" />
       </div>
     </div>,
 
