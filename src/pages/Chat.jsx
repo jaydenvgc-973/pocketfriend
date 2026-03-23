@@ -236,6 +236,10 @@ export default function Chat() {
       image_url: userImageUrl || undefined,
       timestamp: new Date().toISOString(),
     });
+    if (!userMsg || !userMsg.id) {
+      setSendError("Message failed to save. Try again.");
+      return;
+    }
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
