@@ -122,6 +122,39 @@ export default function Settings() {
               </div>
             </button>
           </Link>
+          <Link to="/edit-character-photos">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Camera className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Character Photos</p>
+                <p className="text-xs text-muted-foreground">Update avatar and reference photos</p>
+              </div>
+            </button>
+          </Link>
+          <Link to="/edit-character-emotions">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Heart className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Character Emotions</p>
+                <p className="text-xs text-muted-foreground">Triggers, emotional state, baggage & reactions</p>
+              </div>
+            </button>
+          </Link>
+          <Link to="/edit-character-relationships">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <BarChart2 className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Relationship Levels</p>
+                <p className="text-xs text-muted-foreground">Respect, friendship, romantic, attraction & chosen family</p>
+              </div>
+            </button>
+          </Link>
         </div>
         {movedAwayChars.length > 0 && (
           <div className="space-y-4 pt-4 border-t border-border">
