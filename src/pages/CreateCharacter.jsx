@@ -500,7 +500,12 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         <Textarea value={data.personality_override} onChange={e => update("personality_override", e.target.value)} placeholder="e.g. She holds grudges but never admits it. Laughs loudly then goes quiet when something actually matters to her..." className="rounded-xl min-h-[90px] text-sm resize-none" />
       </div>
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Current situation (optional)</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Current situation (optional)</label>
+          <button onClick={generateSituation} disabled={isGeneratingSituation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+            <Sparkles className="w-3 h-3" />{isGeneratingSituation ? "Generating..." : "Auto-generate"}
+          </button>
+        </div>
         <p className="text-xs text-muted-foreground mb-2">What's going on in their life right now — job situation, housing, something they're dealing with.</p>
         <Textarea value={data.situation_override} onChange={e => update("situation_override", e.target.value)} placeholder="e.g. Just got out of a 3-year relationship. Moved back to her hometown. Working two jobs to save up..." className="rounded-xl min-h-[80px] text-sm resize-none" />
       </div>
