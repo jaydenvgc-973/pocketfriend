@@ -105,6 +105,71 @@ export default function Chat() {
 
   const [sendError, setSendError] = useState(null);
 
+  const handleReact = async (messageId, emoji) => {
+    // Find the message
+    const msg = messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    // Toggle: if user already reacted with this emoji, remove it
+    const existing = (msg.reactions || []).find(r => r.reactor_type === "user" && r.emoji === emoji);
+    const updatedReactions = existing
+      ? msg.reactions.filter(r => !(r.reactor_type === "user" && r.emoji === emoji))
+      : [...(msg.reactions || []), { emoji, reactor_type: "user", reactor_id: "user" }];
+
+    // Optimistic update
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: updatedReactions } : m));
+    await base44.entities.Message.update(messageId, { reactions: updatedReactions });
+
+    // If user is reacting to a character's message, trigger character reaction awareness & relationship update
+    if (msg.sender_type === "character" && !existing && character) {
+      base44.functions.invoke("updateRelationshipLevels", {
+        characterId,
+        emojiReaction: emoji,
+        reactedMessageContent: msg.content || "(image)",
+        reactedMessageSenderType: msg.sender_type,
+        recentMessages: messages.slice(-10),
+      }).then(res => {
+        if (res?.data?.reason) setLastChangeReason(res.data.reason);
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+      });
+
+      // Small chance the character reacts back to user messages too
+      setTimeout(async () => {
+        // Generate character's emoji reaction to a user message if applicable
+        if (msg.sender_type === "character") {
+          // Character might react to being reacted to (e.g., heart back on their own message)
+          // This is a lightweight reaction — no LLM call, just mirror or complement occasionally
+          const complementMap = { "❤️": "❤️", "😂": "😂", "😮": null, "😢": "😢", "😡": null, "👍": "👍" };
+          const charEmoji = complementMap[emoji];
+          if (charEmoji && Math.random() > 0.5) {
+            const withCharReaction = [...updatedReactions, { emoji: charEmoji, reactor_type: "character", reactor_id: characterId }];
+            await base44.entities.Message.update(messageId, { reactions: withCharReaction });
+            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: withCharReaction } : m));
+          }
+        }
+      }, 1500 + Math.random() * 2000);
+    }
+
+    // If user reacts to their OWN message, character may also react to that message
+    if (msg.sender_type === "user" && !existing && character) {
+      setTimeout(async () => {
+        const reloadedMsg = await base44.entities.Message.get ? null : null; // use current state
+        const currentReactions = (messages.find(m => m.id === messageId)?.reactions || updatedReactions);
+        const alreadyCharReacted = currentReactions.some(r => r.reactor_type === "character");
+        if (!alreadyCharReacted) {
+          // Character reacts to user's own message — context-based
+          const responseMap = { "❤️": "😮", "😂": "😂", "😢": "😢", "👍": "👍", "😡": "😮", "😮": "😂" };
+          const charEmoji = responseMap[emoji];
+          if (charEmoji && Math.random() > 0.4) {
+            const withCharReaction = [...currentReactions, { emoji: charEmoji, reactor_type: "character", reactor_id: characterId }];
+            await base44.entities.Message.update(messageId, { reactions: withCharReaction });
+            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: withCharReaction } : m));
+          }
+        }
+      }, 2000 + Math.random() * 3000);
+    }
+  };
+
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
