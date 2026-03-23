@@ -10,6 +10,8 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
+import { BarChart2 } from "lucide-react";
 
 export default function Chat() {
   const { characterId } = useParams();
