@@ -315,8 +315,6 @@ export default function Chat() {
       queryClient.invalidateQueries({ queryKey: ["character", characterId] });
     }).catch(() => {});
 
-    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: responseText.substring(0, 100),
       last_message_date: new Date().toISOString(),
