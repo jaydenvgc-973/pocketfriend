@@ -14,6 +14,7 @@ import Groups from './pages/Groups';
 import CreateCharacter from './pages/CreateCharacter.jsx';
 import Settings from './pages/Settings';
 import EditDefaultCharacter from './pages/EditDefaultCharacter';
+import EditCharacterStory from './pages/EditCharacterStory';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();

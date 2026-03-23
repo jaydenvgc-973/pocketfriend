@@ -109,6 +109,20 @@ export default function Settings() {
             onCheckedChange={v => mutation.mutate({ voice_enabled: v })}
           />
         </div>
+        <div className="pt-4 border-t border-border">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
+          <Link to="/edit-character-story">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <BookOpen className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Character Stories</p>
+                <p className="text-xs text-muted-foreground">Update backstory, situation, family history & more</p>
+              </div>
+            </button>
+          </Link>
+        </div>
         {movedAwayChars.length > 0 && (
           <div className="space-y-4 pt-4 border-t border-border">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Characters Away ({movedAwayChars.length})</p>
