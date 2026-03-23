@@ -13,9 +13,20 @@ export default function ChatInput({ onSend }) {
   const fileInputRef = useRef(null);
 
   const handleSend = () => {
-    if (!text.trim()) return;
-    onSend(text.trim());
+    if (!text.trim() && !pendingImage) return;
+    onSend(text.trim(), pendingImage);
     setText("");
+    setPendingImage(null);
+  };
+
+  const handleImageSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploading(true);
+    const { file_url } = await base44.integrations.Core.UploadFile({ file });
+    setPendingImage(file_url);
+    setIsUploading(false);
+    e.target.value = "";
   };
 
   const handleKeyDown = (e) => {
