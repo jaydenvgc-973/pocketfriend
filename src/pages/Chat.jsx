@@ -46,14 +46,57 @@ export default function Chat() {
     if (!characterId) return;
     const loadConvo = async () => {
       const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] });
+      let convoId = null;
+      let loadedMsgs = [];
+
       if (convos.length > 0) {
-        setConversationId(convos[0].id);
-        const msgs = await base44.entities.Message.filter({ conversation_id: convos[0].id }, "created_date", 100);
-        setMessages(msgs);
+        convoId = convos[0].id;
+        setConversationId(convoId);
+        loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
+        setMessages(loadedMsgs);
+      }
+
+      // Deliver any pending proactive messages from the character
+      const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
+      if (pending.length > 0 && character) {
+        const pm = pending[0];
+
+        // Ensure conversation exists
+        if (!convoId) {
+          const convo = await base44.entities.Conversation.create({
+            title: `${chatType} with ${character.name}`,
+            type: chatType,
+            character_ids: [characterId],
+          });
+          convoId = convo.id;
+          setConversationId(convoId);
+        }
+
+        // Small delay so it feels natural when opening chat
+        await new Promise(r => setTimeout(r, 1200));
+
+        const charMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: pm.content,
+          image_url: pm.image_url || undefined,
+          emotional_state: pm.emotional_state || "calm",
+          timestamp: new Date().toISOString(),
+        });
+
+        setMessages(prev => [...prev, charMsg]);
+
+        await base44.entities.PendingMessage.update(pm.id, { delivered: true });
+        await base44.entities.Conversation.update(convoId, {
+          last_message_preview: pm.content.substring(0, 100),
+          last_message_date: new Date().toISOString(),
+        });
       }
     };
-    loadConvo();
-  }, [characterId, chatType]);
+    if (character) loadConvo();
+  }, [characterId, chatType, character]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
