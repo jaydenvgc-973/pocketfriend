@@ -6,6 +6,8 @@ module.exports = {
       "ring-emerald-500/40", "ring-orange-500/40", "ring-red-500/40", "ring-blue-500/40", "ring-zinc-600/40",
       "bg-emerald-400", "bg-orange-400", "bg-red-400", "bg-blue-400", "bg-zinc-500",
       "bg-orange-950/40", "bg-red-950/30", "bg-blue-950/30", "bg-zinc-900",
+      "bg-blue-500", "bg-emerald-500", "bg-pink-500", "bg-orange-500", "bg-purple-500",
+      "text-emerald-400", "text-orange-400", "text-red-400", "text-blue-400", "text-zinc-400",
     ],
   theme: {
   	extend: {
