@@ -97,7 +97,15 @@ export default function Chat() {
 
     const fullPrompt = `${systemPrompt}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.`;
 
-    if (isPhone) await new Promise(r => setTimeout(r, 800 + Math.random() * 1500));
+    // Realistic typing delay based on emotional state
+    const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
+    const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
+    const delayMs = isUncomfortable
+      ? (60 + Math.random() * 240) * 1000   // 1–5 minutes
+      : isPhone
+        ? 800 + Math.random() * 1500         // original phone delay preserved
+        : (5 + Math.random() * 55) * 1000;  // 5–60 seconds for direct chat
+    await new Promise(r => setTimeout(r, delayMs));
 
     response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
     responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
