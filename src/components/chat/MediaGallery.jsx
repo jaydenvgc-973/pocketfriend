@@ -91,35 +91,38 @@ export default function MediaGallery({ messages }) {
       )}
 
       {/* Full image viewer */}
-      <AnimatePresence>
-        {selectedImage && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-4"
-            onClick={() => setSelectedImage(null)}
-          >
-            <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
-              <p className="text-sm text-muted-foreground">
-                {selectedImage.senderName} • {selectedImage.senderType === "user" ? "You" : "Them"}
-              </p>
-              <button
-                onClick={() => setSelectedImage(null)}
-                className="p-2 hover:bg-secondary rounded-lg transition-colors"
-              >
-                <X className="w-5 h-5 text-foreground" />
-              </button>
-            </div>
-            <img
-              src={selectedImage.url}
-              alt="Full view"
-              className="max-w-full max-h-[90vh] object-contain rounded-xl"
-              onClick={e => e.stopPropagation()}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {selectedImage && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/95 z-50 flex flex-col items-center justify-center p-4"
+              onClick={() => setSelectedImage(null)}
+            >
+              <div className="absolute top-4 left-4 right-4 flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">
+                  {selectedImage.senderName} • {selectedImage.senderType === "user" ? "You" : "Them"}
+                </p>
+                <button
+                  onClick={() => setSelectedImage(null)}
+                  className="p-2 hover:bg-secondary rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5 text-foreground" />
+                </button>
+              </div>
+              <img
+                src={selectedImage.url}
+                alt="Full view"
+                className="max-w-full max-h-[90vh] object-contain rounded-xl"
+                onClick={e => e.stopPropagation()}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </>
   );
 }
