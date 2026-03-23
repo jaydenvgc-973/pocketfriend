@@ -202,12 +202,12 @@ export default function Chat() {
     }
   };
 
-  const handleShareSong = async (spotifyLink) => {
+  const handleShareSong = async (songLink) => {
     if (!character) return;
     try {
       const res = await base44.functions.invoke('processSongLink', {
         characterId,
-        spotifyLink
+        songLink
       });
       if (res?.data?.success) {
         setMessages(prev => [...prev, {
@@ -230,10 +230,10 @@ export default function Chat() {
     if (!character) return;
     setSendError(null);
 
-    // Check for Spotify links in message
-    const spotifyMatch = text.match(/https?:\/\/(open\.)?spotify\.com\/track\/[a-zA-Z0-9]+/);
-    if (spotifyMatch) {
-      await handleShareSong(spotifyMatch[0]);
+    // Check for music platform links (Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, etc.)
+    const musicLinkMatch = text.match(/https?:\/\/[^\s]+(spotify|apple|music|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
+    if (musicLinkMatch) {
+      await handleShareSong(musicLinkMatch[0]);
     }
 
     let convoId = conversationIdRef.current || conversationId;

@@ -9,24 +9,16 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { characterId, spotifyLink } = await req.json();
+    const { characterId, songLink } = await req.json();
 
-    if (!characterId || !spotifyLink) {
-      return Response.json({ error: 'characterId and spotifyLink are required' }, { status: 400 });
+    if (!characterId || !songLink) {
+      return Response.json({ error: 'characterId and songLink are required' }, { status: 400 });
     }
 
-    // Extract track info from Spotify link
-    const spotifyIdMatch = spotifyLink.match(/track\/([a-zA-Z0-9]+)/);
-    const spotifyId = spotifyIdMatch ? spotifyIdMatch[1] : null;
+    // Use LLM to extract song/artist info from any music platform link
+    const extractionPrompt = `Extract song information from this music link: ${songLink}
 
-    if (!spotifyId) {
-      return Response.json({ error: 'Invalid Spotify link format' }, { status: 400 });
-    }
-
-    // Use LLM to extract song/artist info and fetch lyrics
-    const extractionPrompt = `Extract song information from this Spotify URL: ${spotifyLink}
-
-The URL contains a track ID: ${spotifyId}
+This could be from Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, or any other platform.
 
 Please provide:
 1. The song title
@@ -75,7 +67,6 @@ Return as JSON with fields: title, artist, summary, lyric_excerpt`;
     const newSong = {
       title: response.title,
       artist: response.artist,
-      spotify_id: spotifyId,
       lyrics_excerpt: response.lyric_excerpt,
       full_lyrics: fullLyrics,
       added_date: new Date().toISOString()
