@@ -16,6 +16,10 @@ const stateColors = {
   defensive: "text-red-400",
   reflective: "text-blue-400",
   "closed-off": "text-zinc-400",
+  flirtatious: "text-pink-500",
+  bored: "text-slate-500",
+  "burnt out": "text-orange-600",
+  joyful: "text-yellow-500",
 };
 
 function DeltaIndicator({ delta }) {
