@@ -316,25 +316,7 @@ export default function Chat() {
       }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
       emotionalState = character.emotional_state || "calm";
-
-      const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/i);
       imageUrl = null;
-      if (imageMatch) {
-        const imagePrompt = imageMatch[1];
-        responseText = responseText.replace(imageMatch[0], "").trim();
-        const refImages = character.reference_image_urls?.length
-          ? character.reference_image_urls
-          : character.avatar_url
-            ? [character.avatar_url]
-            : null;
-        const lockedPrompt = refImages
-          ? `MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same face, same skin tone, same features. Do NOT alter their look. ${imagePrompt}`
-          : imagePrompt;
-        const imgResult = refImages
-          ? await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
-          : await base44.integrations.Core.GenerateImage({ prompt: lockedPrompt });
-        imageUrl = imgResult.url;
-      }
     } catch (err) {
       setIsTyping(false);
       setSendError("Couldn't get a response. Try again.");
