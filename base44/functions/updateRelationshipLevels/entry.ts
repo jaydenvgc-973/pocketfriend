@@ -47,10 +47,15 @@ RELATIONSHIP RULES — apply these carefully:
 1. FRIENDSHIP drops slowly and only when RESPECT is also low. If respect >= 50, friendship is resistant to drops.
 2. RESPECT drops if the user is consistently dismissive, rude, or disrespectful. A single rude comment is a small drop, not a collapse.
 3. ROMANTIC level rises more easily if the character is flirtatious by nature AND chosen_family_level < 30. If chosen_family_level >= 60, romantic stays stable/lower.
-4. CHOSEN FAMILY rises slowly over time when the user shows consistent loyalty, dependability, or genuine care.
+4. CHOSEN FAMILY: Only starts increasing once friendship_level >= 70. Once that threshold is met, the following actions push chosen_family up:
+   - Giving genuine, thoughtful advice: +2 to +4
+   - Checking in on how the character feels / showing emotional concern: +2 to +5
+   - Allowing the character to vent without redirecting or dismissing: +3 to +6
+   - General warmth and care over time: +1 to +2
+   If friendship_level < 70, chosen_family CANNOT increase (it may only decrease from neglect or disrespect).
 5. GOOD ADVICE given by the user raises respect +2 to +5 and friendship +1 to +3.
 6. TALKING ABOUT THEIR DAY (casual sharing) raises friendship +1 to +3.
-7. LETTING THE CHARACTER VENT (user listens, validates, doesn't redirect) raises respect +3 to +6 and chosen_family +1 to +2.
+7. LETTING THE CHARACTER VENT (user listens, validates, doesn't redirect) raises respect +3 to +6 and chosen_family +1 to +2 (only if friendship >= 70).
 8. DISRESPECT (dismissive, rude, mocking tone) lowers respect -3 to -8, and can lower friendship if sustained.
 9. Changes should be small and realistic — max ±10 per message unless something dramatically significant happened.
 10. Levels are clamped between 0 and 100.
