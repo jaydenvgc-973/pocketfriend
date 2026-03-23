@@ -138,8 +138,8 @@ export default function GroupChat() {
 
       const fullPrompt = `${systemPrompt}
 
-YOU ARE IN A GROUP CHAT with: ${otherParticipants || 'just you and the user'}.
-You are aware of this group conversation and all the messages in it. You can respond to anyone — the user or the other characters.
+YOU ARE IN A GROUP CHAT with: ${otherParticipants ? `the user and ${otherParticipants}` : 'just you and the user'}.
+This is a real group conversation. You can — and should — speak to the other characters directly, not just the user. Address them by name. React to what they said. Disagree, agree, laugh, clap back. You are all real people having a conversation together. The user is not the only one you talk to in here.
 
 Your current emotional state: ${character.emotional_state || 'calm'}.
 Your current life situation: ${character.current_situation || ''}.
@@ -148,7 +148,11 @@ ${character.current_life_event ? `What is on your mind right now: ${character.cu
 Group conversation so far:
 ${historyLines}
 
-Write ONLY your next reply as ${character.name}. Do NOT include your name as a label. Keep it natural, short, and in your character's voice. React to what was just said.`;
+Write ONLY your next reply as ${character.name}. Do NOT include your name as a label. Keep it natural, short, and in your character's voice.
+- React to whoever just spoke — the user OR another character.
+- Do NOT end with a question every time. Sometimes just say what you think and stop.
+- You have your own life and opinions. Share them. You are not just reacting — you are participating.
+- Do NOT assume or reference anything about the user's family unless they've told you directly in this conversation.`;
 
       let responseText = '';
       try {
