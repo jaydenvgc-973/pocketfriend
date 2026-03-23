@@ -322,6 +322,13 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
           {LIVING.map(l => <button key={l} onClick={() => update("living_situation", l)} className={chipClass(data.living_situation === l)}>{l}</button>)}
         </div>
       </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Where do they live?</label>
+        <div className="grid grid-cols-2 gap-2">
+          <Input value={data.city} onChange={e => update("city", e.target.value)} placeholder="City" className="h-11 rounded-xl text-sm" />
+          <Input value={data.state} onChange={e => update("state", e.target.value)} placeholder="State" className="h-11 rounded-xl text-sm" />
+        </div>
+      </div>
     </div>,
 
     // Step 2: Work & Places
