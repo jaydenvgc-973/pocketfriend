@@ -262,6 +262,12 @@ export default function CharacterProfile() {
           </div>
         )}
 
+        {/* Criminal Record */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
+          <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
+        </div>
+
         {/* Personality Traits */}
         {character.personality_traits && character.personality_traits.length > 0 && (
           <div className="bg-card border border-border rounded-2xl p-4">
