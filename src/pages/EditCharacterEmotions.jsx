@@ -145,6 +145,10 @@ export default function EditCharacterEmotions() {
                   <SelectItem value="defensive">Defensive</SelectItem>
                   <SelectItem value="reflective">Reflective</SelectItem>
                   <SelectItem value="closed-off">Closed-off</SelectItem>
+                  <SelectItem value="flirtatious">Flirtatious</SelectItem>
+                  <SelectItem value="bored">Bored</SelectItem>
+                  <SelectItem value="burnt out">Burnt Out</SelectItem>
+                  <SelectItem value="joyful">Joyful</SelectItem>
                 </SelectContent>
               </Select>
             </div>
