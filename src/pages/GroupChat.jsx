@@ -19,6 +19,7 @@ export default function GroupChat() {
   const [messages, setMessages] = useState([]);
   const [showCharacterSelector, setShowCharacterSelector] = useState(false);
   const [typingCharacter, setTypingCharacter] = useState(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const scrollRef = useRef(null);
   const messagesRef = useRef([]);
 
