@@ -28,6 +28,7 @@ export default function Chat() {
   const bottomRef = useRef(null);
   const queryClient = useQueryClient();
   const conversationIdRef = useRef(null);
+  const unsubscribeRef = useRef(null);
 
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
