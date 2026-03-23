@@ -268,6 +268,24 @@ export default function Chat() {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
     }
 
+    // Character occasionally reacts with an emoji to the user's message
+    if (Math.random() > 0.6) {
+      const emojiByEmotion = {
+        calm: ["👍", "❤️", "😂"],
+        reflective: ["😢", "😮", "❤️"],
+        irritated: ["😡", "😮"],
+        defensive: ["😡", "😮"],
+        "closed-off": ["😮"],
+      };
+      const pool = emojiByEmotion[emotionalState] || ["👍"];
+      const pickedEmoji = pool[Math.floor(Math.random() * pool.length)];
+      setTimeout(async () => {
+        const updatedUserMsgReactions = [...(userMsg.reactions || []), { emoji: pickedEmoji, reactor_type: "character", reactor_id: characterId }];
+        await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
+        setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
+      }, 2000 + Math.random() * 3000);
+    }
+
     const prevLevels = {
       user_respect_level: character.user_respect_level ?? 50,
       friendship_level: character.friendship_level ?? 75,
