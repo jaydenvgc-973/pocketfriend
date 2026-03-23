@@ -33,6 +33,18 @@ export default function GroupChat() {
     queryFn: () => base44.entities.Character.list('-created_date'),
   });
 
+  const deleteGroupMutation = useMutation({
+    mutationFn: (convId) => base44.entities.Conversation.delete(convId),
+    onSuccess: (_, convId) => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      if (selectedConversation?.id === convId) {
+        setSelectedConversation(null);
+        setMessages([]);
+      }
+      setConfirmDeleteId(null);
+    },
+  });
+
   const createGroupMutation = useMutation({
     mutationFn: async (characterIds) => {
       const selectedCharacters = characters.filter(c => characterIds.includes(c.id));
