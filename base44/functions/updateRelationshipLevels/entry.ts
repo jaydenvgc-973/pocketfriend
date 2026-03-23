@@ -28,7 +28,12 @@ Deno.serve(async (req) => {
     const prompt = `You are a relationship dynamics analyzer. Analyze this conversation and update the relationship levels between the character and the user.
 
 CHARACTER: ${character.name}
+CHARACTER ARCHETYPE: ${character.archetype || 'unknown'}
 CHARACTER PERSONALITY: ${character.personality_summary || ''}
+EMOTIONAL TRIGGERS (what deeply affects this character): ${(character.emotional_triggers_deep || []).join(', ') || 'none specified'}
+COMMUNICATION STYLE: ${character.communication_style || 'unknown'}
+EMOTIONAL BAGGAGE: ${character.emotional_baggage || 'none specified'}
+SEXUAL ORIENTATION: ${character.sexual_orientation || 'not specified'}
 
 CURRENT RELATIONSHIP LEVELS (0-100):
 - Respect: ${current.user_respect_level}
