@@ -2,7 +2,7 @@ import React from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, Sparkles } from "lucide-react";
+import { ArrowLeft, Cake, Sparkles, Heart, BookOpen, Users } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import { format } from "date-fns";
@@ -131,10 +131,35 @@ export default function CharacterProfile() {
           </div>
         )}
 
+        {/* Biography & Background */}
+        {(character.personality_summary || character.background_story || character.current_situation || character.family_history) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Biography & Background</p>
+            {character.background_story && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-2">Background</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.background_story}</p>
+              </div>
+            )}
+            {character.current_situation && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-2">Current Situation</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.current_situation}</p>
+              </div>
+            )}
+            {character.family_history && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-2">Family History</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.family_history}</p>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Work */}
         {character.work_details && (
           <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Work</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Occupation</p>
             <div className="space-y-2">
               {character.work_details.job_title && (
                 <p className="text-sm text-foreground"><span className="font-medium">Title:</span> {character.work_details.job_title}</p>
@@ -146,6 +171,94 @@ export default function CharacterProfile() {
                 <p className="text-sm text-foreground"><span className="font-medium">Environment:</span> {character.work_details.work_environment}</p>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Education */}
+        {(character.current_education_activity || character.completed_education?.length > 0) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-2 mb-2">
+              <BookOpen className="w-4 h-4 text-primary" />
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Education</p>
+            </div>
+            {character.current_education_activity && character.current_education_activity !== "none" && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-1">Currently Learning</p>
+                <p className="text-sm text-muted-foreground">{character.current_education_activity}</p>
+              </div>
+            )}
+            {character.completed_education?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-2">Completed</p>
+                <div className="space-y-1">
+                  {character.completed_education.map((edu, idx) => (
+                    <p key={idx} className="text-sm text-muted-foreground">
+                      {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Key Life Events & Memories */}
+        {character.memories?.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Key Life Events & Memories</p>
+            <div className="space-y-3">
+              {character.memories.map((memory, idx) => (
+                <div key={idx} className="pb-3 border-b border-border last:border-b-0">
+                  <p className="text-sm font-medium text-foreground">{memory.title}</p>
+                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>
+                  {memory.emotional_impact && (
+                    <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>
+                  )}
+                  {memory.lesson_learned && (
+                    <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Relationships */}
+        {(character.fictional_relationships?.length > 0 || character.transient_encounters?.length > 0) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Users className="w-4 h-4 text-primary" />
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Relationships</p>
+            </div>
+            {character.fictional_relationships?.length > 0 && (
+              <div className="space-y-3">
+                {character.fictional_relationships.map((rel, idx) => (
+                  <div key={idx} className="pb-3 border-b border-border last:border-b-0">
+                    <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{rel.relationship_type}</p>
+                    {rel.description && (
+                      <p className="text-xs text-muted-foreground/70 mt-1">{rel.description}</p>
+                    )}
+                    {rel.current_status && (
+                      <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Now:</span> {rel.current_status}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {character.transient_encounters?.length > 0 && (
+              <div className="space-y-3 border-t border-border pt-3">
+                <p className="text-xs font-medium text-foreground">One-off Encounters</p>
+                {character.transient_encounters.map((enc, idx) => (
+                  <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
+                    <p className="text-xs text-foreground">{enc.description}</p>
+                    {enc.context && (
+                      <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
