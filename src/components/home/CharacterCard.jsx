@@ -28,7 +28,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditName, setShowEditName] = useState(false);
+  const [showAvatarModal, setShowAvatarModal] = useState(false);
+  const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const isMovedAway = character.status === "moved_away";
+  const queryClient = useQueryClient();
+
+  const generateAvatar = async () => {
+    setIsGeneratingAvatar(true);
+    const ethnicityPart = character.background_story || "";
+    const prompt = `Portrait photo of a real person. ${character.gender || "Person"}, natural appearance. ${character.personality_traits?.join(", ") || ""} energy. ${character.archetype ? character.archetype + " personality." : ""} ${ethnicityPart ? "Background: " + ethnicityPart.substring(0, 100) + "." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
+    const result = await base44.integrations.Core.GenerateImage({ prompt });
+    await base44.entities.Character.update(character.id, { avatar_url: result.url });
+    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    setIsGeneratingAvatar(false);
+    setShowAvatarModal(false);
+  };
 
   return (
     <>
