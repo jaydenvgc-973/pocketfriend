@@ -487,14 +487,57 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
     <div key="photo" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">Photo</h2>
-        <p className="text-xs text-muted-foreground mb-4">Upload real photos of the character to generate a consistent avatar, or skip.</p>
+        <p className="text-xs text-muted-foreground mb-1">Upload real photos to generate a consistent avatar, or let AI create one from their description.</p>
       </div>
-      <ReferencePhotoUploader
-        descriptor={`a ${data.age_range} ${data.ethnicities.join(" / ")} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality`}
-        onAvatarGenerated={(url, refs) => { setAvatarUrl(url); setReferenceUrls(refs); saveDraft(data, step, url, refs); }}
-        existingReferenceUrls={referenceUrls}
-        existingAvatarUrl={avatarUrl}
-      />
+
+      {/* AI Generate option */}
+      <div className="border border-border rounded-2xl p-4 space-y-3">
+        <p className="text-xs font-medium text-foreground uppercase tracking-wider">Generate from description</p>
+        {avatarUrl && !referenceUrls.length ? (
+          <div className="flex flex-col items-center gap-3">
+            <img src={avatarUrl} alt="Generated avatar" className="w-28 h-28 rounded-full object-cover ring-2 ring-primary/40" />
+            <button
+              onClick={async () => {
+                setAvatarUrl(null);
+                saveDraft(data, step, null, referenceUrls);
+              }}
+              className="text-xs text-muted-foreground hover:text-destructive transition-colors"
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <button
+            disabled={isGeneratingAvatar}
+            onClick={async () => {
+              setIsGeneratingAvatar(true);
+              const ethnicityPart = data.ethnicities.length > 0 ? data.ethnicities.join(" and ") + " descent" : "";
+              const prompt = `Portrait photo of a real person. ${data.gender || "Person"}, ${data.age_range || "adult"}, ${ethnicityPart}. ${data.vibes.join(", ")} energy. ${data.archetype ? data.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
+              const result = await base44.integrations.Core.GenerateImage({ prompt });
+              setAvatarUrl(result.url);
+              setReferenceUrls([]);
+              saveDraft(data, step, result.url, []);
+              setIsGeneratingAvatar(false);
+            }}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4" />
+            {isGeneratingAvatar ? "Generating..." : "Generate AI Avatar"}
+          </button>
+        )}
+        <p className="text-xs text-muted-foreground">Uses gender, age, cultural background, and personality vibes.</p>
+      </div>
+
+      {/* Upload option */}
+      <div className="border border-border rounded-2xl p-4 space-y-3">
+        <p className="text-xs font-medium text-foreground uppercase tracking-wider">Upload reference photos</p>
+        <ReferencePhotoUploader
+          descriptor={`a ${data.age_range} ${data.ethnicities.join(" / ")} ${data.gender?.toLowerCase()}, ${data.vibes.join(", ")} personality`}
+          onAvatarGenerated={(url, refs) => { setAvatarUrl(url); setReferenceUrls(refs); saveDraft(data, step, url, refs); }}
+          existingReferenceUrls={referenceUrls}
+          existingAvatarUrl={referenceUrls.length > 0 ? avatarUrl : null}
+        />
+      </div>
     </div>,
   ];
 
