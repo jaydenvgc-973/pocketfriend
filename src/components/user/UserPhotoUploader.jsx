@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, X, Loader2 } from "lucide-react";
+import { Plus, X, Loader2, Wand2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Button } from "@/components/ui/button";
 
 export default function UserPhotoUploader({ referenceImages = [] }) {
   const [uploading, setUploading] = useState(false);
