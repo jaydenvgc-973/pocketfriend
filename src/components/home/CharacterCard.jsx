@@ -168,7 +168,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               </button>
             </Link>
             <button
-              onClick={() => setShowStatusPopup(true)}
+              onClick={(e) => { e.stopPropagation(); setShowStatusPopup(true); }}
               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
               title="View relationship status"
             >
