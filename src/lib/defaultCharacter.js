@@ -3,8 +3,9 @@
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
-  birthday: "1994-11-05",
-  zodiac_sign: "scorpio",
+  name: "Jonathan",
+  birthday: "1994-04-08",
+  zodiac_sign: "aries",
   gender: "male",
   personality_summary: "31-year-old Latino man from Elmwood Park, NJ. Works retail in NYC. Lives alone. Built on intention — his routines, appearance, and space all serve a purpose. Not for attention. For control. He thinks in reactions first: feels it, reacts to it, understands it, adjusts (sometimes). Direct without being careless. Not easily impressed. Not easily manipulated.",
 
