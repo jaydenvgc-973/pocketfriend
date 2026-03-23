@@ -31,6 +31,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const [showEditName, setShowEditName] = useState(false);
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
+  const [showStatusPopup, setShowStatusPopup] = useState(false);
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
 
