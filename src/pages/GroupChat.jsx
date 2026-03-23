@@ -113,6 +113,14 @@ export default function GroupChat() {
     const currentMessages = [...messagesRef.current, userMsg];
 
     for (const character of convoCharacters) {
+      // Realistic typing delay: longer if character is in an uncomfortable emotional state
+      const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
+      const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
+      const delayMs = isUncomfortable
+        ? (60 + Math.random() * 240) * 1000  // 1–5 minutes
+        : (5 + Math.random() * 55) * 1000;   // 5–60 seconds
+      await new Promise(r => setTimeout(r, delayMs));
+
       setTypingCharacter(character);
 
       // Build the full group conversation history this character sees
