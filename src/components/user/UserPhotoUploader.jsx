@@ -104,6 +104,7 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
           <input
             type="file"
             accept="image/*"
+            multiple
             onChange={handleFileSelect}
             disabled={uploading}
             className="hidden"
@@ -114,10 +115,58 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
             ) : (
               <Plus className="w-5 h-5" />
             )}
-            <span className="text-[10px] font-medium">{uploading ? "Uploading..." : "Add photo"}</span>
+            <span className="text-[10px] font-medium">{uploading ? "Uploading..." : "Add photos"}</span>
           </div>
         </label>
       </div>
+
+      {/* Generate preview button */}
+      {referenceImages.length > 0 && (
+        <Button
+          onClick={handleGeneratePreview}
+          disabled={generatingPreview}
+          className="w-full gap-2"
+        >
+          {generatingPreview ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Generating...
+            </>
+          ) : (
+            <>
+              <Wand2 className="w-4 h-4" />
+              Generate Image Preview
+            </>
+          )}
+        </Button>
+      )}
+
+      {/* Generated preview */}
+      <AnimatePresence>
+        {generatedImageUrl && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="space-y-2"
+          >
+            <p className="text-xs font-medium text-muted-foreground">Your Generated Preview</p>
+            <div className="relative rounded-xl overflow-hidden bg-secondary aspect-square">
+              <img
+                src={generatedImageUrl}
+                alt="generated preview"
+                className="w-full h-full object-cover"
+              />
+              <button
+                onClick={() => setGeneratedImageUrl(null)}
+                className="absolute top-2 right-2 p-1.5 rounded-full bg-destructive/80 text-destructive-foreground hover:bg-destructive transition-colors"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
