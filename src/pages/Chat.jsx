@@ -209,6 +209,15 @@ export default function Chat() {
       convoId = convo.id;
       setConversationId(convoId);
       conversationIdRef.current = convoId;
+
+      // Set up subscription for this new conversation
+      if (unsubscribeRef.current) unsubscribeRef.current();
+      const unsubscribe = base44.entities.Message.subscribe((event) => {
+        if (event.type === "create" && event.data.conversation_id === conversationIdRef.current) {
+          setMessages(prev => [...prev, event.data]);
+        }
+      });
+      unsubscribeRef.current = unsubscribe;
     }
 
     const userMsg = await base44.entities.Message.create({
