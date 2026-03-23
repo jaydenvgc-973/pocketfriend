@@ -480,7 +480,12 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         </div>
       </div>
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Backstory (optional)</label>
+        <div className="flex items-center justify-between mb-1">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Backstory (optional)</label>
+          <button onClick={generateBackstory} disabled={isGeneratingBackstory} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+            <Sparkles className="w-3 h-3" />{isGeneratingBackstory ? "Generating..." : "Auto-generate"}
+          </button>
+        </div>
         <p className="text-xs text-muted-foreground mb-2">Write freely — this shapes who they are. The AI will blend it in.</p>
         <Textarea value={data.background} onChange={e => update("background", e.target.value)} placeholder="Anything about their past, family, where they came from..." className="rounded-xl min-h-[90px] text-sm resize-none" />
       </div>
