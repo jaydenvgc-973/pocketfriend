@@ -222,7 +222,17 @@ export default function Chat() {
           : (5 + Math.random() * 55) * 1000;
       await new Promise(r => setTimeout(r, delayMs));
 
-      response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
+      let retries = 2;
+      while (retries >= 0) {
+        try {
+          response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
+          break;
+        } catch (llmErr) {
+          if (retries === 0) throw llmErr;
+          retries--;
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
       emotionalState = character.emotional_state || "calm";
 
