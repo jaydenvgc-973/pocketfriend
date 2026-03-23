@@ -46,6 +46,7 @@ const AuthenticatedApp = () => {
       <Route path="/create" element={<CreateCharacter />} />
       <Route path="/settings" element={<Settings />} />
       <Route path="/edit-default" element={<EditDefaultCharacter />} />
+      <Route path="/edit-character-story" element={<EditCharacterStory />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
