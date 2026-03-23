@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
+import UserPhotoUploader from "@/components/user/UserPhotoUploader";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -23,6 +24,11 @@ export default function Settings() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters"],
     queryFn: () => base44.entities.Character.list("-created_date"),
+  });
+
+  const { data: user = {} } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
   });
 
   const settings = settingsList[0] || {};
@@ -108,6 +114,9 @@ export default function Settings() {
             checked={settings.voice_enabled || false}
             onCheckedChange={v => mutation.mutate({ voice_enabled: v })}
           />
+        </div>
+        <div className="pt-4 border-t border-border">
+          <UserPhotoUploader referenceImages={user.reference_image_urls || []} />
         </div>
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
