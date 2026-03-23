@@ -452,20 +452,61 @@ export default function Chat() {
 
     setIsTyping(false);
 
-    const charMsg = await base44.entities.Message.create({
-      conversation_id: convoId,
-      sender_type: "character",
-      character_id: characterId,
-      character_name: character.name,
-      content: responseText,
-      image_url: imageUrl || undefined,
-      emotional_state: emotionalState,
-      timestamp: new Date().toISOString(),
-    });
-    if (!charMsg || !charMsg.id) {
-       setSendError("Character response failed to save. Try again.");
-       return;
-     }
+    // 80% chance to split image and text into two separate messages
+    const shouldSplitMessages = imageUrl && responseText && Math.random() < 0.8;
+
+    if (shouldSplitMessages) {
+      // Create image message first
+      const imgMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: "",
+        image_url: imageUrl,
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+      if (!imgMsg || !imgMsg.id) {
+        setSendError("Character response failed to save. Try again.");
+        return;
+      }
+
+      // Small delay before text message
+      await new Promise(r => setTimeout(r, 800 + Math.random() * 400));
+
+      // Create text message
+      const textMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: responseText,
+        image_url: undefined,
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+      if (!textMsg || !textMsg.id) {
+        setSendError("Character response failed to save. Try again.");
+        return;
+      }
+    } else {
+      // Create single message with both image and text (or just one)
+      const charMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: responseText,
+        image_url: imageUrl || undefined,
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+      if (!charMsg || !charMsg.id) {
+        setSendError("Character response failed to save. Try again.");
+        return;
+      }
+    }
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
