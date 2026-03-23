@@ -512,8 +512,8 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
             disabled={isGeneratingAvatar}
             onClick={async () => {
               setIsGeneratingAvatar(true);
-              const ethnicityPart = data.ethnicities.length > 0 ? data.ethnicities.join(" and ") + " descent" : "";
-              const prompt = `Portrait photo of a real person. ${data.gender || "Person"}, ${data.age_range || "adult"}, ${ethnicityPart}. ${data.vibes.join(", ")} energy. ${data.archetype ? data.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
+              const ethnicityPart = data.ethnicities.length > 0 ? `${data.ethnicities.join(" and ")} descent, clearly reflecting their cultural background` : "";
+              const prompt = `Portrait photo of a real person. ${data.age_range || "adult"} ${ethnicityPart ? ethnicityPart + "." : ""} Gender: ${data.gender || "person"}. ${data.vibes.join(", ")} energy. ${data.archetype ? data.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
               const result = await base44.integrations.Core.GenerateImage({ prompt });
               setAvatarUrl(result.url);
               setReferenceUrls([]);
