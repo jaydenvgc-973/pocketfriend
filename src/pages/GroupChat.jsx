@@ -149,6 +149,7 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
       });
 
       currentMessages.push(charMsg);
+      messagesRef.current = currentMessages;
       setMessages(prev => [...prev, charMsg]);
     }
 
