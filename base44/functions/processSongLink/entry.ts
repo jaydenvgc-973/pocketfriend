@@ -58,7 +58,7 @@ Return as JSON with fields: title, artist, summary, lyric_excerpt`;
     }
 
     // Add song to character's heard songs
-    const character = await base44.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]);
+    const character = await base44.asServiceRole.entities.Character.get(characterId);
     
     if (!character) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
@@ -75,7 +75,7 @@ Return as JSON with fields: title, artist, summary, lyric_excerpt`;
     const songsHeard = character.songs_heard || [];
     const updatedSongs = [...songsHeard, newSong];
 
-    await base44.entities.Character.update(characterId, {
+    await base44.asServiceRole.entities.Character.update(characterId, {
       songs_heard: updatedSongs
     });
 
