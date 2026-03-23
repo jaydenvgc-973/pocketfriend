@@ -127,7 +127,7 @@ export default function EditCharacterEmotions() {
                 <CharacterAvatar character={char} size="md" />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground">{char.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
+                  <p className="text-xs text-muted-foreground truncate capitalize">Mood: {char.emotional_state || 'calm'}</p>
                 </div>
                 <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
               </button>

@@ -46,6 +46,7 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character) return;
     const loadConvo = async () => {
+      setMessages([]);
       const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] });
       let convoId = null;
       let loadedMsgs = [];
@@ -313,6 +314,8 @@ export default function Chat() {
     }).then(res => {
       if (res?.data?.reason) setLastChangeReason(res.data.reason);
     }).catch(() => {});
+
+    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: responseText.substring(0, 100),
