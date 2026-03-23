@@ -76,9 +76,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         )}
       </AnimatePresence>
 
-      {showStatusPopup && (
-        <CharacterStatusPopup character={character} onClose={() => setShowStatusPopup(false)} />
-      )}
+      <AnimatePresence>
+        {showStatusPopup && (
+          <CharacterStatusPopup character={character} onClose={() => setShowStatusPopup(false)} />
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showAvatarModal && (
