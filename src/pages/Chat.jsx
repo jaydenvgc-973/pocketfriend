@@ -101,7 +101,7 @@ export default function Chat() {
     const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
     const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
     const delayMs = isUncomfortable
-      ? (60 + Math.random() * 240) * 1000   // 1–5 minutes
+      ? (60 + Math.random() * 60) * 1000   // 1–2 minutes
       : isPhone
         ? 800 + Math.random() * 1500         // original phone delay preserved
         : (5 + Math.random() * 55) * 1000;  // 5–60 seconds for direct chat
