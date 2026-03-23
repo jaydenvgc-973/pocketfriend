@@ -58,21 +58,9 @@ export default function Chat() {
         const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date");
         setMessages(loadedMsgs);
         setConversationId(convoId);
-        conversationIdRef.current = convoId;
       }
 
-      // Subscribe to new messages for this conversation (whether it exists or will be created)
-      if (unsubscribeRef.current) unsubscribeRef.current();
-      const unsubscribe = base44.entities.Message.subscribe((event) => {
-        if (event.type === "create" && event.data.conversation_id === conversationIdRef.current) {
-          setMessages(prev => {
-            // Avoid duplicates: only add if not already present
-            if (prev.some(m => m.id === event.data.id)) return prev;
-            return [...prev, event.data];
-          });
-        }
-      });
-      unsubscribeRef.current = unsubscribe;
+
 
       // Check for pending proactive messages
       const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
@@ -85,7 +73,6 @@ export default function Chat() {
         });
         convoId = convo.id;
         setConversationId(convoId);
-        conversationIdRef.current = convoId;
 
         await new Promise(r => setTimeout(r, 1200));
 
@@ -114,6 +101,26 @@ export default function Chat() {
       if (unsubscribeRef.current) unsubscribeRef.current();
     };
   }, [characterId, character, chatType]);
+
+  useEffect(() => {
+    if (!conversationId) return;
+
+    if (unsubscribeRef.current) unsubscribeRef.current();
+
+    const unsubscribe = base44.entities.Message.subscribe((event) => {
+      if (event.type === "create" && event.data.conversation_id === conversationId) {
+        setMessages(prev => {
+          if (prev.some(m => m.id === event.data.id)) return prev;
+          return [...prev, event.data];
+        });
+      }
+    });
+    unsubscribeRef.current = unsubscribe;
+
+    return () => {
+      if (unsubscribeRef.current) unsubscribeRef.current();
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -229,20 +236,7 @@ export default function Chat() {
       });
       convoId = convo.id;
       setConversationId(convoId);
-      conversationIdRef.current = convoId;
-
-      // Set up subscription for this new conversation
-       if (unsubscribeRef.current) unsubscribeRef.current();
-       const unsubscribe = base44.entities.Message.subscribe((event) => {
-         if (event.type === "create" && event.data.conversation_id === conversationIdRef.current) {
-           setMessages(prev => {
-             if (prev.some(m => m.id === event.data.id)) return prev;
-             return [...prev, event.data];
-           });
-         }
-       });
-       unsubscribeRef.current = unsubscribe;
-    }
+      }
 
     const userMsg = await base44.entities.Message.create({
       conversation_id: convoId,
@@ -255,7 +249,8 @@ export default function Chat() {
        setSendError("Message failed to save. Try again.");
        return;
      }
-     setIsTyping(true);
+    setMessages(prev => [...prev, userMsg]);
+    setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imageUrl;
     try {
