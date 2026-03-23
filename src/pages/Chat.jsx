@@ -125,7 +125,7 @@ export default function Chat() {
       conversation_id: convoId,
       sender_type: "user",
       content: text,
-      image_url: imageUrl || undefined,
+      image_url: userImageUrl || undefined,
       timestamp: new Date().toISOString(),
     });
     setMessages(prev => [...prev, userMsg]);
