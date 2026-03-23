@@ -319,6 +319,10 @@ export default function Chat() {
       emotional_state: emotionalState,
       timestamp: new Date().toISOString(),
     });
+    if (!charMsg || !charMsg.id) {
+      setSendError("Character response failed to save. Try again.");
+      return;
+    }
     setMessages(prev => [...prev, charMsg]);
 
     if (emotionalState !== character.emotional_state) {
