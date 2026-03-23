@@ -165,6 +165,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 <Phone className="w-4 h-4" /> Text
               </button>
             </Link>
+            <button
+              onClick={() => setShowStatusPopup(true)}
+              className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+              title="View relationship status"
+            >
+              <BarChart2 className="w-4 h-4" />
+            </button>
             {character.is_default ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
