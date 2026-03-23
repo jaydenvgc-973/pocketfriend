@@ -157,8 +157,29 @@ export default function Chat() {
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
-      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
     }
+
+    // Update relationship levels in background
+    const prevLevels = {
+      user_respect_level: character.user_respect_level ?? 50,
+      friendship_level: character.friendship_level ?? 75,
+      romantic_level: character.romantic_level ?? 0,
+      attraction_level: character.attraction_level ?? 0,
+      chosen_family_level: character.chosen_family_level ?? 0,
+    };
+    setPreviousLevels(prevLevels);
+
+    base44.functions.invoke("updateRelationshipLevels", {
+      characterId,
+      userMessage: text,
+      characterReply: responseText,
+      recentMessages: recentMsgs,
+    }).then(res => {
+      if (res?.data?.reason) setLastChangeReason(res.data.reason);
+      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+    });
+
+    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: responseText.substring(0, 100),
