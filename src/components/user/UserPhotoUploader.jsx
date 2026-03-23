@@ -6,6 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 
 export default function UserPhotoUploader({ referenceImages = [] }) {
   const [uploading, setUploading] = useState(false);
+  const [generatingPreview, setGeneratingPreview] = useState(false);
+  const [generatedImageUrl, setGeneratedImageUrl] = useState(null);
   const queryClient = useQueryClient();
 
   const uploadMutation = useMutation({
