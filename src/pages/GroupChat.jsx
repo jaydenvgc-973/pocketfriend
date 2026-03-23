@@ -59,6 +59,7 @@ export default function GroupChat() {
 
   useEffect(() => {
     setMessages(messagesData);
+    messagesRef.current = messagesData;
   }, [messagesData, selectedConversation?.id]);
 
   useEffect(() => {
