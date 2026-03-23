@@ -8,6 +8,7 @@ import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import MediaGallery from "@/components/chat/MediaGallery";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -368,6 +369,7 @@ export default function Chat() {
           <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
+        {character && <MediaGallery messages={messages} />}
         {character && (
           <button
             onClick={() => setShowStatusPopup(true)}
