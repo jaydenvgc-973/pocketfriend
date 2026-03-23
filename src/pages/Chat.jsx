@@ -56,7 +56,7 @@ export default function Chat() {
         
         // Always load messages from database for this conversation
         if (convoId !== conversationIdRef.current) {
-          const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "-created_date", 100);
+          const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
           setMessages(loadedMsgs);
           setConversationId(convoId);
           conversationIdRef.current = convoId;
