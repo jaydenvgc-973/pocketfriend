@@ -40,10 +40,30 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
   });
 
   const handleFileSelect = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
     setUploading(true);
-    uploadMutation.mutate(file);
+    
+    for (const file of files) {
+      uploadMutation.mutate(file);
+    }
+  };
+
+  const handleGeneratePreview = async () => {
+    if (referenceImages.length === 0) return;
+    setGeneratingPreview(true);
+    
+    try {
+      const genRes = await base44.integrations.Core.GenerateImage({
+        prompt: "A realistic, well-lit portrait of a person. Focus on capturing their natural appearance, style, and presence.",
+        existing_image_urls: referenceImages
+      });
+      setGeneratedImageUrl(genRes.url);
+    } catch (err) {
+      console.error("Failed to generate preview:", err);
+    } finally {
+      setGeneratingPreview(false);
+    }
   };
 
   return (
