@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2 } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -113,6 +113,15 @@ export default function Settings() {
           <Switch
             checked={settings.voice_enabled || false}
             onCheckedChange={v => mutation.mutate({ voice_enabled: v })}
+          />
+        </div>
+        <div className="space-y-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Birthday (optional)</p>
+          <input
+            type="date"
+            value={settings.user_birthday || ""}
+            onChange={e => mutation.mutate({ user_birthday: e.target.value })}
+            className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm"
           />
         </div>
         <div className="pt-4 border-t border-border">
