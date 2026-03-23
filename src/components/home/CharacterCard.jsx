@@ -187,6 +187,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
                     <Pencil className="w-4 h-4" /> Edit name
                   </DropdownMenuItem>
+                  {!character.avatar_url && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={() => setShowAvatarModal(true)} className="gap-2 text-muted-foreground">
+                        <ImagePlus className="w-4 h-4" /> Add avatar
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   {onMoveAway && <DropdownMenuSeparator />}
                   {onMoveAway && (
                     <DropdownMenuItem onClick={() => onMoveAway(character.id)} className="gap-2 text-muted-foreground">
