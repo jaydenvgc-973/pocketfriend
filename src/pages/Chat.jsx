@@ -128,6 +128,11 @@ export default function Chat() {
 
   const [sendError, setSendError] = useState(null);
 
+  const handleDeleteMessage = async (messageId) => {
+    setMessages(prev => prev.filter(msg => msg.id !== messageId));
+    await base44.entities.Message.delete(messageId);
+  };
+
   const handleReact = async (messageId, emoji) => {
     // Find the message
     const msg = messages.find(m => m.id === messageId);
@@ -487,7 +492,7 @@ export default function Chat() {
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         <AnimatePresence>
-          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} />)}
+          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} onDelete={handleDeleteMessage} />)}
         </AnimatePresence>
         <AnimatePresence>
           {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}
