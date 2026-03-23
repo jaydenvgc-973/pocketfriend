@@ -232,13 +232,16 @@ export default function Chat() {
       conversationIdRef.current = convoId;
 
       // Set up subscription for this new conversation
-      if (unsubscribeRef.current) unsubscribeRef.current();
-      const unsubscribe = base44.entities.Message.subscribe((event) => {
-        if (event.type === "create" && event.data.conversation_id === conversationIdRef.current) {
-          setMessages(prev => [...prev, event.data]);
-        }
-      });
-      unsubscribeRef.current = unsubscribe;
+       if (unsubscribeRef.current) unsubscribeRef.current();
+       const unsubscribe = base44.entities.Message.subscribe((event) => {
+         if (event.type === "create" && event.data.conversation_id === conversationIdRef.current) {
+           setMessages(prev => {
+             if (prev.some(m => m.id === event.data.id)) return prev;
+             return [...prev, event.data];
+           });
+         }
+       });
+       unsubscribeRef.current = unsubscribe;
     }
 
     const userMsg = await base44.entities.Message.create({
@@ -249,11 +252,10 @@ export default function Chat() {
       timestamp: new Date().toISOString(),
     });
     if (!userMsg || !userMsg.id) {
-      setSendError("Message failed to save. Try again.");
-      return;
-    }
-    setMessages(prev => [...prev, userMsg]);
-    setIsTyping(true);
+       setSendError("Message failed to save. Try again.");
+       return;
+     }
+     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imageUrl;
     try {
@@ -336,10 +338,9 @@ export default function Chat() {
       timestamp: new Date().toISOString(),
     });
     if (!charMsg || !charMsg.id) {
-      setSendError("Character response failed to save. Try again.");
-      return;
-    }
-    setMessages(prev => [...prev, charMsg]);
+       setSendError("Character response failed to save. Try again.");
+       return;
+     }
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
