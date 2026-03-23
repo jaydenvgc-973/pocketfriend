@@ -313,12 +313,10 @@ export default function Chat() {
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
-      const delayMs = isUncomfortable
-        ? (60 + Math.random() * 60) * 1000
-        : isPhone
-          ? 800 + Math.random() * 1500
-          : (5 + Math.random() * 55) * 1000;
-      await new Promise(r => setTimeout(r, delayMs));
+      const thinkingDelayMs = isUncomfortable
+        ? (30 + Math.random() * 30) * 1000
+        : (5 + Math.random() * 15) * 1000;
+      await new Promise(r => setTimeout(r, thinkingDelayMs));
 
       let retries = 2;
       while (retries >= 0) {
@@ -336,6 +334,12 @@ export default function Chat() {
         }
       }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
+      
+      // Calculate typing delay based on word count at 41 words per minute
+      const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
+      const msPerWord = (60000 / 41); // ~1463ms per word
+      const typingDelayMs = wordCount * msPerWord;
+      await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
       imageUrl = null;
     } catch (err) {
