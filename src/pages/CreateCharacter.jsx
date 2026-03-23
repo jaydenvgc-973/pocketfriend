@@ -100,6 +100,9 @@ export default function CreateCharacter() {
   const [data, setData] = useState(draft?.data || defaultData);
   const [isGeneratingName, setIsGeneratingName] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
+  const [isGeneratingBackstory, setIsGeneratingBackstory] = useState(false);
+  const [isGeneratingPersonality, setIsGeneratingPersonality] = useState(false);
+  const [isGeneratingSituation, setIsGeneratingSituation] = useState(false);
 
   const { data: existingCharacters = [] } = useQuery({
     queryKey: ["characters"],
