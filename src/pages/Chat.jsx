@@ -321,6 +321,7 @@ export default function Chat() {
       setSendError("Character response failed to save. Try again.");
       return;
     }
+    setMessages(prev => [...prev, charMsg]);
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
