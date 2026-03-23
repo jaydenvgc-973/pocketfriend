@@ -85,7 +85,7 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
 
       {open && (
         <div
-          className={`absolute bottom-6 z-20 flex gap-1.5 bg-card border border-border rounded-2xl px-3 py-2 shadow-xl ${
+          className={`absolute top-7 z-20 flex gap-1.5 bg-card border border-border rounded-2xl px-3 py-2 shadow-xl ${
             isUser ? "right-0" : "left-0"
           }`}
         >
