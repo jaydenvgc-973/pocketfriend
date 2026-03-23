@@ -319,6 +319,7 @@ export default function Chat() {
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
 
     // Character occasionally reacts with an emoji to the user's message
