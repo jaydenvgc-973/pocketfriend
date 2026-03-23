@@ -13,6 +13,7 @@ import GroupChat from './pages/GroupChat';
 import Groups from './pages/Groups';
 import CreateCharacter from './pages/CreateCharacter.jsx';
 import Settings from './pages/Settings';
+import CharacterProfile from './pages/CharacterProfile';
 import EditDefaultCharacter from './pages/EditDefaultCharacter';
 import EditCharacterStory from './pages/EditCharacterStory';
 import EditCharacterPhotos from './pages/EditCharacterPhotos';
@@ -48,6 +49,7 @@ const AuthenticatedApp = () => {
       <Route path="/group-chat" element={<GroupChat />} />
       <Route path="/create" element={<CreateCharacter />} />
       <Route path="/settings" element={<Settings />} />
+      <Route path="/profile/:characterId" element={<CharacterProfile />} />
       <Route path="/edit-default" element={<EditDefaultCharacter />} />
       <Route path="/edit-character-story" element={<EditCharacterStory />} />
       <Route path="/edit-character-photos" element={<EditCharacterPhotos />} />
