@@ -70,12 +70,18 @@ const DRAFT_KEY = "create_character_draft";
 const defaultData = {
   first_name: "", middle_name: "", last_name: "",
   gender: "", age_range: "", ethnicities: [], living_situation: "",
+  city: "", state: "",
   vibes: [], background: "", archetype: "", social_energy: "", sexual_orientation: "",
   personality_override: "", situation_override: "",
   memories: [],
   job_title: "", workplace_type: "", work_environment: "",
   frequented_places: [],
   known_character_ids: [],
+  user_respect_level: 50,
+  friendship_level: 75,
+  romantic_level: 0,
+  attraction_level: 0,
+  chosen_family_level: 0,
 };
 
 function loadDraft() {
