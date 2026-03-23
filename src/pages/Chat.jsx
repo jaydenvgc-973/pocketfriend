@@ -376,6 +376,12 @@ export default function Chat() {
             }
           }
           
+          // Always include user's reference images if available
+          const currentUser = await base44.auth.me();
+          if (currentUser?.reference_image_urls?.length > 0) {
+            referenceImages.push(...currentUser.reference_image_urls);
+          }
+          
           const genRes = await base44.integrations.Core.GenerateImage({ 
             prompt: imagePrompt,
             existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
