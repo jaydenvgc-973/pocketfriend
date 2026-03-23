@@ -44,7 +44,7 @@ export default function Chat() {
   });
 
   useEffect(() => {
-    if (!characterId || !character) return;
+    if (!characterId) return;
     const loadConvo = async () => {
       setMessages([]);
       const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] });
@@ -57,48 +57,72 @@ export default function Chat() {
         conversationIdRef.current = convoId;
         loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
         setMessages(loadedMsgs);
+
+        // Subscribe to new messages in this conversation
+        const unsubscribe = base44.entities.Message.subscribe((event) => {
+          if (event.type === "create" && event.data.conversation_id === convoId) {
+            setMessages(prev => [...prev, event.data]);
+          }
+        });
+
+        return unsubscribe;
       }
 
       // Deliver any pending proactive messages from the character
-      const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
-      if (pending.length > 0 && character) {
-        const pm = pending[0];
+      if (character) {
+        const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
+        if (pending.length > 0) {
+          const pm = pending[0];
 
-        if (!convoId) {
-          const convo = await base44.entities.Conversation.create({
-            title: `${chatType} with ${character.name}`,
-            type: chatType,
-            character_ids: [characterId],
+          if (!convoId) {
+            const convo = await base44.entities.Conversation.create({
+              title: `${chatType} with ${character.name}`,
+              type: chatType,
+              character_ids: [characterId],
+            });
+            convoId = convo.id;
+            setConversationId(convoId);
+            conversationIdRef.current = convoId;
+          }
+
+          await new Promise(r => setTimeout(r, 1200));
+
+          const charMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: characterId,
+            character_name: character.name,
+            content: pm.content,
+            image_url: pm.image_url || undefined,
+            emotional_state: pm.emotional_state || "calm",
+            timestamp: new Date().toISOString(),
           });
-          convoId = convo.id;
-          setConversationId(convoId);
-          conversationIdRef.current = convoId;
+
+          setMessages(prev => [...prev, charMsg]);
+
+          await base44.entities.PendingMessage.update(pm.id, { delivered: true });
+          await base44.entities.Conversation.update(convoId, {
+            last_message_preview: pm.content.substring(0, 100),
+            last_message_date: new Date().toISOString(),
+          });
+
+          // Subscribe to new messages
+          const unsubscribe = base44.entities.Message.subscribe((event) => {
+            if (event.type === "create" && event.data.conversation_id === convoId) {
+              setMessages(prev => [...prev, event.data]);
+            }
+          });
+
+          return unsubscribe;
         }
-
-        await new Promise(r => setTimeout(r, 1200));
-
-        const charMsg = await base44.entities.Message.create({
-          conversation_id: convoId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: pm.content,
-          image_url: pm.image_url || undefined,
-          emotional_state: pm.emotional_state || "calm",
-          timestamp: new Date().toISOString(),
-        });
-
-        setMessages(prev => [...prev, charMsg]);
-
-        await base44.entities.PendingMessage.update(pm.id, { delivered: true });
-        await base44.entities.Conversation.update(convoId, {
-          last_message_preview: pm.content.substring(0, 100),
-          last_message_date: new Date().toISOString(),
-        });
       }
     };
-    loadConvo();
-  }, [characterId, chatType, character]);
+
+    const cleanup = loadConvo();
+    return () => {
+      if (cleanup && typeof cleanup === 'function') cleanup();
+    };
+  }, [characterId, chatType]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
