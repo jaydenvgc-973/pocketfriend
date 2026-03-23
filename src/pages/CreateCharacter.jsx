@@ -92,6 +92,7 @@ export default function CreateCharacter() {
   const [showMemoryForm, setShowMemoryForm] = useState(false);
   const [data, setData] = useState(draft?.data || defaultData);
   const [isGeneratingName, setIsGeneratingName] = useState(false);
+  const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
 
   const { data: existingCharacters = [] } = useQuery({
     queryKey: ["characters"],
