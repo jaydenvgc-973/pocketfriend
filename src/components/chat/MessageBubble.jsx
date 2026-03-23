@@ -1,6 +1,6 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { format } from "date-fns";
-import MessageReactions from "./MessageReactions";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -143,6 +143,3 @@ function ReactionBadges({ reactions, onReact, messageId }) {
     </>
   );
 }
-
-// Need useState imported
-import { useState } from "react";
