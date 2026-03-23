@@ -105,7 +105,7 @@ export default function Chat() {
 
   const [sendError, setSendError] = useState(null);
 
-  const sendMessage = async (text, imageUrl) => {
+  const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
 
