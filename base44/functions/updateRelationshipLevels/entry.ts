@@ -87,12 +87,19 @@ Respond with ONLY a valid JSON object in this exact format:
     });
 
     // Clamp all values 0-100
+    const newFriendship = Math.min(100, Math.max(0, Math.round(result.friendship_level)));
+    const newChosenFamily = Math.min(100, Math.max(0, Math.round(result.chosen_family_level)));
+    // Chosen family can only increase if friendship >= 70; if under threshold, cap it at current value
+    const clampedChosenFamily = newFriendship >= 70
+      ? newChosenFamily
+      : Math.min(current.chosen_family_level, newChosenFamily);
+
     const updated = {
       user_respect_level: Math.min(100, Math.max(0, Math.round(result.user_respect_level))),
-      friendship_level: Math.min(100, Math.max(0, Math.round(result.friendship_level))),
+      friendship_level: newFriendship,
       romantic_level: Math.min(100, Math.max(0, Math.round(result.romantic_level))),
       attraction_level: Math.min(100, Math.max(0, Math.round(result.attraction_level))),
-      chosen_family_level: Math.min(100, Math.max(0, Math.round(result.chosen_family_level))),
+      chosen_family_level: clampedChosenFamily,
     };
 
     await base44.asServiceRole.entities.Character.update(characterId, updated);
