@@ -72,6 +72,40 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {showAvatarModal && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
+            onClick={() => !isGeneratingAvatar && setShowAvatarModal(false)}
+          >
+            <motion.div
+              initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4"
+            >
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-foreground">Add avatar for {character.name}</h3>
+                {!isGeneratingAvatar && (
+                  <button onClick={() => setShowAvatarModal(false)} className="text-muted-foreground hover:text-foreground">
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">AI will generate an avatar based on {character.name}'s personality, archetype, and backstory.</p>
+              <button
+                onClick={generateAvatar}
+                disabled={isGeneratingAvatar}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-60"
+              >
+                <Sparkles className="w-4 h-4" />
+                {isGeneratingAvatar ? "Generating..." : "Generate AI Avatar"}
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <motion.div whileTap={{ scale: 0.99 }} className={`bg-card border border-border rounded-2xl p-4 ${isMovedAway ? "opacity-60" : ""}`}>
         <div className="flex items-start gap-3">
           <div className={character.avatar_url ? "cursor-pointer" : ""} onClick={() => character.avatar_url && setShowPhoto(true)}>
