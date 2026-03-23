@@ -186,6 +186,10 @@ Respond with ONLY a valid JSON object in this exact format:
 
     return Response.json({ ...updated, reason: result.reason });
   } catch (error) {
+    // Rate limit or LLM unavailable — skip update silently, don't crash
+    if (error.message?.includes('429') || error.message?.includes('Rate limit') || error.message?.includes('rate limit')) {
+      return Response.json({ skipped: true, reason: 'Rate limit — no changes applied' });
+    }
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
