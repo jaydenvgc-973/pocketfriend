@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";

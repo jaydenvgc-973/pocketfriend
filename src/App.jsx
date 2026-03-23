@@ -15,6 +15,9 @@ import CreateCharacter from './pages/CreateCharacter.jsx';
 import Settings from './pages/Settings';
 import EditDefaultCharacter from './pages/EditDefaultCharacter';
 import EditCharacterStory from './pages/EditCharacterStory';
+import EditCharacterPhotos from './pages/EditCharacterPhotos';
+import EditCharacterEmotions from './pages/EditCharacterEmotions';
+import EditCharacterRelationships from './pages/EditCharacterRelationships';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
