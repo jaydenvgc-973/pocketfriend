@@ -48,22 +48,18 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId) return;
     const loadConvo = async () => {
-      // Only clear messages if this is the first load (conversationIdRef not set)
-      const isFirstLoad = !conversationIdRef.current;
-      if (isFirstLoad) setMessages([]);
-
       const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] });
       let convoId = null;
-      let loadedMsgs = [];
 
       if (convos.length > 0) {
         convoId = convos[0].id;
-        setConversationId(convoId);
-        conversationIdRef.current = convoId;
         
-        if (isFirstLoad) {
-          loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
+        // Always load messages from database for this conversation
+        if (convoId !== conversationIdRef.current) {
+          const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100);
           setMessages(loadedMsgs);
+          setConversationId(convoId);
+          conversationIdRef.current = convoId;
         }
 
         // Subscribe to new messages in this conversation
