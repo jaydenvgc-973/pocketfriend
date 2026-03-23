@@ -1,7 +1,8 @@
 import React, { useState, useRef } from "react";
-import { Send, Mic, MicOff } from "lucide-react";
+import { Send, Mic, MicOff, ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
+import { base44 } from "@/api/base44Client";
 
 export default function ChatInput({ onSend }) {
   const [text, setText] = useState("");
