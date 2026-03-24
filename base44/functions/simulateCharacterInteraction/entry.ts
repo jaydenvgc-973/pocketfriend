@@ -57,30 +57,27 @@ Deno.serve(async (req) => {
       ? `USER DIRECTION (HIGHEST PRIORITY): ${userPrompt}\n\nBase the interaction around this direction. Make it central to what happens.`
       : '';
 
-    const prompt = `Simulate a realistic interaction between these characters:
+    const prompt = `${userPromptDirective ? `${userPromptDirective}\n\n---\n\n` : ''}Simulate a realistic interaction between these characters:
 
 ${characterProfiles.map(p => `
 NAME: ${p.name}
+Archetype: ${p.archetype}
+Emotional state: ${p.emotionalState}
 Personality: ${p.personality}
 Core traits: ${p.traits}
-Emotional state: ${p.emotionalState}
 Current life: ${p.currentSituation}
-Archetype: ${p.archetype}
 `).join('\n')}
 
-RELATIONSHIP CONTEXT:
+RELATIONSHIP CONTEXT (fine-tune details based on this):
 ${interactionContext}
 
-${userPromptDirective}
-
 Generate a natural conversation/interaction scene that:
-1. Each character acts according to their ARCHETYPE first — this defines their core approach to the world
-2. Their emotional state heavily influences their tone, patience, and openness in this moment
-3. Reflects their actual personalities and relationship dynamic
-4. Includes realistic dialogue with distinct voices for each character
-5. Shows how their emotional state and archetype affect their reactions to each other
-6. References something specific from their current situations or past history if known
-7. Results in some outcome — does the interaction bring them closer, create tension, resolve something, or leave them confused?
+1. STRICTLY FOLLOW the user direction above if provided — this is your primary constraint
+2. Each character acts according to their ARCHETYPE — this is their core lens on the world
+3. Their emotional state heavily shapes their tone, patience, and openness
+4. Relationships provide context for how they interact, but do not override archetype/mood
+5. Includes realistic dialogue with distinct voices for each character
+6. Results in some outcome — does the interaction bring them closer, create tension, resolve something, or leave them confused?
 
 Return a JSON object with:
 {
