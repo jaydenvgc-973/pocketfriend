@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { character_ids } = await req.json();
+    const { character_ids, userPrompt } = await req.json();
     
     if (!character_ids || character_ids.length < 2) {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
