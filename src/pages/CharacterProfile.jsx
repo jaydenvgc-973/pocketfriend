@@ -227,10 +227,10 @@ export default function CharacterProfile() {
         {/* Family Members - Editable */}
         <FamilyEditor character={character} />
 
-        {/* Family History */}
+        {/* Family History — below family list */}
         {character.family_history && (
           <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Family History</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Family History</p>
             <p className="text-sm text-muted-foreground leading-relaxed">{character.family_history}</p>
           </div>
         )}
