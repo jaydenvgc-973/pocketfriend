@@ -502,10 +502,30 @@ export default function Chat() {
               : peopleRefs;
           }
 
+          // Extract time of day from conversation context to adjust lighting
+          const timeMatch = text.match(/(\d{1,2}):?(\d{2})?\s*(am|pm|AM|PM)?|(?:morning|afternoon|evening|night|dawn|dusk|midnight|noon|lunch|dinner)/i);
+          let lightingContext = "";
+          if (timeMatch) {
+            const timeStr = timeMatch[0].toLowerCase();
+            if (timeStr.includes("morning") || timeStr.includes("dawn") || /^[5-9].*am/i.test(timeStr)) {
+              lightingContext = " Bright, natural morning/early daylight. Golden hour lighting.";
+            } else if (timeStr.includes("afternoon") || timeStr.includes("noon") || /^1[0-2].*am|^[1-4].*pm/i.test(timeStr)) {
+              lightingContext = " Bright midday or early afternoon lighting. Natural sunlight.";
+            } else if (timeStr.includes("evening") || timeStr.includes("dusk") || /^[5-8].*pm/i.test(timeStr)) {
+              lightingContext = " Evening lighting. Transitioning to dim. Artificial lights starting to dominate. Warm tones.";
+            } else if (timeStr.includes("night") || timeStr.includes("midnight") || /^[9-11].*pm|^[12]-?[4].*am/i.test(timeStr)) {
+              lightingContext = " Dark night scene. Artificial lighting, neon, or streetlights. Moody atmosphere.";
+            } else if (timeStr.includes("dinner") || /^[6-8].*pm/i.test(timeStr)) {
+              lightingContext = " Dinner time lighting. Soft artificial light. Warm ambiance.";
+            }
+          }
+
           // Enhance the prompt with appearance and scene consistency instructions
           let enhancedPrompt = imagePrompt + appearanceNote + detailContext;
           if (sceneReferenceUrl) {
-            enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.`;
+            enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.${lightingContext}`;
+          } else if (lightingContext) {
+            enhancedPrompt += lightingContext;
           }
           if (!userExplicitlyRequested) {
             enhancedPrompt = enhancedPrompt.replace(/\b(the user|the person I'm talking to|my friend)\b/gi, "").trim();
