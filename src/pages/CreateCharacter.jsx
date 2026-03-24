@@ -67,6 +67,12 @@ const MEMORY_PRESETS = [
 
 const DRAFT_KEY = "create_character_draft";
 
+const RELATIONSHIP_TYPES = [
+  "mother","father","grandmother","grandfather","great-grandmother","great-grandfather",
+  "aunt","uncle","sister","brother","half-sister","half-brother","step-mother","step-father",
+  "step-sister","step-brother","cousin","niece","nephew","daughter","son","other",
+];
+
 const defaultData = {
   first_name: "", middle_name: "", last_name: "",
   gender: "", age_range: "", ethnicities: [], living_situation: "",
@@ -77,6 +83,7 @@ const defaultData = {
   job_title: "", workplace_type: "", work_environment: "",
   frequented_places: [],
   known_character_ids: [],
+  family_members: [],
   birthday: "",
   user_respect_level: 50,
   friendship_level: 75,
