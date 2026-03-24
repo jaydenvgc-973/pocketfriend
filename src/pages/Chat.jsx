@@ -12,7 +12,8 @@ import MediaGallery from "@/components/chat/MediaGallery";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
-import { BarChart2 } from "lucide-react";
+import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
+import { BarChart2, BookOpen } from "lucide-react";
 
 export default function Chat() {
   const { characterId } = useParams();
