@@ -38,28 +38,59 @@ export function EditableTextField({ character, field, label, placeholder = "Not 
 export function EditableSelectField({ character, field, label, options }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState(character[field] || "");
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
 
   useEffect(() => { setValue(character[field] || ""); }, [character[field]]);
 
+  useEffect(() => {
+    const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
   const save = async (newVal) => {
     setValue(newVal);
+    setOpen(false);
     await base44.entities.Character.update(character.id, { [field]: newVal });
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
   };
 
+  const displayValue = value ? (options.find(o => (o.value || o) === value)?.label || value) : "Not set";
+
   return (
-    <div>
+    <div ref={ref} className="relative">
       <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
-      <select
-        value={value}
-        onChange={e => save(e.target.value)}
-        className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2 outline-none border border-transparent focus:border-primary/50 capitalize"
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between bg-secondary text-foreground text-sm rounded-xl px-3 py-2 border border-transparent focus:border-primary/50 hover:border-primary/30 transition-colors"
       >
-        <option value="">Not set</option>
-        {options.map(opt => (
-          <option key={opt.value || opt} value={opt.value || opt}>{opt.label || opt}</option>
-        ))}
-      </select>
+        <span className={value ? "capitalize" : "text-muted-foreground"}>{displayValue}</span>
+        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-lg overflow-y-auto max-h-52">
+          <button
+            onClick={() => save("")}
+            className="w-full text-left px-3 py-2 text-sm text-muted-foreground hover:bg-secondary transition-colors"
+          >
+            Not set
+          </button>
+          {options.map(opt => {
+            const val = opt.value || opt;
+            const lbl = opt.label || opt;
+            return (
+              <button
+                key={val}
+                onClick={() => save(val)}
+                className={`w-full text-left px-3 py-2 text-sm capitalize transition-colors hover:bg-secondary ${value === val ? "text-primary font-medium" : "text-foreground"}`}
+              >
+                {lbl}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
