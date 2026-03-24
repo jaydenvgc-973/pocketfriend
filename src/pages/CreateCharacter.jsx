@@ -366,6 +366,18 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         } : undefined,
         frequented_places: data.frequented_places.length > 0 ? data.frequented_places : undefined,
         family_members: (data.family_members || []).filter(m => m.name.trim()).length > 0 ? data.family_members.filter(m => m.name.trim()) : [],
+        fictional_relationships: knownChars.length > 0 ? knownChars.map(c => {
+          const rel = knownRels.find(r => r.character_id === c.id);
+          return {
+            person_name: c.name,
+            relationship_type: rel?.relationship_type || "Friend",
+            description: "",
+            current_status: "",
+            emotional_impact: "",
+            last_interaction_summary: "",
+            history_summary: "",
+          };
+        }) : undefined,
         city: data.city || undefined,
         state: data.state || undefined,
         user_respect_level: data.user_respect_level,
