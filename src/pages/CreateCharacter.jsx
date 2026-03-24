@@ -447,7 +447,60 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       )}
     </div>,
 
-    // Step 4: Archetype + social energy + orientation
+    // Step 4: Family members
+    <div key="family" className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground mb-1">Family members</h2>
+        <p className="text-xs text-muted-foreground mb-4">Add anyone in their family. Leave blank if they have none — this is the definitive list the character will know.</p>
+      </div>
+      <div className="space-y-2">
+        {(data.family_members || []).map((member, idx) => (
+          <div key={idx} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={member.name}
+              onChange={e => {
+                const updated = [...data.family_members];
+                updated[idx] = { ...updated[idx], name: e.target.value };
+                update("family_members", updated);
+              }}
+              placeholder="Name"
+              className="flex-1 bg-secondary text-foreground text-sm rounded-xl px-3 py-2 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground min-w-0"
+            />
+            <select
+              value={member.relationship_type}
+              onChange={e => {
+                const updated = [...data.family_members];
+                updated[idx] = { ...updated[idx], relationship_type: e.target.value };
+                update("family_members", updated);
+              }}
+              className="bg-secondary text-foreground text-sm rounded-xl px-2 py-2 outline-none border border-transparent focus:border-primary/50 capitalize"
+            >
+              {RELATIONSHIP_TYPES.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => update("family_members", data.family_members.filter((_, i) => i !== idx))}
+              className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={() => update("family_members", [...(data.family_members || []), { name: "", relationship_type: "mother" }])}
+        className="w-full flex items-center gap-2 justify-center py-3 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-sm"
+      >
+        <Plus className="w-4 h-4" /> Add family member
+      </button>
+      {(data.family_members || []).length === 0 && (
+        <p className="text-xs text-muted-foreground text-center italic">No family added — character will have no family in their world.</p>
+      )}
+    </div>,
+
+    // Step 5: Archetype + social energy + orientation
     <div key="archetype" className="space-y-6">
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Archetype</label>
