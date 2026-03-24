@@ -694,6 +694,15 @@ export default function Chat() {
         {character && <MediaGallery messages={messages} />}
         {character && (
           <button
+            onClick={() => setShowNarrativeBuilder(true)}
+            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            title="Add narrative event"
+          >
+            <BookOpen className="w-4 h-4" />
+          </button>
+        )}
+        {character && (
+          <button
             onClick={() => setShowStatusPopup(true)}
             className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
             title="View relationship status"
