@@ -4,6 +4,7 @@ module.exports = {
     content: ["./index.html", "./src/**/*.{ts,tsx,js,jsx}"],
     safelist: [
       "ring-emerald-500/40", "ring-orange-500/40", "ring-red-500/40", "ring-blue-500/40", "ring-zinc-600/40", "ring-pink-500/40", "ring-slate-500/40", "ring-orange-600/40", "ring-yellow-500/40",
+      "ring-purple-500/40", "ring-blue-600/40", "ring-amber-400/40", "ring-rose-500/40", "ring-teal-400/40", "ring-red-600/40",
       "bg-emerald-400", "bg-orange-400", "bg-red-400", "bg-blue-400", "bg-zinc-500",
       "bg-orange-950/40", "bg-red-950/30", "bg-blue-950/30", "bg-zinc-900",
       "bg-blue-500", "bg-emerald-500", "bg-pink-500", "bg-orange-500", "bg-purple-500",
