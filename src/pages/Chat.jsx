@@ -580,6 +580,47 @@ export default function Chat() {
             }).join(", ");
             enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self.`;
           }
+
+          // --- CLOTHING & WEATHER CONTEXT ---
+          let clothingContext = "";
+          const promptLower = imagePrompt.toLowerCase();
+          
+          // Detect location/activity
+          const isAtWork = /\b(work|office|job|desk|cubicle|coworkers|meeting|workplace)\b/i.test(promptLower);
+          const isAtSchool = /\b(school|class|university|college|campus|lecture|classroom)\b/i.test(promptLower);
+          const isAtGym = /\b(gym|exercise|workout|training|fitness)\b/i.test(promptLower);
+          const isAtPool = /\bpool\b/i.test(promptLower);
+          const isAtBeach = /\bbeach\b/i.test(promptLower);
+          const isOutside = /\b(outside|outdoor|park|hiking|running|jogging)\b/i.test(promptLower);
+          const isAtNightclub = /\b(nightclub|club|dancing|bar|party)\b/i.test(promptLower);
+          const isAtHome = /\b(home|house|apartment|couch|bed|kitchen|living room|bedroom|bedroom|lounging)\b/i.test(promptLower);
+          const isAtLoversHome = /\b(lover|partner|significant|intimate|bedroom)\b/i.test(promptLower);
+
+          if (isAtWork) {
+            clothingContext = "wearing professional work attire appropriate for their workplace.";
+          } else if (isAtSchool) {
+            clothingContext = "wearing casual student clothing appropriate for school.";
+          } else if (isAtGym || isAtPool) {
+            clothingContext = "wearing athletic or swimwear appropriate for the activity.";
+          } else if (isAtBeach) {
+            clothingContext = "wearing swimwear or beach attire appropriate for the setting.";
+          } else if (isOutside) {
+            clothingContext = "wearing casual outdoor clothing appropriate for being outside.";
+          } else if (isAtNightclub) {
+            clothingContext = "wearing fashionable nightclub attire.";
+          } else if (isAtLoversHome) {
+            clothingContext = "wearing casual comfortable clothing or minimal clothing appropriate for being with their lover.";
+          } else if (isAtHome) {
+            if (character.lives_alone) {
+              clothingContext = "wearing whatever they want, from comfortable loungewear to nothing at all, reflecting their privacy and mood.";
+            } else {
+              clothingContext = "wearing comfortable loungewear or casual clothes.";
+            }
+          }
+
+          if (clothingContext && !promptLower.includes("wearing") && !promptLower.includes("dressed")) {
+            enhancedPrompt += ` The character is ${clothingContext}`;
+          }
           
           const genRes = await base44.integrations.Core.GenerateImage({ 
             prompt: enhancedPrompt,
