@@ -104,7 +104,13 @@ export default function CharacterProfile() {
           <CharacterAvatar character={character} size="xl" />
           <div className="text-center">
             <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
-            <p className="text-sm text-muted-foreground mt-1">{character.personality_summary?.split(".")[0]}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {character.is_default
+                ? "He grew up developing a keen instinct for authenticity from varied environments, now works in NYC retail, and builds his life on intention and control."
+                : character.id === "69c05643cad0c019b157815c"
+                ? "Currently in-between jobs and holding various certifications, he recently completed a draining shift at the community center."
+                : character.personality_summary?.split(".")[0]}
+            </p>
           </div>
         </div>
 
