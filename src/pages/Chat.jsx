@@ -468,11 +468,17 @@ export default function Chat() {
             }
           }
 
-          // Assemble reference images: character references first, then scene reference
-          const peopleRefs = Object.values(characterReferenceMap).slice(0, 3);
-          const referenceImages = sceneReferenceUrl
-            ? [...peopleRefs, sceneReferenceUrl]
-            : peopleRefs;
+          // Assemble reference images: detail reference takes priority, then character and scene
+          let referenceImages = [];
+          if (detailReferenceImage) {
+            // Detail reference is the primary guide for consistency
+            referenceImages = [detailReferenceImage, ...Object.values(characterReferenceMap).slice(0, 2)];
+          } else {
+            const peopleRefs = Object.values(characterReferenceMap).slice(0, 3);
+            referenceImages = sceneReferenceUrl
+              ? [...peopleRefs, sceneReferenceUrl]
+              : peopleRefs;
+          }
 
           // Enhance the prompt with appearance and scene consistency instructions
           let enhancedPrompt = imagePrompt + appearanceNote + detailContext;
