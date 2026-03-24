@@ -104,8 +104,8 @@ export default function Home() {
   const activeCustomChars = customChars.filter(c => c.status === "active" || !c.status);
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
   // Slot opens when a character moves away (they still exist) or is deleted
-  const canCreate = activeCustomChars.length < 4;
-  const canMoveBack = movedAwayChars.length > 0 && activeCustomChars.length < 4;
+  const canCreate = activeCustomChars.length < 7;
+  const canMoveBack = movedAwayChars.length > 0 && activeCustomChars.length < 7;
 
   return (
     <div className="min-h-screen bg-background">
@@ -143,13 +143,13 @@ export default function Home() {
             <CharacterCard character={defaultChar} />
           </div>
         )}
-        {activeCustomChars.length >= 2 && (
-          <CharacterInteractionSimulator characters={activeCustomChars} />
-        )}
+        {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
+          <CharacterInteractionSimulator characters={defaultChar ? [defaultChar, ...activeCustomChars] : activeCustomChars} />
+        ) : null}
         
         <div>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/4</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/7</p>
             {canCreate && (
               <Link to="/create">
                 <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
