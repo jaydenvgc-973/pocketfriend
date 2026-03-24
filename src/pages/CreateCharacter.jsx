@@ -111,6 +111,8 @@ export default function CreateCharacter() {
   const [isGeneratingBackstory, setIsGeneratingBackstory] = useState(false);
   const [isGeneratingPersonality, setIsGeneratingPersonality] = useState(false);
   const [isGeneratingSituation, setIsGeneratingSituation] = useState(false);
+  const [isExtractingFamily, setIsExtractingFamily] = useState(false);
+  const [familyExtracted, setFamilyExtracted] = useState(false);
 
   const { data: existingCharacters = [] } = useQuery({
     queryKey: ["characters"],
