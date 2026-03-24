@@ -34,14 +34,28 @@ export function EditableTextField({ character, field, label, placeholder = "Not 
   );
 }
 
+const STANDARD_OPTIONS_KEY = "__standard__";
+
 // Editable select/dropdown field
 export function EditableSelectField({ character, field, label, options }) {
   const queryClient = useQueryClient();
-  const [value, setValue] = useState(character[field] || "");
+  const standardOptions = options.filter(o => (o.value || o) !== "Other");
+  const currentVal = character[field] || "";
+  const isCustom = currentVal && !standardOptions.some(o => (o.value || o) === currentVal) && currentVal !== "Other";
+
+  const [value, setValue] = useState(currentVal);
   const [open, setOpen] = useState(false);
+  const [showCustomInput, setShowCustomInput] = useState(isCustom);
+  const [customText, setCustomText] = useState(isCustom ? currentVal : "");
   const ref = useRef(null);
 
-  useEffect(() => { setValue(character[field] || ""); }, [character[field]]);
+  useEffect(() => {
+    const v = character[field] || "";
+    const custom = v && !standardOptions.some(o => (o.value || o) === v) && v !== "Other";
+    setValue(v);
+    setShowCustomInput(custom);
+    setCustomText(custom ? v : "");
+  }, [character[field]]);
 
   useEffect(() => {
     const handleClick = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -56,7 +70,13 @@ export function EditableSelectField({ character, field, label, options }) {
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
   };
 
-  const displayValue = value ? (options.find(o => (o.value || o) === value)?.label || value) : "Not set";
+  const saveCustom = async () => {
+    if (!customText.trim()) return;
+    await save(customText.trim());
+  };
+
+  const isStandard = standardOptions.some(o => (o.value || o) === value);
+  const displayValue = showCustomInput ? (value || "Custom...") : (value || "Not set");
 
   return (
     <div ref={ref} className="relative">
@@ -71,24 +91,44 @@ export function EditableSelectField({ character, field, label, options }) {
       {open && (
         <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-card border border-border rounded-xl shadow-lg overflow-y-auto max-h-52">
           <button
-            onClick={() => save("")}
+            onClick={() => { setValue(""); setShowCustomInput(false); setCustomText(""); setOpen(false); save(""); }}
             className="w-full text-left px-3 py-2 text-sm text-muted-foreground hover:bg-secondary transition-colors"
           >
             Not set
           </button>
-          {options.map(opt => {
+          {standardOptions.map(opt => {
             const val = opt.value || opt;
             const lbl = opt.label || opt;
             return (
               <button
                 key={val}
-                onClick={() => save(val)}
+                onClick={() => { setShowCustomInput(false); setCustomText(""); save(val); }}
                 className={`w-full text-left px-3 py-2 text-sm capitalize transition-colors hover:bg-secondary ${value === val ? "text-primary font-medium" : "text-foreground"}`}
               >
                 {lbl}
               </button>
             );
           })}
+          <button
+            onClick={() => { setShowCustomInput(true); setOpen(false); }}
+            className={`w-full text-left px-3 py-2 text-sm transition-colors hover:bg-secondary ${showCustomInput ? "text-primary font-medium" : "text-foreground"}`}
+          >
+            Other...
+          </button>
+        </div>
+      )}
+      {showCustomInput && (
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={customText}
+            onChange={e => setCustomText(e.target.value)}
+            onBlur={saveCustom}
+            onKeyDown={e => e.key === "Enter" && saveCustom()}
+            placeholder="Type custom value..."
+            autoFocus
+            className="flex-1 bg-secondary text-foreground text-sm rounded-xl px-3 py-2 outline-none border border-primary/50 placeholder:text-muted-foreground"
+          />
         </div>
       )}
     </div>

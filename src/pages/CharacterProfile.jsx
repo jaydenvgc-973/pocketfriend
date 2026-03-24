@@ -137,7 +137,7 @@ export default function CharacterProfile() {
             character={character}
             field="sexual_orientation"
             label="Orientation"
-            options={["Straight", "Gay", "Lesbian", "Bisexual", "Pansexual", "Asexual", "Queer", "Questioning", "Other", "Bisexual (DL)"]}
+            options={["Straight", "Gay", "Lesbian", "Bisexual", "Pansexual", "Asexual", "Queer", "Questioning", "Other"]}
           />
         </div>
 
