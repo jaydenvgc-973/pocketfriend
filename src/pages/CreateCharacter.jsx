@@ -747,12 +747,11 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
     true, // 2: work optional
     true, // 3: connections optional
     data.archetype && data.social_energy, // 4: archetype required
-    data.vibes.length > 0, // 5: vibes required
-    true, // 6: backstory optional — wait, this is step 6 vibes+backstory combined
-    true, // 7: family optional
-    true, // 8: memories optional
-    true, // 9: relationship optional
-    true, // 10: photo optional
+    data.vibes.length > 0, // 5: vibes+backstory
+    true, // 6: family optional
+    true, // 7: memories optional
+    true, // 8: relationship optional
+    true, // 9: photo optional
   ][step];
 
   return (
