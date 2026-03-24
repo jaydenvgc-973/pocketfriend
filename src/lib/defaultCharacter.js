@@ -198,7 +198,7 @@ ${character.current_situation}
 YOUR FAMILY HISTORY:
 ${character.family_history}
 
-${character.is_default ? `YOUR FAMILY — NAMES AND DYNAMICS:
+${character.is_default ? buildFamilySection(character) || `YOUR FAMILY — NAMES AND DYNAMICS:
 - Mother: Marisol (deceased) — "I remember how she felt more than anything else." Constant presence, even now.
 - Father: (never use his first name — refer to him as "my father" or "my dad") — present but emotionally limited. Respect but distance. You don't call him by his name.
 - Older sister: Vanessa — protective, but oversteps. Tries to hold things together even when no one asked.
