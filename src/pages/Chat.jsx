@@ -425,10 +425,10 @@ export default function Chat() {
                 } else {
                   try {
                     const npcGenRes = await base44.integrations.Core.GenerateImage({
-                      prompt: `Photorealistic portrait photo of ${rel.person_name}, ${rel.relationship_type}. ${rel.description ? `${rel.description}` : "Focus on natural appearance and distinctive features."}
+                      prompt: `Photorealistic, authentic portrait photo of ${rel.person_name} (${rel.relationship_type}). ${rel.description ? `${rel.description}. ` : ""}Real person, natural appearance, distinctive features. Match the photographic realism and lighting style of the reference photos provided.
 
-📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley. Natural skin texture, real human proportions, authentic appearance.`,
-                      existing_image_urls: Object.values(characterReferenceMap).slice(0, 2)
+📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. ❌ NOT: illustration, painting, digital art, anime, CGI, drawing, cartoon, stylized, artificial, plastic, doll-like, uncanny valley, oversoftened, fake, filter, Photoshop effect.`,
+                      existing_image_urls: [characterReferenceMap[character.name], ...Object.values(characterReferenceMap).filter(url => url !== characterReferenceMap[character.name]).slice(0, 1)].filter(Boolean)
                     });
                     if (npcGenRes?.url) {
                       characterReferenceMap[rel.person_name] = npcGenRes.url;
@@ -489,9 +489,9 @@ export default function Chat() {
                   // Fallback: Generate a scene reference if web search didn't yield URLs
                   const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
                   const sceneGenRes = await base44.integrations.Core.GenerateImage({
-                   prompt: `Interior photo of ${locationDesc}. Realistic, lived-in, personal space. No people. Natural lighting. High detail. This is their personal ${detectedLocation} that should look the same every time.
+                   prompt: `Professional interior photo of ${locationDesc}. Realistic, lived-in, authentic personal space. No people. Natural lighting. High detail, real textures, authentic materials. This is their personal ${detectedLocation} that should look the same every time.
 
-                  📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley. Authentic real-world interior with natural materials, textures, and lighting.`
+                  📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. ❌ NOT: illustration, painting, digital art, rendering, anime, CGI, stylized, cartoon, fake, artificial, oversoften, Photoshop, filter, unreal.`
                   });
                   if (sceneGenRes?.url) {
                     sceneReferenceUrl = sceneGenRes.url;
@@ -531,19 +531,23 @@ export default function Chat() {
             }
           }
 
-          // Assemble reference images: detail reference takes priority, then character and scene
+          // Assemble reference images: ALWAYS prioritize character's primary appearance over scene
           let referenceImages = [];
+          // Character reference is ALWAYS first priority for facial/appearance consistency
+          const primaryCharRef = characterReferenceMap[character.name];
+          const otherPeopleRefs = Object.entries(characterReferenceMap)
+            .filter(([name]) => name !== character.name)
+            .map(([, url]) => url);
+
           if (detailReferenceImage) {
-            // Detail reference is the primary guide for consistency
-            referenceImages = [detailReferenceImage, ...Object.values(characterReferenceMap).slice(0, 2)];
+            // Detail reference is secondary guide, but character appearance is primary lock
+            referenceImages = [primaryCharRef, detailReferenceImage, ...otherPeopleRefs.slice(0, 1)].filter(Boolean);
+          } else {
+            // Character appearance ALWAYS comes first, then scene, then other people
+            referenceImages = [primaryCharRef, ...otherPeopleRefs.slice(0, 2)].filter(Boolean);
             if (sceneReferenceUrl) {
               referenceImages.push(sceneReferenceUrl);
             }
-          } else {
-            const peopleRefs = Object.values(characterReferenceMap).slice(0, 3);
-            referenceImages = sceneReferenceUrl
-              ? [sceneReferenceUrl, ...peopleRefs]
-              : peopleRefs;
           }
 
           // Extract time of day from conversation context to adjust lighting
@@ -565,7 +569,7 @@ export default function Chat() {
           }
 
           // Enhance the prompt with appearance and scene consistency instructions
-          let enhancedPrompt = imagePrompt + appearanceNote + detailContext + "\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph.";
+          let enhancedPrompt = imagePrompt + appearanceNote + detailContext + "\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. ❌ NOT: illustration, painting, digital art, anime, stylized, cartoon, drawing, sketch, filter, CGI, unreal, plastic, doll-like, porcelain, uncanny, artificial, oversmoothed, Photoshop, edited, fake, unrealistic.";
           if (sceneReferenceUrl) {
             enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.${lightingContext}`;
           } else if (lightingContext) {
