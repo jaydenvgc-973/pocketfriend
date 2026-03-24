@@ -68,9 +68,25 @@ Deno.serve(async (req) => {
       const fullDate = now.toLocaleDateString("en-US", { weekday: "long", year: "numeric", month: "long", day: "numeric", timeZone: "America/New_York" });
       const lastUpdated = character.life_last_updated ? new Date(character.life_last_updated).toLocaleString("en-US", { timeZone: "America/New_York" }) : "never";
 
+      // Fetch current weather for the character's city
+      let weatherContext = "";
+      if (character.city || character.state) {
+        const location = [character.city, character.state].filter(Boolean).join(", ");
+        try {
+          const weatherRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `What is the current weather right now in ${location}? Give a short 1-sentence summary: temperature (Fahrenheit), conditions (e.g. sunny, cloudy, rainy, snowy), and how it feels outside. Be specific and accurate.`,
+            add_context_from_internet: true,
+            model: 'gemini_3_flash'
+          });
+          weatherContext = `\nCURRENT WEATHER IN ${location.toUpperCase()}: ${weatherRes}`;
+        } catch (_) {
+          // Weather fetch failed, skip
+        }
+      }
+
       const prompt = `You are writing the internal life updates for a fictional character named ${name}. This character is NOT aware they are fictional — their life, relationships, and events are completely real to them.
 
-REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)
+REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)${weatherContext}
 Time since last update: last updated ${lastUpdated}
 
 CHARACTER PROFILE:
