@@ -47,6 +47,7 @@ export default function EditCharacterRelationships() {
     setIsSaving(true);
     await base44.entities.Character.update(selectedChar.id, levels);
     queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

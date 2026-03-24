@@ -44,6 +44,7 @@ export default function EditCharacterStory() {
       system_prompt: updated.system_prompt,
     });
     queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

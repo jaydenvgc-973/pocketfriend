@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
+import { buildSystemPrompt } from "@/lib/defaultCharacter";
 
 const RELATIONSHIP_TYPES = [
   "mother",
