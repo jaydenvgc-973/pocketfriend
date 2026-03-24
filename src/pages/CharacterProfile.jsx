@@ -114,9 +114,9 @@ export default function CharacterProfile() {
           </div>
         </div>
 
-        {/* Age, Location, Identity — editable */}
+        {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-          {/* Age display */}
+          {/* Age display — always read-only (ages dynamically) */}
           {(age !== null || character.age_range) && (
             <div className="flex items-center gap-2 pb-2 border-b border-border">
               <User className="w-4 h-4 text-primary" />
@@ -128,23 +128,44 @@ export default function CharacterProfile() {
               )}
             </div>
           )}
+
+          {/* City & State: locked for default, editable for custom */}
           <div className="grid grid-cols-2 gap-3">
-            <EditableTextField character={character} field="city" label="City" placeholder="City" />
-            <EditableTextField character={character} field="state" label="State" placeholder="State" />
+            {character.is_default ? (
+              <>
+                <NonEditableField label="City" value={character.city} />
+                <NonEditableField label="State" value={character.state} />
+              </>
+            ) : (
+              <>
+                <EditableTextField character={character} field="city" label="City" placeholder="City" />
+                <EditableTextField character={character} field="state" label="State" placeholder="State" />
+              </>
+            )}
           </div>
-          <EditableSelectField
-            character={character}
-            field="gender"
-            label="Gender"
-            options={["male", "female", "non-binary", "other"]}
-          />
-          <EditableEthnicityField character={character} />
-          <EditableSelectField
-            character={character}
-            field="sexual_orientation"
-            label="Orientation"
-            options={["Straight", "Gay", "Lesbian", "Bisexual", "Pansexual", "Asexual", "Queer", "Questioning", "Other"]}
-          />
+
+          {/* Gender: always displayed, never user-editable */}
+          <NonEditableField label="Gender" value={character.gender} />
+
+          {/* Ethnicity: locked for default, editable for custom */}
+          {character.is_default ? (
+            <div>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Ethnic Background</p>
+              <div className="flex flex-wrap gap-1.5">
+                {(character.ethnicities || []).length > 0
+                  ? character.ethnicities.map(eth => (
+                      <span key={eth} className="px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">{eth}</span>
+                    ))
+                  : <span className="text-sm text-muted-foreground italic">Not set</span>
+                }
+              </div>
+            </div>
+          ) : (
+            <EditableEthnicityField character={character} />
+          )}
+
+          {/* Sexual Orientation: always displayed, never user-editable */}
+          <NonEditableField label="Orientation" value={character.sexual_orientation} />
         </div>
 
         {/* Birthday & Zodiac */}
