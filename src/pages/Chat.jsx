@@ -734,6 +734,14 @@ export default function Chat() {
         <div ref={bottomRef} />
       </div>
       <ChatInput onSend={sendMessage} />
+      <NarrativeBuilderPopup
+        isOpen={showNarrativeBuilder}
+        onClose={() => setShowNarrativeBuilder(false)}
+        characterId={characterId}
+        conversationId={conversationId}
+        chatHistory={messages}
+        onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+      />
       <BottomNav />
     </div>
   );
