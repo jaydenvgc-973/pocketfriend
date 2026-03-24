@@ -43,7 +43,8 @@ const SEXUAL_ORIENTATIONS = ["Straight", "Gay", "Bisexual", "Pansexual", "Queer"
 const JOB_TYPES = [
   "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
   "Corporate / Office", "Education / Teaching", "Creative / Arts", "Tech / Software",
-  "Trades / Construction", "Freelance / Self-employed", "Student", "Between jobs"
+  "Trades / Construction", "Freelance / Self-employed", "Student", "Student & Internship",
+  "Unemployed", "Crime / Illegal", "Between jobs"
 ];
 
 const PLACE_OPTIONS = [
