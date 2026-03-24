@@ -340,27 +340,12 @@ export default function Chat() {
       }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
 
-      // Always strip [IMAGE: ...] tags from responseText immediately (before any DB save)
-      const rawImageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/s);
+      // Extract [IMAGE: ...] tag if present — if LLM included it, always generate the image
+      const imageMatch = responseText.match(/\[IMAGE:\s*([\s\S]+?)\]/);
       let typingDelayMs = 0;
 
-      // Dynamic photo send rate based on personality
-      const isPhotogenic = character.is_photogenic || false;
-      const energy = character.social_energy || "ambivert";
-      const isIntrovert = energy === "introvert" || energy === "mostly_introvert";
-      const isExtrovert = energy === "extrovert" || energy === "mostly_extrovert";
-
-      let photoChance;
-      if (isExtrovert && isPhotogenic)       photoChance = 2 / 10;  // 20%
-      else if (isExtrovert && !isPhotogenic) photoChance = 2 / 15;  // ~13%
-      else if (isIntrovert && isPhotogenic)  photoChance = 2 / 15;  // ~13%
-      else if (isIntrovert && !isPhotogenic) photoChance = 1 / 30;  // ~3%
-      else /* ambivert */                    photoChance = isPhotogenic ? 1 / 10 : 1 / 20;
-
-      const imageMatch = rawImageMatch && Math.random() < photoChance ? rawImageMatch : null;
-
       // Always strip the [IMAGE: ...] tag from responseText before any DB save
-      responseText = responseText.replace(/\[IMAGE:\s*.+?\]/gs, "").trim();
+      responseText = responseText.replace(/\[IMAGE:\s*[\s\S]+?\]/g, "").trim();
 
       if (imageMatch) {
         const imagePrompt = imageMatch[1].trim();
