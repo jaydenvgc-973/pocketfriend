@@ -45,6 +45,7 @@ export default function EditCharacterRelationships() {
   const handleSave = async () => {
     if (!selectedChar) return;
     setIsSaving(true);
+    // Relationship levels don't affect the system prompt — just save directly
     await base44.entities.Character.update(selectedChar.id, levels);
     queryClient.invalidateQueries({ queryKey: ["characters"] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
