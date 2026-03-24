@@ -146,7 +146,25 @@ export default function CreateCharacter() {
   });
 
   const toggleKnownCharacter = (id) => setData(prev => {
-    const next = { ...prev, known_character_ids: prev.known_character_ids.includes(id) ? prev.known_character_ids.filter(x => x !== id) : [...prev.known_character_ids, id] };
+    const existing = prev.known_character_relationships || [];
+    const isSelected = existing.some(r => r.character_id === id);
+    const next = {
+      ...prev,
+      known_character_relationships: isSelected
+        ? existing.filter(r => r.character_id !== id)
+        : [...existing, { character_id: id, relationship_type: "Friend" }]
+    };
+    saveDraft(next, step, avatarUrl, referenceUrls);
+    return next;
+  });
+
+  const updateKnownCharacterRelType = (id, relationship_type) => setData(prev => {
+    const next = {
+      ...prev,
+      known_character_relationships: (prev.known_character_relationships || []).map(r =>
+        r.character_id === id ? { ...r, relationship_type } : r
+      )
+    };
     saveDraft(next, step, avatarUrl, referenceUrls);
     return next;
   });
