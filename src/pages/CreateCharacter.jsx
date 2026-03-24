@@ -73,6 +73,10 @@ const RELATIONSHIP_TYPES = [
   "step-sister","step-brother","cousin","niece","nephew","daughter","son","other",
 ];
 
+const KNOWN_CHARACTER_RELATIONSHIP_TYPES = [
+  "Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss",
+];
+
 const defaultData = {
   first_name: "", middle_name: "", last_name: "",
   gender: "", age_range: "", ethnicities: [], living_situation: "",
