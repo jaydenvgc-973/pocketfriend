@@ -27,7 +27,8 @@ Deno.serve(async (req) => {
       character_id: characterId,
       character_name: character[0].name,
       content: narrativeContent,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      is_narrative: true
     });
 
     // Update character's current_life_event to reflect this narrative
