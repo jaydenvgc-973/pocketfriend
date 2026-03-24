@@ -67,8 +67,9 @@ export default function CharacterProfile() {
     enabled: !!characterId,
   });
 
-  const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : null;
+  const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
   const zodiacData = zodiacSign ? ZODIAC_SIGNS[zodiacSign] : null;
+  const age = character?.birthday ? calculateAge(character.birthday) : null;
 
   if (isLoading) {
     return (
