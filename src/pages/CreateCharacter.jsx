@@ -676,7 +676,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       )}
     </div>,
 
-    // Step 8: Relationship levels
+    // Step 8: Relationship levels (index 8)
     <RelationshipStep
       key="relationship"
       data={data}
