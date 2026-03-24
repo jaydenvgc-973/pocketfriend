@@ -188,6 +188,44 @@ export default function CreateCharacter() {
     setIsGeneratingSituation(false);
   };
 
+  const extractFamilyFromText = async () => {
+    const text = [data.background, data.personality_override, data.situation_override].filter(Boolean).join("\n\n");
+    if (!text.trim()) return;
+    setIsExtractingFamily(true);
+    const result = await base44.integrations.Core.InvokeLLM({
+      prompt: `Read the following character description and extract any explicitly named family members mentioned. Only include people who are clearly described as family (e.g. "her mom Sarah", "his brother Darius", "raised by her grandmother Elena"). Do not invent or assume. If no family members are mentioned by name, return an empty array.
+
+Text:
+${text}
+
+Return ONLY a JSON object with a "members" array. Each item: { name: string, relationship_type: string }. Use lowercase relationship types like: mother, father, sister, brother, grandmother, grandfather, aunt, uncle, cousin, daughter, son, other.`,
+      response_json_schema: {
+        type: "object",
+        properties: {
+          members: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                relationship_type: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    });
+    setIsExtractingFamily(false);
+    setFamilyExtracted(true);
+    if (result?.members?.length > 0) {
+      // Merge with any manually added entries, avoid duplicates by name
+      const existing = data.family_members || [];
+      const existingNames = existing.map(m => m.name.toLowerCase());
+      const newOnes = result.members.filter(m => !existingNames.includes(m.name.toLowerCase()));
+      update("family_members", [...existing, ...newOnes]);
+    }
+  };
+
   const toggleVibe = (v) => setData(prev => {
     const next = { ...prev, vibes: prev.vibes.includes(v) ? prev.vibes.filter(x => x !== v) : prev.vibes.length < 4 ? [...prev.vibes, v] : prev.vibes };
     saveDraft(next, step, avatarUrl, referenceUrls);
