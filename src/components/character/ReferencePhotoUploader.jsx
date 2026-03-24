@@ -48,7 +48,7 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
 
   const generateAvatar = async () => {
     setIsGenerating(true);
-    const prompt = `Realistic portrait photo of ${descriptor}. Candid, natural lighting, authentic. Not a stock photo. Match the person's exact appearance from the reference photos.`;
+    const prompt = `Realistic portrait photo of ${descriptor}. Candid, natural lighting, authentic. Not a stock photo. Match the person's exact appearance from the reference photos.\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley, natural skin texture, real human proportions.`;
     const result = await base44.integrations.Core.GenerateImage({
       prompt,
       existing_image_urls: referenceUrls,
