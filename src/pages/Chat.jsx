@@ -501,7 +501,6 @@ export default function Chat() {
             existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
           });
           imageUrl = genRes.url;
-          responseText = responseText.replace(/\[IMAGE:\s*.+?\]/g, "").trim();
         } catch (imgErr) {
           // Image generation failed, continue without image
         }
