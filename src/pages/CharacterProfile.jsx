@@ -107,8 +107,20 @@ export default function CharacterProfile() {
           </div>
         </div>
 
-        {/* Location — editable */}
+        {/* Age, Location, Identity — editable */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+          {/* Age display */}
+          {(age !== null || character.age_range) && (
+            <div className="flex items-center gap-2 pb-2 border-b border-border">
+              <User className="w-4 h-4 text-primary" />
+              <span className="text-sm text-foreground font-medium">
+                {age !== null ? `${age} years old` : character.age_range}
+              </span>
+              {age !== null && character.age_range && (
+                <span className="text-xs text-muted-foreground">({character.age_range})</span>
+              )}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <EditableTextField character={character} field="city" label="City" placeholder="City" />
             <EditableTextField character={character} field="state" label="State" placeholder="State" />
@@ -118,7 +130,7 @@ export default function CharacterProfile() {
             character={character}
             field="sexual_orientation"
             label="Orientation"
-            options={["Straight", "Gay", "Lesbian", "Bisexual", "Pansexual", "Asexual", "Queer", "Questioning", "Other"]}
+            options={["Straight", "Gay", "Lesbian", "Bisexual", "Pansexual", "Asexual", "Queer", "Questioning", "Other", "Bisexual (DL)"]}
           />
         </div>
 
