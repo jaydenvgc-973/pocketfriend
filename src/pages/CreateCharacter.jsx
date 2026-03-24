@@ -742,16 +742,17 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
   ];
 
   const canNext = [
-    data.first_name.trim() && data.last_name.trim() && data.gender && data.age_range,
-    data.ethnicities.length > 0 && data.living_situation,
-    true, // work optional
-    true, // connections optional
-    true, // family optional
-    data.archetype && data.social_energy,
-    data.vibes.length > 0,
-    true, // memories optional
-    true, // relationship optional
-    true, // photo optional
+    data.first_name.trim() && data.last_name.trim() && data.gender && data.age_range, // 0: basic
+    data.ethnicities.length > 0 && data.living_situation, // 1: background
+    true, // 2: work optional
+    true, // 3: connections optional
+    data.archetype && data.social_energy, // 4: archetype required
+    data.vibes.length > 0, // 5: vibes required
+    true, // 6: backstory optional — wait, this is step 6 vibes+backstory combined
+    true, // 7: family optional
+    true, // 8: memories optional
+    true, // 9: relationship optional
+    true, // 10: photo optional
   ][step];
 
   return (
