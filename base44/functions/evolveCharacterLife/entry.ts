@@ -187,8 +187,17 @@ Ground everything in real time. This person's life moves like real life — not 
         }
       });
 
+      // Preserve bidirectional relationship IDs when updating
+      const preservedRelationships = (update.fictional_relationships || []).map(updatedRel => {
+        const original = (character.fictional_relationships || []).find(r => r.person_name === updatedRel.person_name);
+        return {
+          ...updatedRel,
+          related_character_id: original?.related_character_id || updatedRel.related_character_id
+        };
+      });
+
       await base44.asServiceRole.entities.Character.update(character.id, {
-        fictional_relationships: update.fictional_relationships || character.fictional_relationships || [],
+        fictional_relationships: preservedRelationships,
         transient_encounters: update.transient_encounters || [],
         current_life_event: update.current_life_event || "",
         emotional_state: update.emotional_state || character.emotional_state || "calm",
