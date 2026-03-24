@@ -481,31 +481,51 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       ) : (
         <div className="space-y-3">
           {existingCharacters.map(char => {
-            const selected = data.known_character_ids.includes(char.id);
+            const rel = (data.known_character_relationships || []).find(r => r.character_id === char.id);
+            const selected = !!rel;
             return (
-              <button
+              <div
                 key={char.id}
-                onClick={() => toggleKnownCharacter(char.id)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors text-left ${selected ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/30"}`}
+                className={`w-full rounded-xl border transition-colors ${selected ? "bg-primary/10 border-primary/40" : "bg-card border-border"}`}
               >
-                <CharacterAvatar character={char} size="md" />
-                <div className="flex-1 min-w-0">
-                  <p className={`text-sm font-medium ${selected ? "text-primary" : "text-foreground"}`}>{char.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
-                </div>
-                {selected && (
-                  <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                    <Check className="w-3 h-3 text-primary-foreground" />
+                <button
+                  onClick={() => toggleKnownCharacter(char.id)}
+                  className="w-full flex items-center gap-3 p-3 text-left"
+                >
+                  <CharacterAvatar character={char} size="md" />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm font-medium ${selected ? "text-primary" : "text-foreground"}`}>{char.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
+                  </div>
+                  {selected && (
+                    <div className="w-5 h-5 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                      <Check className="w-3 h-3 text-primary-foreground" />
+                    </div>
+                  )}
+                </button>
+                {selected && !char.is_default && (
+                  <div className="px-3 pb-3">
+                    <div className="flex flex-wrap gap-2">
+                      {KNOWN_CHARACTER_RELATIONSHIP_TYPES.map(type => (
+                        <button
+                          key={type}
+                          onClick={() => updateKnownCharacterRelType(char.id, type)}
+                          className={`px-3 py-1 rounded-full text-xs border transition-colors ${rel.relationship_type === type ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                        >
+                          {type}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
-              </button>
+              </div>
             );
           })}
         </div>
       )}
-      {data.known_character_ids.length > 0 && (
+      {(data.known_character_relationships || []).length > 0 && (
         <p className="text-xs text-muted-foreground text-center">
-          Knows {data.known_character_ids.length} character{data.known_character_ids.length > 1 ? "s" : ""}
+          Knows {data.known_character_relationships.length} character{data.known_character_relationships.length > 1 ? "s" : ""}
         </p>
       )}
     </div>,
