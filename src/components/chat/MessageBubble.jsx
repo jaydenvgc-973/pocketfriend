@@ -25,7 +25,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       animate={{ opacity: 1, y: 0 }}
       className={`flex ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
     >
-      <div className={`relative max-w-[80%] ${isNarrative ? "items-center" : isUser ? "items-end" : "items-start"} flex flex-col`}>
+      <div className={`relative ${isNarrative ? "max-w-2xl" : "max-w-[80%]"} ${isNarrative ? "items-center" : isUser ? "items-end" : "items-start"} flex flex-col`}>
         {showName && !isUser && !isNarrative && message.character_name && (
           <span className="text-xs text-primary/70 ml-3 mb-1 font-medium">{message.character_name}</span>
         )}
@@ -51,8 +51,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         </AnimatePresence>
 
         {/* Message bubble with reaction trigger */}
-        <div className="group relative" onClick={() => setShowDelete(!showDelete)}>
-          <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"}`} overflow-hidden`}>
+        <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)}>
+          <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {message.image_url && (
               <img
                 src={message.image_url}
@@ -66,7 +66,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           </div>
 
           {/* Reactions + add button — all anchored to same bottom corner spot */}
-          {onReact && (
+          {onReact && !isNarrative && (
             <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-20 flex gap-0.5 items-center`}>
               {hasReactions && (
                 <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
@@ -74,7 +74,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />
             </div>
           )}
-        </div>
+          </div>
 
         {time && (
           <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>

@@ -68,9 +68,56 @@ export default function CharacterInteractionSimulator({ characters }) {
     }
   };
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     setIsApprovalMode(false);
     setShowModal(false);
+
+    // Create narrative message for each character
+    if (result && selected.length > 0) {
+      try {
+        const narrativeContent = `${result.scene_summary}\n\n${result.dialogue.map(d => `**${d.speaker}:** "${d.text}"`).join('\n\n')}\n\n${result.outcome}`;
+
+        for (const characterId of selected) {
+          const char = characters.find(c => c.id === characterId);
+          if (!char) continue;
+
+          // Get or create conversation
+          const convos = await base44.entities.Conversation.filter(
+            { type: 'direct', character_ids: [characterId] },
+            '-updated_date',
+            1
+          );
+
+          let convoId = convos[0]?.id;
+          if (!convoId) {
+            const convo = await base44.entities.Conversation.create({
+              title: `Direct with ${char.name}`,
+              type: 'direct',
+              character_ids: [characterId],
+            });
+            convoId = convo.id;
+          }
+
+          // Create narrative message
+          await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: 'system',
+            content: narrativeContent,
+            is_narrative: true,
+            timestamp: new Date().toISOString(),
+          });
+
+          // Update conversation metadata
+          await base44.entities.Conversation.update(convoId, {
+            last_message_preview: result.scene_summary.substring(0, 100),
+            last_message_date: new Date().toISOString(),
+          });
+        }
+      } catch (err) {
+        console.error('Failed to save narrative to chat:', err);
+      }
+    }
+
     setUserPrompt('');
   };
 
