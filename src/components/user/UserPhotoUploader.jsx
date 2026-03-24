@@ -60,6 +60,12 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
         existing_image_urls: referenceImages
       });
       setGeneratedImageUrl(genRes.url);
+      
+      // Save as user avatar
+      await base44.auth.updateMe({
+        user_avatar_url: genRes.url
+      });
+      queryClient.invalidateQueries({ queryKey: ["user"] });
     } catch (err) {
       console.error("Failed to generate preview:", err);
     } finally {

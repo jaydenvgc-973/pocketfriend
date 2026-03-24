@@ -397,8 +397,10 @@ export default function Chat() {
             characterReferenceMap[character.name] = character.avatar_url;
           }
 
-          // Map the user
-          if (currentUser?.reference_image_urls?.length > 0) {
+          // Map the user — prioritize AI-generated avatar, fall back to uploaded reference images
+          if (currentUser?.user_avatar_url) {
+            characterReferenceMap["user"] = currentUser.user_avatar_url;
+          } else if (currentUser?.reference_image_urls?.length > 0) {
             characterReferenceMap["user"] = currentUser.reference_image_urls[0];
           }
 
