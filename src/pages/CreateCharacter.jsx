@@ -162,9 +162,22 @@ export default function CreateCharacter() {
   const updateKnownCharacterRelType = (id, relationship_type) => setData(prev => {
     const next = {
       ...prev,
-      known_character_relationships: (prev.known_character_relationships || []).map(r =>
-        r.character_id === id ? { ...r, relationship_type } : r
-      )
+      known_character_relationships: (prev.known_character_relationships || []).map(r => {
+        if (r.character_id === id) {
+          const updated = { ...r, relationship_type };
+          // If "Partner" is selected, set romantic and attraction to 60
+          if (relationship_type === "Partner") {
+            updated.romantic_level = 60;
+            updated.attraction_level = 60;
+          } else {
+            // Reset to 0 if changing from Partner to something else
+            updated.romantic_level = 0;
+            updated.attraction_level = 0;
+          }
+          return updated;
+        }
+        return r;
+      })
     };
     saveDraft(next, step, avatarUrl, referenceUrls);
     return next;
