@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
@@ -8,6 +8,7 @@ import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
+import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -57,8 +58,9 @@ function getZodiacSign(dateString) {
 
 export default function CharacterProfile() {
   const { characterId } = useParams();
+  const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   
-  const { data: character, isLoading } = useQuery({
+  const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
       const chars = await base44.entities.Character.filter({ id: characterId });
@@ -71,6 +73,26 @@ export default function CharacterProfile() {
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
   const zodiacData = zodiacSign ? ZODIAC_SIGNS[zodiacSign] : null;
   const age = character?.birthday ? calculateAge(character.birthday) : null;
+
+  const handleZodiacSelect = async (sign) => {
+    if (!character || character.is_default) return;
+    
+    setIsSavingZodiac(true);
+    try {
+      const birthdate = calculateBirthdateFromZodiac(sign, character.age_range);
+      if (birthdate) {
+        await base44.entities.Character.update(character.id, {
+          birthday: birthdate,
+          zodiac_sign: sign
+        });
+        refetch();
+      }
+    } catch (error) {
+      console.error("Failed to set zodiac and birthdate:", error);
+    } finally {
+      setIsSavingZodiac(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -191,6 +213,23 @@ export default function CharacterProfile() {
                   <p className="text-xs text-muted-foreground">{zodiacData.dates}</p>
                 </div>
               )}
+            </div>
+          ) : !character.is_default ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground italic">No birthday set. Pick a zodiac sign to auto-generate one.</p>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.keys(ZODIAC_SIGNS).map(sign => (
+                  <button
+                    key={sign}
+                    onClick={() => handleZodiacSelect(sign)}
+                    disabled={isSavingZodiac}
+                    className="flex flex-col items-center gap-1 p-2 rounded-lg border border-border hover:border-primary/40 transition-colors disabled:opacity-50"
+                  >
+                    <span className="text-2xl">{ZODIAC_SIGNS[sign].emoji}</span>
+                    <span className="text-xs capitalize text-muted-foreground hover:text-foreground">{sign}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground italic">No birthday set</p>
