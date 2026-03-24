@@ -53,6 +53,8 @@ Deno.serve(async (req) => {
           return others.map(other => getRelationshipContext(char, other)).join('\n');
         }).join('\n');
 
+    const userDirection = userPrompt ? `\n\nUSER DIRECTION: ${userPrompt}\n` : '';
+
     const prompt = `Simulate a realistic interaction between these characters:
 
 ${characterProfiles.map(p => `
@@ -65,7 +67,7 @@ Archetype: ${p.archetype}
 `).join('\n')}
 
 RELATIONSHIP CONTEXT:
-${interactionContext}
+${interactionContext}${userDirection}
 
 Generate a natural conversation/interaction scene that:
 1. Reflects their actual personalities and relationship dynamic
