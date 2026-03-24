@@ -86,7 +86,7 @@ const defaultData = {
   memories: [],
   job_title: "", workplace_type: "", work_environment: "",
   frequented_places: [],
-  known_character_ids: [],
+  known_character_relationships: [],
   family_members: [],
   birthday: "",
   user_respect_level: 50,
