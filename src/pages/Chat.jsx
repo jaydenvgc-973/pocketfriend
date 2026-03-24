@@ -359,10 +359,8 @@ export default function Chat() {
 
       const imageMatch = rawImageMatch && Math.random() < photoChance ? rawImageMatch : null;
 
-      // Always strip the [IMAGE: ...] tag from responseText, even if we decided not to send a photo
-      if (rawImageMatch) {
-        responseText = responseText.replace(/\[IMAGE:\s*.+?\]/g, "").trim();
-      }
+      // Always strip the [IMAGE: ...] tag from responseText before any DB save
+      responseText = responseText.replace(/\[IMAGE:\s*.+?\]/gs, "").trim();
 
       if (imageMatch) {
         const imagePrompt = imageMatch[1].trim();
