@@ -425,17 +425,39 @@ export default function Chat() {
               // Reuse the existing scene reference image
               sceneReferenceUrl = sceneImages[detectedLocation];
             } else {
-              // Generate a scene-only reference image (no people) and store it
+              // Search for real-world images of this location in the character's city
               try {
-                const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
-                const sceneGenRes = await base44.integrations.Core.GenerateImage({
-                  prompt: `Interior photo of ${locationDesc}. Realistic, lived-in, personal space. No people. Natural lighting. High detail. This is their personal ${detectedLocation} that should look the same every time.`
+                const cityInfo = character.city ? ` in ${character.city}${character.state ? `, ${character.state}` : ""}` : "";
+                const searchResults = await base44.integrations.Core.InvokeLLM({
+                  prompt: `Find real photos/images of ${detectedLocation}s${cityInfo}. Return 2-3 image URLs from Google Images or similar sources that show what a typical ${detectedLocation} looks like in that area. Focus on interior shots with clear details of furniture, lighting, and decor. Return ONLY the URLs, one per line.`,
+                  add_context_from_internet: true,
+                  model: 'gemini_3_flash'
                 });
-                if (sceneGenRes?.url) {
-                  sceneReferenceUrl = sceneGenRes.url;
+                
+                // Extract URLs from response
+                const searchImageUrls = searchResults
+                  .split('\n')
+                  .filter(line => line.trim().startsWith('http'))
+                  .slice(0, 2);
+                
+                if (searchImageUrls.length > 0) {
+                  // Use the first found URL as the scene reference
+                  sceneReferenceUrl = searchImageUrls[0];
                   await base44.entities.Character.update(characterId, {
-                    scene_images: { ...sceneImages, [detectedLocation]: sceneGenRes.url }
+                    scene_images: { ...sceneImages, [detectedLocation]: sceneReferenceUrl }
                   });
+                } else {
+                  // Fallback: Generate a scene reference if web search didn't yield URLs
+                  const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
+                  const sceneGenRes = await base44.integrations.Core.GenerateImage({
+                    prompt: `Interior photo of ${locationDesc}. Realistic, lived-in, personal space. No people. Natural lighting. High detail. This is their personal ${detectedLocation} that should look the same every time.`
+                  });
+                  if (sceneGenRes?.url) {
+                    sceneReferenceUrl = sceneGenRes.url;
+                    await base44.entities.Character.update(characterId, {
+                      scene_images: { ...sceneImages, [detectedLocation]: sceneGenRes.url }
+                    });
+                  }
                 }
               } catch (sceneErr) { /* continue without scene reference */ }
             }
