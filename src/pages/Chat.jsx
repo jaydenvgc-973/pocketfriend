@@ -292,6 +292,34 @@ export default function Chat() {
         songsContext = `\n\nSONGS YOU KNOW: You have listened to these songs and know them well: ${songsInfo}. You can naturally reference these songs, quote lyrics, or discuss what they mean to you in conversations.`;
       }
 
+      // Fetch current weather for character's location
+      let weatherContext = "";
+      if (character.city && character.state) {
+        try {
+          const weatherRes = await base44.integrations.Core.InvokeLLM({
+            prompt: `What is the current weather right now in ${character.city}, ${character.state}? Include temperature, conditions (sunny, rainy, cloudy, etc.), and any notable weather patterns. Be specific and accurate.`,
+            add_context_from_internet: true,
+            model: 'gemini_3_flash'
+          });
+          weatherContext = `\n\nCURRENT WEATHER: Right now in ${character.city}, ${character.state}: ${weatherRes}. Naturally reference this weather in your response if it fits the conversation - mention how it affects your mood, what you're doing, or what you're wearing. Don't force it, but weave it in naturally.`;
+        } catch (weatherErr) {
+          // Weather lookup failed, continue without it
+        }
+      }
+
+      // Fetch recent events/news
+      let recentEventsContext = "";
+      try {
+        const eventsRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`,
+          add_context_from_internet: true,
+          model: 'gemini_3_flash'
+        });
+        recentEventsContext = `\n\nRECENT EVENTS: Here are current events happening now: ${eventsRes}. You can naturally reference these if they fit the conversation, but don't force it. Only mention them if they genuinely relate to what you're discussing.`;
+      } catch (eventsErr) {
+        // Events lookup failed, continue without it
+      }
+
       // Get past web lookups to reference naturally
       let researchContext = "";
       const pastLookups = await base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10);
