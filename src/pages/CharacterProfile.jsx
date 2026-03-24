@@ -112,12 +112,12 @@ export default function CharacterProfile() {
         </div>
 
         {/* Birthday & Zodiac */}
-        {character.birthday && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            <div className="flex items-center gap-2 mb-3">
-              <Cake className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday & Zodiac</p>
-            </div>
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Cake className="w-4 h-4 text-primary" />
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday & Zodiac</p>
+          </div>
+          {character.birthday ? (
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-foreground font-medium">
@@ -135,8 +135,10 @@ export default function CharacterProfile() {
                 </div>
               )}
             </div>
-          </div>
-        )}
+          ) : (
+            <p className="text-sm text-muted-foreground italic">No birthday set</p>
+          )}
+        </div>
 
         {/* Biography & Background */}
         {(character.background_story || character.current_situation) && (
