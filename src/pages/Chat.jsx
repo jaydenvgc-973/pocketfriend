@@ -453,16 +453,18 @@ export default function Chat() {
             : `\n\n🔒 CRITICAL APPEARANCE LOCK: ${character.name} MUST look exactly like their reference photo. Identical facial hair, hair style, and features. This is the source of truth for their appearance. Do not vary.`;
 
           // Detect if user is asking for a close-up/detail of a previous image
-          const detailRequestMatch = text.match(/(?:close-up|close up|detail|zoomed|zoom in|picture of that|photo of that|show me that)\s+(?:of\s+)?(?:the\s+)?(.+?)(?:\?|$)/i);
+          const detailRequestMatch = text.match(/(?:close-up|close up|detail|zoomed|zoom in|picture of that|photo of that|show me that|those|that wall|that painting)\s+(?:of\s+)?(?:the\s+)?(.+?)(?:\?|$)/i);
           let detailContext = "";
+          let detailReferenceImage = null;
           
           if (detailRequestMatch) {
             const detailKeyword = detailRequestMatch[1].toLowerCase();
-            // Find the most recent image message in the conversation that might contain this detail
-            const recentImageMessages = recentMsgs.filter(m => m.sender_type === "character" && m.image_url).slice(-5);
+            // Find the most recent image message in the conversation
+            const recentImageMessages = recentMsgs.filter(m => m.sender_type === "character" && m.image_url).reverse();
             if (recentImageMessages.length > 0) {
-              const mostRecentImage = recentImageMessages[recentImageMessages.length - 1];
-              detailContext = `\n\nIMPORTANT: The user is asking for a close-up or detail of "${detailKeyword}" from your recent image. Use that previous image as a reference to understand what they're referring to. Generate a close-up or detailed view of specifically that element/detail, maintaining any context visible in the previous image.`;
+              const mostRecentImage = recentImageMessages[0];
+              detailReferenceImage = mostRecentImage.image_url;
+              detailContext = `\n\n🎯 DETAIL REQUEST PRIORITY: The user is asking for a close-up or detailed view of "${detailKeyword}" from your previous image. The reference image provided shows the original context. Generate a detailed close-up of EXACTLY that element from that image. Do not generate something random or different — match the specific detail the user is asking about. Ensure visual continuity with what was shown before.`;
             }
           }
 
