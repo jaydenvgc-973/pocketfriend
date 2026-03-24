@@ -275,9 +275,13 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       const ethnicityStr = data.ethnicities.join(" / ");
 
       // Build known-characters context for the prompt
-      const knownChars = existingCharacters.filter(c => data.known_character_ids.includes(c.id));
+      const knownRels = data.known_character_relationships || [];
+      const knownChars = existingCharacters.filter(c => knownRels.some(r => r.character_id === c.id));
       const knownContext = knownChars.length > 0
-        ? `They personally know these people: ${knownChars.map(c => `${c.name} (${c.personality_summary?.split(".")[0] || ""})`).join("; ")}.`
+        ? `They personally know these people: ${knownChars.map(c => {
+            const rel = knownRels.find(r => r.character_id === c.id);
+            return `${c.name} (${rel?.relationship_type || "knows them"} — ${c.personality_summary?.split(".")[0] || ""})`;
+          }).join("; ")}.`
         : "";
 
       const charProfile = `Name: ${fullName}. Age: ${data.age_range}. Background: ${ethnicityStr}. Gender: ${data.gender}. Archetype: ${data.archetype}. Social energy: ${data.social_energy}. Vibes: ${data.vibes.join(", ")}. Living situation: ${data.living_situation}. Job: ${data.job_title || "not specified"} at a ${data.workplace_type || "workplace"}. Background story: ${data.background || "not specified"}. ${knownContext}`;
