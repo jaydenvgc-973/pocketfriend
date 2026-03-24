@@ -407,11 +407,22 @@ export default function Chat() {
             }
           }
 
+          // RULE: Only include the user in the image if they explicitly requested it
+          const userExplicitlyRequested = /\b(us|together|with me|with the user|you and me|me and you)\b/i.test(text);
+          if (!userExplicitlyRequested) {
+            // Remove user reference images so user doesn't appear in the photo
+            delete characterReferenceMap["user"];
+          }
+
           // Use only the most representative reference images (limit to 3-4 to avoid confusion)
           const referenceImages = Object.values(characterReferenceMap).slice(0, 4);
           
           // Enhance the prompt to be explicit about character identities
           let enhancedPrompt = imagePrompt;
+          // If user wasn't explicitly requested, strip any "user" mentions from the prompt
+          if (!userExplicitlyRequested) {
+            enhancedPrompt = enhancedPrompt.replace(/\b(the user|the person I'm talking to|my friend)\b/gi, "").trim();
+          }
           const peopleInImage = Object.keys(characterReferenceMap).filter(name => 
             imagePrompt.toLowerCase().includes(name.toLowerCase()) || name === "user" || name === character.name
           );
