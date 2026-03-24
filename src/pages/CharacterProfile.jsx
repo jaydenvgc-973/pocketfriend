@@ -6,6 +6,7 @@ import { ArrowLeft, Cake, BookOpen, Users } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
+import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 
 const ZODIAC_SIGNS = {
