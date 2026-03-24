@@ -583,7 +583,6 @@ export default function Chat() {
 
           // --- CLOTHING & WEATHER CONTEXT ---
           let clothingContext = "";
-          const promptLower = imagePrompt.toLowerCase();
           
           // Detect location/activity
           const isAtWork = /\b(work|office|job|desk|cubicle|coworkers|meeting|workplace)\b/i.test(promptLower);
