@@ -96,38 +96,27 @@ export default function CharacterProfile() {
           </div>
         </div>
 
-        {/* Location & Background */}
-        {(character.city || character.state || character.ethnicities?.length > 0) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            {(character.city || character.state) && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">Location</p>
-                <p className="text-sm text-foreground font-medium">
-                  {[character.city, character.state].filter(Boolean).join(", ")}
-                </p>
-              </div>
-            )}
-            {character.ethnicities?.length > 0 && (
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Ethnic Background</p>
-                <div className="flex flex-wrap gap-2">
-                  {character.ethnicities.map(eth => (
-                    <span key={eth} className="px-3 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
-                      {eth}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+        {/* Location — editable */}
+        <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <EditableTextField character={character} field="city" label="City" placeholder="City" />
+            <EditableTextField character={character} field="state" label="State" placeholder="State" />
           </div>
-        )}
+          <EditableEthnicityField character={character} />
+          <EditableSelectField
+            character={character}
+            field="sexual_orientation"
+            label="Orientation"
+            options={["Straight", "Gay", "Lesbian", "Bisexual", "Pansexual", "Asexual", "Queer", "Questioning", "Other"]}
+          />
+        </div>
 
         {/* Birthday & Zodiac */}
         {character.birthday && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
             <div className="flex items-center gap-2 mb-3">
               <Cake className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Birthday & Zodiac</p>
             </div>
             <div className="flex items-center justify-between">
               <div>
@@ -150,7 +139,7 @@ export default function CharacterProfile() {
         )}
 
         {/* Biography & Background */}
-        {(character.personality_summary || character.background_story || character.current_situation || character.family_history) && (
+        {(character.background_story || character.current_situation) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Biography & Background</p>
             {character.background_story && (
@@ -163,12 +152,6 @@ export default function CharacterProfile() {
               <div>
                 <p className="text-xs font-medium text-foreground mb-2">Current Situation</p>
                 <p className="text-sm text-muted-foreground leading-relaxed">{character.current_situation}</p>
-              </div>
-            )}
-            {character.family_history && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-2">Family History</p>
-                <p className="text-sm text-muted-foreground leading-relaxed">{character.family_history}</p>
               </div>
             )}
           </div>
