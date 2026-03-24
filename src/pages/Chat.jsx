@@ -27,6 +27,7 @@ export default function Chat() {
   const [lastChangeReason, setLastChangeReason] = useState(null);
   const [previousLevels, setPreviousLevels] = useState(null);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
+  const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
   const bottomRef = useRef(null);
   const queryClient = useQueryClient();
   const conversationIdRef = useRef(null);
