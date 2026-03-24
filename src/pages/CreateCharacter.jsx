@@ -565,7 +565,77 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       </div>
     </div>,
 
-    // Step 7: Memories
+    // Step 7: Family members
+    <div key="family" className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground mb-1">Family members</h2>
+        <p className="text-xs text-muted-foreground mb-1">We scanned the backstory you wrote for any family names. Edit, add, or remove — this is the definitive list.</p>
+        <p className="text-xs text-muted-foreground/60 mb-3">Leave empty if they have no family — the character will know that too.</p>
+      </div>
+
+      {/* AI extraction button — only if there's text to scan and haven't extracted yet */}
+      {(data.background || data.personality_override || data.situation_override) && !familyExtracted && (
+        <button
+          onClick={extractFamilyFromText}
+          disabled={isExtractingFamily}
+          className="w-full flex items-center gap-2 justify-center py-3 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
+        >
+          <Sparkles className="w-4 h-4" />
+          {isExtractingFamily ? "Reading backstory..." : "Extract family from backstory"}
+        </button>
+      )}
+      {familyExtracted && (data.family_members || []).length === 0 && (
+        <p className="text-xs text-primary/70 text-center">No family names found in the backstory. Add them manually below if needed.</p>
+      )}
+
+      <div className="space-y-2">
+        {(data.family_members || []).map((member, idx) => (
+          <div key={idx} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={member.name}
+              onChange={e => {
+                const updated = [...data.family_members];
+                updated[idx] = { ...updated[idx], name: e.target.value };
+                update("family_members", updated);
+              }}
+              placeholder="Name"
+              className="flex-1 bg-secondary text-foreground text-sm rounded-xl px-3 py-2 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground min-w-0"
+            />
+            <select
+              value={member.relationship_type}
+              onChange={e => {
+                const updated = [...data.family_members];
+                updated[idx] = { ...updated[idx], relationship_type: e.target.value };
+                update("family_members", updated);
+              }}
+              className="bg-secondary text-foreground text-sm rounded-xl px-2 py-2 outline-none border border-transparent focus:border-primary/50 capitalize"
+            >
+              {RELATIONSHIP_TYPES.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => update("family_members", data.family_members.filter((_, i) => i !== idx))}
+              className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={() => update("family_members", [...(data.family_members || []), { name: "", relationship_type: "mother" }])}
+        className="w-full flex items-center gap-2 justify-center py-3 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-sm"
+      >
+        <Plus className="w-4 h-4" /> Add family member
+      </button>
+      {!familyExtracted && (data.family_members || []).length === 0 && !(data.background || data.personality_override || data.situation_override) && (
+        <p className="text-xs text-muted-foreground text-center italic">No family added — character will have no family in their world.</p>
+      )}
+    </div>,
+
+    // Step 8: Memories
     <div key="memories" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">What have they been through?</h2>
