@@ -305,8 +305,17 @@ export default function CharacterProfile() {
               <div className="space-y-3">
                 {character.fictional_relationships.map((rel, idx) => (
                   <div key={idx} className="pb-3 border-b border-border last:border-b-0">
-                    <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{rel.relationship_type}</p>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
+                        <p className="text-xs text-muted-foreground capitalize">{rel.relationship_type}</p>
+                      </div>
+                      {rel.related_character_id && (
+                        <div className="flex items-center gap-1 ml-2 px-2 py-1 rounded-full bg-primary/10 border border-primary/20">
+                          <span className="text-[10px] text-primary font-medium">Mutual</span>
+                        </div>
+                      )}
+                    </div>
                     {rel.description && (
                       <p className="text-xs text-muted-foreground/70 mt-1">{rel.description}</p>
                     )}
