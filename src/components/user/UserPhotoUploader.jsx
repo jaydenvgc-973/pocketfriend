@@ -79,7 +79,7 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
       <p className="text-xs text-muted-foreground">Upload photos of yourself to appear in character-generated images</p>
 
       {/* Photo grid */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-2">
         <AnimatePresence>
           {referenceImages.map((url) => (
             <motion.div
@@ -150,28 +150,28 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
       {/* Generated preview */}
       <AnimatePresence>
         {generatedImageUrl && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            className="space-y-2"
-          >
-            <p className="text-xs font-medium text-muted-foreground">Your Generated Preview</p>
-            <div className="relative rounded-xl overflow-hidden bg-secondary aspect-square">
-              <img
-                src={generatedImageUrl}
-                alt="generated preview"
-                className="w-full h-full object-cover"
-              />
-              <button
-                onClick={() => setGeneratedImageUrl(null)}
-                className="absolute top-2 right-2 p-1.5 rounded-full bg-destructive/80 text-destructive-foreground hover:bg-destructive transition-colors"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          </motion.div>
-        )}
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="space-y-2 mt-6"
+            >
+              <p className="text-xs font-medium text-muted-foreground">Your Generated Avatar</p>
+              <div className="relative rounded-xl overflow-hidden bg-secondary mx-auto w-32 h-32">
+                <img
+                  src={generatedImageUrl}
+                  alt="generated preview"
+                  className="w-full h-full object-cover"
+                />
+                <button
+                  onClick={() => setGeneratedImageUrl(null)}
+                  className="absolute top-1 right-1 p-1 rounded-full bg-destructive/80 text-destructive-foreground hover:bg-destructive transition-colors"
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            </motion.div>
+          )}
       </AnimatePresence>
     </div>
   );
