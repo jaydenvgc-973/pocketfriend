@@ -126,6 +126,12 @@ export default function CharacterProfile() {
             <EditableTextField character={character} field="city" label="City" placeholder="City" />
             <EditableTextField character={character} field="state" label="State" placeholder="State" />
           </div>
+          <EditableSelectField
+            character={character}
+            field="gender"
+            label="Gender"
+            options={["male", "female", "non-binary", "other"]}
+          />
           <EditableEthnicityField character={character} />
           <EditableSelectField
             character={character}
