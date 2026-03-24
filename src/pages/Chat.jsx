@@ -339,9 +339,9 @@ export default function Chat() {
         }
       }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
-      
-      // Check for image generation tag [IMAGE: prompt]
-      const rawImageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/);
+
+      // Always strip [IMAGE: ...] tags from responseText immediately (before any DB save)
+      const rawImageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/s);
       let typingDelayMs = 0;
 
       // Dynamic photo send rate based on personality
