@@ -333,51 +333,72 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Relationships */}
-        {(character.fictional_relationships?.length > 0 || character.transient_encounters?.length > 0) && (
+        {/* Character Relationships - Active Characters They Know */}
+        {character.fictional_relationships?.length > 0 && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <Users className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Relationships</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">How They Know Others</p>
             </div>
-            {character.fictional_relationships?.length > 0 && (
-              <div className="space-y-3">
-                {character.fictional_relationships.map((rel, idx) => (
-                  <div key={idx} className="pb-3 border-b border-border last:border-b-0">
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
-                        <p className="text-xs text-muted-foreground capitalize">{rel.relationship_type}</p>
-                      </div>
-                      {rel.related_character_id && (
-                        <div className="flex items-center gap-1 ml-2 px-2 py-1 rounded-full bg-primary/10 border border-primary/20">
-                          <span className="text-[10px] text-primary font-medium">Mutual</span>
-                        </div>
-                      )}
+            <div className="space-y-4">
+              {character.fictional_relationships.map((rel, idx) => (
+                <div key={idx} className="pb-4 border-b border-border last:border-b-0">
+                  {/* Name and Relationship Type */}
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
+                      <p className="text-xs text-primary font-medium capitalize mt-0.5">{rel.relationship_type}</p>
                     </div>
-                    {rel.description && (
-                      <p className="text-xs text-muted-foreground/70 mt-1">{rel.description}</p>
-                    )}
-                    {rel.current_status && (
-                      <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Now:</span> {rel.current_status}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-            {character.transient_encounters?.length > 0 && (
-              <div className="space-y-3 border-t border-border pt-3">
-                <p className="text-xs font-medium text-foreground">One-off Encounters</p>
-                {character.transient_encounters.map((enc, idx) => (
-                  <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
-                    <p className="text-xs text-foreground">{enc.description}</p>
-                    {enc.context && (
-                      <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
+                    {rel.related_character_id && (
+                      <div className="flex items-center gap-1 ml-2 px-2 py-1 rounded-full bg-primary/10 border border-primary/20">
+                        <span className="text-[10px] text-primary font-medium">Mutual</span>
+                      </div>
                     )}
                   </div>
-                ))}
-              </div>
-            )}
+
+                  {/* Relationship Levels */}
+                  <div className="space-y-2">
+                    {[
+                      { label: "Respect", value: rel.user_respect_level ?? 50 },
+                      { label: "Friendship", value: rel.friendship_level ?? 75 },
+                      { label: "Romantic", value: rel.romantic_level ?? 0 },
+                      { label: "Attraction", value: rel.attraction_level ?? 0 },
+                      { label: "Chosen Family", value: rel.chosen_family_level ?? 0 }
+                    ].map(({ label, value }) => (
+                      <div key={label}>
+                        <div className="flex justify-between mb-1">
+                          <span className="text-xs font-medium text-foreground">{label}</span>
+                          <span className="text-xs text-muted-foreground">{value}%</span>
+                        </div>
+                        <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-primary transition-all"
+                            style={{ width: `${value}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Transient Encounters */}
+        {character.transient_encounters?.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+            <p className="text-xs font-medium text-foreground uppercase tracking-wider">One-off Encounters</p>
+            <div className="space-y-3">
+              {character.transient_encounters.map((enc, idx) => (
+                <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
+                  <p className="text-xs text-foreground">{enc.description}</p>
+                  {enc.context && (
+                    <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
