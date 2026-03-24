@@ -240,20 +240,8 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Family Members */}
-        {character.family_members?.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Family</p>
-            <div className="space-y-2">
-              {character.family_members.map((member, idx) => (
-                <div key={idx} className="flex items-start justify-between">
-                  <p className="text-sm font-medium text-foreground">{member.name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{member.relationship_type}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Family Members - Editable */}
+        <FamilyEditor character={character} />
 
         {/* Relationships */}
         {(character.fictional_relationships?.length > 0 || character.transient_encounters?.length > 0) && (
