@@ -516,7 +516,7 @@ export default function Chat() {
               lightingContext = " Bright midday or early afternoon lighting. Natural sunlight.";
             } else if (timeStr.includes("evening") || timeStr.includes("dusk") || /^[5-8].*pm/i.test(timeStr)) {
               lightingContext = " Evening lighting. Transitioning to dim. Artificial lights starting to dominate. Warm tones.";
-            } else if (timeStr.includes("night") || timeStr.includes("midnight") || /^[9-11].*pm|^[12]-?[4].*am/i.test(timeStr)) {
+            } else if (timeStr.includes("night") || timeStr.includes("midnight") || /^(9|10|11).*pm|^(12|1|2|3|4).*am/i.test(timeStr)) {
               lightingContext = " Dark night scene. Artificial lighting, neon, or streetlights. Moody atmosphere.";
             } else if (timeStr.includes("dinner") || /^[6-8].*pm/i.test(timeStr)) {
               lightingContext = " Dinner time lighting. Soft artificial light. Warm ambiance.";
