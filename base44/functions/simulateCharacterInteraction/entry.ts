@@ -118,7 +118,7 @@ Return a JSON object with:
       model: 'gemini_3_flash'
     });
 
-    // Update each character with interaction data
+    // Update each character with interaction data and create memories
     for (const character of characters) {
       const updates = response.relationship_updates[character.name];
       
@@ -170,6 +170,17 @@ Return a JSON object with:
             transient_encounters: updatedEncounters,
             fictional_relationships: updatedRelationships,
             emotional_state: response.emotional_shifts[character.name]?.split(' ')[0] || character.emotional_state
+          });
+
+          // Create memory of this interaction
+          const dialogueText = response.dialogue.map(d => `${d.speaker}: ${d.text}`).join('\n');
+          await base44.entities.Memory.create({
+            character_id: character.id,
+            title: `Interaction with ${otherChar.name}`,
+            description: `Scene: ${response.scene_summary}\n\nDialogue:\n${dialogueText}\n\nOutcome: ${response.outcome}`,
+            emotional_impact: response.emotional_shifts[character.name] || 'neutral',
+            timestamp: new Date().toISOString(),
+            source_context: 'character interaction simulation'
           });
         }
       }
