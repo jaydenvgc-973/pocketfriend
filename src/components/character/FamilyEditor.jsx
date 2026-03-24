@@ -49,8 +49,14 @@ export default function FamilyEditor({ character, readOnly = false }) {
   const save = async () => {
     setSaving(true);
     const valid = members.filter(m => m.name.trim());
-    await base44.entities.Character.update(character.id, { family_members: valid });
+    const updated = { ...character, family_members: valid };
+    updated.system_prompt = buildSystemPrompt(updated);
+    await base44.entities.Character.update(character.id, {
+      family_members: valid,
+      system_prompt: updated.system_prompt,
+    });
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    queryClient.invalidateQueries({ queryKey: ["characters"] });
     setSaving(false);
   };
 
