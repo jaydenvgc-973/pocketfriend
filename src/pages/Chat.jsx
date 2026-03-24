@@ -352,7 +352,7 @@ export default function Chat() {
           const characterReferenceMap = {}; // Maps character names to their reference images
           const currentUser = await base44.auth.me();
           
-          // Map the main character
+          // Map the main character — always use their reference/avatar for appearance consistency
           if (character.reference_image_urls?.length > 0) {
             characterReferenceMap[character.name] = character.reference_image_urls[0];
           } else if (character.avatar_url) {
@@ -383,7 +383,6 @@ export default function Chat() {
                 if (character.fictional_entity_images?.[rel.person_name]) {
                   characterReferenceMap[rel.person_name] = character.fictional_entity_images[rel.person_name];
                 } else {
-                  // Generate a new image for this fictional entity
                   try {
                     const npcGenRes = await base44.integrations.Core.GenerateImage({
                       prompt: `A realistic portrait of ${rel.person_name}, ${rel.relationship_type}. ${rel.description ? `${rel.description}` : "Focus on natural appearance and distinctive features."}`,
@@ -391,7 +390,6 @@ export default function Chat() {
                     });
                     if (npcGenRes?.url) {
                       characterReferenceMap[rel.person_name] = npcGenRes.url;
-                      // Store for future consistency
                       await base44.entities.Character.update(characterId, {
                         fictional_entity_images: {
                           ...(character.fictional_entity_images || {}),
@@ -399,11 +397,44 @@ export default function Chat() {
                         }
                       });
                     }
-                  } catch (npcErr) {
-                    // Failed to generate, continue
-                  }
+                  } catch (npcErr) { /* continue */ }
                 }
               }
+            }
+          }
+
+          // --- SCENE / LOCATION CONTINUITY ---
+          // Detect location keywords in the image prompt
+          const locationKeywords = [
+            "bedroom", "bed room", "kitchen", "living room", "bathroom", "bathroom",
+            "office", "workplace", "gym", "club", "bar", "restaurant", "car",
+            "backyard", "front yard", "porch", "balcony", "apartment", "house",
+            "school", "library", "park", "beach", "hallway", "garage", "basement"
+          ];
+          const promptLower = imagePrompt.toLowerCase();
+          const detectedLocation = locationKeywords.find(loc => promptLower.includes(loc));
+
+          let sceneReferenceUrl = null;
+          const sceneImages = character.scene_images || {};
+
+          if (detectedLocation) {
+            if (sceneImages[detectedLocation]) {
+              // Reuse the existing scene reference image
+              sceneReferenceUrl = sceneImages[detectedLocation];
+            } else {
+              // Generate a scene-only reference image (no people) and store it
+              try {
+                const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
+                const sceneGenRes = await base44.integrations.Core.GenerateImage({
+                  prompt: `Interior photo of ${locationDesc}. Realistic, lived-in, personal space. No people. Natural lighting. High detail. This is their personal ${detectedLocation} that should look the same every time.`
+                });
+                if (sceneGenRes?.url) {
+                  sceneReferenceUrl = sceneGenRes.url;
+                  await base44.entities.Character.update(characterId, {
+                    scene_images: { ...sceneImages, [detectedLocation]: sceneGenRes.url }
+                  });
+                }
+              } catch (sceneErr) { /* continue without scene reference */ }
             }
           }
 
@@ -413,26 +444,36 @@ export default function Chat() {
             delete characterReferenceMap["user"];
           }
 
-          // Use only the most representative reference images (limit to 3-4 to avoid confusion)
-          const referenceImages = Object.values(characterReferenceMap).slice(0, 4);
-          
-          // Enhance the prompt to be explicit about character identities
-          let enhancedPrompt = imagePrompt;
-          // If user wasn't explicitly requested, strip any "user" mentions from the prompt
+          // Build appearance lock note for the character
+          const appearanceNote = character.appearance_notes
+            ? ` IMPORTANT: ${character.name}'s appearance must match exactly: ${character.appearance_notes}. Do not change their hair, facial hair, or any physical features.`
+            : ` IMPORTANT: ${character.name} must look exactly like their reference photo — same hair, facial hair, and features. Do not change their appearance.`;
+
+          // Assemble reference images: character references first, then scene reference
+          const peopleRefs = Object.values(characterReferenceMap).slice(0, 3);
+          const referenceImages = sceneReferenceUrl
+            ? [...peopleRefs, sceneReferenceUrl]
+            : peopleRefs;
+
+          // Enhance the prompt with appearance and scene consistency instructions
+          let enhancedPrompt = imagePrompt + appearanceNote;
+          if (sceneReferenceUrl) {
+            enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.`;
+          }
           if (!userExplicitlyRequested) {
             enhancedPrompt = enhancedPrompt.replace(/\b(the user|the person I'm talking to|my friend)\b/gi, "").trim();
           }
+
           const peopleInImage = Object.keys(characterReferenceMap).filter(name => 
             imagePrompt.toLowerCase().includes(name.toLowerCase()) || name === "user" || name === character.name
           );
-          
           if (peopleInImage.length > 1) {
             const characterDescriptions = peopleInImage.map(name => {
               if (name === "user") return "the user";
-              if (name === character.name) return `${character.name} (a ${character.gender || 'person'} with ${character.personality_summary?.split(' ').slice(0, 3).join(' ') || 'distinctive features'})`;
+              if (name === character.name) return `${character.name} (a ${character.gender || 'person'})`;
               return name;
             }).join(", ");
-            enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self, not variations of each other.`;
+            enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self.`;
           }
           
           const genRes = await base44.integrations.Core.GenerateImage({ 
