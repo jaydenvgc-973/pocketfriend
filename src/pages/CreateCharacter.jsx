@@ -370,10 +370,11 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
           const rel = knownRels.find(r => r.character_id === c.id);
           return {
             person_name: c.name,
+            related_character_id: c.id,
             relationship_type: rel?.relationship_type || "Friend",
-            description: "",
-            current_status: "",
-            emotional_impact: "",
+            description: `${fullName} is a ${rel?.relationship_type || "friend"} of ${c.name}.`,
+            current_status: "active",
+            emotional_impact: "neutral",
             last_interaction_summary: "",
             history_summary: "",
           };
@@ -390,9 +391,18 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       };
       charData.system_prompt = buildSystemPrompt(charData, knownChars);
 
-      await base44.entities.Character.create(charData);
-      localStorage.removeItem(DRAFT_KEY);
-      navigate("/home");
+      // Create character and handle bidirectional relationships
+      const res = await base44.functions.invoke("createCharacterWithRelationships", {
+        characterData: charData,
+        characterRelationships: charData.fictional_relationships || []
+      });
+
+      if (res?.data?.success) {
+        localStorage.removeItem(DRAFT_KEY);
+        navigate("/home");
+      } else {
+        throw new Error(res?.data?.error || "Failed to create character");
+      }
     } catch (error) {
       setIsCreating(false);
       alert("Failed to create character. Please check your connection and try again.");
