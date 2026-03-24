@@ -143,6 +143,10 @@ export default function Home() {
             <CharacterCard character={defaultChar} />
           </div>
         )}
+        {activeCustomChars.length >= 2 && (
+          <CharacterInteractionSimulator characters={activeCustomChars} />
+        )}
+        
         <div>
           <div className="flex items-center justify-between mb-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/4</p>
