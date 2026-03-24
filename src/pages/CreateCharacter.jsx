@@ -535,7 +535,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       </div>
     </div>,
 
-    // Step 5: Vibes + backstory + overrides
+    // Step 6: Vibes + backstory + overrides
     <div key="vibes" className="space-y-5">
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Their vibe (pick up to 4)</label>
