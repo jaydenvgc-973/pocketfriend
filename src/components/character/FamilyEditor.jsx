@@ -28,7 +28,7 @@ const RELATIONSHIP_TYPES = [
   "other",
 ];
 
-export default function FamilyEditor({ character }) {
+export default function FamilyEditor({ character, readOnly = false }) {
   const queryClient = useQueryClient();
   const [members, setMembers] = useState(character.family_members || []);
   const [saving, setSaving] = useState(false);
