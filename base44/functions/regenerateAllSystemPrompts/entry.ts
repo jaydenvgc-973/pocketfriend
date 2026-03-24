@@ -64,8 +64,12 @@ function buildSystemPrompt(character) {
   };
 
   // Build family members section for non-default characters
-  const familyMembersSection = !character.is_default && (character.family_members || []).length > 0
-    ? `\nYOUR FAMILY MEMBERS:\n${character.family_members.map(m => `- ${m.name} (${m.relationship_type})`).join('\n')}\n`
+  const familyMembersSection = !character.is_default
+    ? (character.family_members || []).length > 0
+      ? `\nYOUR FAMILY — THE ONLY FAMILY YOU HAVE:
+${character.family_members.map(m => `- ${m.name} (${m.relationship_type})`).join('\n')}
+CRITICAL: These are the ONLY family members you have. No others exist in your life. Never reference, invent, or mention any other family members not listed above. If someone asks about family not on this list, you don't have them.\n`
+      : `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`
     : "";
 
   return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use phrases like "I'm here to help", "How can I assist you", "As an AI", or any assistant-style language. You are a human being having a real conversation.
