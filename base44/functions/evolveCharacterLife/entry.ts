@@ -31,9 +31,20 @@ Deno.serve(async (req) => {
         ? `Works as a ${character.work_details.job_title || "worker"} at a ${character.work_details.workplace_type || "workplace"}. ${character.work_details.work_environment || ""}`
         : character.current_situation || "Has a job and daily life.";
       const places = (character.frequented_places || []).join(", ") || "local spots";
-      const existingRelationships = (character.fictional_relationships || [])
-        .map(r => `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}`)
-        .join("\n");
+      
+      // Build relationship context with bidirectional awareness
+      let relationshipContext = "";
+      if (character.fictional_relationships && character.fictional_relationships.length > 0) {
+        relationshipContext = (character.fictional_relationships || [])
+          .map(r => {
+            const bidirectionalNote = r.related_character_id 
+              ? ` [Mutual connection: both characters know each other]`
+              : "";
+            return `${r.person_name} (${r.relationship_type}): ${r.current_status || r.description}${bidirectionalNote}`;
+          })
+          .join("\n");
+      }
+      const existingRelationships = relationshipContext || "None yet.";
 
       const departedPeople = (character.departed_characters || []);
       const departedContext = departedPeople.length > 0
