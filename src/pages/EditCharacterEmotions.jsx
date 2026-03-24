@@ -82,11 +82,28 @@ export default function EditCharacterEmotions() {
   const handleSave = async () => {
     if (!selectedChar) return;
     setIsSaving(true);
-    const updated = { ...selectedChar, ...form };
-    updated.system_prompt = buildSystemPrompt(updated);
+    const merged = { ...selectedChar, ...form };
+
+    // Re-generate personality summary reflecting updated emotional profile
+    const personality = await base44.integrations.Core.InvokeLLM({
+      prompt: `Create a personality summary (2-3 sentences, raw and real, written in third person) based on this character's updated emotional profile.
+Name: ${merged.name}. Age: ${merged.age_range || "adult"}. Gender: ${merged.gender || "person"}.
+Archetype: ${merged.archetype || "not specified"}. Social energy: ${merged.social_energy || "not specified"}.
+Emotional state: ${merged.emotional_state || "calm"}.
+Emotional baggage: ${merged.emotional_baggage || "not specified"}.
+Reaction when upset: ${merged.upset_reaction || "not specified"}.
+High triggers: ${(merged.emotional_triggers_high || []).join(", ") || "not specified"}.
+Background: ${merged.background_story || "not specified"}.
+Make it feel like a real person, not a description. No flowery language.`
+    });
+
+    merged.personality_summary = personality;
+    merged.system_prompt = buildSystemPrompt(merged);
+
     await base44.entities.Character.update(selectedChar.id, {
       ...form,
-      system_prompt: updated.system_prompt,
+      personality_summary: personality,
+      system_prompt: merged.system_prompt,
     });
     queryClient.invalidateQueries({ queryKey: ["characters"] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
