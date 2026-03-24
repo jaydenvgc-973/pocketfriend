@@ -577,7 +577,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       </div>
     </div>,
 
-    // Step 6: Memories
+    // Step 7: Memories
     <div key="memories" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">What have they been through?</h2>
