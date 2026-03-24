@@ -2,9 +2,10 @@ import React from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, Sparkles, Heart, BookOpen, Users } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import FamilyEditor from "@/components/character/FamilyEditor";
 import { format } from "date-fns";
 
 const ZODIAC_SIGNS = {
