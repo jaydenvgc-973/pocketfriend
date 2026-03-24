@@ -526,7 +526,7 @@ export default function Chat() {
           }
 
           // Enhance the prompt with appearance and scene consistency instructions
-          let enhancedPrompt = imagePrompt + appearanceNote + detailContext;
+          let enhancedPrompt = imagePrompt + appearanceNote + detailContext + "\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph.";
           if (sceneReferenceUrl) {
             enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.${lightingContext}`;
           } else if (lightingContext) {
