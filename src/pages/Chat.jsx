@@ -341,9 +341,24 @@ export default function Chat() {
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
       
       // Check for image generation tag [IMAGE: prompt]
-      const imageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/);
+      const rawImageMatch = responseText.match(/\[IMAGE:\s*(.+?)\]/);
       let typingDelayMs = 0;
-      
+
+      // Dynamic photo send rate based on personality
+      const isPhotogenic = character.is_photogenic || false;
+      const energy = character.social_energy || "ambivert";
+      const isIntrovert = energy === "introvert" || energy === "mostly_introvert";
+      const isExtrovert = energy === "extrovert" || energy === "mostly_extrovert";
+
+      let photoChance;
+      if (isExtrovert && isPhotogenic)       photoChance = 2 / 10;  // 20%
+      else if (isExtrovert && !isPhotogenic) photoChance = 2 / 15;  // ~13%
+      else if (isIntrovert && isPhotogenic)  photoChance = 2 / 15;  // ~13%
+      else if (isIntrovert && !isPhotogenic) photoChance = 1 / 30;  // ~3%
+      else /* ambivert */                    photoChance = isPhotogenic ? 1 / 10 : 1 / 20;
+
+      const imageMatch = rawImageMatch && Math.random() < photoChance ? rawImageMatch : null;
+
       if (imageMatch) {
         const imagePrompt = imageMatch[1].trim();
         typingDelayMs = 500; // Small fixed delay for image generation
