@@ -79,7 +79,7 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
       <p className="text-xs text-muted-foreground">Upload photos of yourself to appear in character-generated images</p>
 
       {/* Photo grid */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-4 gap-2">
         <AnimatePresence>
           {referenceImages.map((url) => (
             <motion.div
@@ -157,7 +157,7 @@ export default function UserPhotoUploader({ referenceImages = [] }) {
               className="space-y-2 mt-6"
             >
               <p className="text-xs font-medium text-muted-foreground">Your Generated Avatar</p>
-              <div className="relative rounded-xl overflow-hidden bg-secondary mx-auto w-32 h-32">
+              <div className="relative rounded-xl overflow-hidden bg-secondary mx-auto w-48 h-48">
                 <img
                   src={generatedImageUrl}
                   alt="generated preview"
