@@ -348,9 +348,14 @@ export default function Chat() {
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
-      const thinkingDelayMs = isUncomfortable
+      
+      // Add extra delay for weather/events lookups (they take ~2-4 seconds)
+      const lookupDelayMs = (weatherContext || recentEventsContext) ? 2500 : 0;
+      const baseThinkingDelayMs = isUncomfortable
         ? (30 + Math.random() * 30) * 1000
         : (5 + Math.random() * 15) * 1000;
+      const thinkingDelayMs = baseThinkingDelayMs + lookupDelayMs;
+      
       await new Promise(r => setTimeout(r, thinkingDelayMs));
 
       let retries = 2;
