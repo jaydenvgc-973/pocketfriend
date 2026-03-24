@@ -147,6 +147,17 @@ function buildRelationshipsContext(character) {
   return section;
 }
 
+function buildFamilySection(character) {
+  if (character.is_default) return ""; // default character has its own hardcoded family block below
+  const members = character.family_members || [];
+  if (members.length > 0) {
+    return `\nYOUR FAMILY — THE ONLY FAMILY YOU HAVE:
+${members.map(m => `- ${m.name} (${m.relationship_type})`).join('\n')}
+CRITICAL: These are the ONLY family members you have. No others exist in your life. Never reference, invent, or mention any other family members not listed above. If someone asks about family not on this list, you don't have them.\n`;
+  }
+  return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`;
+}
+
 export function buildSystemPrompt(character, knownCharacters = []) {
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
