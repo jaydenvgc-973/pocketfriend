@@ -414,6 +414,12 @@ export default function Chat() {
             delete characterReferenceMap["user"];
           }
 
+          // RULE: Only include the user in the image if they explicitly requested it
+          const userExplicitlyRequested = /\b(us|together|with me|with the user|you and me|me and you)\b/i.test(text);
+          if (!userExplicitlyRequested) {
+            delete characterReferenceMap["user"];
+          }
+
           // Use only the most representative reference images (limit to 3-4 to avoid confusion)
           const referenceImages = Object.values(characterReferenceMap).slice(0, 4);
           
