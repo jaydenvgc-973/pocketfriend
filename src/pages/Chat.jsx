@@ -447,10 +447,24 @@ export default function Chat() {
             delete characterReferenceMap["user"];
           }
 
-          // Build appearance lock note for the character
+          // Build appearance lock note for the character — CRITICAL for consistency
           const appearanceNote = character.appearance_notes
-            ? ` IMPORTANT: ${character.name}'s appearance must match exactly: ${character.appearance_notes}. Do not change their hair, facial hair, or any physical features.`
-            : ` IMPORTANT: ${character.name} must look exactly like their reference photo — same hair, facial hair, and features. Do not change their appearance.`;
+            ? `\n\n🔒 CRITICAL APPEARANCE LOCK: ${character.name}'s appearance MUST match exactly: ${character.appearance_notes}. This is non-negotiable. Same facial hair state, same hair style, same distinctive features. Do not deviate.`
+            : `\n\n🔒 CRITICAL APPEARANCE LOCK: ${character.name} MUST look exactly like their reference photo. Identical facial hair, hair style, and features. This is the source of truth for their appearance. Do not vary.`;
+
+          // Detect if user is asking for a close-up/detail of a previous image
+          const detailRequestMatch = text.match(/(?:close-up|close up|detail|zoomed|zoom in|picture of that|photo of that|show me that)\s+(?:of\s+)?(?:the\s+)?(.+?)(?:\?|$)/i);
+          let detailContext = "";
+          
+          if (detailRequestMatch) {
+            const detailKeyword = detailRequestMatch[1].toLowerCase();
+            // Find the most recent image message in the conversation that might contain this detail
+            const recentImageMessages = recentMsgs.filter(m => m.sender_type === "character" && m.image_url).slice(-5);
+            if (recentImageMessages.length > 0) {
+              const mostRecentImage = recentImageMessages[recentImageMessages.length - 1];
+              detailContext = `\n\nIMPORTANT: The user is asking for a close-up or detail of "${detailKeyword}" from your recent image. Use that previous image as a reference to understand what they're referring to. Generate a close-up or detailed view of specifically that element/detail, maintaining any context visible in the previous image.`;
+            }
+          }
 
           // Assemble reference images: character references first, then scene reference
           const peopleRefs = Object.values(characterReferenceMap).slice(0, 3);
@@ -459,7 +473,7 @@ export default function Chat() {
             : peopleRefs;
 
           // Enhance the prompt with appearance and scene consistency instructions
-          let enhancedPrompt = imagePrompt + appearanceNote;
+          let enhancedPrompt = imagePrompt + appearanceNote + detailContext;
           if (sceneReferenceUrl) {
             enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.`;
           }
