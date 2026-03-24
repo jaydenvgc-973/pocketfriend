@@ -20,6 +20,12 @@ const stateColors = {
   bored: "text-slate-500",
   "burnt out": "text-orange-600",
   joyful: "text-yellow-500",
+  anxious: "text-purple-400",
+  sad: "text-blue-600",
+  excited: "text-amber-400",
+  overwhelmed: "text-rose-500",
+  content: "text-teal-400",
+  frustrated: "text-red-600"
 };
 
 function DeltaIndicator({ delta }) {
