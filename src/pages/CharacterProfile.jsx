@@ -283,8 +283,8 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Family Members - Editable */}
-        <FamilyEditor character={character} />
+        {/* Family Members — read-only for default, editable for custom */}
+        <FamilyEditor character={character} readOnly={character.is_default} />
 
         {/* Family History — below family list */}
         {character.family_history && (
