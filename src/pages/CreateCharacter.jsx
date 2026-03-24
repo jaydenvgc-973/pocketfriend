@@ -688,6 +688,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
     data.ethnicities.length > 0 && data.living_situation,
     true, // work optional
     true, // connections optional
+    true, // family optional
     data.archetype && data.social_energy,
     data.vibes.length > 0,
     true, // memories optional
