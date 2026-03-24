@@ -495,10 +495,13 @@ export default function Chat() {
           if (detailReferenceImage) {
             // Detail reference is the primary guide for consistency
             referenceImages = [detailReferenceImage, ...Object.values(characterReferenceMap).slice(0, 2)];
+            if (sceneReferenceUrl) {
+              referenceImages.push(sceneReferenceUrl);
+            }
           } else {
             const peopleRefs = Object.values(characterReferenceMap).slice(0, 3);
             referenceImages = sceneReferenceUrl
-              ? [...peopleRefs, sceneReferenceUrl]
+              ? [sceneReferenceUrl, ...peopleRefs]
               : peopleRefs;
           }
 
