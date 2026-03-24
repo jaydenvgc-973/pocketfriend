@@ -37,11 +37,26 @@ export default function EditCharacterStory() {
   const handleSave = async () => {
     if (!selectedChar) return;
     setIsSaving(true);
-    const updated = { ...selectedChar, ...form };
-    updated.system_prompt = buildSystemPrompt(updated);
+    const merged = { ...selectedChar, ...form };
+
+    // Re-generate personality summary from the updated story content
+    const personality = await base44.integrations.Core.InvokeLLM({
+      prompt: `Create a personality summary (2-3 sentences, raw and real, written in third person) based on this character's updated profile.
+Name: ${merged.name}. Age: ${merged.age_range || "adult"}. Gender: ${merged.gender || "person"}.
+Background story: ${merged.background_story || "not specified"}.
+Current situation: ${merged.current_situation || "not specified"}.
+Emotional baggage: ${merged.emotional_baggage || "not specified"}.
+Existing personality traits: ${(merged.personality_traits || []).join(", ") || "not specified"}.
+Make it feel like a real person, not a description. No flowery language.`
+    });
+
+    merged.personality_summary = personality;
+    merged.system_prompt = buildSystemPrompt(merged);
+
     await base44.entities.Character.update(selectedChar.id, {
       ...form,
-      system_prompt: updated.system_prompt,
+      personality_summary: personality,
+      system_prompt: merged.system_prompt,
     });
     queryClient.invalidateQueries({ queryKey: ["characters"] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
