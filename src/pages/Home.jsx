@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
+import CharacterInteractionSimulator from "@/components/home/CharacterInteractionSimulator";
 import BottomNav from "@/components/BottomNav";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
