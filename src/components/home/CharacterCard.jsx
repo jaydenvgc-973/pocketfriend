@@ -24,7 +24,13 @@ const stateLabels = {
   flirtatious: "flirtatious",
   bored: "bored",
   "burnt out": "burnt out",
-  joyful: "joyful"
+  joyful: "joyful",
+  anxious: "anxious",
+  sad: "sad",
+  excited: "excited",
+  overwhelmed: "overwhelmed",
+  content: "content",
+  frustrated: "frustrated"
 };
 
 const stateDots = {
@@ -36,7 +42,13 @@ const stateDots = {
   flirtatious: "bg-pink-500",
   bored: "bg-slate-500",
   "burnt out": "bg-orange-600",
-  joyful: "bg-yellow-500"
+  joyful: "bg-yellow-500",
+  anxious: "bg-purple-500",
+  sad: "bg-blue-600",
+  excited: "bg-amber-400",
+  overwhelmed: "bg-rose-500",
+  content: "bg-teal-400",
+  frustrated: "bg-red-600"
 };
 
 export default function CharacterCard({ character, onDelete, onMoveAway }) {
@@ -151,8 +163,8 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               </div>
               {!isMovedAway && (
                 <div className="flex items-center gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state]}`} />
-                  <span className="text-xs text-muted-foreground">{stateLabels[state]}</span>
+                  <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
+                  <span className="text-xs text-muted-foreground">{stateLabels[state] || state}</span>
                 </div>
               )}
             </div>
