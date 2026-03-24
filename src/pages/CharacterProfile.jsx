@@ -61,10 +61,11 @@ export default function CharacterProfile() {
   const { data: character, isLoading } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
-      const chars = await base44.entities.Character.list();
-      return chars.find(c => c.id === characterId);
+      const chars = await base44.entities.Character.filter({ id: characterId });
+      return chars[0] || null;
     },
     enabled: !!characterId,
+    staleTime: 0,
   });
 
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
