@@ -425,7 +425,9 @@ export default function Chat() {
                 } else {
                   try {
                     const npcGenRes = await base44.integrations.Core.GenerateImage({
-                      prompt: `A realistic portrait of ${rel.person_name}, ${rel.relationship_type}. ${rel.description ? `${rel.description}` : "Focus on natural appearance and distinctive features."}`,
+                      prompt: `Photorealistic portrait photo of ${rel.person_name}, ${rel.relationship_type}. ${rel.description ? `${rel.description}` : "Focus on natural appearance and distinctive features."}
+
+📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley. Natural skin texture, real human proportions, authentic appearance.`,
                       existing_image_urls: Object.values(characterReferenceMap).slice(0, 2)
                     });
                     if (npcGenRes?.url) {
@@ -487,7 +489,9 @@ export default function Chat() {
                   // Fallback: Generate a scene reference if web search didn't yield URLs
                   const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
                   const sceneGenRes = await base44.integrations.Core.GenerateImage({
-                    prompt: `Interior photo of ${locationDesc}. Realistic, lived-in, personal space. No people. Natural lighting. High detail. This is their personal ${detectedLocation} that should look the same every time.`
+                   prompt: `Interior photo of ${locationDesc}. Realistic, lived-in, personal space. No people. Natural lighting. High detail. This is their personal ${detectedLocation} that should look the same every time.
+
+                  📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley. Authentic real-world interior with natural materials, textures, and lighting.`
                   });
                   if (sceneGenRes?.url) {
                     sceneReferenceUrl = sceneGenRes.url;
