@@ -625,7 +625,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
       onChange={(field, value) => update(field, value)}
     />,
 
-    // Step 8: Photo
+    // Step 9: Photo
     <div key="photo" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">Photo</h2>
