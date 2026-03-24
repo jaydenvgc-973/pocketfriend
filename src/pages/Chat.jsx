@@ -410,13 +410,6 @@ export default function Chat() {
           // RULE: Only include the user in the image if they explicitly requested it
           const userExplicitlyRequested = /\b(us|together|with me|with the user|you and me|me and you)\b/i.test(text);
           if (!userExplicitlyRequested) {
-            // Remove user reference images so user doesn't appear in the photo
-            delete characterReferenceMap["user"];
-          }
-
-          // RULE: Only include the user in the image if they explicitly requested it
-          const userExplicitlyRequested = /\b(us|together|with me|with the user|you and me|me and you)\b/i.test(text);
-          if (!userExplicitlyRequested) {
             delete characterReferenceMap["user"];
           }
 
