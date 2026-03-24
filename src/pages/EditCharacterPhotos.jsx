@@ -33,6 +33,7 @@ export default function EditCharacterPhotos() {
       system_prompt: updated.system_prompt,
     });
     queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
   };
 
   return (
