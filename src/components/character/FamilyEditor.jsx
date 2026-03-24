@@ -59,13 +59,15 @@ export default function FamilyEditor({ character, readOnly = false }) {
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground uppercase tracking-wider">Family</p>
-        <button
-          onClick={addMember}
-          className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          Add
-        </button>
+        {!readOnly && (
+          <button
+            onClick={addMember}
+            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add
+          </button>
+        )}
       </div>
 
       {members.length === 0 && (
@@ -75,33 +77,42 @@ export default function FamilyEditor({ character, readOnly = false }) {
       <div className="space-y-2">
         {members.map((member, idx) => (
           <div key={idx} className="flex items-center gap-2">
-            <input
-              type="text"
-              value={member.name}
-              onChange={e => updateMember(idx, "name", e.target.value)}
-              placeholder="Name"
-              className="flex-1 bg-secondary text-foreground text-sm rounded-xl px-3 py-2 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground min-w-0"
-            />
-            <select
-              value={member.relationship_type}
-              onChange={e => updateMember(idx, "relationship_type", e.target.value)}
-              className="bg-secondary text-foreground text-sm rounded-xl px-2 py-2 outline-none border border-transparent focus:border-primary/50 capitalize"
-            >
-              {RELATIONSHIP_TYPES.map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-            <button
-              onClick={() => removeMember(idx)}
-              className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-            >
-              <Trash2 className="w-4 h-4" />
-            </button>
+            {readOnly ? (
+              <div className="flex-1 flex items-center gap-2 bg-secondary/40 rounded-xl px-3 py-2">
+                <span className="text-sm text-foreground flex-1">{member.name}</span>
+                <span className="text-xs text-muted-foreground capitalize">{member.relationship_type}</span>
+              </div>
+            ) : (
+              <>
+                <input
+                  type="text"
+                  value={member.name}
+                  onChange={e => updateMember(idx, "name", e.target.value)}
+                  placeholder="Name"
+                  className="flex-1 bg-secondary text-foreground text-sm rounded-xl px-3 py-2 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground min-w-0"
+                />
+                <select
+                  value={member.relationship_type}
+                  onChange={e => updateMember(idx, "relationship_type", e.target.value)}
+                  className="bg-secondary text-foreground text-sm rounded-xl px-2 py-2 outline-none border border-transparent focus:border-primary/50 capitalize"
+                >
+                  {RELATIONSHIP_TYPES.map(type => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => removeMember(idx)}
+                  className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </>
+            )}
           </div>
         ))}
       </div>
 
-      {hasChanges && (
+      {!readOnly && hasChanges && (
         <button
           onClick={save}
           disabled={saving}
