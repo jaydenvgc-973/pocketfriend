@@ -3,6 +3,18 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
 
+// Read-only display field (non-editable)
+export function NonEditableField({ label, value, placeholder = "Not set" }) {
+  return (
+    <div>
+      <p className="text-xs text-muted-foreground uppercase tracking-wider mb-1">{label}</p>
+      <p className="text-sm text-foreground capitalize px-3 py-2 bg-secondary/40 rounded-xl">
+        {value || <span className="text-muted-foreground italic">{placeholder}</span>}
+      </p>
+    </div>
+  );
+}
+
 // Editable text input field that saves on blur
 export function EditableTextField({ character, field, label, placeholder = "Not set" }) {
   const queryClient = useQueryClient();
