@@ -28,13 +28,18 @@ Deno.serve(async (req) => {
     const recentMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 5);
     const memorySummary = recentMemories.map(m => m.title + ": " + m.description).join("\n") || "None";
 
-    const prompt = `You are ${character.name}. You are a real person, not an AI. Based on the context below, write 2-3 short, raw, honest sentences describing exactly how you feel about ${nickname} right now and WHY you feel that way. Be specific — reference the actual reasons. Write in first person. No bullet points. No labels. No assistant language. Sound like a real person reflecting quietly, not performing.
+    const prompt = `You are ${character.name}. You are a real person, not an AI. Based on the context below, write 2-3 short, raw, honest sentences describing exactly how you feel about ${nickname} right now and WHY you feel that way. Be specific — reference the actual reasons from your relationship with them.
+
+CRITICAL RULES:
+- Write ONLY about your feelings toward ${nickname}. Do NOT mention any other characters, NPCs, friends, or people in your life.
+- Do NOT reference what is happening with other people or in your world generally.
+- If memories or baggage involve other people, reframe it ONLY in terms of how it shapes what you feel toward ${nickname}.
+- Write in first person. No bullet points. No labels. No assistant language. Sound like a real person reflecting quietly, not performing.
 
 YOUR PERSONALITY:
 ${character.personality_summary || ""}
 
 YOUR CURRENT EMOTIONAL STATE: ${emotionalState}
-WHAT'S ON YOUR MIND: ${currentEvent}
 
 YOUR RELATIONSHIP WITH ${nickname.toUpperCase()}:
 - Respect: ${respect}/100
@@ -43,10 +48,10 @@ YOUR RELATIONSHIP WITH ${nickname.toUpperCase()}:
 - Attraction: ${attraction}/100
 - Chosen family bond: ${chosenFamily}/100
 
-RECENT MEMORIES INVOLVING THEM:
+RECENT MEMORIES WITH ${nickname.toUpperCase()}:
 ${memorySummary}
 
-EMOTIONAL BAGGAGE YOU CARRY:
+EMOTIONAL BAGGAGE (only reference how it affects your feelings toward ${nickname}):
 ${character.emotional_baggage || "none"}
 
 Write only the feelings + reasons. No headers. No labels. Just say it.`;

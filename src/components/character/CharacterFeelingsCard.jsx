@@ -16,18 +16,18 @@ export default function CharacterFeelingsCard({ character }) {
   }, [character?.id]);
 
   return (
-    <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+    <div className="pt-3 border-t border-border space-y-2">
       <div className="flex items-center gap-2">
-        <Heart className="w-4 h-4 text-primary" />
-        <p className="text-xs text-muted-foreground uppercase tracking-wider">How They Feel Right Now</p>
+        <Heart className="w-3.5 h-3.5 text-primary" />
+        <p className="text-xs text-muted-foreground uppercase tracking-wider">In Their Own Words</p>
       </div>
       {loading ? (
         <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
           <span className="text-xs">Thinking...</span>
         </div>
       ) : feelings ? (
-        <p className="text-sm text-foreground leading-relaxed">{feelings}</p>
+        <p className="text-sm text-foreground leading-relaxed italic">{feelings}</p>
       ) : (
         <p className="text-sm text-muted-foreground italic">Nothing to share right now.</p>
       )}

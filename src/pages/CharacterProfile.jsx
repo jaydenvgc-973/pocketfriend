@@ -192,11 +192,9 @@ export default function CharacterProfile() {
                 </div>
               </div>
             ))}
+            <CharacterFeelingsCard character={character} />
           </div>
         </div>
-
-        {/* How They Feel Right Now */}
-        <CharacterFeelingsCard character={character} />
 
         {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
