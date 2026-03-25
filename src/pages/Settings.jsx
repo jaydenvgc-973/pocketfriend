@@ -179,6 +179,17 @@ export default function Settings() {
             className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm"
           />
         </div>
+        <div className="space-y-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Schedule</p>
+          <p className="text-xs text-muted-foreground">Let characters know when you're usually free so they reach out at the right times.</p>
+          <textarea
+            placeholder="e.g. I work 9-5 on weekdays. I'm usually free evenings and weekends. I'm a night owl."
+            value={settings.user_schedule_notes || ""}
+            onChange={e => mutation.mutate({ user_schedule_notes: e.target.value })}
+            rows={3}
+            className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground resize-none"
+          />
+        </div>
         <div className="pt-4 border-t border-border">
           <UserPhotoUploader referenceImages={user.reference_image_urls || []} generatedAvatars={user.generated_avatar_urls || []} />
         </div>
