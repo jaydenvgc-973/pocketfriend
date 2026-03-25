@@ -442,13 +442,15 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* NPC / Fictional World Characters (no status bars — just rich details) */}
-        {character.fictional_relationships?.some(r => !r.related_character_id) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <div className="flex items-center gap-2 mb-2">
-              <Ghost className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
-            </div>
+        {/* NPC / Fictional World Characters + Transient Encounters */}
+        <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Ghost className="w-4 h-4 text-primary" />
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
+          </div>
+
+          {/* NPC relationships */}
+          {(character.fictional_relationships?.filter(r => !r.related_character_id) || []).length > 0 ? (
             <div className="space-y-5">
               {character.fictional_relationships
                 .filter(r => !r.related_character_id)
@@ -491,25 +493,29 @@ export default function CharacterProfile() {
                   </div>
                 ))}
             </div>
-          </div>
-        )}
+          ) : (
+            !character.transient_encounters?.length && (
+              <p className="text-sm text-muted-foreground italic">No people in their world yet.</p>
+            )
+          )}
 
-        {/* Transient Encounters */}
-        {character.transient_encounters?.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            <p className="text-xs font-medium text-foreground uppercase tracking-wider">One-off Encounters</p>
+          {/* Chance Encounters */}
+          {character.transient_encounters?.length > 0 && (
             <div className="space-y-3">
-              {character.transient_encounters.map((enc, idx) => (
-                <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
-                  <p className="text-xs text-foreground">{enc.description}</p>
-                  {enc.context && (
-                    <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
-                  )}
-                </div>
-              ))}
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chance Encounters</p>
+              <div className="space-y-3">
+                {character.transient_encounters.map((enc, idx) => (
+                  <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
+                    <p className="text-xs text-foreground">{enc.description}</p>
+                    {enc.context && (
+                      <p className="text-xs text-muted-foreground/70">at {enc.context}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* Personality Traits */}
         {character.personality_traits && character.personality_traits.length > 0 && (
