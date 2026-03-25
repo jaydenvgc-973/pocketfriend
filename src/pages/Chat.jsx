@@ -863,7 +863,7 @@ export default function Chat() {
         )}
         <div ref={bottomRef} />
       </div>
-      <ChatInput onSend={sendMessage} />
+      <ChatInput onSend={sendMessage} draftKey={characterId} />
       <NarrativeBuilderPopup
         isOpen={showNarrativeBuilder}
         onClose={() => setShowNarrativeBuilder(false)}

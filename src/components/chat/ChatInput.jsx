@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { motion } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 
-export default function ChatInput({ onSend }) {
-  const [text, setText] = useState("");
+export default function ChatInput({ onSend, draftKey = "chat_draft_default" }) {
+  const storageKey = `chat_draft_${draftKey}`;
+  const [text, setText] = useState(() => localStorage.getItem(storageKey) || "");
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [pendingImage, setPendingImage] = useState(null);
@@ -17,6 +18,17 @@ export default function ChatInput({ onSend }) {
     onSend(text.trim(), pendingImage);
     setText("");
     setPendingImage(null);
+    localStorage.removeItem(storageKey);
+  };
+
+  const handleTextChange = (e) => {
+    const val = e.target.value;
+    setText(val);
+    if (val) {
+      localStorage.setItem(storageKey, val);
+    } else {
+      localStorage.removeItem(storageKey);
+    }
   };
 
   const handleImageSelect = async (e) => {
@@ -83,7 +95,7 @@ export default function ChatInput({ onSend }) {
         </Button>
         <textarea
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={handleTextChange}
           onKeyDown={handleKeyDown}
           placeholder="Say something..."
           rows={1}
