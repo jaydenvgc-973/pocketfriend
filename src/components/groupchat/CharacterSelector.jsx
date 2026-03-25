@@ -7,6 +7,7 @@ import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
 export default function CharacterSelector({ characters, onConfirm, onCancel }) {
   const [selected, setSelected] = useState([]);
+  const [groupTitle, setGroupTitle] = useState('');
 
   const toggleCharacter = (id) => {
     setSelected(prev =>
@@ -18,7 +19,7 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
 
   const handleConfirm = () => {
     if (selected.length > 0) {
-      onConfirm(selected);
+      onConfirm(selected, groupTitle.trim());
     }
   };
 
@@ -36,6 +37,15 @@ export default function CharacterSelector({ characters, onConfirm, onCancel }) {
           <button onClick={onCancel} className="text-muted-foreground hover:text-foreground">
             <X className="w-4 h-4" />
           </button>
+        </div>
+
+        <div className="mb-3">
+          <Input
+            placeholder="Group chat title (optional)"
+            value={groupTitle}
+            onChange={(e) => setGroupTitle(e.target.value)}
+            className="w-full text-sm"
+          />
         </div>
 
         <div className="space-y-2 mb-3 overflow-y-auto flex-1">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -14,6 +14,9 @@ import TypingIndicator from '@/components/chat/TypingIndicator';
 
 export default function GroupChat() {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const urlParams = new URLSearchParams(location.search);
+  const initialConversationId = urlParams.get('conversationId');
   const [selectedConversation, setSelectedConversation] = useState(null);
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
@@ -46,11 +49,13 @@ export default function GroupChat() {
   });
 
   const createGroupMutation = useMutation({
-    mutationFn: async (characterIds) => {
+    mutationFn: async (args) => {
+      const { characterIds, title } = args;
       const selectedCharacters = characters.filter(c => characterIds.includes(c.id));
       const characterNames = selectedCharacters.map(c => c.name).join(', ');
+      const chatTitle = title || characterNames;
       return await base44.entities.Conversation.create({
-        title: characterNames,
+        title: chatTitle,
         type: 'group',
         character_ids: characterIds,
       });
@@ -78,6 +83,15 @@ export default function GroupChat() {
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typingCharacter]);
+
+  useEffect(() => {
+    if (initialConversationId && conversationsData.length > 0 && !selectedConversation) {
+      const convoToSelect = conversationsData.find(c => c.id === initialConversationId);
+      if (convoToSelect) {
+        setSelectedConversation(convoToSelect);
+      }
+    }
+  }, [initialConversationId, conversationsData, selectedConversation]);
 
   useEffect(() => {
     if (!selectedConversation) return;
@@ -320,7 +334,7 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
         {showCharacterSelector && (
           <CharacterSelector
             characters={activeCharacters}
-            onConfirm={(selectedIds) => createGroupMutation.mutate(selectedIds)}
+            onConfirm={(selectedIds, groupTitle) => createGroupMutation.mutate({ characterIds: selectedIds, title: groupTitle })}
             onCancel={() => setShowCharacterSelector(false)}
           />
         )}
