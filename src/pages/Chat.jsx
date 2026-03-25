@@ -306,9 +306,10 @@ export default function Chat() {
         songsContext = `\n\nSONGS YOU KNOW: You have listened to these songs and know them well: ${songsInfo}. You can naturally reference these songs, quote lyrics, or discuss what they mean to you in conversations.`;
       }
 
-      // Fetch current weather for character's location
+      // Fetch current weather ONLY if conversation seems weather-related
       let weatherContext = "";
-      if (character.city && character.state) {
+      const weatherKeywords = /\b(weather|rain|raining|sunny|cold|hot|warm|freezing|snow|snowing|storm|cloudy|outside|outdoors|going out|what's it like|nice out|bad out|degrees|temperature|humid|windy|fog|foggy)\b/i;
+      if (character.city && character.state && weatherKeywords.test(text)) {
         try {
           const weatherRes = await base44.integrations.Core.InvokeLLM({
             prompt: `What is the current weather right now in ${character.city}, ${character.state}? Include temperature, conditions (sunny, rainy, cloudy, etc.), and any notable weather patterns. Be specific and accurate.`,
@@ -321,17 +322,20 @@ export default function Chat() {
         }
       }
 
-      // Fetch recent events/news
+      // Fetch recent events ONLY if conversation seems news/current-events-related
       let recentEventsContext = "";
-      try {
-        const eventsRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`,
-          add_context_from_internet: true,
-          model: 'gemini_3_flash'
-        });
-        recentEventsContext = `\n\nRECENT EVENTS: Here are current events happening now: ${eventsRes}. You can naturally reference these if they fit the conversation, but don't force it. Only mention them if they genuinely relate to what you're discussing.`;
-      } catch (eventsErr) {
-        // Events lookup failed, continue without it
+      const newsKeywords = /\b(news|heard about|did you see|what's going on|what happened|current events|trending|politics|election|sports|game|match|celebrity|scandal|viral|social media|twitter|tiktok|instagram)\b/i;
+      if (newsKeywords.test(text)) {
+        try {
+          const eventsRes = await base44.integrations.Core.InvokeLLM({
+            prompt: `What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`,
+            add_context_from_internet: true,
+            model: 'gemini_3_flash'
+          });
+          recentEventsContext = `\n\nRECENT EVENTS: Here are current events happening now: ${eventsRes}. You can naturally reference these if they fit the conversation, but don't force it. Only mention them if they genuinely relate to what you're discussing.`;
+        } catch (eventsErr) {
+          // Events lookup failed, continue without it
+        }
       }
 
       // Get recent memories for long-term recall
@@ -342,22 +346,25 @@ export default function Chat() {
         memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference these naturally when relevant, don't force it):\n${memoryList}`;
       }
 
-      // Detect if conversation mentions any of the character's frequented places and update emotional state
+      // Detect frequented places and update emotional state asynchronously (non-blocking)
       const frequentedPlaces = character.frequented_places || [];
       if (frequentedPlaces.length > 0) {
         const fullText = (text + " " + (recentMsgs.slice(-3).map(m => m.content).join(" "))).toLowerCase();
         const mentionedPlace = frequentedPlaces.find(p => fullText.includes(p.toLowerCase()));
         if (mentionedPlace) {
-          base44.integrations.Core.InvokeLLM({
-            prompt: `A character named ${character.name} (personality: ${character.personality_summary || "unknown"}) is currently at or talking about "${mentionedPlace}", one of their frequented places. Based on their personality and the context, what emotional state best fits them right now? Choose ONE from this list: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated. Return ONLY the single word.`,
-          }).then(async (newState) => {
-            const cleaned = newState?.trim().toLowerCase().replace(/[^a-z\s-]/g, "");
-            const validStates = ["calm","irritated","defensive","reflective","closed-off","flirtatious","bored","burnt out","joyful","anxious","sad","excited","overwhelmed","content","frustrated"];
-            if (validStates.includes(cleaned)) {
-              await base44.entities.Character.update(characterId, { emotional_state: cleaned });
-              queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-            }
-          }).catch(() => {});
+          // Fire-and-forget — does not block response generation
+          setTimeout(() => {
+            base44.integrations.Core.InvokeLLM({
+              prompt: `A character named ${character.name} (personality: ${character.personality_summary || "unknown"}) is currently at or talking about "${mentionedPlace}", one of their frequented places. Based on their personality and the context, what emotional state best fits them right now? Choose ONE from this list: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated. Return ONLY the single word.`,
+            }).then(async (newState) => {
+              const cleaned = newState?.trim().toLowerCase().replace(/[^a-z\s-]/g, "");
+              const validStates = ["calm","irritated","defensive","reflective","closed-off","flirtatious","bored","burnt out","joyful","anxious","sad","excited","overwhelmed","content","frustrated"];
+              if (validStates.includes(cleaned)) {
+                await base44.entities.Character.update(characterId, { emotional_state: cleaned });
+                queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+              }
+            }).catch(() => {});
+          }, 0);
         }
       }
 
@@ -369,17 +376,10 @@ export default function Chat() {
         researchContext = `\n\nTHINGS YOU'VE LOOKED UP: You've researched these topics and have this knowledge:\n${researchInfo}\nWhen relevant, naturally reference what you've learned from these lookups. Don't force it, but if something comes up in conversation that relates to your research, mention it like you actually read about it.`;
       }
 
-      // Perform web lookup if user asked for one
+      // Perform web lookup asynchronously if user asked for one (non-blocking)
       if (lookupMatch && lookupMatch[1]) {
         const query = lookupMatch[1].trim();
-        try {
-          await base44.functions.invoke('performWebLookup', {
-            characterId,
-            searchQuery: query
-          });
-        } catch (err) {
-          // Lookup failed but continue conversation
-        }
+        base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
