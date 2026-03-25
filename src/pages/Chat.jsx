@@ -61,10 +61,10 @@ export default function Chat() {
         setMessages(loadedMsgs);
         setConversationId(convoId);
 
-        // Mark all unread character messages as read
+        // Mark all unread character messages as read (batched to avoid rate limits)
         const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
-        if (unread.length > 0) {
-          await Promise.all(unread.map(m => base44.entities.Message.update(m.id, { is_read: true })));
+        for (const m of unread) {
+          await base44.entities.Message.update(m.id, { is_read: true });
         }
       }
 
