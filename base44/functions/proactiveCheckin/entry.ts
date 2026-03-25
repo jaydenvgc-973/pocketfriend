@@ -111,8 +111,8 @@ Rules:
           ? character.reference_image_urls
           : character.avatar_url ? [character.avatar_url] : null;
         const lockedPrompt = refImages
-          ? `MATCH THE EXACT APPEARANCE of the person in the reference photo(s). ${imagePrompt}`
-          : imagePrompt;
+          ? `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, drawing, sketch, CGI, 3D render, plastic look, doll-like, porcelain skin, glossy surface, uncanny valley, overly smooth, airbrushed, filtered, stylized, artificial, fake, or any non-photographic aesthetic. 🔒 APPEARANCE LOCK: MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same facial structure, same features, same hair. ${imagePrompt}`
+          : `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands. Must look like an unmanipulated photograph. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, airbrushed, stylized, fake. ${imagePrompt}`;
         const imgResult = refImages
           ? await base44.asServiceRole.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
           : await base44.asServiceRole.integrations.Core.GenerateImage({ prompt: lockedPrompt });
