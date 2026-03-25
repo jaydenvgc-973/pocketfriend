@@ -110,13 +110,26 @@ Rules:
         const refImages = character.reference_image_urls?.length
           ? character.reference_image_urls
           : character.avatar_url ? [character.avatar_url] : null;
-        const lockedPrompt = refImages
-          ? `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, drawing, sketch, CGI, 3D render, plastic look, doll-like, porcelain skin, glossy surface, uncanny valley, overly smooth, airbrushed, filtered, stylized, artificial, fake, or any non-photographic aesthetic. 🔒 APPEARANCE LOCK: MATCH THE EXACT APPEARANCE of the person in the reference photo(s) — same facial structure, same features, same hair. ${imagePrompt}`
-          : `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands. Must look like an unmanipulated photograph. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, airbrushed, stylized, fake. ${imagePrompt}`;
+
+        if (!refImages) {
+          // No reference images — skip image generation entirely, cannot guarantee appearance
+          finalText = cleanText.replace(imageMatch[0], '').trim();
+          results.push({ id: character.id, name: character.name, status: 'skipped_image', reason: 'No reference images available' });
+        }
+
+        const appearanceNote = character.appearance_notes
+          ? `🔒 ABSOLUTE APPEARANCE MANDATE — NON-NEGOTIABLE: You MUST use the provided reference photo(s) to render ${character.name}'s face. The reference photo is the sole source of truth for their facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, and all facial features. Replicate their face with pixel-level fidelity from the reference image. Current appearance details: ${character.appearance_notes}. Same exact facial hair state, same exact hair style, same exact distinctive features. ANY deviation from the reference photo face is a critical failure.`
+          : `🔒 ABSOLUTE APPEARANCE MANDATE — NON-NEGOTIABLE: You MUST use the provided reference photo(s) to render ${character.name}'s face. The reference photo is the sole and definitive source of truth for their facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, and every facial feature. Do NOT invent or approximate their face — copy it exactly from the reference image. Their hair style and any distinctive physical traits must also match exactly. ANY deviation from the reference photo face is a critical failure.`;
+
+        const lockedPrompt = `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, drawing, sketch, CGI, 3D render, plastic look, doll-like, porcelain skin, glossy surface, uncanny valley, overly smooth, airbrushed, filtered, stylized, artificial, fake, or any non-photographic aesthetic. If it doesn't look like a real photograph, it has failed.\n\n🎯 CRITICAL FACE RENDERING RULE: Every person appearing in this image MUST have their face rendered with absolute fidelity to their provided reference photo. The reference photos are not suggestions — they are mandatory templates. Copy the exact facial structure, eye shape, nose, lips, skin tone, and distinguishing features from the reference. Do NOT generate a generic or invented face. If a reference photo is provided for a person, their face in this image must be indistinguishable from that reference. Failure to replicate the reference face exactly is unacceptable.\n\n${imagePrompt}\n\n${appearanceNote}`;
+
         const imgResult = refImages
           ? await base44.asServiceRole.integrations.Core.GenerateImage({ prompt: lockedPrompt, existing_image_urls: refImages })
-          : await base44.asServiceRole.integrations.Core.GenerateImage({ prompt: lockedPrompt });
-        imageUrl = imgResult.url;
+          : null;
+
+        if (imgResult) {
+          imageUrl = imgResult.url;
+        }
       }
 
       await base44.asServiceRole.entities.PendingMessage.create({
