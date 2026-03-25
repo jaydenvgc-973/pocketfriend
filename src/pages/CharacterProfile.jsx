@@ -395,6 +395,24 @@ export default function CharacterProfile() {
                       {rel.description && (
                         <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{rel.description}</p>
                       )}
+                      {rel.current_status && (
+                        <div className="mb-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">What's going on now</p>
+                          <p className="text-xs text-foreground leading-relaxed">{rel.current_status}</p>
+                        </div>
+                      )}
+                      {rel.emotional_impact && (
+                        <div className="mb-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">How they feel right now</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed italic">{rel.emotional_impact}</p>
+                        </div>
+                      )}
+                      {rel.last_interaction_summary && (
+                        <div className="mb-3">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Last interaction</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{rel.last_interaction_summary}</p>
+                        </div>
+                      )}
                       <div className="space-y-2">
                         {[
                           { label: "Respect", value: rel.user_respect_level ?? 50 },
