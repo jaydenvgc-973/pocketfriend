@@ -132,7 +132,11 @@ export default function Chat() {
 
   const handleDeleteMessage = async (messageId) => {
     setMessages(prev => prev.filter(msg => msg.id !== messageId));
-    await base44.entities.Message.delete(messageId);
+    try {
+      await base44.entities.Message.delete(messageId);
+    } catch {
+      // Message already deleted or not found — UI already updated
+    }
   };
 
   const handleReact = async (messageId, emoji) => {
