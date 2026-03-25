@@ -169,7 +169,7 @@ export default function Settings() {
           />
         </div>
         <div className="pt-4 border-t border-border">
-          <UserPhotoUploader referenceImages={user.reference_image_urls || []} />
+          <UserPhotoUploader referenceImages={user.reference_image_urls || []} generatedAvatars={user.generated_avatar_urls || []} />
         </div>
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
