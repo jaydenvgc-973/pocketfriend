@@ -250,7 +250,7 @@ export default function Chat() {
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, detailReferenceImage = null;
+    let recentMsgs, response, responseText, emotionalState, imagePrompt, detailReferenceImage = null;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -400,7 +400,7 @@ export default function Chat() {
         }
       }
       responseText = responseObj.text?.trim() || "";
-      const imagePrompt = responseObj.image_prompt;
+      imagePrompt = responseObj.image_prompt;
 
       // Calculate typing delay based on user's WPM setting
       let typingDelayMs = 0;
