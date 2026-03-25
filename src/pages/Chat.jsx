@@ -401,11 +401,11 @@ export default function Chat() {
       responseText = responseText.replace(/\[IMAGE:\s*[\s\S]+?\]/g, "").trim();
 
       if (imageMatch) {
-        // Check if character has reference images to generate from
-        const hasReferenceImages = character.reference_image_urls && character.reference_image_urls.length > 0;
+        // Check if character has reference images or avatar to generate from
+        const hasReferenceImages = (character.reference_image_urls && character.reference_image_urls.length > 0) || character.avatar_url;
         
         if (!hasReferenceImages) {
-          // No reference images — treat as connectivity issue and skip generation
+          // No reference images or avatar — treat as connectivity issue and skip generation
           setSendError("Image couldn't be sent — appears to be a connectivity issue.");
           typingDelayMs = 500;
           imageMatch = null; // Clear to prevent generation attempt below
