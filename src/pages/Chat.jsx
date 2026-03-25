@@ -766,21 +766,44 @@ export default function Chat() {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
 
-    // Character occasionally reacts with an emoji to the user's message
-    if (Math.random() > 0.6) {
-      const emojiByEmotion = {
-        calm: ["👍", "❤️", "😂"],
-        reflective: ["😢", "😮", "❤️"],
-        irritated: ["😡", "😮"],
-        defensive: ["😡", "😮"],
-        "closed-off": ["😮"],
-      };
-      const pool = emojiByEmotion[emotionalState] || ["👍"];
-      const pickedEmoji = pool[Math.floor(Math.random() * pool.length)];
+    // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
+    if (Math.random() > 0.5) {
       setTimeout(async () => {
-        const updatedUserMsgReactions = [...(userMsg.reactions || []), { emoji: pickedEmoji, reactor_type: "character", reactor_id: characterId }];
-        await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
-        setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
+        const isImage = !!userImageUrl;
+        const messageDesc = isImage
+          ? `The user sent an image${text ? ` with caption: "${text}"` : ""}.`
+          : `The user said: "${text}"`;
+
+        const emojiRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `You are ${character.name}. ${character.personality_summary ? `Your personality: ${character.personality_summary}.` : ""} Your relationship with the user: friendship level ${character.friendship_level ?? 75}/100, romantic level ${character.romantic_level ?? 0}/100.
+
+${messageDesc}
+
+Based on how this message makes YOU feel — its emotional impact on you — choose ONE emoji reaction from this list, or respond with "none" if no strong reaction fits:
+- ❤️ (love, care, appreciation, warmth — "this means something to me / I love this")
+- 👍 (acknowledgment, approval, agreement — "got it / looks good / that works")
+- 😢 (sadness, empathy, being touched — "this is sad / I feel for you")
+- 😡 (anger, frustration, disapproval — "this upset me / this is wrong")
+- 😲 (shock, surprise, being impressed — "I didn't expect this / that's wild")
+
+Consider:
+- Is this a positive message that makes you feel warmth or love? → ❤️
+- Is it neutral information or approval-seeking? → 👍
+- Is it sad or touching? → 😢
+- Is it upsetting or wrong? → 😡
+- Is it shocking or unexpected? → 😲
+- Does it not warrant any strong reaction? → none
+
+Reply with ONLY the single emoji or the word "none".`,
+        });
+
+        const picked = emojiRes?.trim();
+        const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
+        if (picked && validEmojis.includes(picked)) {
+          const updatedUserMsgReactions = [...(userMsg.reactions || []), { emoji: picked, reactor_type: "character", reactor_id: characterId }];
+          await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
+          setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
+        }
       }, 2000 + Math.random() * 3000);
     }
 
