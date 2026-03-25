@@ -59,12 +59,29 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [hasPendingMessage, setHasPendingMessage] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
 
   useEffect(() => {
+    // Check for pending (proactive) messages
     base44.entities.PendingMessage.filter({ character_id: character.id, delivered: false })
       .then(msgs => setHasPendingMessage(msgs.length > 0));
+
+    // Count unread messages from this character across all conversations
+    base44.entities.Conversation.filter({ character_ids: [character.id] }).then(async (convos) => {
+      let count = 0;
+      for (const convo of convos) {
+        const unread = await base44.entities.Message.filter({
+          conversation_id: convo.id,
+          sender_type: "character",
+          character_id: character.id,
+          is_read: false,
+        });
+        count += unread.length;
+      }
+      setUnreadCount(count);
+    });
   }, [character.id]);
 
   const generateAvatar = async () => {

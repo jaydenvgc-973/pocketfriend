@@ -60,6 +60,12 @@ export default function Chat() {
         const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date");
         setMessages(loadedMsgs);
         setConversationId(convoId);
+
+        // Mark all unread character messages as read
+        const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
+        if (unread.length > 0) {
+          await Promise.all(unread.map(m => base44.entities.Message.update(m.id, { is_read: true })));
+        }
       }
 
 
