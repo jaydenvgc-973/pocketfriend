@@ -431,10 +431,16 @@ export default function Chat() {
             characterReferenceMap[character.name] = character.avatar_url;
           }
 
-          // Map the user — prioritize AI-generated avatar, fall back to uploaded reference images
-          if (currentUser?.user_avatar_url) {
-            characterReferenceMap["user"] = currentUser.user_avatar_url;
+          // Map the user — use generated_avatar_urls with rotation logic
+          const userAvatars = currentUser?.generated_avatar_urls || [];
+          if (userAvatars.length === 1) {
+            characterReferenceMap["user"] = userAvatars[0];
+          } else if (userAvatars.length >= 2) {
+            // Rotate evenly across all available avatars (up to 4)
+            const avatarIndex = Math.floor(Math.random() * userAvatars.length);
+            characterReferenceMap["user"] = userAvatars[avatarIndex];
           } else if (currentUser?.reference_image_urls?.length > 0) {
+            // Fallback to reference photos if no generated avatars exist
             characterReferenceMap["user"] = currentUser.reference_image_urls[0];
           }
 
@@ -536,7 +542,9 @@ export default function Chat() {
 
           // RULE: Only include the user in the image if they explicitly requested it
           const userExplicitlyRequested = /\b(us|together|with me|with the user|you and me|me and you)\b/i.test(text);
-          if (!userExplicitlyRequested) {
+          // RULE: Detect if user is requesting a picture of ONLY themselves
+          const userOnlyRequested = /\b(picture of me|photo of me|pic of me|image of me|send me a pic|send me a photo|selfie of me|show me|picture of yourself|just me|only me)\b/i.test(text);
+          if (!userExplicitlyRequested && !userOnlyRequested) {
             delete characterReferenceMap["user"];
           }
 
@@ -609,16 +617,23 @@ export default function Chat() {
             enhancedPrompt = enhancedPrompt.replace(/\b(the user|the person I'm talking to|my friend)\b/gi, "").trim();
           }
 
-          const peopleInImage = Object.keys(characterReferenceMap).filter(name => 
-            imagePrompt.toLowerCase().includes(name.toLowerCase()) || name === "user" || name === character.name
-          );
-          if (peopleInImage.length > 1) {
-            const characterDescriptions = peopleInImage.map(name => {
-              if (name === "user") return "the user";
-              if (name === character.name) return `${character.name} (a ${character.gender || 'person'})`;
-              return name;
-            }).join(", ");
-            enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self.`;
+          // If user-only image, override the prompt and references to focus entirely on the user
+          if (userOnlyRequested && characterReferenceMap["user"]) {
+            const userAvatarRef = characterReferenceMap["user"];
+            referenceImages = [userAvatarRef];
+            enhancedPrompt = "📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake, or any non-photographic aesthetic.\n\n🎯 CRITICAL FACE RENDERING RULE: You MUST replicate the person's face from the provided reference photo with absolute fidelity. Copy their exact facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, hair style, and every distinguishing feature. Do NOT invent or approximate — copy it exactly. ANY deviation from the reference face is a critical failure.\n\n" + imagePrompt + "\n\nThe subject is the person from the reference photo. Render ONLY this one person. Their face must be indistinguishable from the reference." + (lightingContext || "");
+          } else {
+            const peopleInImage = Object.keys(characterReferenceMap).filter(name => 
+              imagePrompt.toLowerCase().includes(name.toLowerCase()) || name === "user" || name === character.name
+            );
+            if (peopleInImage.length > 1) {
+              const characterDescriptions = peopleInImage.map(name => {
+                if (name === "user") return "the user";
+                if (name === character.name) return `${character.name} (a ${character.gender || 'person'})`;
+                return name;
+              }).join(", ");
+              enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self.`;
+            }
           }
 
           // --- CLOTHING & WEATHER CONTEXT ---
@@ -657,7 +672,7 @@ export default function Chat() {
             }
           }
 
-          if (clothingContext && !promptLower.includes("wearing") && !promptLower.includes("dressed")) {
+          if (clothingContext && !promptLower.includes("wearing") && !promptLower.includes("dressed") && !userOnlyRequested) {
             enhancedPrompt += ` The character is ${clothingContext}`;
           }
           
