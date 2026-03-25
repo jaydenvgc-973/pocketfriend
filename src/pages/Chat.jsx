@@ -401,8 +401,18 @@ export default function Chat() {
       responseText = responseText.replace(/\[IMAGE:\s*[\s\S]+?\]/g, "").trim();
 
       if (imageMatch) {
-        // Image will be generated asynchronously — no blocking wait
-        typingDelayMs = 500;
+        // Check if character has reference images to generate from
+        const hasReferenceImages = character.reference_image_urls && character.reference_image_urls.length > 0;
+        
+        if (!hasReferenceImages) {
+          // No reference images — treat as connectivity issue and skip generation
+          setSendError("Image couldn't be sent — appears to be a connectivity issue.");
+          typingDelayMs = 500;
+          imageMatch = null; // Clear to prevent generation attempt below
+        } else {
+          // Image will be generated asynchronously — no blocking wait
+          typingDelayMs = 500;
+        }
       } else {
         imageUrl = null;
         // Calculate typing delay based on user's WPM setting
@@ -440,42 +450,65 @@ export default function Chat() {
       return;
     }
 
-    // If image was requested, create placeholder message and trigger async generation
+    // If image was requested and we have reference images, create placeholder message and trigger async generation
     if (imageMatch) {
-      const imgMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: "",
-        image_url: undefined,
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
+      const hasReferenceImages = character.reference_image_urls && character.reference_image_urls.length > 0;
       
-      if (imgMsg && imgMsg.id) {
-        // Prepare reference images for backend
-        const currentUser = await base44.auth.me();
-        const referenceImages = [];
+      if (hasReferenceImages) {
+        const imgMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: "",
+          image_url: undefined,
+          emotional_state: emotionalState,
+          timestamp: new Date().toISOString(),
+        });
         
-        if (character.reference_image_urls?.length > 0) {
-          referenceImages.push(character.reference_image_urls[0]);
-        } else if (character.avatar_url) {
-          referenceImages.push(character.avatar_url);
-        }
+        if (imgMsg && imgMsg.id) {
+          // Prepare reference images for backend
+          const currentUser = await base44.auth.me();
+          const referenceImages = [];
+          
+          if (character.reference_image_urls?.length > 0) {
+            referenceImages.push(character.reference_image_urls[0]);
+          }
 
-        const userAvatars = currentUser?.generated_avatar_urls || [];
-        if (userAvatars.length > 0) {
-          const avatarIndex = Math.floor(Math.random() * userAvatars.length);
-          referenceImages.push(userAvatars[avatarIndex]);
-        }
+          const userAvatars = currentUser?.generated_avatar_urls || [];
+          if (userAvatars.length > 0) {
+            const avatarIndex = Math.floor(Math.random() * userAvatars.length);
+            referenceImages.push(userAvatars[avatarIndex]);
+          }
 
-        // Trigger async image generation
-        base44.functions.invoke('generateImageAsync', {
-          messageId: imgMsg.id,
-          prompt: imageMatch[1].trim(),
-          referenceImageUrls: referenceImages.filter(Boolean),
-        }).catch(() => {});
+          // Trigger async image generation
+          base44.functions.invoke('generateImageAsync', {
+            messageId: imgMsg.id,
+            prompt: imageMatch[1].trim(),
+            referenceImageUrls: referenceImages.filter(Boolean),
+          }).catch(() => {});
+        }
+      } else {
+        // No reference images — create a narrative message about connectivity issue
+        const connectivityMessages = [
+          "Ugh, my signal's terrible right now. That pic didn't go through — I'll try again when I get better service!",
+          "My phone's acting up, the photo didn't send. I'll resend it once I'm somewhere with better connection.",
+          "No signal where I am right now, that didn't upload. I'll get you that picture as soon as I can!",
+          "That didn't go through, ugh. Bad connection. Let me try again once I have service.",
+          "Stupid service... the image didn't send. I'll retry when I get better reception!"
+        ];
+        const chosenMsg = connectivityMessages[Math.floor(Math.random() * connectivityMessages.length)];
+        
+        await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: chosenMsg,
+          is_narrative: false,
+          emotional_state: emotionalState,
+          timestamp: new Date().toISOString(),
+        });
       }
     }
 
