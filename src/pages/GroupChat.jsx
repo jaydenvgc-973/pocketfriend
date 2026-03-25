@@ -6,11 +6,9 @@ import { Button } from '@/components/ui/button';
 import { ArrowLeft, Send, Plus, MessageCircle, Trash2 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { AnimatePresence } from 'framer-motion';
-import { buildSystemPrompt } from '@/lib/defaultCharacter';
 import BottomNav from '@/components/BottomNav';
 import CharacterSelector from '@/components/groupchat/CharacterSelector';
 import MessageBubble from '@/components/chat/MessageBubble';
-import TypingIndicator from '@/components/chat/TypingIndicator';
 
 export default function GroupChat() {
   const queryClient = useQueryClient();
@@ -21,7 +19,6 @@ export default function GroupChat() {
   const [messageText, setMessageText] = useState('');
   const [messages, setMessages] = useState([]);
   const [showCharacterSelector, setShowCharacterSelector] = useState(false);
-  const [typingCharacter, setTypingCharacter] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
   const scrollRef = useRef(null);
   const messagesRef = useRef([]);
@@ -94,6 +91,27 @@ export default function GroupChat() {
   }, [initialConversationId, conversationsData, selectedConversation]);
 
   useEffect(() => {
+    if (selectedConversation) {
+      const draftKey = `groupchat_draft_${selectedConversation.id}`;
+      const savedDraft = localStorage.getItem(draftKey);
+      if (savedDraft) {
+        setMessageText(savedDraft);
+      }
+    }
+  }, [selectedConversation?.id]);
+
+  useEffect(() => {
+    if (selectedConversation) {
+      const draftKey = `groupchat_draft_${selectedConversation.id}`;
+      if (messageText) {
+        localStorage.setItem(draftKey, messageText);
+      } else {
+        localStorage.removeItem(draftKey);
+      }
+    }
+  }, [messageText, selectedConversation?.id]);
+
+  useEffect(() => {
     if (!selectedConversation) return;
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       if (event.data?.conversation_id === selectedConversation.id) {
@@ -108,6 +126,8 @@ export default function GroupChat() {
 
     const text = messageText;
     setMessageText('');
+    const draftKey = `groupchat_draft_${selectedConversation.id}`;
+    localStorage.removeItem(draftKey);
 
     const userMsg = await base44.entities.Message.create({
       conversation_id: selectedConversation.id,
@@ -117,81 +137,12 @@ export default function GroupChat() {
     });
     setMessages(prev => [...prev, userMsg]);
 
-    const convoCharacters = characters.filter(c =>
-      selectedConversation.character_ids?.includes(c.id)
-    );
-
-    const currentMessages = [...messagesRef.current, userMsg];
-
-    for (const character of convoCharacters) {
-      const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
-      const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
-      const delayMs = isUncomfortable
-        ? (60 + Math.random() * 60) * 1000
-        : (5 + Math.random() * 55) * 1000;
-      await new Promise(r => setTimeout(r, delayMs));
-
-      setTypingCharacter(character);
-
-      const historyLines = currentMessages
-        .map(m => `${m.sender_type === 'user' ? 'User' : m.character_name}: ${m.content}`)
-        .join('\n');
-
-      const otherParticipants = convoCharacters
-        .filter(c => c.id !== character.id)
-        .map(c => c.name)
-        .join(', ');
-
-      const systemPrompt = character.system_prompt || buildSystemPrompt(character);
-
-      const fullPrompt = `${systemPrompt}
-
-YOU ARE IN A GROUP CHAT with: ${otherParticipants ? `the user and ${otherParticipants}` : 'just you and the user'}.
-This is a real group conversation. You can — and should — speak to the other characters directly, not just the user. Address them by name. React to what they said. Disagree, agree, laugh, clap back. You are all real people having a conversation together. The user is not the only one you talk to in here.
-
-Your current emotional state: ${character.emotional_state || 'calm'}.
-Your current life situation: ${character.current_situation || ''}.
-${character.current_life_event ? `What is on your mind right now: ${character.current_life_event}` : ''}
-
-Group conversation so far:
-${historyLines}
-
-Write ONLY your next reply as ${character.name}. Do NOT include your name as a label. Keep it natural, short, and in your character's voice.
-- React to whoever just spoke — the user OR another character.
-- Do NOT end with a question every time. Sometimes just say what you think and stop.
-- You have your own life and opinions. Share them. You are not just reacting — you are participating.
-- Do NOT assume or reference anything about the user's family unless they've told you directly in this conversation.`;
-
-      let responseText = '';
-      try {
-        const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
-        responseText = response.replace(/^[\w\s]+:\s*/i, '').trim();
-      } catch (err) {
-        setTypingCharacter(null);
-        continue;
-      }
-
-      const charMsg = await base44.entities.Message.create({
-        conversation_id: selectedConversation.id,
-        sender_type: 'character',
-        character_id: character.id,
-        character_name: character.name,
-        content: responseText,
-        emotional_state: character.emotional_state || 'calm',
-        timestamp: new Date().toISOString(),
-      });
-
-      currentMessages.push(charMsg);
-      messagesRef.current = currentMessages;
-      setMessages(prev => [...prev, charMsg]);
-    }
-
-    setTypingCharacter(null);
-
     await base44.entities.Conversation.update(selectedConversation.id, {
       last_message_preview: text.substring(0, 100),
       last_message_date: new Date().toISOString(),
     });
+
+    await base44.functions.invoke('generateGroupChatResponse', { messageId: userMsg.id });
   };
 
   if (conversationsLoading) {
@@ -283,11 +234,6 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
                   {messages.map(msg => (
                     <MessageBubble key={msg.id} message={msg} showName={msg.sender_type === 'character'} />
                   ))}
-                </AnimatePresence>
-                <AnimatePresence>
-                  {typingCharacter && (
-                    <TypingIndicator name={typingCharacter.name} avatarUrl={typingCharacter.avatar_url} />
-                  )}
                 </AnimatePresence>
                 <div ref={scrollRef} />
               </div>
