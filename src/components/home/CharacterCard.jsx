@@ -80,22 +80,28 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   }, [pendingMessages]);
 
   useEffect(() => {
+    if (conversations.length === 0) return;
+
     const countUnread = async () => {
-      let count = 0;
-      for (const convo of conversations) {
-        const unread = await base44.entities.Message.filter({
-          conversation_id: convo.id,
+      try {
+        let count = 0;
+        // Fetch all unread messages for this character in one query
+        const allUnread = await base44.entities.Message.filter({
           sender_type: "character",
           character_id: character.id,
           is_read: false,
         });
-        count += unread.length;
+        // Only count messages from conversations we know about
+        const convoIds = conversations.map(c => c.id);
+        count = allUnread.filter(msg => convoIds.includes(msg.conversation_id)).length;
+        setUnreadCount(count);
+      } catch (err) {
+        // Silently fail on rate limit to avoid UI crashes
+        console.warn('Failed to count unread messages', err);
       }
-      setUnreadCount(count);
     };
-    if (conversations.length > 0) {
-      countUnread();
-    }
+
+    countUnread();
   }, [conversations, character.id]);
 
   const generateAvatar = async () => {
