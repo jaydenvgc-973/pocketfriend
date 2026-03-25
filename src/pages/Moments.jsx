@@ -7,6 +7,7 @@ import ActiveArcCard from "@/components/moments/ActiveArcCard";
 import AchievementBadge from "@/components/moments/AchievementBadge";
 import LockedAchievements from "@/components/moments/LockedAchievements";
 import GoalsSection from "@/components/moments/GoalsSection";
+import ChallengesSection from "@/components/moments/ChallengesSection";
 import { ACHIEVEMENTS, CATEGORY_LABELS } from "@/lib/achievements";
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
@@ -27,6 +28,11 @@ export default function Moments() {
   const { data: messages = [] } = useQuery({
     queryKey: ["recentMessages"],
     queryFn: () => base44.entities.Message.list("-created_date", 200),
+  });
+
+  const { data: userChallenges = [] } = useQuery({
+    queryKey: ["userChallenges"],
+    queryFn: () => base44.entities.UserChallenge.list(),
   });
 
   // Map achievement_id -> unlocked record (most recent)
@@ -77,6 +83,9 @@ export default function Moments() {
 
         {/* Goals */}
         <GoalsSection characters={characters} messages={messages} />
+
+        {/* Challenges */}
+        <ChallengesSection userChallenges={userChallenges} messages={messages} />
 
         {/* Achievements */}
         <section className="space-y-4">
