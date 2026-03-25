@@ -121,6 +121,10 @@ export default function Chat() {
           if (prev.some(m => m.id === event.data.id)) return prev;
           return [...prev, event.data];
         });
+        // Auto-mark incoming character messages as read since chat is open
+        if (event.data.sender_type === "character" && !event.data.is_read) {
+          base44.entities.Message.update(event.data.id, { is_read: true });
+        }
       }
     });
     unsubscribeRef.current = unsubscribe;
