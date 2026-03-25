@@ -426,13 +426,11 @@ export default function Chat() {
             characterReferenceMap[character.name] = character.avatar_url;
           }
 
-          // Map the user — use all reference images for best appearance consistency
-          if (currentUser?.reference_image_urls?.length > 0) {
-            characterReferenceMap["user"] = currentUser.reference_image_urls[0];
-            // Store all user reference images for use in referenceImages array below
-            characterReferenceMap["__userAllRefs"] = currentUser.reference_image_urls;
-          } else if (currentUser?.user_avatar_url) {
+          // Map the user — prioritize AI-generated avatar, fall back to uploaded reference images
+          if (currentUser?.user_avatar_url) {
             characterReferenceMap["user"] = currentUser.user_avatar_url;
+          } else if (currentUser?.reference_image_urls?.length > 0) {
+            characterReferenceMap["user"] = currentUser.reference_image_urls[0];
           }
 
           // Check for other known characters
@@ -570,14 +568,12 @@ export default function Chat() {
             .filter(([name]) => name !== character.name)
             .map(([, url]) => url);
 
-          const userAllRefs = characterReferenceMap["__userAllRefs"] || [];
-          delete characterReferenceMap["__userAllRefs"];
-
           if (detailReferenceImage) {
+            // Detail reference is secondary guide, but character appearance is primary lock
             referenceImages = [primaryCharRef, detailReferenceImage, ...otherPeopleRefs.slice(0, 1)].filter(Boolean);
           } else {
-            // Character appearance ALWAYS comes first, then all user reference images, then scene
-            referenceImages = [primaryCharRef, ...userAllRefs, ...otherPeopleRefs.filter(r => !userAllRefs.includes(r)).slice(0, 1)].filter(Boolean);
+            // Character appearance ALWAYS comes first, then scene, then other people
+            referenceImages = [primaryCharRef, ...otherPeopleRefs.slice(0, 2)].filter(Boolean);
             if (sceneReferenceUrl) {
               referenceImages.push(sceneReferenceUrl);
             }
