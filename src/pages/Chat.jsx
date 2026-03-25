@@ -71,8 +71,8 @@ export default function Chat() {
         }
       }
 
-      if (alreadyFetchedPending.length > 0 && !convoId) {
-        const pm = alreadyFetchedPending[0];
+      if (pending.length > 0 && !convoId) {
+        const pm = pending[0];
         const convo = await base44.entities.Conversation.create({
           title: `${chatType} with ${character.name}`,
           type: chatType,
