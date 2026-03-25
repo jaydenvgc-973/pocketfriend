@@ -454,9 +454,7 @@ export default function Chat() {
                 } else {
                   try {
                     const npcGenRes = await base44.integrations.Core.GenerateImage({
-                      prompt: `Photorealistic, authentic portrait photo of ${rel.person_name} (${rel.relationship_type}). ${rel.description ? `${rel.description}. ` : ""}Real person, natural appearance, distinctive features. Match the photographic realism and lighting style of the reference photos provided.
-
-📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. ❌ NOT: illustration, painting, digital art, anime, CGI, drawing, cartoon, stylized, artificial, plastic, doll-like, uncanny valley, oversoftened, fake, filter, Photoshop effect.`,
+                      prompt: `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture, natural imperfections, real hair strands. Must look like an unmanipulated photograph. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake. Portrait of a real person: ${rel.person_name} (${rel.relationship_type}). ${rel.description ? `${rel.description}. ` : ""}Natural appearance with distinctive realistic features. Match the photographic style of the reference photos provided.`,
                       existing_image_urls: [characterReferenceMap[character.name], ...Object.values(characterReferenceMap).filter(url => url !== characterReferenceMap[character.name]).slice(0, 1)].filter(Boolean)
                     });
                     if (npcGenRes?.url) {
@@ -518,9 +516,7 @@ export default function Chat() {
                   // Fallback: Generate a scene reference if web search didn't yield URLs
                   const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
                   const sceneGenRes = await base44.integrations.Core.GenerateImage({
-                   prompt: `Professional interior photo of ${locationDesc}. Realistic, lived-in, authentic personal space. No people. Natural lighting. High detail, real textures, authentic materials. This is their personal ${detectedLocation} that should look the same every time.
-
-                  📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. ❌ NOT: illustration, painting, digital art, rendering, anime, CGI, stylized, cartoon, fake, artificial, oversoften, Photoshop, filter, unreal.`
+                   prompt: `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, professional RAW photography. Real textures, authentic materials, natural lighting with realistic shadows. Must look like an unmanipulated photograph. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, CGI, 3D render, stylized, cartoon, fake, airbrushed, filtered, unreal. Professional interior photo of ${locationDesc}. Realistic, lived-in, authentic personal space. No people. High detail, genuine textures, authentic materials. This is their personal ${detectedLocation} that should look the same every time.`
                   });
                   if (sceneGenRes?.url) {
                     sceneReferenceUrl = sceneGenRes.url;
@@ -598,7 +594,7 @@ export default function Chat() {
           }
 
           // Enhance the prompt with appearance and scene consistency instructions
-          let enhancedPrompt = imagePrompt + appearanceNote + detailContext + "\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. ❌ NOT: illustration, painting, digital art, anime, stylized, cartoon, drawing, sketch, filter, CGI, unreal, plastic, doll-like, porcelain, uncanny, artificial, oversmoothed, Photoshop, edited, fake, unrealistic.";
+          let enhancedPrompt = "📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, drawing, sketch, CGI, 3D render, plastic look, doll-like, porcelain skin, glossy surface, uncanny valley, overly smooth, airbrushed, filtered, stylized, artificial, fake, or any non-photographic aesthetic. If it doesn't look like a real photograph, it has failed. " + imagePrompt + appearanceNote + detailContext;
           if (sceneReferenceUrl) {
             enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.${lightingContext}`;
           } else if (lightingContext) {

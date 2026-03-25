@@ -59,7 +59,7 @@ export default function UserPhotoUploader({ referenceImages = [], generatedAvata
     setGenerating(true);
     try {
       const genRes = await base44.integrations.Core.GenerateImage({
-        prompt: "A realistic, high-quality portrait of a person. Accurately capture their natural appearance, facial features, style, and presence based on the provided reference photos.",
+        prompt: "📸 CRITICAL STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional photography. RAW photo quality. Natural light. Authentic skin texture, pores, and fine details. Every detail must appear genuinely real, like a candid snapshot from life. Accurate human anatomy, realistic facial features, natural imperfections. A portrait of a real person that accurately captures their natural appearance, facial features, style, and presence based on the provided reference photos. ❌ AVOID AT ALL COSTS: anything artificial, illustrated, painted, drawn, cartoony, glossy, plastic, doll-like, CGI, 3D render, unreal, porcelain, uncanny valley, overly smooth, fake, airbrushed, edited, filtered, stylized, or non-photographic. This must look like an actual unmanipulated photograph of a real human being.",
         existing_image_urls: referenceImages,
       });
       const user = await base44.auth.me();
