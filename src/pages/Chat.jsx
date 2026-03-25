@@ -182,21 +182,6 @@ export default function Chat() {
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }).catch(() => {});
 
-      // Small chance the character reacts back to user messages too
-      setTimeout(async () => {
-        // Generate character's emoji reaction to a user message if applicable
-        if (msg.sender_type === "character") {
-          // Character might react to being reacted to (e.g., heart back on their own message)
-          // This is a lightweight reaction — no LLM call, just mirror or complement occasionally
-          const complementMap = { "❤️": "❤️", "😂": "😂", "😮": null, "😢": "😢", "😡": null, "👍": "👍" };
-          const charEmoji = complementMap[emoji];
-          if (charEmoji && Math.random() > 0.5) {
-            const withCharReaction = [...updatedReactions, { emoji: charEmoji, reactor_type: "character", reactor_id: characterId }];
-            await base44.entities.Message.update(messageId, { reactions: withCharReaction });
-            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: withCharReaction } : m));
-          }
-        }
-      }, 1500 + Math.random() * 2000);
     }
 
     // If user reacts to their OWN message, character may also react to that message
