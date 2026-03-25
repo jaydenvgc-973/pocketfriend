@@ -36,8 +36,8 @@ export default function Chat() {
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
-      const chars = await base44.entities.Character.list();
-      return chars.find(c => c.id === characterId);
+      const chars = await base44.entities.Character.filter({ id: characterId });
+      return chars[0] || null;
     },
     enabled: !!characterId,
   });
@@ -50,30 +50,29 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character) return;
     const loadConvo = async () => {
-      const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1);
+      // Fetch conversations and pending messages in parallel
+      const [convos, pending] = await Promise.all([
+        base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1),
+        base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false }),
+      ]);
       let convoId = null;
 
       if (convos.length > 0) {
         convoId = convos[0].id;
         
-        // Always load messages from database for this conversation
         const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date");
         setMessages(loadedMsgs);
         setConversationId(convoId);
 
-        // Mark all unread character messages as read (batched to avoid rate limits)
+        // Mark unread messages as read sequentially to avoid rate limits
         const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
         for (const m of unread) {
           await base44.entities.Message.update(m.id, { is_read: true });
         }
       }
 
-
-
-      // Check for pending proactive messages
-      const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
-      if (pending.length > 0 && !convoId) {
-        const pm = pending[0];
+      if (alreadyFetchedPending.length > 0 && !convoId) {
+        const pm = alreadyFetchedPending[0];
         const convo = await base44.entities.Conversation.create({
           title: `${chatType} with ${character.name}`,
           type: chatType,
