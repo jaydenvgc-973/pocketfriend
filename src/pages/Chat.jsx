@@ -401,273 +401,8 @@ export default function Chat() {
       responseText = responseText.replace(/\[IMAGE:\s*[\s\S]+?\]/g, "").trim();
 
       if (imageMatch) {
-        const imagePrompt = imageMatch[1].trim();
-        typingDelayMs = 500; // Small fixed delay for image generation
-        
-        try {
-          const characterReferenceMap = {}; // Maps character names to their reference images
-          const currentUser = await base44.auth.me();
-          
-          // Map the main character — always use their reference/avatar for appearance consistency
-          if (character.reference_image_urls?.length > 0) {
-            characterReferenceMap[character.name] = character.reference_image_urls[0];
-          } else if (character.avatar_url) {
-            characterReferenceMap[character.name] = character.avatar_url;
-          }
-
-          // Map the user — use generated_avatar_urls with rotation logic
-          const userAvatars = currentUser?.generated_avatar_urls || [];
-          if (userAvatars.length === 1) {
-            characterReferenceMap["user"] = userAvatars[0];
-          } else if (userAvatars.length >= 2) {
-            // Rotate evenly across all available avatars (up to 4)
-            const avatarIndex = Math.floor(Math.random() * userAvatars.length);
-            characterReferenceMap["user"] = userAvatars[avatarIndex];
-          } else if (currentUser?.reference_image_urls?.length > 0) {
-            // Fallback to reference photos if no generated avatars exist
-            characterReferenceMap["user"] = currentUser.reference_image_urls[0];
-          }
-
-          // Check for other known characters
-          const allChars = await base44.entities.Character.list();
-          for (const otherChar of allChars) {
-            if (otherChar.id !== characterId && imagePrompt.toLowerCase().includes(otherChar.name.toLowerCase())) {
-              if (otherChar.reference_image_urls?.length > 0) {
-                characterReferenceMap[otherChar.name] = otherChar.reference_image_urls[0];
-              } else if (otherChar.avatar_url) {
-                characterReferenceMap[otherChar.name] = otherChar.avatar_url;
-              }
-            }
-          }
-
-          // Check for fictional relationships and entities
-          if (character.fictional_relationships) {
-            for (const rel of character.fictional_relationships) {
-              if (imagePrompt.toLowerCase().includes(rel.person_name.toLowerCase())) {
-                if (character.fictional_entity_images?.[rel.person_name]) {
-                  characterReferenceMap[rel.person_name] = character.fictional_entity_images[rel.person_name];
-                } else {
-                  try {
-                    const npcGenRes = await base44.integrations.Core.GenerateImage({
-                      prompt: `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture, natural imperfections, real hair strands. Must look like an unmanipulated photograph. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake. Portrait of a real person: ${rel.person_name} (${rel.relationship_type}). ${rel.description ? `${rel.description}. ` : ""}Natural appearance with distinctive realistic features. Match the photographic style of the reference photos provided.`,
-                      existing_image_urls: [characterReferenceMap[character.name], ...Object.values(characterReferenceMap).filter(url => url !== characterReferenceMap[character.name]).slice(0, 1)].filter(Boolean)
-                    });
-                    if (npcGenRes?.url) {
-                      characterReferenceMap[rel.person_name] = npcGenRes.url;
-                      await base44.entities.Character.update(characterId, {
-                        fictional_entity_images: {
-                          ...(character.fictional_entity_images || {}),
-                          [rel.person_name]: npcGenRes.url
-                        }
-                      });
-                    }
-                  } catch (npcErr) { /* continue */ }
-                }
-              }
-            }
-          }
-
-          // --- SCENE / LOCATION CONTINUITY ---
-          // Detect location keywords in the image prompt
-          const locationKeywords = [
-            "bedroom", "bed room", "kitchen", "living room", "bathroom", "bathroom",
-            "office", "workplace", "gym", "club", "bar", "restaurant", "car",
-            "backyard", "front yard", "porch", "balcony", "apartment", "house",
-            "school", "library", "park", "beach", "hallway", "garage", "basement"
-          ];
-          const promptLower = imagePrompt.toLowerCase();
-          const detectedLocation = locationKeywords.find(loc => promptLower.includes(loc));
-
-          let sceneReferenceUrl = null;
-          const sceneImages = character.scene_images || {};
-
-          if (detectedLocation) {
-            if (sceneImages[detectedLocation]) {
-              // Reuse the existing scene reference image
-              sceneReferenceUrl = sceneImages[detectedLocation];
-            } else {
-              // Search for real-world images of this location in the character's city
-              try {
-                const cityInfo = character.city ? ` in ${character.city}${character.state ? `, ${character.state}` : ""}` : "";
-                const searchResults = await base44.integrations.Core.InvokeLLM({
-                  prompt: `Find real photos/images of ${detectedLocation}s${cityInfo}. Return 2-3 image URLs from Google Images or similar sources that show what a typical ${detectedLocation} looks like in that area. Focus on interior shots with clear details of furniture, lighting, and decor. Return ONLY the URLs, one per line.`,
-                  add_context_from_internet: true,
-                  model: 'gemini_3_flash'
-                });
-                
-                // Extract URLs from response
-                const searchImageUrls = searchResults
-                  .split('\n')
-                  .filter(line => line.trim().startsWith('http'))
-                  .slice(0, 2);
-                
-                if (searchImageUrls.length > 0) {
-                  // Use the first found URL as the scene reference
-                  sceneReferenceUrl = searchImageUrls[0];
-                  await base44.entities.Character.update(characterId, {
-                    scene_images: { ...sceneImages, [detectedLocation]: sceneReferenceUrl }
-                  });
-                } else {
-                  // Fallback: Generate a scene reference if web search didn't yield URLs
-                  const locationDesc = `${character.name}'s ${detectedLocation}${character.city ? ` in ${character.city}` : ""}`;
-                  const sceneGenRes = await base44.integrations.Core.GenerateImage({
-                   prompt: `📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, professional RAW photography. Real textures, authentic materials, natural lighting with realistic shadows. Must look like an unmanipulated photograph. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, CGI, 3D render, stylized, cartoon, fake, airbrushed, filtered, unreal. Professional interior photo of ${locationDesc}. Realistic, lived-in, authentic personal space. No people. High detail, genuine textures, authentic materials. This is their personal ${detectedLocation} that should look the same every time.`
-                  });
-                  if (sceneGenRes?.url) {
-                    sceneReferenceUrl = sceneGenRes.url;
-                    await base44.entities.Character.update(characterId, {
-                      scene_images: { ...sceneImages, [detectedLocation]: sceneGenRes.url }
-                    });
-                  }
-                }
-              } catch (sceneErr) { /* continue without scene reference */ }
-            }
-          }
-
-          // RULE: Only include the user in the image if they explicitly requested it
-          const userExplicitlyRequested = /\b(us|together|with me|with the user|you and me|me and you)\b/i.test(text);
-          // RULE: Detect if user is requesting a picture of ONLY themselves
-          const userOnlyRequested = /\b(picture of me|photo of me|pic of me|image of me|send me a pic|send me a photo|selfie of me|show me|picture of yourself|just me|only me)\b/i.test(text);
-          if (!userExplicitlyRequested && !userOnlyRequested) {
-            delete characterReferenceMap["user"];
-          }
-
-          // Build appearance lock note for the character — CRITICAL for consistency
-          const appearanceNote = character.appearance_notes
-            ? `\n\n🔒 ABSOLUTE APPEARANCE MANDATE — NON-NEGOTIABLE: You MUST use the provided reference photo(s) to render ${character.name}'s face. The reference photo is the sole source of truth for their facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, and all facial features. Replicate their face with pixel-level fidelity from the reference image. Current appearance details: ${character.appearance_notes}. Same exact facial hair state, same exact hair style, same exact distinctive features. ANY deviation from the reference photo face is a critical failure.`
-            : `\n\n🔒 ABSOLUTE APPEARANCE MANDATE — NON-NEGOTIABLE: You MUST use the provided reference photo(s) to render ${character.name}'s face. The reference photo is the sole and definitive source of truth for their facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, and every facial feature. Do NOT invent or approximate their face — copy it exactly from the reference image. Their hair style and any distinctive physical traits must also match exactly. ANY deviation from the reference photo face is a critical failure.`;
-
-          // Detect if user is asking for a close-up/detail of a previous image
-          const detailRequestMatch = text.match(/(?:close-up|close up|detail|zoomed|zoom in|picture of that|photo of that|show me that|those|that wall|that painting)\s+(?:of\s+)?(?:the\s+)?(.+?)(?:\?|$)/i);
-          let detailContext = "";
-          let detailReferenceImage = null;
-          
-          if (detailRequestMatch) {
-            const detailKeyword = detailRequestMatch[1].toLowerCase();
-            // Find the most recent image message in the conversation
-            const recentImageMessages = recentMsgs.filter(m => m.sender_type === "character" && m.image_url).reverse();
-            if (recentImageMessages.length > 0) {
-              const mostRecentImage = recentImageMessages[0];
-              detailReferenceImage = mostRecentImage.image_url;
-              detailContext = `\n\n🎯 DETAIL REQUEST PRIORITY: The user is asking for a close-up or detailed view of "${detailKeyword}" from your previous image. The reference image provided shows the original context. Generate a detailed close-up of EXACTLY that element from that image. Do not generate something random or different — match the specific detail the user is asking about. Ensure visual continuity with what was shown before.`;
-            }
-          }
-
-          // Assemble reference images: ALWAYS prioritize character's primary appearance over scene
-          let referenceImages = [];
-          // Character reference is ALWAYS first priority for facial/appearance consistency
-          const primaryCharRef = characterReferenceMap[character.name];
-          const otherPeopleRefs = Object.entries(characterReferenceMap)
-            .filter(([name]) => name !== character.name)
-            .map(([, url]) => url);
-
-          if (detailReferenceImage) {
-            // Detail reference is secondary guide, but character appearance is primary lock
-            referenceImages = [primaryCharRef, detailReferenceImage, ...otherPeopleRefs.slice(0, 1)].filter(Boolean);
-          } else {
-            // Character appearance ALWAYS comes first, then scene, then other people
-            referenceImages = [primaryCharRef, ...otherPeopleRefs.slice(0, 2)].filter(Boolean);
-            if (sceneReferenceUrl) {
-              referenceImages.push(sceneReferenceUrl);
-            }
-          }
-
-          // Extract time of day from conversation context to adjust lighting
-          const timeMatch = text.match(/(\d{1,2}):?(\d{2})?\s*(am|pm|AM|PM)?|(?:morning|afternoon|evening|night|dawn|dusk|midnight|noon|lunch|dinner)/i);
-          let lightingContext = "";
-          if (timeMatch) {
-            const timeStr = timeMatch[0].toLowerCase();
-            if (timeStr.includes("morning") || timeStr.includes("dawn") || /^[5-9].*am/i.test(timeStr)) {
-              lightingContext = " Bright, natural morning/early daylight. Golden hour lighting.";
-            } else if (timeStr.includes("afternoon") || timeStr.includes("noon") || /^1[0-2].*am|^[1-4].*pm/i.test(timeStr)) {
-              lightingContext = " Bright midday or early afternoon lighting. Natural sunlight.";
-            } else if (timeStr.includes("evening") || timeStr.includes("dusk") || /^[5-8].*pm/i.test(timeStr)) {
-              lightingContext = " Evening lighting. Transitioning to dim. Artificial lights starting to dominate. Warm tones.";
-            } else if (timeStr.includes("night") || timeStr.includes("midnight") || /^(9|10|11).*pm|^(12|1|2|3|4).*am/i.test(timeStr)) {
-              lightingContext = " Dark night scene. Artificial lighting, neon, or streetlights. Moody atmosphere.";
-            } else if (timeStr.includes("dinner") || /^[6-8].*pm/i.test(timeStr)) {
-              lightingContext = " Dinner time lighting. Soft artificial light. Warm ambiance.";
-            }
-          }
-
-          // Enhance the prompt with appearance and scene consistency instructions
-          let enhancedPrompt = "📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, drawing, sketch, CGI, 3D render, plastic look, doll-like, porcelain skin, glossy surface, uncanny valley, overly smooth, airbrushed, filtered, stylized, artificial, fake, or any non-photographic aesthetic. If it doesn't look like a real photograph, it has failed.\n\n🎯 CRITICAL FACE RENDERING RULE: Every person appearing in this image MUST have their face rendered with absolute fidelity to their provided reference photo. The reference photos are not suggestions — they are mandatory templates. Copy the exact facial structure, eye shape, nose, lips, skin tone, and distinguishing features from the reference. Do NOT generate a generic or invented face. If a reference photo is provided for a person, their face in this image must be indistinguishable from that reference. Failure to replicate the reference face exactly is unacceptable.\n\n" + imagePrompt + appearanceNote + detailContext;
-          if (sceneReferenceUrl) {
-            enhancedPrompt += ` The ${detectedLocation} must look exactly like the reference — same layout, furniture, colors, and overall state of the room.${lightingContext}`;
-          } else if (lightingContext) {
-            enhancedPrompt += lightingContext;
-          }
-          if (!userExplicitlyRequested) {
-            enhancedPrompt = enhancedPrompt.replace(/\b(the user|the person I'm talking to|my friend)\b/gi, "").trim();
-          }
-
-          // If user-only image, override the prompt and references to focus entirely on the user
-          if (userOnlyRequested && characterReferenceMap["user"]) {
-            const userAvatarRef = characterReferenceMap["user"];
-            referenceImages = [userAvatarRef];
-            enhancedPrompt = "📸 NON-NEGOTIABLE STYLE DIRECTIVE: Ultra-photorealistic, cinematic, professional RAW photography. Authentic skin texture with visible pores, natural imperfections, real hair strands, genuine fabric texture. Natural lighting with realistic shadows and depth. This image MUST look like an unmanipulated photograph taken by a professional camera. ❌ STRICTLY FORBIDDEN: illustration, painting, digital art, anime, cartoon, CGI, 3D render, plastic, doll-like, porcelain, glossy, uncanny valley, airbrushed, stylized, fake, or any non-photographic aesthetic.\n\n🎯 CRITICAL FACE RENDERING RULE: You MUST replicate the person's face from the provided reference photo with absolute fidelity. Copy their exact facial structure, bone structure, eye shape, nose shape, lip shape, skin tone, hair style, and every distinguishing feature. Do NOT invent or approximate — copy it exactly. ANY deviation from the reference face is a critical failure.\n\n" + imagePrompt + "\n\nThe subject is the person from the reference photo. Render ONLY this one person. Their face must be indistinguishable from the reference." + (lightingContext || "");
-          } else {
-            const peopleInImage = Object.keys(characterReferenceMap).filter(name => 
-              imagePrompt.toLowerCase().includes(name.toLowerCase()) || name === "user" || name === character.name
-            );
-            if (peopleInImage.length > 1) {
-              const characterDescriptions = peopleInImage.map(name => {
-                if (name === "user") return "the user";
-                if (name === character.name) return `${character.name} (a ${character.gender || 'person'})`;
-                return name;
-              }).join(", ");
-              enhancedPrompt += ` Include these specific people: ${characterDescriptions}. Each person should look distinctly like their individual self.`;
-            }
-          }
-
-          // --- CLOTHING & WEATHER CONTEXT ---
-          let clothingContext = "";
-          
-          // Detect location/activity
-          const isAtWork = /\b(work|office|job|desk|cubicle|coworkers|meeting|workplace)\b/i.test(promptLower);
-          const isAtSchool = /\b(school|class|university|college|campus|lecture|classroom)\b/i.test(promptLower);
-          const isAtGym = /\b(gym|exercise|workout|training|fitness)\b/i.test(promptLower);
-          const isAtPool = /\bpool\b/i.test(promptLower);
-          const isAtBeach = /\bbeach\b/i.test(promptLower);
-          const isOutside = /\b(outside|outdoor|park|hiking|running|jogging)\b/i.test(promptLower);
-          const isAtNightclub = /\b(nightclub|club|dancing|bar|party)\b/i.test(promptLower);
-          const isAtHome = /\b(home|house|apartment|couch|bed|kitchen|living room|bedroom|bedroom|lounging)\b/i.test(promptLower);
-          const isAtLoversHome = /\b(lover|partner|significant|intimate|bedroom)\b/i.test(promptLower);
-
-          if (isAtWork) {
-            clothingContext = "wearing professional work attire appropriate for their workplace.";
-          } else if (isAtSchool) {
-            clothingContext = "wearing casual student clothing appropriate for school.";
-          } else if (isAtGym || isAtPool) {
-            clothingContext = "wearing athletic or swimwear appropriate for the activity.";
-          } else if (isAtBeach) {
-            clothingContext = "wearing swimwear or beach attire appropriate for the setting.";
-          } else if (isOutside) {
-            clothingContext = "wearing casual outdoor clothing appropriate for being outside.";
-          } else if (isAtNightclub) {
-            clothingContext = "wearing fashionable nightclub attire.";
-          } else if (isAtLoversHome) {
-            clothingContext = "wearing casual comfortable clothing or minimal clothing appropriate for being with their lover.";
-          } else if (isAtHome) {
-            if (character.lives_alone) {
-              clothingContext = "wearing whatever they want, from comfortable loungewear to nothing at all, reflecting their privacy and mood.";
-            } else {
-              clothingContext = "wearing comfortable loungewear or casual clothes.";
-            }
-          }
-
-          if (clothingContext && !promptLower.includes("wearing") && !promptLower.includes("dressed") && !userOnlyRequested) {
-            enhancedPrompt += ` The character is ${clothingContext}`;
-          }
-          
-          const genRes = await base44.integrations.Core.GenerateImage({ 
-            prompt: enhancedPrompt,
-            existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined
-          });
-          imageUrl = genRes.url;
-        } catch (imgErr) {
-          // Image generation failed, continue without image
-        }
+        // Image will be generated asynchronously — no blocking wait
+        typingDelayMs = 500;
       } else {
         imageUrl = null;
         // Calculate typing delay based on user's WPM setting
@@ -689,59 +424,58 @@ export default function Chat() {
 
     setIsTyping(false);
 
-    // 80% chance to split image and text into two separate messages
-    const shouldSplitMessages = imageUrl && responseText && Math.random() < 0.8;
+    // Create main message with text
+    const charMsg = await base44.entities.Message.create({
+      conversation_id: convoId,
+      sender_type: "character",
+      character_id: characterId,
+      character_name: character.name,
+      content: responseText,
+      image_url: undefined,
+      emotional_state: emotionalState,
+      timestamp: new Date().toISOString(),
+    });
+    if (!charMsg || !charMsg.id) {
+      setSendError("Character response failed to save. Try again.");
+      return;
+    }
 
-    if (shouldSplitMessages) {
-      // Create image message first
+    // If image was requested, create placeholder message and trigger async generation
+    if (imageMatch) {
       const imgMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
         character_id: characterId,
         character_name: character.name,
         content: "",
-        image_url: imageUrl,
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
-      if (!imgMsg || !imgMsg.id) {
-        setSendError("Character response failed to save. Try again.");
-        return;
-      }
-
-      // Small delay before text message
-      await new Promise(r => setTimeout(r, 800 + Math.random() * 400));
-
-      // Create text message
-      const textMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: responseText,
         image_url: undefined,
         emotional_state: emotionalState,
         timestamp: new Date().toISOString(),
       });
-      if (!textMsg || !textMsg.id) {
-        setSendError("Character response failed to save. Try again.");
-        return;
-      }
-    } else {
-      // Create single message with both image and text (or just one)
-      const charMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: responseText,
-        image_url: imageUrl || undefined,
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
-      if (!charMsg || !charMsg.id) {
-        setSendError("Character response failed to save. Try again.");
-        return;
+      
+      if (imgMsg && imgMsg.id) {
+        // Prepare reference images for backend
+        const currentUser = await base44.auth.me();
+        const referenceImages = [];
+        
+        if (character.reference_image_urls?.length > 0) {
+          referenceImages.push(character.reference_image_urls[0]);
+        } else if (character.avatar_url) {
+          referenceImages.push(character.avatar_url);
+        }
+
+        const userAvatars = currentUser?.generated_avatar_urls || [];
+        if (userAvatars.length > 0) {
+          const avatarIndex = Math.floor(Math.random() * userAvatars.length);
+          referenceImages.push(userAvatars[avatarIndex]);
+        }
+
+        // Trigger async image generation
+        base44.functions.invoke('generateImageAsync', {
+          messageId: imgMsg.id,
+          prompt: imageMatch[1].trim(),
+          referenceImageUrls: referenceImages.filter(Boolean),
+        }).catch(() => {});
       }
     }
 
@@ -749,6 +483,9 @@ export default function Chat() {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
+    
+    // Invalidate messages so async image updates appear when ready
+    queryClient.invalidateQueries({ queryKey: ["messages", convoId] });
 
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
