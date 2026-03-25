@@ -454,11 +454,13 @@ export default function Chat() {
       });
       
       if (imgMsg && imgMsg.id) {
-        // Trigger async image generation
-        base44.functions.invoke('generateImageAsync', {
-          messageId: imgMsg.id,
-          prompt: imageMatch[1].trim(),
-        }).catch(() => {});
+        // Small delay to ensure DB sync before triggering generation
+        setTimeout(() => {
+          base44.functions.invoke('generateImageAsync', {
+            messageId: imgMsg.id,
+            prompt: imageMatch[1].trim(),
+          }).catch(() => {});
+        }, 500);
       }
     }
 
