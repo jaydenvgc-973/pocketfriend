@@ -23,9 +23,10 @@ Deno.serve(async (req) => {
       await base44.entities.Message.update(messageId, {
         image_url: response.url,
       });
+      return Response.json({ success: true, imageUrl: response.url });
     }
 
-    return Response.json({ success: true, imageUrl });
+    return Response.json({ success: false, error: 'No image URL generated' });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
