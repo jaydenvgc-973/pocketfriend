@@ -285,6 +285,15 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
   const handleCreate = async () => {
     setIsCreating(true);
     try {
+      // Auto-generate avatar if none provided
+      let finalAvatarUrl = avatarUrl;
+      if (!finalAvatarUrl) {
+        const ethnicityPart = data.ethnicities.length > 0 ? `${data.ethnicities.join(" and ")} descent, clearly reflecting their cultural background` : "";
+        const prompt = `Portrait photo of a real person. ${data.age_range || "adult"} ${ethnicityPart ? ethnicityPart + "." : ""} Gender: ${data.gender || "person"}. ${data.vibes.join(", ")} energy. ${data.archetype ? data.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley, natural skin texture, real human proportions.`;
+        const result = await base44.integrations.Core.GenerateImage({ prompt });
+        finalAvatarUrl = result.url;
+      }
+
       const fullName = [data.first_name, data.middle_name, data.last_name].filter(Boolean).join(" ");
       const ethnicityStr = data.ethnicities.join(" / ");
 
@@ -372,6 +381,7 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         avatar_url: avatarUrl || null,
         reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
         birthday: data.birthday || undefined,
+        avatar_url: finalAvatarUrl,
         memories: finalMemories,
         work_details: (data.job_title || data.workplace_type) ? {
           job_title: data.job_title,
