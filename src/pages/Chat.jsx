@@ -360,7 +360,8 @@ export default function Chat() {
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- IMPORTANT: Do NOT use [IMAGE: ...] tags or any image generation syntax. Just write text only.`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Optional: A vivid description of an image you want to send, or omit this field if no image"\n}\n\n${character.is_photogenic ? "BONUS TRAIT: You LOVE being photographed and sending pics. Include image prompts often when it feels natural." : ""}`;
+
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
@@ -377,6 +378,7 @@ export default function Chat() {
 
 
       let retries = 2;
+      let responseObj = { text: "", image_prompt: null };
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -384,6 +386,12 @@ export default function Chat() {
             add_context_from_internet: true,
             model: 'gemini_3_flash'
           });
+          try {
+            responseObj = JSON.parse(response);
+          } catch (parseErr) {
+            // Fallback: if not valid JSON, treat as plain text
+            responseObj = { text: response.replace(/^[\w\s]+:\s*/i, "").trim() };
+          }
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
@@ -391,7 +399,8 @@ export default function Chat() {
           await new Promise(r => setTimeout(r, 3000));
         }
       }
-      responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
+      responseText = responseObj.text?.trim() || "";
+      const imagePrompt = responseObj.image_prompt;
 
       // Calculate typing delay based on user's WPM setting
       let typingDelayMs = 0;
@@ -419,7 +428,6 @@ export default function Chat() {
       character_id: characterId,
       character_name: character.name,
       content: responseText,
-      image_url: undefined,
       emotional_state: emotionalState,
       timestamp: new Date().toISOString(),
     });
@@ -431,6 +439,17 @@ export default function Chat() {
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
       queryClient.invalidateQueries({ queryKey: ["characters"] });
+    }
+    
+    // Generate image asynchronously if the character wants to send one
+    if (imagePrompt) {
+      setTimeout(() => {
+        base44.functions.invoke('generateImageAsync', {
+          messageId: charMsg.id,
+          prompt: imagePrompt,
+          referenceImageUrls: character.reference_image_urls || []
+        }).catch(() => {});
+      }, 500);
     }
     
     // Invalidate messages so async image updates appear when ready
