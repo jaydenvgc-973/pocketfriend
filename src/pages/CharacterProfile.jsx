@@ -6,6 +6,7 @@ import { ArrowLeft, Cake, BookOpen, Users, User, Ghost } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
+import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
@@ -193,6 +194,9 @@ export default function CharacterProfile() {
             ))}
           </div>
         </div>
+
+        {/* How They Feel Right Now */}
+        <CharacterFeelingsCard character={character} />
 
         {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
