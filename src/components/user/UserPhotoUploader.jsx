@@ -7,165 +7,121 @@ import { Button } from "@/components/ui/button";
 
 export default function UserPhotoUploader({ referenceImages = [] }) {
   const [uploading, setUploading] = useState(false);
-  const [generatingPreview, setGeneratingPreview] = useState(false);
-  const [generatedImageUrl, setGeneratedImageUrl] = useState(null);
+  const [generating, setGenerating] = useState(false);
   const queryClient = useQueryClient();
 
-  const uploadMutation = useMutation({
-    mutationFn: async (file) => {
-      const uploaded = await base44.integrations.Core.UploadFile({ file });
-      const user = await base44.auth.me();
-      const currentImages = user.reference_image_urls || [];
-      await base44.auth.updateMe({
-        reference_image_urls: [...currentImages, uploaded.file_url]
-      });
-      return uploaded;
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user"] });
-      setUploading(false);
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (imageUrl) => {
-      const user = await base44.auth.me();
-      const updated = (user.reference_image_urls || []).filter(url => url !== imageUrl);
-      await base44.auth.updateMe({
-        reference_image_urls: updated
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["user"] });
-    },
-  });
+  const saveImages = async (updatedImages) => {
+    await base44.auth.updateMe({ reference_image_urls: updatedImages });
+    queryClient.invalidateQueries({ queryKey: ["user"] });
+  };
 
   const handleFileSelect = async (e) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     setUploading(true);
-    
-    for (const file of files) {
-      uploadMutation.mutate(file);
+    try {
+      const user = await base44.auth.me();
+      const current = user.reference_image_urls || [];
+      const slots = 4 - current.length;
+      const toUpload = files.slice(0, slots);
+      const uploaded = await Promise.all(toUpload.map(f => base44.integrations.Core.UploadFile({ file: f })));
+      const newUrls = uploaded.map(r => r.file_url);
+      await saveImages([...current, ...newUrls]);
+    } finally {
+      setUploading(false);
     }
   };
 
-  const handleGeneratePreview = async () => {
-    if (referenceImages.length === 0) return;
-    setGeneratingPreview(true);
-    
+  const handleGenerate = async () => {
+    if (referenceImages.length === 0 || referenceImages.length >= 4) return;
+    setGenerating(true);
     try {
       const genRes = await base44.integrations.Core.GenerateImage({
-        prompt: "A realistic, well-lit portrait of a person. Focus on capturing their natural appearance, style, and presence.",
+        prompt: "High-quality, photorealistic portrait of this person. Natural lighting, clear facial features, realistic skin texture, looking at camera. Upper body shot. Photo-real, not illustrated or stylized.",
         existing_image_urls: referenceImages
       });
-      setGeneratedImageUrl(genRes.url);
-      
-      // Save as user avatar
-      await base44.auth.updateMe({
-        user_avatar_url: genRes.url
-      });
-      queryClient.invalidateQueries({ queryKey: ["user"] });
-    } catch (err) {
-      console.error("Failed to generate preview:", err);
+      if (genRes?.url) {
+        const user = await base44.auth.me();
+        const current = user.reference_image_urls || [];
+        await saveImages([...current, genRes.url]);
+      }
     } finally {
-      setGeneratingPreview(false);
+      setGenerating(false);
     }
   };
+
+  const handleDelete = async (urlToRemove) => {
+    const user = await base44.auth.me();
+    const updated = (user.reference_image_urls || []).filter(u => u !== urlToRemove);
+    await saveImages(updated);
+  };
+
+  const canAdd = referenceImages.length < 4;
 
   return (
     <div className="space-y-4">
-      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Avatar & Photos</p>
-      <p className="text-xs text-muted-foreground">Upload photos of yourself to appear in character-generated images</p>
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Reference Photos</p>
+      <p className="text-xs text-muted-foreground">
+        Upload or generate up to 4 photos of yourself. These are used as reference when characters generate images that include you.
+      </p>
 
-      {/* Photo grid */}
-      <div className="grid grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 gap-3">
         <AnimatePresence>
           {referenceImages.map((url) => (
             <motion.div
               key={url}
-              initial={{ opacity: 0, scale: 0.8 }}
+              initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.8 }}
+              exit={{ opacity: 0, scale: 0.9 }}
               className="relative group rounded-xl overflow-hidden bg-secondary aspect-square"
             >
-              <img
-                src={url}
-                alt="reference"
-                className="w-full h-full object-cover"
-              />
+              <img src={url} alt="reference" className="w-full h-full object-cover" />
               <button
-                onClick={() => deleteMutation.mutate(url)}
-                disabled={deleteMutation.isPending}
-                className="absolute top-2 right-2 p-1.5 rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={() => handleDelete(url)}
+                className="absolute top-2 right-2 p-1.5 rounded-full bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </button>
             </motion.div>
           ))}
         </AnimatePresence>
 
-        {/* Upload button */}
-        <label className="relative rounded-xl border-2 border-dashed border-border hover:border-primary/40 transition-colors cursor-pointer flex items-center justify-center aspect-square bg-card/50">
-          <input
-            type="file"
-            accept="image/*"
-            multiple
-            onChange={handleFileSelect}
-            disabled={uploading}
-            className="hidden"
-          />
-          <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            {uploading ? (
-              <Loader2 className="w-5 h-5 animate-spin" />
-            ) : (
-              <Plus className="w-5 h-5" />
-            )}
-            <span className="text-[10px] font-medium">{uploading ? "Uploading..." : "Add photos"}</span>
-          </div>
-        </label>
+        {canAdd && (
+          <label className="relative rounded-xl border-2 border-dashed border-border hover:border-primary/40 transition-colors cursor-pointer flex items-center justify-center aspect-square bg-card/50">
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleFileSelect}
+              disabled={uploading || generating}
+              className="hidden"
+            />
+            <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              {uploading ? <Loader2 className="w-6 h-6 animate-spin" /> : <Plus className="w-6 h-6" />}
+              <span className="text-xs font-medium">{uploading ? "Uploading..." : "Upload photo"}</span>
+            </div>
+          </label>
+        )}
       </div>
 
-      {/* Generated avatar display */}
-      {generatedImageUrl && (
-        <motion.div
-          initial={{ opacity: 0, y: -10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="space-y-2 border border-border rounded-xl p-3 bg-card/50"
-        >
-          <p className="text-xs font-medium text-muted-foreground">Your Current Avatar</p>
-          <div className="relative rounded-lg overflow-hidden bg-secondary w-24 h-24 mx-auto">
-            <img
-              src={generatedImageUrl}
-              alt="user avatar"
-              className="w-full h-full object-cover"
-            />
-          </div>
-        </motion.div>
-      )}
-
-      {/* Generate preview button */}
-      {referenceImages.length > 0 && (
+      {referenceImages.length > 0 && canAdd && (
         <Button
-          onClick={handleGeneratePreview}
-          disabled={generatingPreview}
+          variant="outline"
+          onClick={handleGenerate}
+          disabled={generating}
           className="w-full gap-2"
         >
-          {generatingPreview ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Generating...
-            </>
+          {generating ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
           ) : (
-            <>
-              <Wand2 className="w-4 h-4" />
-              Generate Image Preview
-            </>
+            <><Wand2 className="w-4 h-4" /> Generate AI variation</>
           )}
         </Button>
       )}
 
-
+      {referenceImages.length === 4 && (
+        <p className="text-xs text-muted-foreground text-center">4/4 photos saved. Delete one to add more.</p>
+      )}
     </div>
   );
 }
