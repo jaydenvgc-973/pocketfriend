@@ -250,7 +250,7 @@ export default function Chat() {
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imageUrl, detailReferenceImage = null;
+    let recentMsgs, response, responseText, emotionalState, imageUrl, imageMatch, detailReferenceImage = null;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
