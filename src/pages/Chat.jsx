@@ -155,25 +155,29 @@ export default function Chat() {
   };
 
   const handleReact = async (messageId, emoji) => {
-    // Find the message
     const msg = messages.find(m => m.id === messageId);
     if (!msg) return;
 
-    // Toggle: if user already reacted with this emoji, remove it
-    const existing = (msg.reactions || []).find(r => r.reactor_type === "user" && r.emoji === emoji);
-    const updatedReactions = existing
-      ? msg.reactions.filter(r => !(r.reactor_type === "user" && r.emoji === emoji))
-      : [...(msg.reactions || []), { emoji, reactor_type: "user", reactor_id: "user" }];
+    const currentReactions = msg.reactions || [];
+    const existingUserReaction = currentReactions.find(r => r.reactor_type === "user");
+    const isSameEmoji = existingUserReaction?.emoji === emoji;
+
+    // One reaction per user per message: toggle off if same, replace if different
+    const nonUserReactions = currentReactions.filter(r => r.reactor_type !== "user");
+    const updatedReactions = isSameEmoji
+      ? nonUserReactions  // remove reaction
+      : [...nonUserReactions, { emoji, reactor_type: "user", reactor_id: "user" }];  // replace/set
 
     // Optimistic update
     setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: updatedReactions } : m));
     await base44.entities.Message.update(messageId, { reactions: updatedReactions });
 
-    // If user is reacting to a character's message, trigger character reaction awareness & relationship update
-    if (msg.sender_type === "character" && !existing && character) {
+    // If user reacted (not removed) to a character's message, trigger relationship update
+    if (msg.sender_type === "character" && !isSameEmoji && character) {
       base44.functions.invoke("updateRelationshipLevels", {
         characterId,
         emojiReaction: emoji,
+        emojiMeaning: { "❤️": "love/care/appreciation", "👍": "acknowledgment/approval", "😢": "sadness/empathy", "😡": "anger/disapproval", "😲": "shock/surprise", "😂": "humor/laughter" }[emoji] || "general reaction",
         reactedMessageContent: msg.content || "(image)",
         reactedMessageSenderType: msg.sender_type,
         recentMessages: messages.slice(-10),
@@ -181,26 +185,6 @@ export default function Chat() {
         if (res?.data?.reason) setLastChangeReason(res.data.reason);
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }).catch(() => {});
-
-    }
-
-    // If user reacts to their OWN message, character may also react to that message
-    if (msg.sender_type === "user" && !existing && character) {
-      setTimeout(async () => {
-        const reloadedMsg = await base44.entities.Message.get ? null : null; // use current state
-        const currentReactions = (messages.find(m => m.id === messageId)?.reactions || updatedReactions);
-        const alreadyCharReacted = currentReactions.some(r => r.reactor_type === "character");
-        if (!alreadyCharReacted) {
-          // Character reacts to user's own message — context-based
-          const responseMap = { "❤️": "😮", "😂": "😂", "😢": "😢", "👍": "👍", "😡": "😮", "😮": "😂" };
-          const charEmoji = responseMap[emoji];
-          if (charEmoji && Math.random() > 0.4) {
-            const withCharReaction = [...currentReactions, { emoji: charEmoji, reactor_type: "character", reactor_id: characterId }];
-            await base44.entities.Message.update(messageId, { reactions: withCharReaction });
-            setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: withCharReaction } : m));
-          }
-        }
-      }, 2000 + Math.random() * 3000);
     }
   };
 
@@ -800,7 +784,9 @@ Reply with ONLY the single emoji or the word "none".`,
         const picked = emojiRes?.trim();
         const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
         if (picked && validEmojis.includes(picked)) {
-          const updatedUserMsgReactions = [...(userMsg.reactions || []), { emoji: picked, reactor_type: "character", reactor_id: characterId }];
+          // One character reaction per message — replace any existing character reaction
+          const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
+          const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
           await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
           setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
         }
