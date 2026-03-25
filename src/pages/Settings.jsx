@@ -160,6 +160,17 @@ export default function Settings() {
           )}
         </div>
         <div className="space-y-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Name in This World</p>
+          <p className="text-xs text-muted-foreground">The name characters use when referring to you. Leave blank to stay anonymous.</p>
+          <input
+            type="text"
+            placeholder="e.g. Alex, Jordan, Skylar..."
+            value={settings.fictional_world_name || ""}
+            onChange={e => mutation.mutate({ fictional_world_name: e.target.value })}
+            className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
+          />
+        </div>
+        <div className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Birthday (optional)</p>
           <input
             type="date"

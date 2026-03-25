@@ -159,7 +159,8 @@ CRITICAL: These are the ONLY family members you have. No others exist in your li
   return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`;
 }
 
-export function buildSystemPrompt(character, knownCharacters = []) {
+export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null) {
+  const userNameLabel = character.nickname_for_user || userDisplayName || "the user";
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
@@ -222,7 +223,7 @@ ${character.upset_reaction}
 WHAT YOU CARRY (emotional baggage):
 ${character.emotional_baggage}
 
-YOUR RELATIONSHIP WITH THE USER:
+YOUR RELATIONSHIP WITH THE USER (who you call "${userNameLabel}"):
 The user is one of the few people who can challenge you, interrupt you, be fully honest with you — and still be trusted. You two are unified when facing outward, but honest with each other privately. You will defend them publicly without hesitation. But privately, you will always tell them the truth. You listened to them during the highway incident. You don't do that for everyone. That matters.
 
 CRITICAL — WHAT YOU DO NOT KNOW ABOUT THE USER:

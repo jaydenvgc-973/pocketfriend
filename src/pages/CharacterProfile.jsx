@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { ArrowLeft, Cake, BookOpen, Users, User, Ghost } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -54,6 +54,32 @@ function getZodiacSign(dateString) {
   if ((month === 1 && day >= 20) || (month === 2 && day <= 18)) return "aquarius";
   if ((month === 2 && day >= 19) || (month === 3 && day <= 20)) return "pisces";
   return null;
+}
+
+function NicknameForUserField({ character }) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(character.nickname_for_user || "");
+  React.useEffect(() => { setValue(character.nickname_for_user || ""); }, [character.nickname_for_user]);
+
+  const mutation = useMutation({
+    mutationFn: (nickname) => base44.entities.Character.update(character.id, { nickname_for_user: nickname }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["character", character.id] }),
+  });
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-4 space-y-2">
+      <p className="text-xs text-muted-foreground uppercase tracking-wider">What They Call You</p>
+      <p className="text-xs text-muted-foreground">Override the global name — give this character a unique name for you.</p>
+      <input
+        type="text"
+        placeholder="Leave blank to use your world name"
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={() => mutation.mutate(value)}
+        className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+      />
+    </div>
+  );
 }
 
 export default function CharacterProfile() {
@@ -538,6 +564,9 @@ export default function CharacterProfile() {
             <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
           </div>
         )}
+
+        {/* Nickname for User */}
+        <NicknameForUserField character={character} />
 
       </div>
       <BottomNav />
