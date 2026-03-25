@@ -454,27 +454,10 @@ export default function Chat() {
       });
       
       if (imgMsg && imgMsg.id) {
-        // Prepare reference images for backend
-        const currentUser = await base44.auth.me();
-        const referenceImages = [];
-        
-        if (character.reference_image_urls?.length > 0) {
-          referenceImages.push(character.reference_image_urls[0]);
-        } else if (character.avatar_url) {
-          referenceImages.push(character.avatar_url);
-        }
-
-        const userAvatars = currentUser?.generated_avatar_urls || [];
-        if (userAvatars.length > 0) {
-          const avatarIndex = Math.floor(Math.random() * userAvatars.length);
-          referenceImages.push(userAvatars[avatarIndex]);
-        }
-
         // Trigger async image generation
         base44.functions.invoke('generateImageAsync', {
           messageId: imgMsg.id,
           prompt: imageMatch[1].trim(),
-          referenceImageUrls: referenceImages.filter(Boolean),
         }).catch(() => {});
       }
     }
