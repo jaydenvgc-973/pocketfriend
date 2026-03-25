@@ -115,6 +115,50 @@ export default function Settings() {
             onCheckedChange={v => mutation.mutate({ voice_enabled: v })}
           />
         </div>
+        <div className="space-y-4 pt-2 border-t border-border">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Response Timing</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm text-foreground">Response Lag</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Characters wait a realistic time before replying</p>
+            </div>
+            <Switch
+              checked={settings.response_lag_enabled !== false}
+              onCheckedChange={v => mutation.mutate({ response_lag_enabled: v })}
+            />
+          </div>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm text-foreground">Typing Speed Delay</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Simulate realistic typing before the message appears</p>
+            </div>
+            <Switch
+              checked={settings.typing_speed_enabled !== false}
+              onCheckedChange={v => mutation.mutate({ typing_speed_enabled: v })}
+            />
+          </div>
+          {settings.typing_speed_enabled !== false && (
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <Label className="text-sm text-foreground">Typing Speed</Label>
+                <span className="text-xs text-muted-foreground font-medium">{settings.words_per_minute || 41} WPM</span>
+              </div>
+              <input
+                type="range"
+                min={15}
+                max={120}
+                step={1}
+                value={settings.words_per_minute || 41}
+                onChange={e => mutation.mutate({ words_per_minute: Number(e.target.value) })}
+                className="w-full accent-primary"
+              />
+              <div className="flex justify-between text-[10px] text-muted-foreground">
+                <span>15 WPM (slow)</span>
+                <span>120 WPM (fast)</span>
+              </div>
+            </div>
+          )}
+        </div>
         <div className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Birthday (optional)</p>
           <input

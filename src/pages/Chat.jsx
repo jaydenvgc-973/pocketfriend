@@ -375,15 +375,17 @@ export default function Chat() {
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
-      
-      // Add extra delay for weather/events lookups (they take ~2-4 seconds)
-      const lookupDelayMs = (weatherContext || recentEventsContext) ? 2500 : 0;
-      const baseThinkingDelayMs = isUncomfortable
-        ? (30 + Math.random() * 30) * 1000
-        : (5 + Math.random() * 15) * 1000;
-      const thinkingDelayMs = baseThinkingDelayMs + lookupDelayMs;
-      
-      await new Promise(r => setTimeout(r, thinkingDelayMs));
+
+      // Apply response lag if enabled
+      const responseLagEnabled = userSettings.response_lag_enabled !== false;
+      if (responseLagEnabled) {
+        const lookupDelayMs = (weatherContext || recentEventsContext) ? 2500 : 0;
+        const baseThinkingDelayMs = isUncomfortable
+          ? (30 + Math.random() * 30) * 1000
+          : (5 + Math.random() * 15) * 1000;
+        await new Promise(r => setTimeout(r, baseThinkingDelayMs + lookupDelayMs));
+      }
+
 
       let retries = 2;
       while (retries >= 0) {
@@ -668,10 +670,13 @@ export default function Chat() {
         }
       } else {
         imageUrl = null;
-        // Calculate typing delay only for text messages
-        const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
-        const msPerWord = (60000 / 81); // ~740ms per word
-        typingDelayMs = wordCount * msPerWord;
+        // Calculate typing delay based on user's WPM setting
+        const typingSpeedEnabled = userSettings.typing_speed_enabled !== false;
+        if (typingSpeedEnabled) {
+          const wpm = userSettings.words_per_minute || 41;
+          const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
+          typingDelayMs = (wordCount / wpm) * 60000;
+        }
       }
       
       await new Promise(r => setTimeout(r, typingDelayMs));
