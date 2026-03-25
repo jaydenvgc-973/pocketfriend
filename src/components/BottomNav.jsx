@@ -1,5 +1,5 @@
 import { Link, useLocation } from "react-router-dom";
-import { Home, Users, Plus, Settings } from "lucide-react";
+import { Home, Users, Plus, Settings, Star } from "lucide-react";
 
 export default function BottomNav() {
   const location = useLocation();
@@ -10,6 +10,7 @@ export default function BottomNav() {
     { path: "/home", icon: Home, label: "Home" },
     { path: "/groups", icon: Users, label: "Groups" },
     { path: "/create", icon: Plus, label: "Create" },
+    { path: "/moments", icon: Star, label: "Moments" },
     { path: "/settings", icon: Settings, label: "Settings" },
   ];
 

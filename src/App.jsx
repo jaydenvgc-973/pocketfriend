@@ -19,6 +19,7 @@ import EditCharacterStory from './pages/EditCharacterStory';
 import EditCharacterPhotos from './pages/EditCharacterPhotos';
 import EditCharacterEmotions from './pages/EditCharacterEmotions';
 import EditCharacterRelationships from './pages/EditCharacterRelationships';
+import Moments from './pages/Moments';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -54,6 +55,7 @@ const AuthenticatedApp = () => {
       <Route path="/edit-character-story" element={<EditCharacterStory />} />
       <Route path="/edit-character-photos" element={<EditCharacterPhotos />} />
       <Route path="/edit-character-emotions" element={<EditCharacterEmotions />} />
+      <Route path="/moments" element={<Moments />} />
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
