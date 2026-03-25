@@ -208,8 +208,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors">
                 <MessageCircle className="w-4 h-4" /> Chat
               </button>
-              {hasPendingMessage && (
-                <span className="absolute -top-1 -right-1 w-3 h-3 bg-primary rounded-full border-2 border-background" />
+              {(hasPendingMessage || unreadCount > 0) && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
+                  {unreadCount > 0 ? (unreadCount > 9 ? "9+" : unreadCount) : "!"}
+                </span>
               )}
             </Link>
             <Link to={`/chat/${character.id}?type=phone`} className="flex-1">
