@@ -6,7 +6,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import { base44 } from "@/api/base44Client";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,15 +63,26 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
 
-  useEffect(() => {
-    // Check for pending (proactive) messages
-    base44.entities.PendingMessage.filter({ character_id: character.id, delivered: false })
-      .then(msgs => setHasPendingMessage(msgs.length > 0));
+  const { data: pendingMessages = [] } = useQuery({
+    queryKey: ['pendingMessages', character.id],
+    queryFn: () => base44.entities.PendingMessage.filter({ character_id: character.id, delivered: false }),
+    staleTime: 30000,
+  });
 
-    // Count unread messages from this character across all conversations
-    base44.entities.Conversation.filter({ character_ids: [character.id] }).then(async (convos) => {
+  const { data: conversations = [] } = useQuery({
+    queryKey: ['conversations', character.id],
+    queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id] }),
+    staleTime: 60000,
+  });
+
+  useEffect(() => {
+    setHasPendingMessage(pendingMessages.length > 0);
+  }, [pendingMessages]);
+
+  useEffect(() => {
+    const countUnread = async () => {
       let count = 0;
-      for (const convo of convos) {
+      for (const convo of conversations) {
         const unread = await base44.entities.Message.filter({
           conversation_id: convo.id,
           sender_type: "character",
@@ -81,8 +92,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         count += unread.length;
       }
       setUnreadCount(count);
-    });
-  }, [character.id]);
+    };
+    if (conversations.length > 0) {
+      countUnread();
+    }
+  }, [conversations, character.id]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
