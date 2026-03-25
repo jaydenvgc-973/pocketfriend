@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
@@ -68,6 +68,11 @@ export default function CharacterProfile() {
     },
     enabled: !!characterId,
     staleTime: 0,
+  });
+
+  const { data: allCharacters = [] } = useQuery({
+    queryKey: ["characters"],
+    queryFn: () => base44.entities.Character.list(),
   });
 
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
@@ -333,54 +338,104 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Character Relationships - Active Characters They Know */}
-        {character.fictional_relationships?.length > 0 && (
+        {/* Active App Characters They Know (with avatar + status bars) */}
+        {character.fictional_relationships?.some(r => r.related_character_id) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <Users className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">How They Know Others</p>
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Characters They Know</p>
             </div>
             <div className="space-y-4">
-              {character.fictional_relationships.map((rel, idx) => (
-                <div key={idx} className="pb-4 border-b border-border last:border-b-0">
-                  {/* Name and Relationship Type */}
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
-                      <p className="text-xs text-primary font-medium capitalize mt-0.5">{rel.relationship_type}</p>
+              {character.fictional_relationships
+                .filter(r => r.related_character_id)
+                .map((rel, idx) => {
+                  const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
+                  return (
+                    <div key={idx} className="pb-4 border-b border-border last:border-b-0">
+                      <div className="flex items-center gap-3 mb-3">
+                        {linkedChar && <CharacterAvatar character={linkedChar} size="md" />}
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{rel.person_name}</p>
+                          <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                        </div>
+                      </div>
+                      {rel.description && (
+                        <p className="text-xs text-muted-foreground mb-3 leading-relaxed">{rel.description}</p>
+                      )}
+                      <div className="space-y-2">
+                        {[
+                          { label: "Respect", value: rel.user_respect_level ?? 50 },
+                          { label: "Friendship", value: rel.friendship_level ?? 75 },
+                          { label: "Romantic", value: rel.romantic_level ?? 0 },
+                          { label: "Attraction", value: rel.attraction_level ?? 0 },
+                          { label: "Chosen Family", value: rel.chosen_family_level ?? 0 }
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <div className="flex justify-between mb-1">
+                              <span className="text-xs font-medium text-foreground">{label}</span>
+                              <span className="text-xs text-muted-foreground">{value}%</span>
+                            </div>
+                            <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                              <div className="h-full bg-primary transition-all" style={{ width: `${value}%` }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    {rel.related_character_id && (
-                      <div className="flex items-center gap-1 ml-2 px-2 py-1 rounded-full bg-primary/10 border border-primary/20">
-                        <span className="text-[10px] text-primary font-medium">Mutual</span>
+                  );
+                })}
+            </div>
+          </div>
+        )}
+
+        {/* NPC / Fictional World Characters (no status bars — just rich details) */}
+        {character.fictional_relationships?.some(r => !r.related_character_id) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Ghost className="w-4 h-4 text-primary" />
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
+            </div>
+            <div className="space-y-5">
+              {character.fictional_relationships
+                .filter(r => !r.related_character_id)
+                .map((rel, idx) => (
+                  <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
+                      <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                    </div>
+                    {rel.description && (
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Who they are</p>
+                        <p className="text-xs text-foreground leading-relaxed">{rel.description}</p>
+                      </div>
+                    )}
+                    {rel.history_summary && (
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">History</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{rel.history_summary}</p>
+                      </div>
+                    )}
+                    {rel.current_status && (
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">What's going on now</p>
+                        <p className="text-xs text-foreground leading-relaxed">{rel.current_status}</p>
+                      </div>
+                    )}
+                    {rel.emotional_impact && (
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">How they feel about them</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed italic">{rel.emotional_impact}</p>
+                      </div>
+                    )}
+                    {rel.last_interaction_summary && (
+                      <div>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-0.5">Last interaction</p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">{rel.last_interaction_summary}</p>
                       </div>
                     )}
                   </div>
-
-                  {/* Relationship Levels */}
-                  <div className="space-y-2">
-                    {[
-                      { label: "Respect", value: rel.user_respect_level ?? 50 },
-                      { label: "Friendship", value: rel.friendship_level ?? 75 },
-                      { label: "Romantic", value: rel.romantic_level ?? 0 },
-                      { label: "Attraction", value: rel.attraction_level ?? 0 },
-                      { label: "Chosen Family", value: rel.chosen_family_level ?? 0 }
-                    ].map(({ label, value }) => (
-                      <div key={label}>
-                        <div className="flex justify-between mb-1">
-                          <span className="text-xs font-medium text-foreground">{label}</span>
-                          <span className="text-xs text-muted-foreground">{value}%</span>
-                        </div>
-                        <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
-                          <div 
-                            className="h-full bg-primary transition-all"
-                            style={{ width: `${value}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
+                ))}
             </div>
           </div>
         )}
