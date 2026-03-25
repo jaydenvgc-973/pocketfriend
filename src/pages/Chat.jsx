@@ -250,7 +250,7 @@ export default function Chat() {
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imageUrl, imageMatch, detailReferenceImage = null;
+    let recentMsgs, response, responseText, emotionalState, detailReferenceImage = null;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -393,27 +393,15 @@ export default function Chat() {
       }
       responseText = response.replace(/^[\w\s]+:\s*/i, "").trim();
 
-      // Extract [IMAGE: ...] tag if present — if LLM included it, always generate the image
-      const imageMatch = responseText.match(/\[IMAGE:\s*([\s\S]+?)\]/);
+      // Calculate typing delay based on user's WPM setting
       let typingDelayMs = 0;
-
-      // Always strip the [IMAGE: ...] tag from responseText before any DB save
-      responseText = responseText.replace(/\[IMAGE:\s*[\s\S]+?\]/g, "").trim();
-
-      if (imageMatch) {
-        // Image will be generated asynchronously — no blocking wait
-        typingDelayMs = 500;
-      } else {
-        imageUrl = null;
-        // Calculate typing delay based on user's WPM setting
-        const typingSpeedEnabled = userSettings.typing_speed_enabled !== false;
-        if (typingSpeedEnabled) {
-          const wpm = userSettings.words_per_minute || 41;
-          const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
-          typingDelayMs = (wordCount / wpm) * 60000;
-        }
+      const typingSpeedEnabled = userSettings.typing_speed_enabled !== false;
+      if (typingSpeedEnabled) {
+        const wpm = userSettings.words_per_minute || 41;
+        const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
+        typingDelayMs = (wordCount / wpm) * 60000;
       }
-      
+
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
     } catch (err) {
@@ -438,27 +426,6 @@ export default function Chat() {
     if (!charMsg || !charMsg.id) {
       setSendError("Character response failed to save. Try again.");
       return;
-    }
-
-    // If image was requested, create placeholder message and trigger async generation
-    if (imageMatch) {
-      const imgMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: "",
-        image_url: undefined,
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
-      
-      if (imgMsg && imgMsg.id) {
-        base44.functions.invoke('generateImageAsync', {
-          messageId: imgMsg.id,
-          prompt: imageMatch[1].trim(),
-        }).catch(() => {});
-      }
     }
 
     if (emotionalState !== character.emotional_state) {
