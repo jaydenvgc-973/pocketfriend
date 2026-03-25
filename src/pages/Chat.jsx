@@ -473,6 +473,8 @@ export default function Chat() {
           
           if (character.reference_image_urls?.length > 0) {
             referenceImages.push(character.reference_image_urls[0]);
+          } else if (character.avatar_url) {
+            referenceImages.push(character.avatar_url);
           }
 
           const userAvatars = currentUser?.generated_avatar_urls || [];
