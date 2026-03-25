@@ -55,7 +55,7 @@ export default function ActiveArcCard({ character }) {
             <span className="text-sm font-semibold text-foreground truncate">{character.name}</span>
             <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{clampedProgress}%</span>
           </div>
-          <p className="text-xs text-muted-foreground truncate mb-2">{arcLabel}</p>
+          <p className="text-xs text-muted-foreground text-justify mb-2 leading-relaxed">{arcLabel}</p>
 
           {/* Segmented progress bar */}
           <div className="flex gap-1">
