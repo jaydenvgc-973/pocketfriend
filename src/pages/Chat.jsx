@@ -320,6 +320,33 @@ export default function Chat() {
         // Events lookup failed, continue without it
       }
 
+      // Get recent memories for long-term recall
+      let memoryContext = "";
+      const recentMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 10);
+      if (recentMemories.length > 0) {
+        const memoryList = recentMemories.map(m => `- ${m.title}: ${m.description}`).join("\n");
+        memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference these naturally when relevant, don't force it):\n${memoryList}`;
+      }
+
+      // Detect if conversation mentions any of the character's frequented places and update emotional state
+      const frequentedPlaces = character.frequented_places || [];
+      if (frequentedPlaces.length > 0) {
+        const fullText = (text + " " + (recentMsgs.slice(-3).map(m => m.content).join(" "))).toLowerCase();
+        const mentionedPlace = frequentedPlaces.find(p => fullText.includes(p.toLowerCase()));
+        if (mentionedPlace) {
+          base44.integrations.Core.InvokeLLM({
+            prompt: `A character named ${character.name} (personality: ${character.personality_summary || "unknown"}) is currently at or talking about "${mentionedPlace}", one of their frequented places. Based on their personality and the context, what emotional state best fits them right now? Choose ONE from this list: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated. Return ONLY the single word.`,
+          }).then(async (newState) => {
+            const cleaned = newState?.trim().toLowerCase().replace(/[^a-z\s-]/g, "");
+            const validStates = ["calm","irritated","defensive","reflective","closed-off","flirtatious","bored","burnt out","joyful","anxious","sad","excited","overwhelmed","content","frustrated"];
+            if (validStates.includes(cleaned)) {
+              await base44.entities.Character.update(characterId, { emotional_state: cleaned });
+              queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+            }
+          }).catch(() => {});
+        }
+      }
+
       // Get past web lookups to reference naturally
       let researchContext = "";
       const pastLookups = await base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10);
@@ -344,7 +371,7 @@ export default function Chat() {
       const systemPrompt = character.system_prompt || buildSystemPrompt(character);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite ONLY your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.`;
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
@@ -750,8 +777,22 @@ export default function Chat() {
       userMessage: text,
       characterReply: responseText,
       recentMessages: recentMsgs,
-    }).then(res => {
+    }).then(async res => {
       if (res?.data?.reason) setLastChangeReason(res.data.reason);
+      // Inject milestone narrative messages into the conversation
+      if (res?.data?.milestone_messages?.length > 0) {
+        for (const milestone of res.data.milestone_messages) {
+          await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: characterId,
+            character_name: character.name,
+            content: milestone.text,
+            is_narrative: true,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      }
     }).catch(() => {});
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });

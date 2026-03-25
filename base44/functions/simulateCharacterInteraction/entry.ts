@@ -1,52 +1,112 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// Determines attraction speed multiplier based on orientation + gender compatibility
+function getAttractionMultiplier(characterOrientation, characterGender, targetGender) {
+  const orientation = (characterOrientation || 'not specified').toLowerCase();
+  const charGender = (characterGender || '').toLowerCase();
+  const tgtGender = (targetGender || '').toLowerCase();
+
+  const isSameGender = charGender && tgtGender && charGender === tgtGender;
+  const isOppositeGender =
+    (charGender === 'male' && tgtGender === 'female') ||
+    (charGender === 'female' && tgtGender === 'male');
+  const isNonBinary =
+    tgtGender === 'non-binary' || tgtGender === 'other' || tgtGender === 'non_binary';
+
+  if (orientation === 'straight') {
+    if (isNonBinary) return 0.15;
+    if (isSameGender) return 0.1; // 90% slower
+    return 1.0;
+  }
+  if (orientation === 'gay' || orientation === 'lesbian') {
+    if (isOppositeGender) return 0.1; // 90% slower
+    if (isNonBinary) return 0.5;
+    return 1.0;
+  }
+  // bisexual, pansexual, queer, prefer not to say — full speed
+  return 1.0;
+}
+
+// Returns a new orientation if the 30% attraction threshold triggers a shift
+function checkOrientationShift(currentOrientation, attractionLevel, characterGender, targetGender) {
+  const orientation = (currentOrientation || '').toLowerCase();
+  const charGender = (characterGender || '').toLowerCase();
+  const tgtGender = (targetGender || '').toLowerCase();
+
+  if (attractionLevel < 30) return null;
+
+  const isSameGender = charGender && tgtGender && charGender === tgtGender;
+  const isNonBinary = tgtGender === 'non-binary' || tgtGender === 'other' || tgtGender === 'non_binary';
+  const isOppositeGender =
+    (charGender === 'male' && tgtGender === 'female') ||
+    (charGender === 'female' && tgtGender === 'male');
+
+  if (orientation === 'straight') {
+    if (isNonBinary) return 'pansexual';
+    if (isSameGender) return Math.random() > 0.5 ? 'bisexual' : 'prefer not to say';
+  }
+  if (orientation === 'gay' || orientation === 'lesbian') {
+    if (isOppositeGender) return 'bisexual';
+  }
+  return null;
+}
+
+// Milestone definitions
+const MILESTONES = [
+  { field: 'friendship_level', threshold: 25, label: 'budding friendship' },
+  { field: 'friendship_level', threshold: 50, label: 'genuine friendship' },
+  { field: 'friendship_level', threshold: 75, label: 'deep friendship' },
+  { field: 'romantic_level', threshold: 25, label: 'romantic spark' },
+  { field: 'romantic_level', threshold: 50, label: 'romantic feelings' },
+  { field: 'romantic_level', threshold: 75, label: 'deep romantic bond' },
+  { field: 'attraction_level', threshold: 30, label: 'noticeable attraction' },
+  { field: 'attraction_level', threshold: 60, label: 'strong attraction' },
+];
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
-  
+
   try {
     const user = await base44.auth.me();
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { character_ids, userPrompt } = await req.json();
-    
     if (!character_ids || character_ids.length < 2) {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
     }
 
     const characters = await Promise.all(
-      character_ids.map(id => base44.entities.Character.list().then(chars => 
-        chars.find(c => c.id === id)
-      ))
+      character_ids.map(id => base44.entities.Character.list().then(chars => chars.find(c => c.id === id)))
     );
 
     if (characters.some(c => !c)) {
       return Response.json({ error: 'One or more characters not found' }, { status: 404 });
     }
 
-    // Build relationship context
     const getRelationshipContext = (fromChar, toChar) => {
       const rel = (fromChar.fictional_relationships || []).find(r => r.related_character_id === toChar.id);
       if (rel) {
-        return `${fromChar.name} views ${toChar.name} as a ${rel.relationship_type}. ${rel.description || ''} Current status: ${rel.current_status || 'unknown'}.`;
+        const levels = `Friendship: ${rel.friendship_level ?? 'unknown'}, Attraction: ${rel.attraction_level ?? 'unknown'}, Romantic: ${rel.romantic_level ?? 'unknown'}`;
+        return `${fromChar.name} views ${toChar.name} as a ${rel.relationship_type}. ${rel.description || ''} Current status: ${rel.current_status || 'unknown'}. Levels — ${levels}.`;
       }
       return `${fromChar.name} and ${toChar.name} haven't established a formal relationship yet.`;
     };
 
-    // Build character profiles for interaction
     const characterProfiles = characters.map(char => ({
       id: char.id,
       name: char.name,
+      gender: char.gender || 'unknown',
+      sexual_orientation: char.sexual_orientation || 'not specified',
       personality: char.personality_summary || '',
       traits: (char.personality_traits || []).join(', '),
       emotionalState: char.emotional_state || 'calm',
       currentSituation: char.current_life_event || char.current_situation || '',
-      archetype: char.archetype || 'unknown'
+      archetype: char.archetype || 'unknown',
+      emotional_baggage: char.emotional_baggage || '',
+      emotional_triggers_deep: (char.emotional_triggers_deep || []).join(', '),
     }));
 
-    // Generate interaction prompt
-    const interactionContext = characters.length === 2 
+    const interactionContext = characters.length === 2
       ? `${getRelationshipContext(characters[0], characters[1])}\n${getRelationshipContext(characters[1], characters[0])}`
       : characters.map((char, i) => {
           const others = characters.filter((_, j) => j !== i);
@@ -55,15 +115,19 @@ Deno.serve(async (req) => {
 
     const userDirection = userPrompt ? `\n\nUSER DIRECTION: ${userPrompt}\n` : '';
 
-    const prompt = `Simulate a realistic interaction between these characters:
+    const prompt = `Simulate a realistic interaction between these characters. Pay close attention to their sexual orientations and genders when determining how attraction develops.
 
 ${characterProfiles.map(p => `
 NAME: ${p.name}
+Gender: ${p.gender}
+Sexual Orientation: ${p.sexual_orientation}
 Personality: ${p.personality}
 Core traits: ${p.traits}
 Emotional state: ${p.emotionalState}
 Current life: ${p.currentSituation}
 Archetype: ${p.archetype}
+Emotional baggage: ${p.emotional_baggage}
+Deep emotional triggers: ${p.emotional_triggers_deep}
 `).join('\n')}
 
 RELATIONSHIP CONTEXT:
@@ -74,25 +138,46 @@ Generate a natural conversation/interaction scene that:
 2. Includes realistic dialogue with distinct voices for each character
 3. Shows their emotional state and how they currently feel about each other
 4. References something specific from their current situations or past history if known
-5. Results in some outcome — does the interaction bring them closer, create tension, resolve something, or leave them confused?
+5. Results in some outcome — does the interaction bring them closer, create tension, resolve something?
+
+NON-PHYSICAL ATTRACTION TRAIT DETECTION — for each character, detect if the OTHER character demonstrated:
+- KINDNESS: genuine warmth, empathy, or unprompted care
+- HUMOR: wit, playful banter, making the other laugh
+- INTEGRITY: honesty, moral backbone, standing by values under pressure
+- VULNERABILITY: emotional openness, admitting something difficult, sharing fear/insecurity
+- INTELLECTUAL GROWTH: sharing learned insights, engaging with meaningful ideas, stimulating the other intellectually
+
+Use detected traits to update attraction_level_change for each character. Apply more weight to traits that align with that character's specific archetype and personality. Apply ZERO or minimal weight to traits that don't match the character's attraction profile.
+
+SEXUAL ORIENTATION ATTRACTION RULES — CRITICAL:
+- "straight" characters attract at 90% SLOWER rate to same-gender characters (multiply positive attraction delta by 0.1). For non-binary targets: multiply by 0.15.
+- "gay" or "lesbian" characters attract at 90% SLOWER rate to opposite-gender characters (multiply by 0.1). For non-binary: multiply by 0.5.
+- "bisexual", "pansexual", "queer", "prefer not to say" — full normal attraction speed for all genders.
+- These multipliers apply to positive attraction changes only. Negative changes are unaffected.
+
+For each character, provide their updated relationship levels toward EACH other character (the changes should reflect the above rules).
 
 Return a JSON object with:
 {
   "scene_summary": "brief description of what happened and the setting",
   "dialogue": [
-    { "speaker": "character_name", "text": "dialogue" },
-    ...
+    { "speaker": "character_name", "text": "dialogue" }
   ],
-  "outcome": "what changed or was revealed in this interaction",
+  "outcome": "what changed or was revealed",
   "emotional_shifts": { "character_name": "how their emotional state changed" },
+  "emotional_milestone": "<brief description if a significant emotional moment occurred, or null>",
+  "shared_secret": "<brief description if a secret was revealed, or null>",
   "relationship_updates": {
-    "character_name_1": {
+    "character_name": {
       "other_character_id": "other_character_id",
-      "last_interaction_summary": "specific summary of this interaction",
-      "updated_status": "current status after this interaction",
-      "emotional_impact": "how this interaction affected them"
-    },
-    ...
+      "last_interaction_summary": "specific summary",
+      "updated_status": "current status after interaction",
+      "emotional_impact": "how this interaction affected them",
+      "friendship_level_change": <number -10 to +10>,
+      "attraction_level_change": <number -10 to +10, BEFORE orientation multiplier — the system will apply it>,
+      "romantic_level_change": <number -10 to +10>,
+      "detected_traits": ["kindness"|"humor"|"integrity"|"vulnerability"|"intellectual_growth"]
+    }
   }
 }`;
 
@@ -102,90 +187,159 @@ Return a JSON object with:
         type: 'object',
         properties: {
           scene_summary: { type: 'string' },
-          dialogue: { 
+          dialogue: {
             type: 'array',
-            items: {
-              type: 'object',
-              properties: {
-                speaker: { type: 'string' },
-                text: { type: 'string' }
-              }
-            }
+            items: { type: 'object', properties: { speaker: { type: 'string' }, text: { type: 'string' } } }
           },
           outcome: { type: 'string' },
           emotional_shifts: { type: 'object' },
+          emotional_milestone: {},
+          shared_secret: {},
           relationship_updates: { type: 'object' }
         }
       },
       model: 'gemini_3_flash'
     });
 
-    // Update each character with interaction data and create memories
+    // Update each character with interaction data, apply orientation multipliers, check milestones
     for (const character of characters) {
-      const updates = response.relationship_updates[character.name];
-      
-      if (updates) {
-        // Find the corresponding character being interacted with
-        const otherCharId = updates.other_character_id;
-        const otherChar = characters.find(c => c.id === otherCharId);
+      const updates = response.relationship_updates?.[character.name];
+      if (!updates) continue;
 
-        if (otherChar) {
-          // Update transient encounters
-          const newEncounter = {
-            description: `Interaction with ${otherChar.name}: ${response.scene_summary}`,
-            context: 'character interaction simulation',
-            emotional_reaction: response.emotional_shifts[character.name] || 'neutral',
-            date: new Date().toISOString()
-          };
+      const otherCharId = updates.other_character_id;
+      const otherChar = characters.find(c => c.id === otherCharId);
+      if (!otherChar) continue;
 
-          const updatedEncounters = [...(character.transient_encounters || []), newEncounter];
+      // Apply orientation multiplier to attraction delta
+      const multiplier = getAttractionMultiplier(
+        character.sexual_orientation,
+        character.gender,
+        otherChar.gender
+      );
 
-          // Update fictional relationships
-          const updatedRelationships = (character.fictional_relationships || []).map(rel => {
-            if (rel.related_character_id === otherCharId) {
-              return {
-                ...rel,
-                last_interaction_summary: updates.last_interaction_summary,
-                current_status: updates.updated_status,
-                emotional_impact: updates.emotional_impact
-              };
-            }
-            return rel;
-          });
+      const rawAttractionDelta = updates.attraction_level_change || 0;
+      const adjustedAttractionDelta = rawAttractionDelta > 0
+        ? rawAttractionDelta * multiplier
+        : rawAttractionDelta;
 
-          // If no existing relationship but should have one after interaction
-          if (!updatedRelationships.some(r => r.related_character_id === otherCharId)) {
-            updatedRelationships.push({
-              person_name: otherChar.name,
-              related_character_id: otherCharId,
-              relationship_type: 'acquaintance',
-              description: response.scene_summary,
-              current_status: updates.updated_status,
-              emotional_impact: updates.emotional_impact,
-              last_interaction_summary: updates.last_interaction_summary,
-              history_summary: 'Recently had their first significant interaction'
-            });
+      // Update fictional relationships with new levels
+      const updatedRelationships = (character.fictional_relationships || []).map(rel => {
+        if (rel.related_character_id === otherCharId) {
+          const currentFriendship = rel.friendship_level ?? 50;
+          const currentAttraction = rel.attraction_level ?? 0;
+          const currentRomantic = rel.romantic_level ?? 0;
+
+          const newFriendship = Math.min(100, Math.max(0, currentFriendship + (updates.friendship_level_change || 0)));
+          const newAttraction = Math.min(100, Math.max(0, Math.round(currentAttraction + adjustedAttractionDelta)));
+          const newRomantic = Math.min(100, Math.max(0, currentRomantic + (updates.romantic_level_change || 0)));
+
+          // Check milestones for this relationship
+          for (const milestone of MILESTONES) {
+            const before = milestone.field === 'friendship_level' ? currentFriendship
+              : milestone.field === 'attraction_level' ? currentAttraction
+              : currentRomantic;
+            const after = milestone.field === 'friendship_level' ? newFriendship
+              : milestone.field === 'attraction_level' ? newAttraction
+              : newRomantic;
+            // Milestone tracking per relationship is logged in memory below
           }
 
-          // Update character with new data
-          await base44.entities.Character.update(character.id, {
-            transient_encounters: updatedEncounters,
-            fictional_relationships: updatedRelationships,
-            emotional_state: response.emotional_shifts[character.name]?.split(' ')[0] || character.emotional_state
-          });
-
-          // Create memory of this interaction
-          const dialogueText = response.dialogue.map(d => `${d.speaker}: ${d.text}`).join('\n');
-          await base44.entities.Memory.create({
-            character_id: character.id,
-            title: `Interaction with ${otherChar.name}`,
-            description: `Scene: ${response.scene_summary}\n\nDialogue:\n${dialogueText}\n\nOutcome: ${response.outcome}`,
-            emotional_impact: response.emotional_shifts[character.name] || 'neutral',
-            timestamp: new Date().toISOString(),
-            source_context: 'character interaction simulation'
-          });
+          return {
+            ...rel,
+            last_interaction_summary: updates.last_interaction_summary,
+            current_status: updates.updated_status,
+            emotional_impact: updates.emotional_impact,
+            friendship_level: newFriendship,
+            attraction_level: newAttraction,
+            romantic_level: newRomantic,
+          };
         }
+        return rel;
+      });
+
+      // If no existing relationship, create one
+      if (!updatedRelationships.some(r => r.related_character_id === otherCharId)) {
+        const newAttraction = Math.min(100, Math.max(0, Math.round(adjustedAttractionDelta)));
+        updatedRelationships.push({
+          person_name: otherChar.name,
+          related_character_id: otherCharId,
+          relationship_type: 'acquaintance',
+          description: response.scene_summary,
+          current_status: updates.updated_status,
+          emotional_impact: updates.emotional_impact,
+          last_interaction_summary: updates.last_interaction_summary,
+          history_summary: 'Recently had their first significant interaction',
+          friendship_level: Math.max(0, updates.friendship_level_change || 0),
+          attraction_level: Math.max(0, newAttraction),
+          romantic_level: Math.max(0, updates.romantic_level_change || 0),
+        });
       }
+
+      // Check for orientation shift in this character's relationship to otherChar
+      const thisRel = updatedRelationships.find(r => r.related_character_id === otherCharId);
+      const currentAttractionForShift = thisRel?.attraction_level ?? 0;
+      const orientationShift = checkOrientationShift(
+        character.sexual_orientation,
+        currentAttractionForShift,
+        character.gender,
+        otherChar.gender
+      );
+
+      const newEncounter = {
+        description: `Interaction with ${otherChar.name}: ${response.scene_summary}`,
+        context: 'character interaction simulation',
+        emotional_reaction: response.emotional_shifts?.[character.name] || 'neutral',
+        date: new Date().toISOString()
+      };
+
+      const characterUpdatePayload = {
+        transient_encounters: [...(character.transient_encounters || []), newEncounter],
+        fictional_relationships: updatedRelationships,
+        emotional_state: response.emotional_shifts?.[character.name]?.split(' ')[0] || character.emotional_state,
+      };
+
+      if (orientationShift) {
+        characterUpdatePayload.sexual_orientation = orientationShift;
+      }
+
+      await base44.entities.Character.update(character.id, characterUpdatePayload);
+
+      // Create memory of this interaction
+      const dialogueText = (response.dialogue || []).map(d => `${d.speaker}: ${d.text}`).join('\n');
+      const memoryPromises = [
+        base44.entities.Memory.create({
+          character_id: character.id,
+          title: `Interaction with ${otherChar.name}`,
+          description: `Scene: ${response.scene_summary}\n\nDialogue:\n${dialogueText}\n\nOutcome: ${response.outcome}`,
+          emotional_impact: response.emotional_shifts?.[character.name] || 'neutral',
+          timestamp: new Date().toISOString(),
+          source_context: 'character interaction simulation'
+        })
+      ];
+
+      // Store emotional milestone and shared secret in memory
+      if (response.emotional_milestone) {
+        memoryPromises.push(base44.entities.Memory.create({
+          character_id: character.id,
+          title: `Emotional milestone with ${otherChar.name}`,
+          description: response.emotional_milestone,
+          emotional_impact: 'meaningful',
+          timestamp: new Date().toISOString(),
+          source_context: 'inter-character interaction',
+        }));
+      }
+      if (response.shared_secret) {
+        memoryPromises.push(base44.entities.Memory.create({
+          character_id: character.id,
+          title: `Secret revealed involving ${otherChar.name}`,
+          description: response.shared_secret,
+          emotional_impact: 'significant',
+          timestamp: new Date().toISOString(),
+          source_context: 'inter-character interaction - confidential',
+        }));
+      }
+
+      await Promise.all(memoryPromises);
     }
 
     return Response.json({
