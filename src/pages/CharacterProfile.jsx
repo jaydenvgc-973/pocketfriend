@@ -372,14 +372,17 @@ export default function CharacterProfile() {
         )}
 
         {/* Active App Characters They Know (with avatar + status bars) */}
-        {character.fictional_relationships?.some(r => r.related_character_id) && (
+        {(true) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <div className="flex items-center gap-2 mb-2">
               <Users className="w-4 h-4 text-primary" />
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Characters They Know</p>
             </div>
+            {(!character.fictional_relationships?.some(r => r.related_character_id)) && (
+              <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
+            )}
             <div className="space-y-4">
-              {character.fictional_relationships
+              {(character.fictional_relationships || [])
                 .filter(r => r.related_character_id)
                 .map((rel, idx) => {
                   const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
