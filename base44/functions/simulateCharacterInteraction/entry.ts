@@ -115,7 +115,13 @@ Deno.serve(async (req) => {
 
     const userDirection = userPrompt ? `\n\nUSER DIRECTION: ${userPrompt}\n` : '';
 
+    const WORLD_CONTEXT = `WORLD CONTEXT (the real world these characters live in):
+The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializing, gaming), works 3.5–8 hours, and checks their phone ~58 times/day. About 24% work remotely. ~1 in 5 Americans has an STI at any given time; ages 15–24 account for half of new STIs. The U.S. incarcerates over 2 million people; racial disparities are significant; innocent Black people are 7x more likely to be wrongly convicted. Religion often serves as a coping mechanism under systemic stress. Youth join gangs due to poverty, instability, and the pull of belonging and protection. The homelessness-jail cycle deepens instability. 74% of high school seniors aspire to college but only ~61% enroll — cost is the #1 barrier.`.trim();
+
     const prompt = `Simulate a realistic interaction between these characters. Pay close attention to their sexual orientations and genders when determining how attraction develops.
+
+${WORLD_CONTEXT}
+
 
 ${characterProfiles.map(p => `
 NAME: ${p.name}

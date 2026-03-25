@@ -143,7 +143,14 @@ INTELLECTUAL GROWTH: Did the user share something they learned, engage in meanin
 For each trait detected — also consider: does this trait align with what THIS CHARACTER specifically finds attractive based on their archetype and personality? Only award attraction boosts for traits this specific character would respond to.`;
     }
 
+    const WORLD_CONTEXT = `
+WORLD CONTEXT (the real world these characters live in — use this to inform how people behave, what they care about, and what shapes their lives):
+The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializing, gaming), works 3.5–8 hours, does ~2 hours of chores, and checks their phone ~58 times/day. About 24% work remotely. 74% of high school seniors aspire to college but only ~61% enroll. Cost is the #1 barrier. ~1 in 5 Americans has an STI at any given time; ages 15–24 account for half of new STIs. The U.S. incarcerates over 2 million people; rights exist on paper but enforcement is inconsistent; innocent Black people are 7x more likely to be wrongly convicted of murder. Religion functions as a coping mechanism especially under systemic stress — people stay for meaning, community, and moral grounding; people leave due to trauma, hypocrisy, or identity conflict. Youth gang involvement is driven by poverty, neighborhood instability, weak school ties, and the pull of belonging and protection. The homelessness-jail cycle pushes unhoused people deeper into instability through fines, warrants, and property seizure.
+`.trim();
+
     const prompt = `You are a relationship dynamics analyzer. Analyze this interaction and update the relationship levels between the character and the user.
+
+${WORLD_CONTEXT}
 
 CHARACTER: ${character.name}
 CHARACTER ARCHETYPE: ${character.archetype || 'unknown'}
