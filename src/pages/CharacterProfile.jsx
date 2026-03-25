@@ -141,6 +141,33 @@ export default function CharacterProfile() {
           </div>
         </div>
 
+        {/* Your Connection */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-4">Your Connection</p>
+          <div className="space-y-3">
+            {[
+              { label: "Respect", value: character.user_respect_level ?? 50 },
+              { label: "Friendship", value: character.friendship_level ?? 75 },
+              { label: "Romantic", value: character.romantic_level ?? 0 },
+              { label: "Attraction", value: character.attraction_level ?? 0 },
+              { label: "Chosen Family", value: character.chosen_family_level ?? 0 }
+            ].map(({ label, value }) => (
+              <div key={label}>
+                <div className="flex justify-between mb-1">
+                  <span className="text-xs font-medium text-foreground">{label}</span>
+                  <span className="text-xs text-muted-foreground">{value}%</span>
+                </div>
+                <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary transition-all"
+                    style={{ width: `${value}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
           {/* Age display — always read-only (ages dynamically) */}
@@ -306,6 +333,12 @@ export default function CharacterProfile() {
           </div>
         )}
 
+        {/* Criminal Record */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
+          <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
+        </div>
+
         {/* Key Life Events & Memories */}
         {character.memories?.length > 0 && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
@@ -457,12 +490,6 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Criminal Record */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Criminal Record</p>
-          <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
-        </div>
-
         {/* Personality Traits */}
         {character.personality_traits && character.personality_traits.length > 0 && (
           <div className="bg-card border border-border rounded-2xl p-4">
@@ -485,32 +512,6 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Relationship Stats */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-4">Your Connection</p>
-          <div className="space-y-3">
-            {[
-              { label: "Respect", value: character.user_respect_level ?? 50 },
-              { label: "Friendship", value: character.friendship_level ?? 75 },
-              { label: "Romantic", value: character.romantic_level ?? 0 },
-              { label: "Attraction", value: character.attraction_level ?? 0 },
-              { label: "Chosen Family", value: character.chosen_family_level ?? 0 }
-            ].map(({ label, value }) => (
-              <div key={label}>
-                <div className="flex justify-between mb-1">
-                  <span className="text-xs font-medium text-foreground">{label}</span>
-                  <span className="text-xs text-muted-foreground">{value}%</span>
-                </div>
-                <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-primary transition-all"
-                    style={{ width: `${value}%` }}
-                  />
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
       <BottomNav />
     </div>
