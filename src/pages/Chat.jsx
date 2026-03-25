@@ -104,8 +104,10 @@ export default function Chat() {
       }
     };
 
-    loadConvo();
+    // Small delay to avoid rate limiting when navigating quickly between pages
+    const timer = setTimeout(() => loadConvo(), 300);
     return () => {
+      clearTimeout(timer);
       if (unsubscribeRef.current) unsubscribeRef.current();
     };
   }, [characterId, character, chatType]);
@@ -132,6 +134,10 @@ export default function Chat() {
     return () => {
       if (unsubscribeRef.current) unsubscribeRef.current();
     };
+  }, [conversationId]);
+
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
   }, [conversationId]);
 
   useEffect(() => {
