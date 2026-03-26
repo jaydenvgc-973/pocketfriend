@@ -46,6 +46,23 @@
       "type": "string",
       "description": "Time this character typically wakes up (HH:MM, 24h format). e.g. '07:00' or '11:00' for someone who sleeps in."
     },
+    "work_start_time": {
+      "type": "string",
+      "description": "Time this character starts work (HH:MM, 24h format). Defaults to '09:00' if not set."
+    },
+    "work_end_time": {
+      "type": "string",
+      "description": "Time this character ends work (HH:MM, 24h format). Defaults to '17:00' if not set."
+    },
+    "work_days": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 6
+      },
+      "description": "Days of the week character works (0=Sunday, 1=Monday, ..., 6=Saturday). Defaults to [1,2,3,4,5] (weekdays) if not set."
+    },
     "current_activity": {
       "type": "string",
       "description": "What the character is currently doing (e.g. 'showering', 'swimming', 'at work', 'sleeping'). If blank, character is available to respond. Blocking activities (shower, swimming, bathroom, sick) prevent text responses."
