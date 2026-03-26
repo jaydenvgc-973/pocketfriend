@@ -113,15 +113,21 @@ Deno.serve(async (req) => {
           return others.map(other => getRelationshipContext(char, other)).join('\n');
         }).join('\n');
 
+    const nowISO = new Date().toISOString();
+    const nowDisplay = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' });
+
     const userDirection = userPrompt
       ? `\n\nCURRENT SITUATION — THIS IS ALREADY HAPPENING RIGHT NOW:\n"${userPrompt}"\nThis is not a suggestion or a direction — it is an established fact. This event is actively occurring or has just occurred. The characters are in the middle of this situation. They are aware of it, affected by it, and must react to it directly. The entire scene, dialogue, and outcome must flow FROM this event. Do not introduce a separate scenario — build entirely on top of this one.\n`
       : '';
+
+    const TIME_CONTEXT = `CURRENT DATE & TIME: ${nowDisplay} (${nowISO})\nWhen the user's prompt or the scene references a specific time (e.g. "1:00 PM", "tonight at 8", "tomorrow morning"), resolve that to an exact ISO 8601 UTC datetime and include it in the scheduled_events output array.\n`;
 
     const WORLD_CONTEXT = `WORLD CONTEXT (the real world these characters live in):
 The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializing, gaming), works 3.5–8 hours, and checks their phone ~58 times/day. About 24% work remotely. ~1 in 5 Americans has an STI at any given time; ages 15–24 account for half of new STIs. The U.S. incarcerates over 2 million people; racial disparities are significant; innocent Black people are 7x more likely to be wrongly convicted. Religion often serves as a coping mechanism under systemic stress. Youth join gangs due to poverty, instability, and the pull of belonging and protection. The homelessness-jail cycle deepens instability. 74% of high school seniors aspire to college but only ~61% enroll — cost is the #1 barrier.`.trim();
 
     const prompt = `Simulate a realistic interaction between these characters. Pay close attention to their sexual orientations and genders when determining how attraction develops.
 
+${TIME_CONTEXT}
 ${WORLD_CONTEXT}
 
 
@@ -188,7 +194,14 @@ Return a JSON object with:
       "romantic_level_change": <number -10 to +10>,
       "detected_traits": ["kindness"|"humor"|"integrity"|"vulnerability"|"intellectual_growth"]
     }
-  }
+  },
+  "scheduled_events": [
+    {
+      "description": "Natural language description of what will happen, e.g. 'Tiffany picks up Tamara at her apartment'",
+      "trigger_time": "<ISO 8601 UTC datetime when this event should occur>",
+      "character_names": ["name1", "name2"]
+    }
+  ]
 }`;
 
     const response = await base44.asServiceRole.integrations.Core.InvokeLLM({
@@ -205,7 +218,18 @@ Return a JSON object with:
           emotional_shifts: { type: 'object' },
           emotional_milestone: {},
           shared_secret: {},
-          relationship_updates: { type: 'object' }
+          relationship_updates: { type: 'object' },
+          scheduled_events: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                description: { type: 'string' },
+                trigger_time: { type: 'string' },
+                character_names: { type: 'array', items: { type: 'string' } }
+              }
+            }
+          }
         }
       },
       model: 'gemini_3_flash'
@@ -353,6 +377,36 @@ Return a JSON object with:
       await Promise.all(memoryPromises);
     }
 
+    // Persist any scheduled events extracted by the LLM
+    const scheduledEventRecords = [];
+    if (response.scheduled_events?.length > 0) {
+      for (const ev of response.scheduled_events) {
+        if (!ev.trigger_time || !ev.description) continue;
+
+        // Resolve character IDs from names
+        const involvedIds = characters
+          .filter(c => (ev.character_names || []).includes(c.name))
+          .map(c => c.id);
+        const involvedNames = characters
+          .filter(c => (ev.character_names || []).includes(c.name))
+          .map(c => c.name);
+
+        if (involvedIds.length === 0) continue;
+
+        const record = await base44.entities.ScheduledEvent.create({
+          character_ids: involvedIds,
+          character_names: involvedNames,
+          description: ev.description,
+          trigger_time: ev.trigger_time,
+          status: 'pending',
+          type: 'narrative',
+          source: 'simulation',
+          primary_character_id: involvedIds[0]
+        });
+        scheduledEventRecords.push(record);
+      }
+    }
+
     return Response.json({
       success: true,
       interaction: {
@@ -360,7 +414,8 @@ Return a JSON object with:
         scene_summary: response.scene_summary,
         dialogue: response.dialogue,
         outcome: response.outcome,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        scheduled_events: scheduledEventRecords
       }
     });
   } catch (error) {

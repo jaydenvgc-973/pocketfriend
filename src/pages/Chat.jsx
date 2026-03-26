@@ -275,6 +275,10 @@ export default function Chat() {
       const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
       const intensityInstruction = { low: "React with mild emotional responses.", medium: "React naturally with moderate emotional responses.", high: "React with strong, intense emotional responses." }[userSettings.emotional_intensity || "medium"];
 
+      const nowISO = new Date().toISOString();
+      const nowDisplay = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' });
+      const timeContext = `\n\nCURRENT DATE & TIME: ${nowDisplay}\nYou are aware of the current time. If the user or you mention plans, events, or actions at a specific time (e.g. "I'll pick you up at 1pm", "see you tonight at 8"), you naturally reference the actual time and treat those plans as real commitments that will happen.`;
+
       let educationContext = "";
       if (character.current_education_activity && character.current_education_activity !== "none") {
         const completionDate = new Date(character.education_expected_completion_date);
@@ -379,7 +383,7 @@ export default function Chat() {
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Optional: A vivid description of an image you want to send, or omit this field if no image"\n}\n\nCRITICAL IMAGE RULES:\n- If the user asks for a picture of "me", "myself", or "of the user" — the image_prompt must describe THE USER, not you. Generate an image of the person the user represents.\n- If the user asks for a picture of "you", "yourself", or your name — then the image_prompt should describe you, ${character.name}.\n- Never confuse who "me" refers to. "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.\n\n${character.is_photogenic ? "BONUS TRAIT: You LOVE being photographed and sending pics. Include image prompts often when it feels natural." : ""}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${timeContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Optional: A vivid description of an image you want to send, or omit this field if no image",\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message (by either you or the user). Omit the field if no timed plans are made.\n\nCRITICAL IMAGE RULES:\n- If the user asks for a picture of "me", "myself", or "of the user" — the image_prompt must describe THE USER, not you. Generate an image of the person the user represents.\n- If the user asks for a picture of "you", "yourself", or your name — then the image_prompt should describe you, ${character.name}.\n- Never confuse who "me" refers to. "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.\n\n${character.is_photogenic ? "BONUS TRAIT: You LOVE being photographed and sending pics. Include image prompts often when it feels natural." : ""}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
@@ -420,6 +424,24 @@ export default function Chat() {
       }
       responseText = responseObj.text?.trim() || "";
       imagePrompt = responseObj.image_prompt;
+
+      // Persist scheduled events extracted from this chat turn
+      if (responseObj.scheduled_events?.length > 0 && convoId) {
+        for (const ev of responseObj.scheduled_events) {
+          if (!ev.trigger_time || !ev.description) continue;
+          base44.entities.ScheduledEvent.create({
+            character_ids: [characterId],
+            character_names: [character.name],
+            description: ev.description,
+            trigger_time: ev.trigger_time,
+            status: "pending",
+            type: "narrative",
+            source: "chat",
+            conversation_id: convoId,
+            primary_character_id: characterId
+          }).catch(() => {});
+        }
+      }
 
       // Calculate typing delay based on user's WPM setting
       let typingDelayMs = 0;
