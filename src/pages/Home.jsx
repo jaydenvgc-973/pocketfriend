@@ -9,6 +9,7 @@ import CharacterCard from "@/components/home/CharacterCard";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import CharacterInteractionSimulator from "@/components/home/CharacterInteractionSimulator";
 import BottomNav from "@/components/BottomNav";
+import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
@@ -191,6 +192,7 @@ export default function Home() {
           )}
         </div>
       </div>
+      <DailyAchievementReminder />
       <BottomNav />
     </div>
   );
