@@ -47,6 +47,11 @@ export default function Chat() {
     queryFn: () => base44.entities.UserSettings.list(),
   });
 
+  const { data: currentUser = {} } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   useEffect(() => {
     if (!characterId || !character) return;
     const loadConvo = async () => {
@@ -451,9 +456,10 @@ export default function Chat() {
     if (imagePrompt) {
       // Detect if the image is about the user (not the character)
       const isAboutUser = /\buser\b|\bme\b|\bmyself\b/i.test(imagePrompt) && !/\b(you|yourself|your|character)\b/i.test(imagePrompt);
-      const userSettings0 = settings?.[0] || {};
-      // Use user's reference images if available and image is about the user
-      const userRefImages = userSettings0.reference_image_urls || [];
+      // Use user's generated avatars (preferred) or reference images if image is about the user
+      const userRefImages = currentUser.generated_avatar_urls?.length > 0
+        ? currentUser.generated_avatar_urls
+        : (currentUser.reference_image_urls || []);
       const refImages = isAboutUser && userRefImages.length > 0 ? userRefImages : (character.reference_image_urls || []);
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
