@@ -288,19 +288,25 @@ export default function Chat() {
         songsContext = `\n\nSONGS YOU KNOW: You have listened to these songs and know them well: ${songsInfo}. You can naturally reference these songs, quote lyrics, or discuss what they mean to you in conversations.`;
       }
 
-      // Fetch current weather ONLY if conversation seems weather-related
+      // Weather context — use pre-fetched daily weather as primary, live lookup as fallback
       let weatherContext = "";
       const weatherKeywords = /\b(weather|rain|raining|sunny|cold|hot|warm|freezing|snow|snowing|storm|cloudy|outside|outdoors|going out|what's it like|nice out|bad out|degrees|temperature|humid|windy|fog|foggy)\b/i;
-      if (character.city && character.state && weatherKeywords.test(text)) {
-        try {
-          const weatherRes = await base44.integrations.Core.InvokeLLM({
-            prompt: `What is the current weather right now in ${character.city}, ${character.state}? Include temperature, conditions (sunny, rainy, cloudy, etc.), and any notable weather patterns. Be specific and accurate.`,
-            add_context_from_internet: true,
-            model: 'gemini_3_flash'
-          });
-          weatherContext = `\n\nCURRENT WEATHER: Right now in ${character.city}, ${character.state}: ${weatherRes}. Naturally reference this weather in your response if it fits the conversation - mention how it affects your mood, what you're doing, or what you're wearing. Don't force it, but weave it in naturally.`;
-        } catch (weatherErr) {
-          // Weather lookup failed, continue without it
+      if (character.city || character.state) {
+        // Use stored daily weather if available (fetched at 5am each day)
+        if (character.weather_summary) {
+          weatherContext = `\n\nCURRENT WEATHER (for ${[character.city, character.state].filter(Boolean).join(", ")}): ${character.weather_summary}. You already know this — it's just part of your day. If weather comes up naturally in conversation, reference it authentically. Don't force it.`;
+        } else if (weatherKeywords.test(text)) {
+          // Fallback: live lookup only if no stored weather and user brings up weather
+          try {
+            const weatherRes = await base44.integrations.Core.InvokeLLM({
+              prompt: `What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature, conditions, and any notable weather patterns.`,
+              add_context_from_internet: true,
+              model: 'gemini_3_flash'
+            });
+            weatherContext = `\n\nCURRENT WEATHER: Right now in ${[character.city, character.state].filter(Boolean).join(", ")}: ${weatherRes}. Naturally reference this if it fits — mention how it affects your mood, what you're doing, or what you're wearing.`;
+          } catch (weatherErr) {
+            // Weather lookup failed, continue without it
+          }
         }
       }
 
