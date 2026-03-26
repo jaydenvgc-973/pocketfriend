@@ -79,7 +79,7 @@ export default function GroupChat() {
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, typingCharacter]);
+  }, [messages]);
 
   useEffect(() => {
     if (initialConversationId && conversationsData.length > 0 && !selectedConversation) {
