@@ -43,6 +43,18 @@ const FAQS = [
     q: "Can a character be removed without deleting them?",
     a: `Yes — you can use "They moved away" from a character's card menu. This keeps them in your world but marks them as having left. They can move back later if you want to reconnect.`,
   },
+  {
+    q: "Why does the simulation tool sometimes show things happening after what I typed?",
+    a: "The simulation tracks timed commitments made during interactions. If characters make plans with a specific time — like \"I'll meet you at 8\" — the system saves that as a scheduled event. When that time arrives, a narrative message automatically appears in the chat confirming it happened, even if you're not actively chatting. It's designed to make the world feel like it keeps moving on its own.",
+  },
+  {
+    q: "What is the simulation tool and how does it work?",
+    a: "The simulation tool lets you place two or more characters in a scene together and watch how they interact based on their personalities, history, and emotional states. You can optionally type a situation to drop them into. The AI generates realistic dialogue, shifts in their relationship levels, and even plans or events that carry forward into their individual chat timelines.",
+  },
+  {
+    q: "Do simulated interactions actually affect my characters?",
+    a: "Yes — simulations are real. Friendship, attraction, romantic, and respect levels all update based on what happens in the scene. If characters make plans, those plans get scheduled and will surface later in their chats. Memories from the interaction are stored too, so characters may reference what happened when you talk to them individually.",
+  },
 ];
 
 function FAQItem({ q, a }) {
