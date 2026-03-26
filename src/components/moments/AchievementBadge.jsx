@@ -1,18 +1,23 @@
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { TIER_STYLES } from "@/lib/achievements";
 import { format } from "date-fns";
+import AchievementDetailsPopup from "./AchievementDetailsPopup";
 
 export default function AchievementBadge({ achievement, unlockedRecord, isNew = false }) {
+  const [showPopup, setShowPopup] = useState(false);
   const tier = unlockedRecord?.tier || "bronze";
   const tierStyle = TIER_STYLES[tier];
   const isUnlocked = !!unlockedRecord;
 
   return (
+    <>
     <motion.div
       initial={isNew ? { scale: 0.7, opacity: 0 } : false}
       animate={isNew ? { scale: 1, opacity: 1 } : false}
       transition={{ type: "spring", stiffness: 300, damping: 20 }}
-      className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all ${
+      onClick={() => setShowPopup(true)}
+      className={`relative flex flex-col items-center gap-2 p-4 rounded-2xl border transition-all cursor-pointer hover:scale-[1.03] ${
         isUnlocked
           ? `bg-card border-border shadow-lg ${tierStyle.glow}`
           : "bg-card/30 border-border/30 opacity-40 grayscale"
@@ -46,5 +51,15 @@ export default function AchievementBadge({ achievement, unlockedRecord, isNew = 
         )}
       </div>
     </motion.div>
+    <AnimatePresence>
+      {showPopup && (
+        <AchievementDetailsPopup
+          achievement={achievement}
+          unlockedRecord={unlockedRecord}
+          onClose={() => setShowPopup(false)}
+        />
+      )}
+    </AnimatePresence>
+    </>
   );
 }
