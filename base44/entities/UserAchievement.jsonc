@@ -1,0 +1,43 @@
+{
+  "name": "UserAchievement",
+  "type": "object",
+  "properties": {
+    "achievement_id": {
+      "type": "string",
+      "description": "Unique key for the achievement (e.g. 'first_impression', 'the_push')"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "Character this achievement is tied to, if applicable"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Name of the character for display"
+    },
+    "unlocked_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this achievement was unlocked"
+    },
+    "tier": {
+      "type": "string",
+      "enum": [
+        "bronze",
+        "silver",
+        "gold",
+        "neon"
+      ],
+      "default": "bronze",
+      "description": "Achievement tier"
+    },
+    "is_seen": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the user has acknowledged the achievement popup"
+    }
+  },
+  "required": [
+    "achievement_id",
+    "unlocked_at"
+  ]
+}

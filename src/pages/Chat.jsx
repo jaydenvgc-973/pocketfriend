@@ -557,6 +557,13 @@ Reply with ONLY the single emoji or the word "none".`,
     };
     setPreviousLevels(prevLevels);
 
+    // Check for achievements based on user message (fire-and-forget)
+    base44.functions.invoke("checkAchievements", {
+      characterId,
+      characterName: character.name,
+      userMessage: text,
+    }).catch(() => {});
+
     base44.functions.invoke("updateRelationshipLevels", {
       characterId,
       userMessage: text,

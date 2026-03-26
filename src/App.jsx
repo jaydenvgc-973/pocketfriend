@@ -20,6 +20,7 @@ import EditCharacterPhotos from './pages/EditCharacterPhotos';
 import EditCharacterEmotions from './pages/EditCharacterEmotions';
 import EditCharacterRelationships from './pages/EditCharacterRelationships';
 import Moments from './pages/Moments';
+import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -69,6 +70,7 @@ function App() {
         <Router>
           <AuthenticatedApp />
         </Router>
+        <AchievementUnlockModal />
         <Toaster />
       </QueryClientProvider>
     </AuthProvider>
