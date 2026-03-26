@@ -113,7 +113,9 @@ Deno.serve(async (req) => {
           return others.map(other => getRelationshipContext(char, other)).join('\n');
         }).join('\n');
 
-    const userDirection = userPrompt ? `\n\nUSER DIRECTION: ${userPrompt}\n` : '';
+    const userDirection = userPrompt
+      ? `\n\nCURRENT SITUATION — THIS IS ALREADY HAPPENING RIGHT NOW:\n"${userPrompt}"\nThis is not a suggestion or a direction — it is an established fact. This event is actively occurring or has just occurred. The characters are in the middle of this situation. They are aware of it, affected by it, and must react to it directly. The entire scene, dialogue, and outcome must flow FROM this event. Do not introduce a separate scenario — build entirely on top of this one.\n`
+      : '';
 
     const WORLD_CONTEXT = `WORLD CONTEXT (the real world these characters live in):
 The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializing, gaming), works 3.5–8 hours, and checks their phone ~58 times/day. About 24% work remotely. ~1 in 5 Americans has an STI at any given time; ages 15–24 account for half of new STIs. The U.S. incarcerates over 2 million people; racial disparities are significant; innocent Black people are 7x more likely to be wrongly convicted. Religion often serves as a coping mechanism under systemic stress. Youth join gangs due to poverty, instability, and the pull of belonging and protection. The homelessness-jail cycle deepens instability. 74% of high school seniors aspire to college but only ~61% enroll — cost is the #1 barrier.`.trim();
@@ -140,11 +142,13 @@ RELATIONSHIP CONTEXT:
 ${interactionContext}${userDirection}
 
 Generate a natural conversation/interaction scene that:
-1. Reflects their actual personalities and relationship dynamic
-2. Includes realistic dialogue with distinct voices for each character
-3. Shows their emotional state and how they currently feel about each other
-4. References something specific from their current situations or past history if known
-5. Results in some outcome — does the interaction bring them closer, create tension, resolve something?
+ 1. Begins DIRECTLY inside the current situation described above (if provided) — do not re-introduce or recap it, just start in it
+ 2. Reflects their actual personalities and relationship dynamic
+ 3. Includes realistic dialogue with distinct voices for each character
+ 4. Shows their emotional state and how they currently feel about each other
+ 5. References something specific from their current situations or past history if known
+ 6. Results in some outcome — does the interaction bring them closer, create tension, resolve something?
+ 7. The scene_summary must describe the current situation as the backdrop, not as a future or hypothetical event
 
 NON-PHYSICAL ATTRACTION TRAIT DETECTION — for each character, detect if the OTHER character demonstrated:
 - KINDNESS: genuine warmth, empathy, or unprompted care
@@ -312,11 +316,12 @@ Return a JSON object with:
 
       // Create memory of this interaction
       const dialogueText = (response.dialogue || []).map(d => `${d.speaker}: ${d.text}`).join('\n');
+      const situationPrefix = userPrompt ? `Situation: ${userPrompt}\n\n` : '';
       const memoryPromises = [
         base44.entities.Memory.create({
           character_id: character.id,
           title: `Interaction with ${otherChar.name}`,
-          description: `Scene: ${response.scene_summary}\n\nDialogue:\n${dialogueText}\n\nOutcome: ${response.outcome}`,
+          description: `${situationPrefix}Scene: ${response.scene_summary}\n\nDialogue:\n${dialogueText}\n\nOutcome: ${response.outcome}`,
           emotional_impact: response.emotional_shifts?.[character.name] || 'neutral',
           timestamp: new Date().toISOString(),
           source_context: 'character interaction simulation'
