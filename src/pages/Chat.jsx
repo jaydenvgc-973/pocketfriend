@@ -76,35 +76,38 @@ export default function Chat() {
         }
       }
 
-      if (pending.length > 0 && !convoId) {
-        const pm = pending[0];
-        const convo = await base44.entities.Conversation.create({
-          title: `${chatType} with ${character.name}`,
-          type: chatType,
-          character_ids: [characterId],
-        });
-        convoId = convo.id;
-        setConversationId(convoId);
+      if (pending.length > 0) {
+        if (!convoId) {
+          const convo = await base44.entities.Conversation.create({
+            title: `${chatType} with ${character.name}`,
+            type: chatType,
+            character_ids: [characterId],
+          });
+          convoId = convo.id;
+          setConversationId(convoId);
+        }
 
-        await new Promise(r => setTimeout(r, 1200));
+        for (const pm of pending) {
+          await new Promise(r => setTimeout(r, 800));
 
-        const charMsg = await base44.entities.Message.create({
-          conversation_id: convoId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: pm.content,
-          image_url: pm.image_url || undefined,
-          emotional_state: pm.emotional_state || "calm",
-          timestamp: new Date().toISOString(),
-        });
+          const charMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: characterId,
+            character_name: character.name,
+            content: pm.content,
+            image_url: pm.image_url || undefined,
+            emotional_state: pm.emotional_state || "calm",
+            timestamp: new Date().toISOString(),
+          });
 
-        setMessages(prev => [...prev, charMsg]);
-        await base44.entities.PendingMessage.update(pm.id, { delivered: true });
-        await base44.entities.Conversation.update(convoId, {
-          last_message_preview: pm.content.substring(0, 100),
-          last_message_date: new Date().toISOString(),
-        });
+          setMessages(prev => [...prev, charMsg]);
+          await base44.entities.PendingMessage.update(pm.id, { delivered: true });
+          await base44.entities.Conversation.update(convoId, {
+            last_message_preview: pm.content.substring(0, 100),
+            last_message_date: new Date().toISOString(),
+          });
+        }
       }
     };
 
