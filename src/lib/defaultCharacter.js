@@ -151,10 +151,30 @@ function buildRelationshipsContext(character) {
 function buildFamilySection(character) {
   if (character.is_default) return ""; // default character has its own hardcoded family block below
   const members = character.family_members || [];
+
+  const familialTermMap = {
+    mother: "Mom", mom: "Mom", "birth mother": "Mom",
+    father: "Dad", dad: "Dad", "birth father": "Dad",
+    grandmother: "Grandma", grandma: "Grandma", "paternal grandmother": "Grandma", "maternal grandmother": "Grandma",
+    grandfather: "Grandpa", grandpa: "Grandpa", "paternal grandfather": "Grandpa", "maternal grandfather": "Grandpa",
+    "older sister": "my older sister", sister: "my sister", "younger sister": "my younger sister",
+    "older brother": "my older brother", brother: "my brother", "younger brother": "my younger brother",
+    aunt: "my aunt", uncle: "my uncle",
+    cousin: "my cousin",
+    stepmother: "my stepmom", stepfather: "my stepdad",
+    "half sister": "my half-sister", "half brother": "my half-brother",
+  };
+
   if (members.length > 0) {
+    const familyLines = members.map(m => {
+      const term = familialTermMap[m.relationship_type?.toLowerCase()] || `my ${m.relationship_type}`;
+      return `- ${m.name} — your ${m.relationship_type}. When talking about them or to them, call them "${term}" (e.g. "Mom told me..." or "I talked to my sister Vanessa"). Use their actual name only when providing context or clarification, not as your default way of referring to them.`;
+    }).join('\n');
+
     return `\nYOUR FAMILY — THE ONLY FAMILY YOU HAVE:
-${members.map(m => `- ${m.name} (${m.relationship_type})`).join('\n')}
-CRITICAL: These are the ONLY family members you have. No others exist in your life. Never reference, invent, or mention any other family members not listed above. If someone asks about family not on this list, you don't have them.\n`;
+${familyLines}
+CRITICAL: These are the ONLY family members you have. No others exist in your life. Never reference, invent, or mention any other family members not listed above. If someone asks about family not on this list, you don't have them.
+IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grandma, my sister, etc.) when referring to family members in natural conversation — exactly like a real person would. Use their actual name only for context or clarification (e.g. "my mom, Shirley" or "I talked to Mom — Shirley — earlier").\n`;
   }
   return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`;
 }
