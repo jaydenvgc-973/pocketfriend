@@ -454,18 +454,17 @@ export default function Chat() {
     
     // Generate image asynchronously if the character wants to send one
     if (imagePrompt) {
-      // Detect if the image is about the user (not the character)
-      const isAboutUser = /\buser\b|\bme\b|\bmyself\b/i.test(imagePrompt) && !/\b(you|yourself|your|character)\b/i.test(imagePrompt);
-      // Use user's generated avatars (preferred) or reference images if image is about the user
       const userRefImages = currentUser.generated_avatar_urls?.length > 0
         ? currentUser.generated_avatar_urls
         : (currentUser.reference_image_urls || []);
-      const refImages = isAboutUser && userRefImages.length > 0 ? userRefImages : (character.reference_image_urls || []);
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
           messageId: charMsg.id,
           prompt: imagePrompt,
-          referenceImageUrls: refImages
+          characterReferenceImages: character.reference_image_urls || [],
+          userReferenceImages: userRefImages,
+          characterName: character.name,
+          userMessage: text,
         }).catch(() => {});
       }, 500);
     }
