@@ -11,6 +11,7 @@ import BottomNav from "@/components/BottomNav";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import UserPhotoUploader from "@/components/user/UserPhotoUploader";
+import CommonQuestions from "@/components/settings/CommonQuestions";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -273,6 +274,7 @@ export default function Settings() {
             </div>
           </div>
         )}
+        <CommonQuestions />
       </div>
       <div className="pb-28" />
       <BottomNav />
