@@ -595,7 +595,9 @@ Reply with ONLY the single emoji or the word "none".`,
         <Link to="/home" className="text-muted-foreground hover:text-foreground transition-colors">
           <ArrowLeft className="w-5 h-5" />
         </Link>
-        {character && <CharacterAvatar character={character} size="sm" />}
+        <Link to={`/profile/${characterId}`}>
+          {character && <CharacterAvatar character={character} size="sm" />}
+        </Link>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
