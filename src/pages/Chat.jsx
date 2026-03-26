@@ -50,11 +50,10 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character) return;
     const loadConvo = async () => {
-      // Fetch conversations and pending messages in parallel
-      const [convos, pending] = await Promise.all([
-        base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1),
-        base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false }),
-      ]);
+      // Fetch conversations first, then pending messages sequentially to avoid rate limits
+      const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1);
+      await new Promise(r => setTimeout(r, 200));
+      const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
       let convoId = null;
 
       if (convos.length > 0) {
@@ -64,10 +63,11 @@ export default function Chat() {
         setMessages(loadedMsgs);
         setConversationId(convoId);
 
-        // Mark unread messages as read sequentially to avoid rate limits
+        // Mark unread messages as read sequentially with delays to avoid rate limits
         const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
         for (const m of unread) {
           await base44.entities.Message.update(m.id, { is_read: true });
+          await new Promise(r => setTimeout(r, 150));
         }
       }
 
