@@ -250,7 +250,7 @@ export default function Chat() {
        setSendError("Message failed to save. Try again.");
        return;
      }
-    setMessages(prev => [...prev, userMsg]);
+    setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompt, detailReferenceImage = null;
@@ -425,6 +425,7 @@ export default function Chat() {
     setIsTyping(false);
 
     // Create main message with text
+    // Add message optimistically to state immediately (subscription will deduplicate)
     const charMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
@@ -438,6 +439,8 @@ export default function Chat() {
       setSendError("Character response failed to save. Try again.");
       return;
     }
+    // Add directly to state — subscription deduplication will prevent doubles
+    setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
