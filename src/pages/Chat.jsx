@@ -108,6 +108,8 @@ export default function Chat() {
             last_message_date: new Date().toISOString(),
           });
         }
+        // Invalidate pending messages for ALL characters so CharacterCard badges clear immediately
+        queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
       }
     };
 
