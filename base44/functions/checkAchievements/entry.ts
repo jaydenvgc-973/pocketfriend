@@ -136,7 +136,7 @@ Deno.serve(async (req) => {
     }
 
     // Get existing achievements so we don't double-unlock
-    const existing = await base44.asServiceRole.entities.UserAchievement.filter({
+    const existing = await base44.entities.UserAchievement.filter({
       created_by: user.email,
     });
     const existingIds = existing.map(a => a.achievement_id);
@@ -145,7 +145,7 @@ Deno.serve(async (req) => {
 
     const newlyUnlocked = [];
     for (const achievement_id of toUnlock) {
-      const record = await base44.asServiceRole.entities.UserAchievement.create({
+      const record = await base44.entities.UserAchievement.create({
         achievement_id,
         character_id: characterId,
         character_name: characterName || '',

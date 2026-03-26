@@ -105,7 +105,7 @@ Deno.serve(async (req) => {
     const characters = await base44.asServiceRole.entities.Character.filter({ is_default: false });
 
     // Get all existing achievements for this user upfront
-    const existing = await base44.asServiceRole.entities.UserAchievement.filter({ created_by: user.email });
+    const existing = await base44.entities.UserAchievement.filter({ created_by: user.email });
     const existingIds = existing.map(a => a.achievement_id);
 
     const allUnlocked = [];
@@ -128,14 +128,13 @@ Deno.serve(async (req) => {
         }, combinedExisting);
 
         for (const achievement_id of toUnlock) {
-          const record = await base44.asServiceRole.entities.UserAchievement.create({
+          const record = await base44.entities.UserAchievement.create({
             achievement_id,
             character_id: character.id,
             character_name: character.name || '',
             unlocked_at: new Date().toISOString(),
             tier: 'bronze',
             is_seen: false,
-            created_by: user.email,
           });
           unlockedForChar.push(achievement_id);
           existingIds.push(achievement_id); // globally prevent re-unlocking same achievement
