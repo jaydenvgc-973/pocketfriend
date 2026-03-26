@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -198,12 +198,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   </span>
                 )}
               </div>
-              {!isMovedAway && (
-                <div className="flex items-center gap-1.5">
-                  <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
-                  <span className="text-xs text-muted-foreground">{stateLabels[state] || state}</span>
-                </div>
-              )}
+              {!isMovedAway && (() => {
+                const hour = new Date().getHours();
+                const asleep = hour >= 23 || hour < 7;
+                return asleep ? (
+                  <div className="flex items-center gap-1.5">
+                    <Moon className="w-3 h-3 text-blue-300" />
+                    <span className="text-xs text-blue-300">sleeping</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
+                    <span className="text-xs text-muted-foreground">{stateLabels[state] || state}</span>
+                  </div>
+                );
+              })()}
             </div>
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{character.personality_summary}</p>
           </div>
