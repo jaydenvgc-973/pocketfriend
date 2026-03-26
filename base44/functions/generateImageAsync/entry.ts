@@ -14,33 +14,44 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
 
-    // Detect if the image request is about the user based on the original user message
-    // Look for patterns like "send me a pic of me", "take a photo of me", "picture of myself", etc.
     const userMsg = (userMessage || "").toLowerCase();
-    const isAboutUser =
-      /\b(pic|picture|photo|image|selfie|shot)\b.*(of me|of myself|with me)\b/i.test(userMsg) ||
-      /\b(send me|show me)\b.*(me|myself)\b/i.test(userMsg) ||
-      /\bpicture of me\b|\bphoto of me\b|\bpic of me\b|\bselfie with me\b/i.test(userMsg) ||
-      /\bme in\b|\bme at\b|\bme with\b/i.test(userMsg);
+    const promptLower = (prompt || "").toLowerCase();
 
-    // Choose the right reference images
     const hasUserImages = userReferenceImages && userReferenceImages.length > 0;
     const hasCharacterImages = characterReferenceImages && characterReferenceImages.length > 0;
+
+    // Detect if the image includes BOTH the character and the user together
+    const isJointPhoto =
+      /\b(us|together|both|with (you|me|each other)|the two of us|selfie with)\b/i.test(userMsg) ||
+      /\b(us|together|both|with (you|me|each other)|the two of us)\b/i.test(promptLower) ||
+      (/\bwith\b/i.test(promptLower) && /\b(me|user)\b/i.test(promptLower));
+
+    // Detect if the image is solely about the user
+    const isAboutUser =
+      !isJointPhoto && (
+        /\b(pic|picture|photo|image|selfie|shot)\b.*(of me|of myself|with me)\b/i.test(userMsg) ||
+        /\b(send me|show me)\b.*(me|myself)\b/i.test(userMsg) ||
+        /\bpicture of me\b|\bphoto of me\b|\bpic of me\b|\bselfie with me\b/i.test(userMsg) ||
+        /\bme in\b|\bme at\b|\bme with\b/i.test(userMsg)
+      );
 
     let referenceImages;
     let enhancedPrompt = prompt;
 
-    if (isAboutUser && hasUserImages) {
-      // Use user's reference images — the subject of the photo is the user
+    if (isJointPhoto && hasUserImages && hasCharacterImages) {
+      // Combine both sets — character images first, then user images
+      referenceImages = [...characterReferenceImages.slice(0, 2), ...userReferenceImages.slice(0, 2)];
+      enhancedPrompt = `${prompt}\n\nCRITICAL: This photo features BOTH ${characterName} AND the user together. The first reference images are of ${characterName} — replicate their exact face and appearance. The remaining reference images are of the USER — replicate their exact face, features, skin tone, and appearance with pristine accuracy. Both people must look like their respective reference images. Render the user's appearance faithfully and with high fidelity.`;
+    } else if (isAboutUser && hasUserImages) {
+      // User is the sole subject
       referenceImages = userReferenceImages.slice(0, 3);
-      enhancedPrompt = `${prompt}\n\nCRITICAL: The subject of this photo is the USER (not ${characterName}). Use the provided reference images to replicate their exact face, features, and appearance. This must look like a real photo of the person in the reference images.`;
-    } else if (!isAboutUser && hasCharacterImages) {
-      // Use character's reference images
+      enhancedPrompt = `${prompt}\n\nCRITICAL: The subject of this photo is the USER (not ${characterName}). Use the provided reference images to replicate their exact face, features, and appearance with pristine accuracy. This must look like a real photo of the person in the reference images.`;
+    } else if (hasCharacterImages) {
+      // Character is the sole subject
       referenceImages = characterReferenceImages.slice(0, 3);
       enhancedPrompt = `${prompt}\n\nCRITICAL: The subject of this photo is ${characterName}. Use the provided reference images to replicate their exact face, features, and appearance. This must look like a real photo of the person in the reference images.`;
     } else {
-      // No matching reference images available
-      referenceImages = hasCharacterImages ? characterReferenceImages.slice(0, 3) : undefined;
+      referenceImages = undefined;
     }
 
     const response = await base44.integrations.Core.GenerateImage({
