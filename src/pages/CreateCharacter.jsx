@@ -318,7 +318,7 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
         ? ` IMPORTANT: The creator also wrote this about them directly — incorporate this and let it shape the result: "${data.personality_override}"`
         : "";
 
-      const [personality, generatedMemories] = await Promise.all([
+      const [personality, generatedMemories, sleepSchedule] = await Promise.all([
         base44.integrations.Core.InvokeLLM({
           prompt: `Create a personality summary (2-3 sentences, raw and real, written about this person in third person) for: ${charProfile}.${personalityOverrideNote} Make it feel like a real person, not a description. No flowery language.`
         }),
@@ -355,6 +355,22 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
                   }
                 }
               }
+            }
+          }
+        }),
+        base44.integrations.Core.InvokeLLM({
+          prompt: `Given this character's lifestyle and job, determine their realistic sleep schedule.
+
+CHARACTER: ${charProfile}
+
+Consider their job type, social energy, age, and lifestyle. A bartender working nights would sleep ~3:00-11:00. A nurse on day shift might sleep 22:00-06:00. A college student might sleep 02:00-10:00. A retiree might sleep 21:30-05:30. A night owl creative might sleep 01:30-09:30.
+
+Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hour format.`,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              sleep_start_time: { type: "string" },
+              wake_up_time: { type: "string" }
             }
           }
         })
@@ -410,6 +426,8 @@ Return ONLY a JSON object with a "memories" array. Each memory object: { title, 
         romantic_level: data.romantic_level,
         attraction_level: data.attraction_level,
         chosen_family_level: data.chosen_family_level,
+        sleep_start_time: sleepSchedule?.sleep_start_time || "23:00",
+        wake_up_time: sleepSchedule?.wake_up_time || "07:00",
         status: "active",
         is_finalized: true,
       };

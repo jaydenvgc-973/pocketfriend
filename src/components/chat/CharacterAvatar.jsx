@@ -1,4 +1,5 @@
 import { Moon } from "lucide-react";
+import { isCharacterAsleep } from "@/lib/sleepUtils";
 
 const stateRings = {
   calm: "ring-emerald-500/40",
@@ -78,13 +79,8 @@ const stateRings = {
   apathy: "ring-stone-400/40"
 };
 
-function isCharacterAsleep() {
-  const hour = new Date().getHours();
-  return hour >= 23 || hour < 7;
-}
-
 export default function CharacterAvatar({ character, size = "md" }) {
-  const asleep = isCharacterAsleep();
+  const asleep = isCharacterAsleep(character);
   const sizeClasses = {
     sm: "w-8 h-8 text-xs",
     md: "w-10 h-10 text-sm",

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon } from "lucide-react";
+import { isCharacterAsleep } from "@/lib/sleepUtils";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -199,8 +200,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 )}
               </div>
               {!isMovedAway && (() => {
-                const hour = new Date().getHours();
-                const asleep = hour >= 23 || hour < 7;
+                const asleep = isCharacterAsleep(character);
                 return asleep ? (
                   <div className="flex items-center gap-1.5">
                     <Moon className="w-3 h-3 text-blue-300" />
