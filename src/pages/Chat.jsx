@@ -562,6 +562,15 @@ Reply with ONLY the single emoji or the word "none".`,
       characterId,
       characterName: character.name,
       userMessage: text,
+      characterState: {
+        health_status: character.health_status,
+        current_education_activity: character.current_education_activity,
+        future_life_goals: character.future_life_goals,
+        emotional_state: character.emotional_state,
+        friendship_level: character.friendship_level,
+        romantic_level: character.romantic_level,
+        chosen_family_level: character.chosen_family_level,
+      },
     }).catch(() => {});
 
     base44.functions.invoke("updateRelationshipLevels", {
