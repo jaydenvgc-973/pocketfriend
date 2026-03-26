@@ -363,7 +363,7 @@ export default function Chat() {
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Optional: A vivid description of an image you want to send, or omit this field if no image"\n}\n\n${character.is_photogenic ? "BONUS TRAIT: You LOVE being photographed and sending pics. Include image prompts often when it feels natural." : ""}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${modeInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Optional: A vivid description of an image you want to send, or omit this field if no image"\n}\n\nCRITICAL IMAGE RULES:\n- If the user asks for a picture of "me", "myself", or "of the user" — the image_prompt must describe THE USER, not you. Generate an image of the person the user represents.\n- If the user asks for a picture of "you", "yourself", or your name — then the image_prompt should describe you, ${character.name}.\n- Never confuse who "me" refers to. "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.\n\n${character.is_photogenic ? "BONUS TRAIT: You LOVE being photographed and sending pics. Include image prompts often when it feels natural." : ""}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
@@ -449,11 +449,17 @@ export default function Chat() {
     
     // Generate image asynchronously if the character wants to send one
     if (imagePrompt) {
+      // Detect if the image is about the user (not the character)
+      const isAboutUser = /\buser\b|\bme\b|\bmyself\b/i.test(imagePrompt) && !/\b(you|yourself|your|character)\b/i.test(imagePrompt);
+      const userSettings0 = settings?.[0] || {};
+      // Use user's reference images if available and image is about the user
+      const userRefImages = userSettings0.reference_image_urls || [];
+      const refImages = isAboutUser && userRefImages.length > 0 ? userRefImages : (character.reference_image_urls || []);
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
           messageId: charMsg.id,
           prompt: imagePrompt,
-          referenceImageUrls: character.reference_image_urls || []
+          referenceImageUrls: refImages
         }).catch(() => {});
       }, 500);
     }
