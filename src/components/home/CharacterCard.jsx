@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home } from "lucide-react";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -50,6 +50,13 @@ const stateDots = {
   overwhelmed: "bg-rose-500",
   content: "bg-teal-400",
   frustrated: "bg-red-600"
+};
+
+const activityIcons = {
+  work: { icon: Briefcase, label: "at work", color: "text-blue-400" },
+  school: { icon: BookOpen, label: "at school", color: "text-amber-400" },
+  out: { icon: MapPin, label: "out", color: "text-emerald-400" },
+  home: { icon: Home, label: "home", color: "text-pink-400" }
 };
 
 export default function CharacterCard({ character, onDelete, onMoveAway }) {
@@ -201,17 +208,32 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               </div>
               {!isMovedAway && (() => {
                 const asleep = isCharacterAsleep(character);
-                return asleep ? (
-                  <div className="flex items-center gap-1.5">
-                    <Moon className="w-3 h-3 text-blue-300" />
-                    <span className="text-xs text-blue-300">sleeping</span>
-                  </div>
-                ) : (
-                  <div className="flex items-center gap-1.5">
-                    <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
-                    <span className="text-xs text-muted-foreground">{stateLabels[state] || state}</span>
-                  </div>
-                );
+                const activity = character.current_activity?.toLowerCase().trim();
+                const activityKey = activity ? Object.keys(activityIcons).find(key => activity.includes(key)) : null;
+                
+                if (asleep) {
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <Moon className="w-3 h-3 text-blue-300" />
+                      <span className="text-xs text-blue-300">sleeping</span>
+                    </div>
+                  );
+                } else if (activityKey) {
+                  const ActivityIcon = activityIcons[activityKey].icon;
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <ActivityIcon className={`w-3 h-3 ${activityIcons[activityKey].color}`} />
+                      <span className={`text-xs ${activityIcons[activityKey].color}`}>{activityIcons[activityKey].label}</span>
+                    </div>
+                  );
+                } else {
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
+                      <span className="text-xs text-muted-foreground">{stateLabels[state] || state}</span>
+                    </div>
+                  );
+                }
               })()}
             </div>
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{character.personality_summary}</p>
