@@ -1,0 +1,627 @@
+{
+  "name": "Character",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Character display name"
+    },
+    "nickname_for_user": {
+      "type": "string",
+      "description": "The name this character uses when referring to or addressing the user. Overrides the user's fictional_world_name if set."
+    },
+    "is_default": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_finalized": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once character creation is complete. Fields are locked."
+    },
+    "is_photogenic": {
+      "type": "boolean",
+      "default": false,
+      "description": "Bonus trait: Character loves being photographed, acts as selfie royalty, and sends more images."
+    },
+    "lives_alone": {
+      "type": "boolean",
+      "description": "True if the character lives alone, influencing clothing choices at home.",
+      "default": false
+    },
+    "birthday": {
+      "type": "string",
+      "format": "date",
+      "description": "Character's birthday (YYYY-MM-DD)"
+    },
+    "zodiac_sign": {
+      "type": "string",
+      "description": "Character's zodiac sign, derived from birthday"
+    },
+    "sleep_start_time": {
+      "type": "string",
+      "description": "Time this character typically goes to sleep (HH:MM, 24h format). e.g. '23:00' or '02:30' for a night owl."
+    },
+    "wake_up_time": {
+      "type": "string",
+      "description": "Time this character typically wakes up (HH:MM, 24h format). e.g. '07:00' or '11:00' for someone who sleeps in."
+    },
+    "current_activity": {
+      "type": "string",
+      "description": "What the character is currently doing (e.g. 'showering', 'swimming', 'at work', 'sleeping'). If blank, character is available to respond. Blocking activities (shower, swimming, bathroom, sick) prevent text responses."
+    },
+    "weather_summary": {
+      "type": "string",
+      "description": "Current day's weather for the character's location, e.g. 'light rain, 58\u00b0F (feels like 54\u00b0F), humidity 80%, wind 12 mph'. Fetched daily at 5am."
+    },
+    "weather_last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the weather_summary was last refreshed."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "moved_away",
+        "deleted"
+      ],
+      "default": "active"
+    },
+    "avatar_url": {
+      "type": "string"
+    },
+    "reference_image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fictional_entity_images": {
+      "type": "object",
+      "description": "Stores generated images for fictional entities (NPCs/family members) to ensure consistency across conversations.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "scene_images": {
+      "type": "object",
+      "description": "Stores reference images for recurring locations (e.g. bedroom, kitchen, workplace) so the same place always looks the same across photos.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "appearance_notes": {
+      "type": "string",
+      "description": "Current physical appearance details: hair length/style, facial hair, tattoos, piercings, etc. Updated when character makes appearance changes."
+    },
+    "gender": {
+      "type": "string",
+      "enum": [
+        "male",
+        "female",
+        "non-binary",
+        "other"
+      ]
+    },
+    "age_range": {
+      "type": "string",
+      "description": "Age range selected at creation. E.g. 'Early 20s', 'Mid 30s'."
+    },
+    "ethnicities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Cultural/ethnic backgrounds selected at creation."
+    },
+    "city": {
+      "type": "string",
+      "description": "City where the character lives."
+    },
+    "state": {
+      "type": "string",
+      "description": "State where the character lives."
+    },
+    "archetype": {
+      "type": "string"
+    },
+    "social_energy": {
+      "type": "string",
+      "enum": [
+        "introvert",
+        "mostly_introvert",
+        "ambivert",
+        "mostly_extrovert",
+        "extrovert"
+      ]
+    },
+    "sexual_orientation": {
+      "type": "string"
+    },
+    "personality_summary": {
+      "type": "string"
+    },
+    "personality_traits": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "communication_style": {
+      "type": "string"
+    },
+    "emotional_triggers_high": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "emotional_triggers_medium": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "emotional_triggers_deep": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "background_story": {
+      "type": "string"
+    },
+    "current_situation": {
+      "type": "string"
+    },
+    "family_history": {
+      "type": "string"
+    },
+    "family_members": {
+      "type": "array",
+      "description": "List of family members with their relationship type",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "relationship_type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "loyalty_view": {
+      "type": "string"
+    },
+    "upset_reaction": {
+      "type": "string"
+    },
+    "emotional_baggage": {
+      "type": "string"
+    },
+    "emotional_state": {
+      "type": "string",
+      "enum": [
+        "calm",
+        "irritated",
+        "defensive",
+        "reflective",
+        "closed-off",
+        "flirtatious",
+        "bored",
+        "burnt out",
+        "joyful",
+        "anxious",
+        "sad",
+        "excited",
+        "overwhelmed",
+        "content",
+        "frustrated",
+        "joy",
+        "happiness",
+        "contentment",
+        "excitement",
+        "elation",
+        "hope",
+        "relief",
+        "gratitude",
+        "love",
+        "affection",
+        "compassion",
+        "empathy",
+        "pride",
+        "confidence",
+        "peacefulness",
+        "satisfaction",
+        "curiosity",
+        "interest",
+        "amusement",
+        "surprise",
+        "awe",
+        "anticipation",
+        "nostalgia",
+        "longing",
+        "desire",
+        "passion",
+        "infatuation",
+        "tenderness",
+        "vulnerability",
+        "trust",
+        "security",
+        "belonging",
+        "acceptance",
+        "patience",
+        "annoyance",
+        "irritation",
+        "anger",
+        "rage",
+        "resentment",
+        "jealousy",
+        "envy",
+        "insecurity",
+        "doubt",
+        "confusion",
+        "stress",
+        "fear",
+        "panic",
+        "worry",
+        "guilt",
+        "shame",
+        "embarrassment",
+        "regret",
+        "disappointment",
+        "grief",
+        "loneliness",
+        "hopelessness",
+        "despair",
+        "detachment",
+        "numbness",
+        "apathy"
+      ],
+      "default": "calm"
+    },
+    "health_status": {
+      "type": "string"
+    },
+    "health_habits": {
+      "type": "string"
+    },
+    "criminal_record": {
+      "type": "string",
+      "description": "Details about criminal history, if any. Leave blank for no record."
+    },
+    "system_prompt": {
+      "type": "string"
+    },
+    "work_details": {
+      "type": "object",
+      "properties": {
+        "job_title": {
+          "type": "string"
+        },
+        "workplace_type": {
+          "type": "string"
+        },
+        "work_environment": {
+          "type": "string"
+        },
+        "coworker_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "frequented_places": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "fictional_relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "person_name": {
+            "type": "string"
+          },
+          "related_character_id": {
+            "type": "string"
+          },
+          "relationship_type": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "current_status": {
+            "type": "string"
+          },
+          "emotional_impact": {
+            "type": "string"
+          },
+          "last_interaction_summary": {
+            "type": "string"
+          },
+          "history_summary": {
+            "type": "string"
+          },
+          "user_respect_level": {
+            "type": "number",
+            "default": 50
+          },
+          "friendship_level": {
+            "type": "number",
+            "default": 75
+          },
+          "romantic_level": {
+            "type": "number",
+            "default": 0
+          },
+          "attraction_level": {
+            "type": "number",
+            "default": 0
+          },
+          "chosen_family_level": {
+            "type": "number",
+            "default": 0
+          }
+        }
+      }
+    },
+    "transient_encounters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "emotional_reaction": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "current_life_event": {
+      "type": "string"
+    },
+    "life_last_updated": {
+      "type": "string"
+    },
+    "departed_characters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "cause": {
+            "type": "string"
+          },
+          "relationship_closeness": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "triggered_milestones": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    },
+    "current_education_activity": {
+      "type": "string",
+      "default": "none"
+    },
+    "education_start_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "education_expected_completion_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "education_details": {
+      "type": "object",
+      "properties": {
+        "course_name": {
+          "type": "string"
+        },
+        "institution": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "duration_days": {
+          "type": "number"
+        }
+      }
+    },
+    "current_job_training_activity": {
+      "type": "string",
+      "default": "none"
+    },
+    "job_training_start_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "job_training_expected_completion_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "job_training_details": {
+      "type": "object",
+      "properties": {
+        "training_name": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "position_title": {
+          "type": "string"
+        },
+        "duration_days": {
+          "type": "number"
+        }
+      }
+    },
+    "completed_education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "course_name": {
+            "type": "string"
+          },
+          "institution": {
+            "type": "string"
+          },
+          "completion_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "completed_job_training": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "training_name": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "position_title": {
+            "type": "string"
+          },
+          "completion_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "songs_heard": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "spotify_id": {
+            "type": "string"
+          },
+          "lyrics_excerpt": {
+            "type": "string"
+          },
+          "full_lyrics": {
+            "type": "string"
+          },
+          "added_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "future_life_goals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "personal_development",
+              "health_wellness",
+              "career_financial",
+              "relationships_family",
+              "adventure_travel",
+              "giving_back_spiritual"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "achieved",
+              "on_hold",
+              "abandoned"
+            ],
+            "default": "active"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "default": "medium"
+          },
+          "details": {
+            "type": "string"
+          },
+          "revealed_to_user": {
+            "type": "boolean",
+            "default": false
+          },
+          "achieved_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "user_respect_level": {
+      "type": "number",
+      "default": 50
+    },
+    "friendship_level": {
+      "type": "number",
+      "default": 75
+    },
+    "romantic_level": {
+      "type": "number",
+      "default": 0
+    },
+    "attraction_level": {
+      "type": "number",
+      "default": 0
+    },
+    "chosen_family_level": {
+      "type": "number",
+      "default": 0
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

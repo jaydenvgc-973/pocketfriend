@@ -1,5 +1,19 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+const BLOCKING_ACTIVITIES = ['showering', 'shower', 'swimming', 'swim', 'bathroom', 'sick', 'nausea', 'throwing up', 'vomiting', 'sleeping', 'sleep'];
+const DAILY_MESSAGE_LIMIT = 3;
+
+function isCharacterBlocked(character) {
+  if (!character.current_activity) return false;
+  const activity = character.current_activity.toLowerCase();
+  return BLOCKING_ACTIVITIES.some(blocked => activity.includes(blocked));
+}
+
+function getDateKey() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')}`;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -30,7 +44,34 @@ Deno.serve(async (req) => {
       100
     );
 
+    const today = getDateKey();
+    const messageCountToday = {};
+
+    for (const char of convoCharacters) {
+      messageCountToday[char.id] = 0;
+    }
+
+    messages.forEach(msg => {
+      if (msg.sender_type === 'character' && msg.timestamp) {
+        const msgDate = new Date(msg.timestamp);
+        const msgDateKey = `${msgDate.getUTCFullYear()}-${String(msgDate.getUTCMonth() + 1).padStart(2, '0')}-${String(msgDate.getUTCDate()).padStart(2, '0')}`;
+        if (msgDateKey === today) {
+          messageCountToday[msg.character_id] = (messageCountToday[msg.character_id] || 0) + 1;
+        }
+      }
+    });
+
     for (const character of convoCharacters) {
+      // Skip if character is blocked by activity
+      if (isCharacterBlocked(character)) {
+        continue;
+      }
+
+      // Skip if character hit daily message limit
+      if (messageCountToday[character.id] >= DAILY_MESSAGE_LIMIT) {
+        continue;
+      }
+
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
       const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
       const delayMs = isUncomfortable
@@ -85,6 +126,8 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
         emotional_state: character.emotional_state || 'calm',
         timestamp: new Date().toISOString(),
       });
+
+      messageCountToday[character.id]++;
     }
 
     await base44.entities.Conversation.update(conversation.id, {
