@@ -186,6 +186,32 @@ export const ACHIEVEMENTS = {
     howToUnlock: "When a tense situation arises, choose to escalate it rather than calm things down. Add fuel to the fire — say the thing that makes it worse — and watch what happens.",
   },
 
+  // Care / Support
+  first_responder: {
+    id: "first_responder",
+    emoji: "🚑❤️",
+    title: "First Responder",
+    description: "You showed up when it really counted",
+    category: "care",
+    howToUnlock: "Actively support a character through a serious personal crisis — arrange help, contact their loved ones, and check in on them while they're going through it. This one isn't given lightly.",
+  },
+  bedside_manner: {
+    id: "bedside_manner",
+    emoji: "🏥🤍",
+    title: "Bedside Manner",
+    description: "You stayed through a character's health scare",
+    category: "care",
+    howToUnlock: "Be present and engaged while a character deals with a medical situation or health crisis. Check in on them, show concern, and don't disappear when things get heavy.",
+  },
+  the_call_nobody_wanted: {
+    id: "the_call_nobody_wanted",
+    emoji: "📞😰",
+    title: "The Call Nobody Wanted",
+    description: "You made a hard call so they didn't have to",
+    category: "care",
+    howToUnlock: "Step in and contact someone on a character's behalf during a crisis — their family, their partner, or someone important to them. The uncomfortable call that had to happen.",
+  },
+
   // Engagement
   still_here: {
     id: "still_here",
@@ -241,6 +267,7 @@ export const CATEGORY_LABELS = {
   moments: { label: "Life Moments", emoji: "📸" },
   drama: { label: "Drama / Chaos", emoji: "🔥" },
   engagement: { label: "Engagement", emoji: "⏳" },
+  care: { label: "Care / Support", emoji: "🤍" },
 };
 
 export const TIER_STYLES = {
