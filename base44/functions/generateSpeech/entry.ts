@@ -93,7 +93,12 @@ Deno.serve(async (req) => {
     }
     
     // Convert to base64 for transmission
-    const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioData)));
+    const audioArray = new Uint8Array(audioData);
+    let binaryString = '';
+    for (let i = 0; i < audioArray.length; i += 8192) {
+      binaryString += String.fromCharCode(...audioArray.slice(i, i + 8192));
+    }
+    const audioBase64 = btoa(binaryString);
     const audioDataUrl = `data:audio/mpeg;base64,${audioBase64}`;
     
     // Calculate approximate duration (rough: ~150 words per minute)
