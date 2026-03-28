@@ -40,6 +40,7 @@ export default function Chat() {
   const [showWorldContacts, setShowWorldContacts] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
+  const lastMessageTimeRef = useRef(0);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -493,6 +494,15 @@ export default function Chat() {
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
+
+    // Rate limit: prevent sending more than 1 message per 3 seconds to avoid rate limit errors
+    const now = Date.now();
+    const timeSinceLastMessage = now - lastMessageTimeRef.current;
+    if (timeSinceLastMessage < 3000) {
+      setSendError("Please wait a moment before sending another message.");
+      return;
+    }
+    lastMessageTimeRef.current = now;
 
     // Fix: command — treat as admin backend directive, do NOT store or process as chat
     if (text.trim().toLowerCase().startsWith("fix:")) {
