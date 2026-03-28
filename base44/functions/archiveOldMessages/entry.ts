@@ -50,22 +50,14 @@ Deno.serve(async (req) => {
       1000
     );
 
-    if (!allMessages || allMessages.length <= keepCount) {
-      return Response.json({ 
-        success: true, 
-        archived: 0,
-        message: `Conversation has ${allMessages?.length || 0} messages, keeping ${keepCount}. No archival needed.`
-      });
-    }
-
-    // Only archive messages that are at least 24 hours old AND beyond keepCount
-    // This prevents new messages from being immediately archived
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // CRITICAL: Only archive messages older than 7 days
+    // Do NOT archive by position — this prevents new messages from being immediately archived
+    // New messages must stay visible and in memory, regardless of count
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
-    let messagesToArchive = allMessages.filter(m => 
+    const messagesToArchive = allMessages.filter(m => 
       !m.archived_date && 
-      m.created_date < oneDayAgo && 
-      allMessages.indexOf(m) >= keepCount
+      m.created_date < sevenDaysAgo
     );
 
     if (notYetArchived.length === 0) {

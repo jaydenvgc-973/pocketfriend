@@ -261,19 +261,9 @@ export default function Chat() {
         }
 
         // Archive old messages & extract memories (non-blocking, delayed)
-        // Protected characters keep more archived buffer (50 vs 30)
         if (convoId) {
           setTimeout(async () => {
-            const settings = await base44.entities.UserSettings.filter(
-              { created_by: currentUser.email },
-              "-created_date",
-              1
-            ).then(arr => arr?.[0]) || {};
-            
-            const isProtected = (settings.protected_character_ids || []).includes(characterId);
-            const keepCount = isProtected ? 50 : 30;
-            
-            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: keepCount, isProtected }).catch(() => {});
+            base44.functions.invoke('archiveOldMessages', { conversationId: convoId }).catch(() => {});
             base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
           }, 3000);
         }
@@ -1110,10 +1100,6 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
 
-    // CRITICAL: Do NOT invalidate message queries
-    // Subscription handles all message updates in real-time
-    // Query invalidation would fetch stale data and overwrite newly delivered messages
-
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
       setTimeout(async () => {
@@ -1206,9 +1192,9 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
-    // Invalidate character to update relationships/emotions (NOT messages)
-    // Subscription will handle message updates, not query invalidation
-    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+    // Do not invalidate character query — relationships are updated but messages must stay stable
+    // Only refresh character data if explicitly needed, not after every send
+    // queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     // Update conversation metadata
     await base44.entities.Conversation.update(convoId, {
