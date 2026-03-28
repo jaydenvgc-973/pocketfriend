@@ -56,7 +56,10 @@ Deno.serve(async (req) => {
     // Use LLM to identify key moments to preserve as character memories
     const memoriesToCreate = [];
     
-    for (const msg of archivedMessages.slice(0, 5)) {
+    // Protected characters: extract more memories (up to 20 instead of 5 archived messages)
+    const memoriesToExtract = isProtected ? archivedMessages.slice(0, 20) : archivedMessages.slice(0, 5);
+
+    for (const msg of memoriesToExtract) {
       // Only store significant character messages as memories
       if (msg.sender_type === 'character' && msg.content && !msg.is_narrative) {
         memoriesToCreate.push({
@@ -65,16 +68,12 @@ Deno.serve(async (req) => {
           description: msg.content.substring(0, 200),
           emotional_impact: msg.emotional_state || 'neutral',
           timestamp: msg.timestamp,
-          source_context: `archived_message_${msg.id}`,
-          is_protected: isProtected // Mark memories of protected characters
+          source_context: `archived_message_${msg.id}`
         });
       }
     }
 
     // Create memory records for significant moments
-    // Protected characters: extract more memories (up to 20 instead of 5 archived messages)
-    const memoriesToExtract = isProtected ? archivedMessages.slice(0, 20) : archivedMessages.slice(0, 5);
-    
     let createdCount = 0;
     for (const memData of memoriesToCreate) {
       try {

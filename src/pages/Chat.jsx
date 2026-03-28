@@ -499,8 +499,10 @@ export default function Chat() {
       return;
     }
     console.log(`[Chat] USER MESSAGE SAVED: ${userMsg.id.substring(0, 8)} | "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+    console.log(`[Chat] USER MESSAGE — RENDERED immediately in UI`);
     // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
+    console.log(`[Chat] USER MESSAGE — STATE UPDATED, message count: ${(prev => [...prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]]).length}`);
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
@@ -903,8 +905,18 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
        // Message is delivered and visible immediately
        setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
-       // Voice generation happens AFTER message delivery (fire-and-forget)
+       // PHASE 3: Commit message to memory (fire-and-forget, non-blocking)
        const textMsgId = primaryCharMsg.id;
+       setTimeout(() => {
+         base44.functions.invoke('commitMessageToMemory', {
+           messageId: textMsgId,
+           characterId,
+           content: responseText,
+           conversationId: convoId
+         }).catch(() => {});
+       }, 100);
+
+       // Voice generation happens AFTER message delivery (fire-and-forget)
        setTimeout(() => {
          generateAndPlayVoice(textMsgId, responseText, character, userSettings);
        }, 300);
@@ -1006,8 +1018,18 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
        // Message delivered and visible immediately
        setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
-       // Voice generation happens AFTER message is safe (fire-and-forget)
+       // PHASE 3: Commit message to memory (fire-and-forget, non-blocking)
        const textMsgId = primaryCharMsg.id;
+       setTimeout(() => {
+         base44.functions.invoke('commitMessageToMemory', {
+           messageId: textMsgId,
+           characterId,
+           content: responseText,
+           conversationId: convoId
+         }).catch(() => {});
+       }, 100);
+
+       // Voice generation happens AFTER message is safe (fire-and-forget)
        setTimeout(() => {
          generateAndPlayVoice(textMsgId, responseText, character, userSettings);
        }, 300);
@@ -1187,7 +1209,8 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
-    // Invalidate character query to update relationships/emotions
+    // PHASE 3: Invalidate character query ONLY for relationship/emotion updates, NOT for message state
+    // This prevents stale data from polluting message visibility
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     // Update conversation metadata
@@ -1251,8 +1274,8 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
-        {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterName={character?.name} />}
-        <AnimatePresence>
+         {/* ArchiveNotice hidden until Phase 4: Message Limit reintroduction */}
+         <AnimatePresence>
           {messages.map(msg => (
             <MessageBubble 
               key={msg.id} 
