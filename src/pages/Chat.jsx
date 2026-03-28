@@ -495,15 +495,6 @@ export default function Chat() {
     if (!character) return;
     setSendError(null);
 
-    // Rate limit: prevent sending more than 1 message per 1 second to avoid rate limit errors
-    const now = Date.now();
-    const timeSinceLastMessage = now - lastMessageTimeRef.current;
-    if (timeSinceLastMessage < 1000) {
-      setSendError("Please wait a moment before sending another message.");
-      return;
-    }
-    lastMessageTimeRef.current = now;
-
     // Fix: command — treat as admin backend directive, do NOT store or process as chat
     if (text.trim().toLowerCase().startsWith("fix:")) {
       const directive = text.trim().slice(4).trim();
