@@ -26,6 +26,7 @@ const RELATIONSHIP_TYPES = [
   "nephew",
   "daughter",
   "son",
+  "spouse",
   "other",
 ];
 

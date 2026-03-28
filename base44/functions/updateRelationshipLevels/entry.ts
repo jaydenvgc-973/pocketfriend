@@ -89,14 +89,31 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, userMessage, characterReply, recentMessages, emojiReaction, reactedMessageContent, reactedMessageSenderType } = await req.json();
+    const { characterId, userMessage, characterReply, recentMessages, emojiReaction, reactedMessageContent, reactedMessageSenderType, playingAsCharacterId } = await req.json();
     if (!characterId) return Response.json({ error: 'Missing required fields' }, { status: 400 });
     if (!userMessage && !emojiReaction) return Response.json({ error: 'Missing required fields' }, { status: 400 });
 
     const character = await base44.asServiceRole.entities.Character.get(characterId);
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
 
-    const current = {
+    // If the user is playing as another character, use that character's relationship entry
+    let playingAsCharacter = null;
+    let charRelEntry = null; // the fictional_relationships entry on `character` for the playing-as character
+    if (playingAsCharacterId) {
+      playingAsCharacter = await base44.asServiceRole.entities.Character.get(playingAsCharacterId);
+      if (playingAsCharacter) {
+        charRelEntry = (character.fictional_relationships || []).find(r => r.related_character_id === playingAsCharacterId) || null;
+      }
+    }
+
+    // Current levels: use the fictional_relationship entry if playing as a character, else use top-level user levels
+    const current = charRelEntry ? {
+      user_respect_level: charRelEntry.user_respect_level ?? 50,
+      friendship_level: charRelEntry.friendship_level ?? 75,
+      romantic_level: charRelEntry.romantic_level ?? 0,
+      attraction_level: charRelEntry.attraction_level ?? 0,
+      chosen_family_level: charRelEntry.chosen_family_level ?? 0,
+    } : {
       user_respect_level: character.user_respect_level ?? 50,
       friendship_level: character.friendship_level ?? 75,
       romantic_level: character.romantic_level ?? 0,
@@ -104,14 +121,15 @@ Deno.serve(async (req) => {
       chosen_family_level: character.chosen_family_level ?? 0,
     };
 
+    const senderLabel = playingAsCharacter ? playingAsCharacter.name : 'User';
     const conversationSummary = (recentMessages || [])
       .slice(-10)
-      .map(m => `${m.sender_type === 'user' ? 'User' : character.name}: ${m.content}`)
+      .map(m => `${m.sender_type === 'user' ? senderLabel : character.name}: ${m.content}`)
       .join('\n');
 
     let interactionSection = '';
     if (emojiReaction) {
-      const senderLabel = reactedMessageSenderType === 'user' ? 'the User' : `${character.name} (the character)`;
+      const senderLabel = reactedMessageSenderType === 'user' ? (playingAsCharacter ? playingAsCharacter.name : 'the User') : `${character.name} (the character)`;
       interactionSection = `
 EMOJI REACTION EVENT:
 The user reacted with "${emojiReaction}" to a message sent by ${senderLabel}.
@@ -148,11 +166,15 @@ WORLD CONTEXT (the real world these characters live in — use this to inform ho
 The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializing, gaming), works 3.5–8 hours, does ~2 hours of chores, and checks their phone ~58 times/day. About 24% work remotely. 74% of high school seniors aspire to college but only ~61% enroll. Cost is the #1 barrier. ~1 in 5 Americans has an STI at any given time; ages 15–24 account for half of new STIs. The U.S. incarcerates over 2 million people; rights exist on paper but enforcement is inconsistent; innocent Black people are 7x more likely to be wrongly convicted of murder. Religion functions as a coping mechanism especially under systemic stress — people stay for meaning, community, and moral grounding; people leave due to trauma, hypocrisy, or identity conflict. Youth gang involvement is driven by poverty, neighborhood instability, weak school ties, and the pull of belonging and protection. The homelessness-jail cycle pushes unhoused people deeper into instability through fines, warrants, and property seizure.
 `.trim();
 
-    const prompt = `You are a relationship dynamics analyzer. Analyze this interaction and update the relationship levels between the character and the user.
+    const interactingPartyDesc = playingAsCharacter
+      ? `INTERACTING PARTY: ${playingAsCharacter.name} (another character — ${playingAsCharacter.age_range || ''} ${playingAsCharacter.gender || ''}, personality: ${playingAsCharacter.personality_summary || ''}, archetype: ${playingAsCharacter.archetype || ''}, orientation: ${playingAsCharacter.sexual_orientation || ''})`
+      : `INTERACTING PARTY: The user (unknown gender)`;
+
+    const prompt = `You are a relationship dynamics analyzer. Analyze this interaction and update the relationship levels between the two characters.
 
 ${WORLD_CONTEXT}
 
-CHARACTER: ${character.name}
+CHARACTER (whose feelings we are analyzing): ${character.name}
 CHARACTER ARCHETYPE: ${character.archetype || 'unknown'}
 CHARACTER PERSONALITY: ${character.personality_summary || ''}
 PERSONALITY TRAITS: ${(character.personality_traits || []).join(', ') || 'none specified'}
@@ -162,6 +184,8 @@ EMOTIONAL BAGGAGE: ${character.emotional_baggage || 'none specified'}
 SEXUAL ORIENTATION: ${character.sexual_orientation || 'not specified'}
 CHARACTER GENDER: ${character.gender || 'not specified'}
 INTERESTS & HOBBIES: ${character.current_situation || 'not specified'}
+
+${interactingPartyDesc}
 
 CURRENT RELATIONSHIP LEVELS (0-100):
 - Respect: ${current.user_respect_level}
@@ -318,10 +342,33 @@ Respond with ONLY a valid JSON object in this exact format:
     // Persist milestones as narrative messages in the conversation (returned to caller to inject)
     const newTriggeredKeys = [...triggeredMilestoneKeys, ...milestonesTriggered.map(m => m.key)];
 
-    const characterUpdatePayload = {
-      ...updated,
-      triggered_milestones: newTriggeredKeys,
-    };
+    let characterUpdatePayload;
+    if (playingAsCharacter && charRelEntry) {
+      // Update the fictional_relationships entry for the playing-as character on this character
+      const updatedFictionalRels = (character.fictional_relationships || []).map(r =>
+        r.related_character_id === playingAsCharacterId
+          ? { ...r, ...updated }
+          : r
+      );
+      characterUpdatePayload = {
+        fictional_relationships: updatedFictionalRels,
+        triggered_milestones: newTriggeredKeys,
+      };
+
+      // Also update the reverse relationship entry on the playing-as character
+      const reverseRels = (playingAsCharacter.fictional_relationships || []);
+      const reverseEntry = reverseRels.find(r => r.related_character_id === characterId);
+      if (reverseEntry) {
+        // Reverse: update the playing-as character's view of this character independently
+        // We don't auto-mirror — each character has their own feelings
+        // Just ensure the entry exists; actual updates happen when chat is initiated from playing-as side
+      }
+    } else {
+      characterUpdatePayload = {
+        ...updated,
+        triggered_milestones: newTriggeredKeys,
+      };
+    }
 
     await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
 
@@ -349,11 +396,40 @@ Respond with ONLY a valid JSON object in this exact format:
     }
     if (memoryPromises.length > 0) await Promise.all(memoryPromises);
 
+    // Check if a relationship title should change due to very low levels
+    // Only applies to non-blood relationships (spouse, partner, friend, romantic interest)
+    const CHANGEABLE_TITLES = ['spouse', 'partner', 'friend', 'best friend', 'romantic interest', 'girlfriend', 'boyfriend', 'lover', 'acquaintance', 'coworker'];
+    const BLOOD_TITLES = ['mother', 'father', 'sister', 'brother', 'cousin', 'aunt', 'uncle', 'grandmother', 'grandfather', 'niece', 'nephew', 'daughter', 'son', 'half-sister', 'half-brother', 'great-grandmother', 'great-grandfather', 'step-mother', 'step-father', 'step-sister', 'step-brother'];
+
+    let relationshipChangeRequest = null;
+    if (playingAsCharacter && charRelEntry) {
+      const relTitle = (charRelEntry.relationship_type || '').toLowerCase();
+      const isChangeable = CHANGEABLE_TITLES.some(t => relTitle.includes(t));
+      const isBlood = BLOOD_TITLES.some(t => relTitle.includes(t));
+      const friendshipVeryLow = updated.friendship_level <= 5;
+      const romanticVeryLow = updated.romantic_level <= 5;
+
+      if (isChangeable && !isBlood && friendshipVeryLow) {
+        if (relTitle.includes('spouse') || relTitle.includes('partner')) {
+          relationshipChangeRequest = { type: 'separation', message: `${character.name} may want to ask for a divorce or separation.` };
+        } else if (relTitle.includes('friend')) {
+          relationshipChangeRequest = { type: 'end_friendship', message: `${character.name} may want to end the friendship with ${playingAsCharacter.name}.` };
+        } else if (romanticVeryLow && (relTitle.includes('romantic') || relTitle.includes('girlfriend') || relTitle.includes('boyfriend') || relTitle.includes('lover'))) {
+          relationshipChangeRequest = { type: 'breakup', message: `${character.name} may want to break up with ${playingAsCharacter.name}.` };
+        }
+      }
+    } else if (!playingAsCharacter) {
+      // User-character: check top-level levels
+      const relWithUser = (character.fictional_relationships || []).find(r => !r.related_character_id);
+      // No title change logic for user<->character — not applicable in same way
+    }
+
     return Response.json({
       ...updated,
       reason: result.reason,
       detected_traits: result.detected_traits || [],
       milestone_messages: milestoneMessages,
+      relationship_change_request: relationshipChangeRequest,
     });
   } catch (error) {
     if (error.message?.includes('Rate limit') || error.message?.includes('429') || error.status === 429) {
