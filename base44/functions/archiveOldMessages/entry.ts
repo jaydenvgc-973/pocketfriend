@@ -50,27 +50,23 @@ Deno.serve(async (req) => {
       1000
     );
 
-    // Archive messages older than 1 day, but only after keepCount threshold is exceeded
-    // This protects new messages while maintaining the visible thread limit
-    const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
+    // CRITICAL: Never archive messages from today (created since midnight UTC)
+    // Today's messages are always protected and stay visible immediately
+    const todayStartUTC = new Date();
+    todayStartUTC.setUTCHours(0, 0, 0, 0);
+    const todayStart = todayStartUTC.toISOString();
     
     let messagesToArchive = [];
     
-    // Only consider archiving if we exceed keepCount
-    if (allMessages.length > keepCount) {
-      // Archive old messages (1+ days old) beyond the keepCount threshold
-      messagesToArchive = allMessages.filter(m => 
-        !m.archived_date && 
-        m.created_date < oneDayAgo
-      );
-      
-      // If still over limit and no old messages to archive, archive the oldest unread message only
-      if (messagesToArchive.length === 0 && allMessages.length > keepCount) {
-        const oldest = allMessages[allMessages.length - 1];
-        if (oldest && !oldest.archived_date) {
-          messagesToArchive = [oldest];
-        }
-      }
+    // Only consider archiving messages older than today
+    const archiveableMessages = allMessages.filter(m => 
+      !m.archived_date && 
+      m.created_date < todayStart
+    );
+    
+    // Archive only if we exceed keepCount AND have old messages available
+    if (archiveableMessages.length > 0 && allMessages.length > keepCount) {
+      messagesToArchive = archiveableMessages.slice(-(archiveableMessages.length - Math.max(0, keepCount - (allMessages.length - archiveableMessages.length))));
     }
 
     if (notYetArchived.length === 0) {
