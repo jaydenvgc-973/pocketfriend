@@ -262,8 +262,9 @@ export default function Chat() {
 
         // Archive old messages & extract memories (non-blocking, delayed)
         if (convoId) {
+          const charIsProtected = characterId && (userSettings.protected_character_ids || []).includes(characterId);
           setTimeout(async () => {
-            base44.functions.invoke('archiveOldMessages', { conversationId: convoId }).catch(() => {});
+            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, isProtected: charIsProtected }).catch(() => {});
             base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
           }, 3000);
         }
