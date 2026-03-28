@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -237,6 +237,17 @@ export default function Settings() {
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">Edit Relationship Levels</p>
                 <p className="text-xs text-muted-foreground">Respect, friendship, romantic, attraction & chosen family</p>
+              </div>
+            </button>
+          </Link>
+          <Link to="/edit-character-profile" className="mt-2 block">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Briefcase className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Occupation, Education & Relationships</p>
+                <p className="text-xs text-muted-foreground">Job, education, inter-character relationships with bi-directional sync</p>
               </div>
             </button>
           </Link>

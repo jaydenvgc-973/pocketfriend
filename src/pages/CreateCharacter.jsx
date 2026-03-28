@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -68,10 +69,15 @@ const MEMORY_PRESETS = [
 
 const DRAFT_KEY = "create_character_draft";
 
+const ZODIAC_SIGNS = [
+  "Aries","Taurus","Gemini","Cancer","Leo","Virgo",
+  "Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"
+];
+
 const RELATIONSHIP_TYPES = [
   "mother","father","grandmother","grandfather","great-grandmother","great-grandfather",
   "aunt","uncle","sister","brother","half-sister","half-brother","step-mother","step-father",
-  "step-sister","step-brother","cousin","niece","nephew","daughter","son","other",
+  "step-sister","step-brother","cousin","niece","nephew","daughter","son","spouse","other",
 ];
 
 const KNOWN_CHARACTER_RELATIONSHIP_TYPES = [
@@ -79,22 +85,25 @@ const KNOWN_CHARACTER_RELATIONSHIP_TYPES = [
 ];
 
 const defaultData = {
-  first_name: "", middle_name: "", last_name: "",
-  gender: "", age_range: "", ethnicities: [], living_situation: "",
-  city: "", state: "",
-  vibes: [], background: "", archetype: "", social_energy: "", sexual_orientation: "",
-  personality_override: "", situation_override: "",
-  memories: [],
-  job_title: "", workplace_type: "", work_environment: "",
-  frequented_places: [],
-  known_character_relationships: [],
-  family_members: [],
-  birthday: "",
-  user_respect_level: 50,
-  friendship_level: 75,
-  romantic_level: 0,
-  attraction_level: 0,
-  chosen_family_level: 0,
+first_name: "", middle_name: "", last_name: "",
+gender: "", age_range: "", ethnicities: [], living_situation: "",
+city: "", state: "",
+vibes: [], background: "", archetype: "", social_energy: "", sexual_orientation: "",
+personality_override: "", situation_override: "",
+memories: [],
+job_title: "", workplace_type: "", work_environment: "",
+occupation_description: "",
+criminal_record: "",
+zodiac_sign: "",
+frequented_places: [],
+known_character_relationships: [],
+family_members: [],
+birthday: "",
+user_respect_level: 50,
+friendship_level: 75,
+romantic_level: 0,
+attraction_level: 0,
+chosen_family_level: 0,
 };
 
 function loadDraft() {
@@ -118,6 +127,8 @@ export default function CreateCharacter() {
   const [isGeneratingSituation, setIsGeneratingSituation] = useState(false);
   const [isExtractingFamily, setIsExtractingFamily] = useState(false);
   const [familyExtracted, setFamilyExtracted] = useState(false);
+  const [isGeneratingOccupation, setIsGeneratingOccupation] = useState(false);
+  const [isGeneratingCriminalRecord, setIsGeneratingCriminalRecord] = useState(false);
 
   const { data: existingCharacters = [] } = useQuery({
     queryKey: ["characters"],
@@ -213,6 +224,25 @@ export default function CreateCharacter() {
     });
     update("personality_override", result);
     setIsGeneratingPersonality(false);
+  };
+
+  const generateOccupationDescription = async () => {
+    setIsGeneratingOccupation(true);
+    const result = await base44.integrations.Core.InvokeLLM({
+      prompt: `Write a short, realistic occupation description (2-3 sentences) for a ${data.age_range || "adult"} ${data.gender || "person"} who works in ${data.workplace_type || "an unspecified field"} as a ${data.job_title || "worker"}. Describe what a typical day looks like — real and grounded. No names. Third person.`
+    });
+    update("occupation_description", result);
+    setIsGeneratingOccupation(false);
+  };
+
+  const generateCriminalRecord = async () => {
+    setIsGeneratingCriminalRecord(true);
+    const name = [data.first_name, data.last_name].filter(Boolean).join(" ") || "this person";
+    const result = await base44.integrations.Core.InvokeLLM({
+      prompt: `Generate a plausible, brief criminal record for a fictional ${data.age_range || "adult"} ${data.gender || "person"} who is ${data.archetype || "a regular person"} with these vibes: ${data.vibes.join(", ") || "unknown"}. Make it feel grounded — could be minor (e.g. a DUI, petty theft) or more serious depending on their archetype. Return only a short paragraph describing the offense(s), rough year, and outcome. No names.`
+    });
+    update("criminal_record", result);
+    setIsGeneratingCriminalRecord(false);
   };
 
   const generateSituation = async () => {
@@ -399,10 +429,12 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         birthday: data.birthday || undefined,
         avatar_url: finalAvatarUrl,
         memories: finalMemories,
+        criminal_record: data.criminal_record || undefined,
+        zodiac_sign: data.zodiac_sign || undefined,
         work_details: (data.job_title || data.workplace_type) ? {
           job_title: data.job_title,
           workplace_type: data.workplace_type,
-          work_environment: data.work_environment,
+          work_environment: data.occupation_description || data.work_environment,
         } : undefined,
         frequented_places: data.frequented_places.length > 0 ? data.frequented_places : undefined,
         family_members: (data.family_members || []).filter(m => m.name.trim()).length > 0 ? data.family_members.filter(m => m.name.trim()) : [],
@@ -479,11 +511,36 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Age Range</label>
         <div className="grid grid-cols-3 gap-2">
-          {AGES.map(a => <button key={a} onClick={() => update("age_range", a)} className={chipClass(data.age_range === a)}>{a}</button>)}
+          {AGES.map(a => (
+            <button key={a} onClick={() => {
+              update("age_range", a);
+              // Auto-fill birthday if zodiac already set
+              if (data.zodiac_sign) {
+                const bd = calculateBirthdateFromZodiac(data.zodiac_sign, a);
+                if (bd) update("birthday", bd);
+              }
+            }} className={chipClass(data.age_range === a)}>{a}</button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Zodiac Sign (optional)</label>
+        <div className="grid grid-cols-3 gap-2 mb-2">
+          {ZODIAC_SIGNS.map(z => (
+            <button key={z} onClick={() => {
+              update("zodiac_sign", z);
+              // Auto-fill birthday if age range is set
+              if (data.age_range) {
+                const bd = calculateBirthdateFromZodiac(z, data.age_range);
+                if (bd) update("birthday", bd);
+              }
+            }} className={chipClass(data.zodiac_sign === z)}>{z}</button>
+          ))}
         </div>
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Birthday (optional)</label>
+        <p className="text-xs text-muted-foreground mb-1">Auto-fills when you pick age range + zodiac sign above.</p>
         <Input type="date" value={data.birthday} onChange={e => update("birthday", e.target.value)} className="h-11 rounded-xl text-sm" />
       </div>
     </div>,
@@ -522,8 +579,22 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
             <button key={j} onClick={() => update("workplace_type", j)} className={chipClass(data.workplace_type === j)}>{j}</button>
           ))}
         </div>
-        <Input value={data.job_title} onChange={e => update("job_title", e.target.value)} placeholder="Specific job title (e.g. cashier, nurse, designer)" className="h-11 rounded-xl text-sm" />
+        <Input value={data.job_title} onChange={e => update("job_title", e.target.value)} placeholder="Specific job title (e.g. cashier, nurse, designer)" className="h-11 rounded-xl text-sm mt-2" />
         <Textarea value={data.work_environment} onChange={e => update("work_environment", e.target.value)} placeholder="Describe the work environment... (optional)" className="rounded-xl mt-2 min-h-[70px] text-sm resize-none" />
+        <div className="flex items-center justify-between mt-3 mb-1">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Occupation description (optional)</label>
+          <button onClick={generateOccupationDescription} disabled={isGeneratingOccupation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
+            <Sparkles className="w-3 h-3" />{isGeneratingOccupation ? "Generating..." : "Auto-generate"}
+          </button>
+        </div>
+        <Textarea value={data.occupation_description} onChange={e => update("occupation_description", e.target.value)} placeholder="What does a typical day at work look like for them?" className="rounded-xl min-h-[70px] text-sm resize-none" />
+        <div className="flex items-center justify-between mt-3 mb-1">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Criminal record (optional)</label>
+          <button onClick={generateCriminalRecord} disabled={isGeneratingCriminalRecord} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
+            <Sparkles className="w-3 h-3" />{isGeneratingCriminalRecord ? "Generating..." : "Auto-generate"}
+          </button>
+        </div>
+        <Textarea value={data.criminal_record} onChange={e => update("criminal_record", e.target.value)} placeholder="Leave blank for no criminal record..." className="rounded-xl min-h-[70px] text-sm resize-none" />
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Places they frequent</label>
