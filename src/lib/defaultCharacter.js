@@ -180,7 +180,7 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
 }
 
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null) {
-  const userNameLabel = character.nickname_for_user || userDisplayName || "the user";
+   const userNameLabel = character.nickname_for_user || (userDisplayName && userDisplayName.trim()) || "the user";
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');

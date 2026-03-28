@@ -675,8 +675,8 @@ export default function Chat() {
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
-      const userDisplayName = userSettings.fictional_world_name || null;
-      const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
+      const userDisplayName = userSettings?.fictional_world_name || null;
+       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
       let playAsInstruction = "";
