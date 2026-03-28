@@ -23,12 +23,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'messageId required' }, { status: 400 });
     }
 
-    const message = await base44.entities.Message.get(messageId);
+    const messages_result = await base44.entities.Message.filter({ id: messageId });
+    const message = messages_result?.[0];
     if (!message || message.sender_type !== 'user') {
       return Response.json({ error: 'Invalid message' }, { status: 400 });
     }
 
-    const conversation = await base44.entities.Conversation.get(message.conversation_id);
+    const convos = await base44.entities.Conversation.filter({ id: message.conversation_id });
+    const conversation = convos?.[0];
     if (!conversation || conversation.type !== 'group') {
       return Response.json({ error: 'Invalid conversation' }, { status: 400 });
     }
