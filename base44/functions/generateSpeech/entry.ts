@@ -68,17 +68,31 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing text or API key' }, { status: 400 });
     }
     
-    // Only speak the actual text — do not include voice style note in the spoken words
-    // The voice style note is only metadata for OpenAI TTS quality, not part of the speech
-    const finalText = text;
+    // Clean text: remove image prompts, metadata, system instructions, tags
+    // Only speak the actual user-facing dialogue
+    let finalText = text
+      .replace(/\[USER\]/gi, '')
+      .replace(/\[CHARACTER\]/gi, '')
+      .replace(/\[JOINT\]/gi, '')
+      .replace(/\[AUDIO\]/gi, '')
+      .replace(/image_prompt[^]*/gi, '')
+      .replace(/image_prompts[^]*/gi, '')
+      .replace(/```[\s\S]*?```/g, '')
+      .trim();
     
-    // Split text into chunks
+    // If text is empty after cleaning, don't generate
+    if (!finalText) {
+      return Response.json({ error: 'No dialogue text to speak after filtering' }, { status: 400 });
+    }
+    
+    // Split text into chunks (max 4096 chars per OpenAI TTS)
     const chunks = chunkText(finalText);
     if (chunks.length === 0) {
       return Response.json({ error: 'No text to generate' }, { status: 400 });
     }
     
-    // Generate audio for first chunk (most important)
+    // Generate audio (concatenate if multiple chunks, but TTS can handle up to 4096)
+    // For now, use first chunk since most messages are under the limit
     let audioData;
     try {
       audioData = await generateChunk(chunks[0], voice, apiKey);

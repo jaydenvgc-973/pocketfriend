@@ -59,16 +59,27 @@ export default function Chat() {
 
   // Voice playback utility
   const playCharacterVoice = async (messageId, text, characterData, userSettings) => {
-    // Check conditions: character has voice, user has API key
+    // Check ALL voice conditions are met
+    const voiceGloballyEnabled = userSettings?.voice_enabled === true;
     const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
     const hasApiKey = userSettings?.openai_api_key;
+    const isNotPhone = chatType !== "phone";
 
-    if (!charHasVoice || !hasApiKey) {
-      console.log('[Voice Debug]', { charHasVoice, hasApiKey, voice_enabled: characterData?.voice_enabled, voice_name: characterData?.voice_name });
+    // All conditions must be true to play voice
+    if (!voiceGloballyEnabled || !charHasVoice || !hasApiKey || !isNotPhone) {
       return;
     }
 
-    const cacheKey = `${characterData.id}_${characterData.voice_name}_${text}`;
+    // Sanitize text: remove image prompts, metadata, system instructions
+    const cleanText = text
+      .replace(/\[USER\]/gi, '')
+      .replace(/\[CHARACTER\]/gi, '')
+      .replace(/\[JOINT\]/gi, '')
+      .trim();
+
+    if (!cleanText) return;
+
+    const cacheKey = `${characterData.id}_${characterData.voice_name}_${cleanText}`;
     
     try {
       setPlayingAudioId(messageId);
@@ -78,7 +89,7 @@ export default function Chat() {
       // Generate if not cached
       if (!audioUrl) {
         const res = await base44.functions.invoke('generateSpeech', {
-          text: text.substring(0, 4096),
+          text: cleanText.substring(0, 4096),
           voice: characterData.voice_name,
           voiceStyleNote: characterData.voice_style_note,
           apiKey: userSettings.openai_api_key,
@@ -88,11 +99,11 @@ export default function Chat() {
           audioUrl = res.data.audioUrl;
           voiceCache.set(cacheKey, audioUrl);
           
-          // Update usage tracking
+          // Update usage tracking (fire-and-forget)
           const estimatedMinutes = res.data.estimatedMinutes || 0.1;
-          await base44.entities.UserSettings.update(userSettings.id, {
+          base44.entities.UserSettings.update(userSettings.id, {
             voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
-          });
+          }).catch(() => {});
         }
       }
 
@@ -100,10 +111,13 @@ export default function Chat() {
       if (audioUrl) {
         const audio = new Audio(audioUrl);
         audio.onended = () => setPlayingAudioId(null);
-        audio.play().catch(() => setPlayingAudioId(null));
+        audio.play().catch(() => {
+          // Playback failed, but message still displays
+          setPlayingAudioId(null);
+        });
       }
     } catch (err) {
-      console.error('Voice playback failed:', err);
+      // Voice generation failed, but message still displays
       setPlayingAudioId(null);
     }
   };
@@ -114,100 +128,91 @@ export default function Chat() {
   });
 
   useEffect(() => {
-    if (!characterId || !character) return;
+    if (!characterId || !character || !currentUser.email) return;
+    
     const loadConvo = async () => {
-      // Helper: retry with exponential backoff for rate limit errors
-      const retryWithBackoff = async (fn, maxRetries = 3) => {
-        let lastErr;
-        for (let i = 0; i < maxRetries; i++) {
-          try {
-            return await fn();
-          } catch (err) {
-            if (!err.message?.includes("Rate limit")) throw err;
-            lastErr = err;
-            // Exponential backoff: 2s, 4s, 8s for rate limits
-            const delayMs = Math.pow(2, i + 1) * 1000 + Math.random() * 2000;
-            await new Promise(r => setTimeout(r, delayMs));
-          }
-        }
-        throw lastErr;
-      };
-
-      // Fetch conversations first, then pending messages sequentially to avoid rate limits
-      const convos = await retryWithBackoff(() =>
-        base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId], created_by: currentUser.email }, "-updated_date", 1)
-      );
-      await new Promise(r => setTimeout(r, 1200));
-      const pending = await retryWithBackoff(() =>
-        base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false })
-      );
-      await new Promise(r => setTimeout(r, 1200));
-      let convoId = null;
-
-      if (convos.length > 0) {
-        convoId = convos[0].id;
-
-        const loadedMsgs = await retryWithBackoff(() =>
-          base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100)
+      try {
+        // Fetch conversations for this character
+        const convos = await base44.entities.Conversation.filter(
+          { type: chatType, character_ids: [characterId], created_by: currentUser.email },
+          "-updated_date",
+          1
         );
-        setMessages(loadedMsgs || []);
-        setConversationId(convoId);
 
-        // Mark unread messages as read sequentially with delays to avoid rate limits
-        const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
-        for (const m of unread) {
-          await base44.entities.Message.update(m.id, { is_read: true });
-          await new Promise(r => setTimeout(r, 300));
-        }
-        if (unread.length > 0) {
-          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-        }
-      }
+        let convoId = null;
 
-      if (pending.length > 0) {
-        if (!convoId) {
+        if (convos.length > 0) {
+          convoId = convos[0].id;
+          // Load all messages for this conversation
+          const loadedMsgs = await base44.entities.Message.filter(
+            { conversation_id: convoId },
+            "created_date",
+            500 // Load more messages to ensure full history
+          );
+          
+          if (loadedMsgs && loadedMsgs.length > 0) {
+            setMessages(loadedMsgs);
+            setConversationId(convoId);
+
+            // Mark unread character messages as read (fire-and-forget)
+            const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
+            if (unread.length > 0) {
+              unread.forEach(m => {
+                base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
+              });
+              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+            }
+          } else {
+            setConversationId(convoId);
+          }
+        } else {
+          // Create conversation if none exists
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
             type: chatType,
             character_ids: [characterId],
           });
-          convoId = convo.id;
-          setConversationId(convoId);
+          setConversationId(convo.id);
         }
 
-        for (const pm of pending) {
-          await new Promise(r => setTimeout(r, 800));
+        // Load pending messages and deliver them
+        const pending = await base44.entities.PendingMessage.filter(
+          { character_id: characterId, delivered: false }
+        );
 
-          const charMsg = await base44.entities.Message.create({
-            conversation_id: convoId,
-            sender_type: "character",
-            character_id: characterId,
-            character_name: character.name,
-            content: pm.content,
-            image_url: pm.image_url || undefined,
-            emotional_state: pm.emotional_state || "calm",
-            timestamp: new Date().toISOString(),
-          });
+        if (pending.length > 0 && convoId) {
+          for (const pm of pending) {
+            const charMsg = await base44.entities.Message.create({
+              conversation_id: convoId,
+              sender_type: "character",
+              character_id: characterId,
+              character_name: character.name,
+              content: pm.content,
+              image_url: pm.image_url || undefined,
+              emotional_state: pm.emotional_state || "calm",
+              timestamp: new Date().toISOString(),
+            });
 
-          setMessages(prev => [...prev, charMsg]);
-          await base44.entities.PendingMessage.update(pm.id, { delivered: true });
-          await base44.entities.Conversation.update(convoId, {
-            last_message_preview: pm.content.substring(0, 100),
-            last_message_date: new Date().toISOString(),
-          });
+            setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
+            await base44.entities.PendingMessage.update(pm.id, { delivered: true });
+            await base44.entities.Conversation.update(convoId, {
+              last_message_preview: pm.content.substring(0, 100),
+              last_message_date: new Date().toISOString(),
+            });
+            
+            // Add slight delay between deliveries
+            await new Promise(r => setTimeout(r, 500));
+          }
+          queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
         }
-        // Invalidate pending messages for ALL characters so CharacterCard badges clear immediately
-        queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
+      } catch (err) {
+        console.error('Failed to load conversation:', err);
       }
     };
 
-    // Small delay to avoid rate limiting when navigating quickly between pages
     const timer = setTimeout(() => loadConvo(), 300);
-    return () => {
-      clearTimeout(timer);
-      if (unsubscribeRef.current) unsubscribeRef.current();
-    };
-  }, [characterId, character, chatType]);
+    return () => clearTimeout(timer);
+  }, [characterId, character, chatType, currentUser.email]);
 
   useEffect(() => {
     if (!conversationId) return;
@@ -215,23 +220,27 @@ export default function Chat() {
     if (unsubscribeRef.current) unsubscribeRef.current();
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      if (event.data.conversation_id === conversationId) {
-        if (event.type === "create") {
-          setMessages(prev => {
-            // Only add if not already present
-            if (prev.some(m => m.id === event.data.id)) return prev;
-            return [...prev, event.data];
-          });
-          // Mark character messages as read
-          if (event.data.sender_type === "character" && !event.data.is_read) {
-            base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
-            queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-          }
-        } else if (event.type === "update") {
-          setMessages(prev => prev.map(m => m.id === event.data.id ? event.data : m));
-        } else if (event.type === "delete") {
-          setMessages(prev => prev.filter(m => m.id !== event.data.id));
+      // Only process events for this conversation
+      if (event.data?.conversation_id !== conversationId) return;
+
+      if (event.type === "create") {
+        setMessages(prev => {
+          // Prevent duplicates: check if message already exists
+          if (prev.some(m => m.id === event.data.id)) return prev;
+          return [...prev, event.data];
+        });
+        
+        // Auto-mark character messages as read
+        if (event.data.sender_type === "character" && !event.data.is_read) {
+          base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
+          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
+      } else if (event.type === "update") {
+        // Update existing message without losing state
+        setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
+      } else if (event.type === "delete") {
+        // Remove deleted messages
+        setMessages(prev => prev.filter(m => m.id !== event.data.id));
       }
     });
     unsubscribeRef.current = unsubscribe;
@@ -733,7 +742,6 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     setIsTyping(false);
 
     // Create main message with text
-    // Add message optimistically to state immediately (subscription will deduplicate)
     const charMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
@@ -750,12 +758,12 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     // Add directly to state — subscription deduplication will prevent doubles
     setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
-    // Play character voice if conditions are met (delayed slightly for better UX)
-    // Use the actual character data to check voice_enabled
-    if (character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key) {
+    // Auto-play character voice if all conditions are met (after short delay for UX)
+    // Conditions: global voice enabled + character voice enabled + API key + not phone chat
+    if (settings[0]?.voice_enabled && character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key && chatType !== "phone") {
       setTimeout(() => {
         playCharacterVoice(charMsg.id, responseText, character, settings[0]);
-      }, 300);
+      }, 500);
     }
 
     if (emotionalState !== character.emotional_state) {
@@ -995,7 +1003,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onReact={handleReact} 
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
-              hasVoice={msg.sender_type !== "user" && character?.voice_enabled && character?.voice_name}
+              hasVoice={msg.sender_type !== "user" && !msg.is_narrative && character?.voice_enabled && character?.voice_name && chatType !== "phone"}
               onPlayVoice={() => playCharacterVoice(msg.id, msg.content, character, settings[0])}
               isPlayingVoice={playingAudioId === msg.id}
             />

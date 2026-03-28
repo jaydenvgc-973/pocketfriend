@@ -103,16 +103,20 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           {time && (
             <span className={`text-[10px] text-muted-foreground ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
           )}
-          {hasVoice && !isUser && !isNarrative && (
+          {hasVoice && !isUser && !isNarrative && onPlayVoice && (
             <motion.button
               whileHover={{ scale: 1.1 }}
               whileTap={{ scale: 0.95 }}
               onClick={onPlayVoice}
               disabled={isPlayingVoice}
-              className="text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 flex-shrink-0"
-              title="Play voice"
+              className={`flex-shrink-0 transition-colors ${
+                isPlayingVoice 
+                  ? 'text-primary opacity-100' 
+                  : 'text-muted-foreground hover:text-primary opacity-70 hover:opacity-100'
+              }`}
+              title={isPlayingVoice ? 'Playing audio...' : 'Play voice message'}
             >
-              <Volume2 className="w-3 h-3" />
+              <Volume2 className="w-4 h-4" />
             </motion.button>
           )}
         </div>
