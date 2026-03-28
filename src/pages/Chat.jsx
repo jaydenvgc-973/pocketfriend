@@ -276,6 +276,8 @@ export default function Chat() {
     
     const loadConvo = async () => {
       try {
+        console.log(`[Chat] Loading conversation for character: ${character.name}`);
+        
         // Fetch conversations for this character
         const convos = await base44.entities.Conversation.filter(
           { type: chatType, character_ids: [characterId], created_by: currentUser.email },
@@ -287,6 +289,8 @@ export default function Chat() {
 
         if (convos.length > 0) {
           convoId = convos[0].id;
+          console.log(`[Chat] Found conversation: ${convoId}`);
+          
           // Load only the 50 most recent messages for active display (excludes archived)
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId, archived_date: { $exists: false } },
@@ -294,23 +298,28 @@ export default function Chat() {
             50 // Keep only most recent 50 visible for performance
           );
           
+          console.log(`[Chat] Loaded ${loadedMsgs?.length || 0} messages from conversation`);
+          
           if (loadedMsgs && loadedMsgs.length > 0) {
             // Reverse to chronological order for display
             setMessages(loadedMsgs.reverse());
             setConversationId(convoId);
 
-            // Mark unread character messages as read (fire-and-forget)
+            // Mark unread character messages as read (fire-and-forget, don't invalidate queries)
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {
+              console.log(`[Chat] Marking ${unread.length} messages as read`);
               unread.forEach(m => {
                 base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
               });
-              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+              // DON'T invalidate queries here — prevents stale data overwrite
             }
           } else {
+            console.log(`[Chat] No messages in conversation, setting ID only`);
             setConversationId(convoId);
           }
         } else {
+          console.log(`[Chat] No conversation found, creating new one`);
           // Create conversation if none exists
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
@@ -334,6 +343,7 @@ export default function Chat() {
         );
 
         if (pending.length > 0 && convoId) {
+          console.log(`[Chat] Delivering ${pending.length} pending messages`);
           for (const pm of pending) {
             const charMsg = await base44.entities.Message.create({
               conversation_id: convoId,
@@ -346,6 +356,7 @@ export default function Chat() {
               timestamp: new Date().toISOString(),
             });
 
+            console.log(`[Chat] Pending message delivered: ${charMsg.id.substring(0, 8)}`);
             setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
             await base44.entities.PendingMessage.update(pm.id, { delivered: true });
             await base44.entities.Conversation.update(convoId, {
@@ -365,7 +376,7 @@ export default function Chat() {
 
     const timer = setTimeout(() => loadConvo(), 300);
     return () => clearTimeout(timer);
-  }, [characterId, character, chatType, currentUser.email]);
+  }, [characterId, chatType, currentUser.email]);
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
@@ -380,21 +391,25 @@ export default function Chat() {
       if (event.type === "create") {
         setMessages(prev => {
           // Prevent duplicates: check if message already exists
-          if (prev.some(m => m.id === event.data.id)) return prev;
-          console.log(`[Chat] Message added via subscription: ${event.data.id.substring(0, 8)}`);
+          if (prev.some(m => m.id === event.data.id)) {
+            console.log(`[Chat] Duplicate prevented: ${event.data.id.substring(0, 8)}`);
+            return prev;
+          }
+          console.log(`[Chat] NEW MESSAGE: ${event.data.sender_type} | ${event.data.id.substring(0, 8)} | "${event.data.content?.substring(0, 50) || '(image)'}"`);
           return [...prev, event.data];
         });
         
-        // Auto-mark character messages as read (fire-and-forget)
+        // Auto-mark character messages as read (fire-and-forget, no query invalidation)
         if (event.data.sender_type === "character" && !event.data.is_read) {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
-          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       } else if (event.type === "update") {
-        // Update existing message without losing state
+        // Update existing message (e.g., image_url being added)
+        console.log(`[Chat] MESSAGE UPDATED: ${event.data.id.substring(0, 8)}`);
         setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
       } else if (event.type === "delete") {
         // Remove deleted messages
+        console.log(`[Chat] MESSAGE DELETED: ${event.data.id.substring(0, 8)}`);
         setMessages(prev => prev.filter(m => m.id !== event.data.id));
       }
     });
@@ -1136,8 +1151,8 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
 
-    // Invalidate messages so async image updates appear when ready
-    queryClient.invalidateQueries({ queryKey: ["messages", convoId] });
+    // DON'T invalidate message queries — this causes stale data to overwrite newly added messages
+    // Subscription handles all message state updates in real-time
 
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
@@ -1231,8 +1246,10 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
+    // Only invalidate character (not messages) to update relationship/emotional state
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
+    // Update conversation metadata
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: responseText.substring(0, 100),
       last_message_date: new Date().toISOString(),
