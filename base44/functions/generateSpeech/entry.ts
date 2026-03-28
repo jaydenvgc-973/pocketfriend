@@ -63,24 +63,28 @@ Deno.serve(async (req) => {
     const audioBuffer = await response.arrayBuffer();
     console.log(`[generateSpeech] Audio received: ${audioBuffer.byteLength} bytes`);
     
-    // Convert to base64 for data URL
+    // Convert ArrayBuffer to base64 data URL
     const uint8Array = new Uint8Array(audioBuffer);
-    let binary = '';
+    let binaryString = '';
     for (let i = 0; i < uint8Array.length; i++) {
-      binary += String.fromCharCode(uint8Array[i]);
+      binaryString += String.fromCharCode(uint8Array[i]);
     }
-    const base64Audio = btoa(binary);
+    
+    const base64Audio = btoa(binaryString);
     const audioUrl = `data:audio/mpeg;base64,${base64Audio}`;
+    console.log(`[generateSpeech] Created data URL: ${audioUrl.substring(0, 50)}... (${audioUrl.length} total chars)`);
 
-    // Estimate minutes used
-    const estimatedMinutes = (cleanedText.length / 1000000) * 5;
+    // Estimate minutes used (rough: ~1000 chars = ~1 second of speech ≈ 0.000278 minutes)
+    const estimatedMinutes = Math.max(0.1, (cleanedText.length / 1000) * (1/60) * 0.5);
 
-    console.log(`[generateSpeech] Success - generated audio, estimated ${estimatedMinutes.toFixed(3)} minutes`);
+    console.log(`[generateSpeech] Success - generated ${audioBuffer.byteLength} byte audio from "${cleanedText.substring(0, 50)}..."`);
+    console.log(`[generateSpeech] Estimated usage: ${estimatedMinutes.toFixed(3)} minutes`);
 
     return Response.json({
       success: true,
       audioUrl: audioUrl,
-      estimatedMinutes: Math.max(0.1, estimatedMinutes),
+      estimatedMinutes: estimatedMinutes,
+      bytesGenerated: audioBuffer.byteLength,
     });
   } catch (error) {
     console.error(`[generateSpeech] Error: ${error.message}`);
