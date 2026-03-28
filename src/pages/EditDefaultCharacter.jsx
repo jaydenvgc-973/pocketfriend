@@ -2,9 +2,10 @@ import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
+import VoiceSettings from "@/components/character/VoiceSettings";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 
@@ -30,11 +31,25 @@ export default function EditDefaultCharacter() {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [referenceUrls, setReferenceUrls] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [form, setForm] = useState({});
+
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
 
   useEffect(() => {
     if (defaultChar && !avatarUrl && referenceUrls.length === 0) {
       setAvatarUrl(defaultChar.avatar_url || null);
       setReferenceUrls(defaultChar.reference_image_urls || []);
+      setForm({
+        voice_enabled: defaultChar.voice_enabled || false,
+        voice_name: defaultChar.voice_name || "",
+        voice_style_note: defaultChar.voice_style_note || "",
+      });
     }
   }, [defaultChar, avatarUrl, referenceUrls]);
 
@@ -50,11 +65,16 @@ export default function EditDefaultCharacter() {
       ...defaultChar,
       avatar_url: avatarUrl || defaultChar.avatar_url,
       reference_image_urls: referenceUrls.length > 0 ? referenceUrls : defaultChar.reference_image_urls,
+      voice_enabled: form.voice_enabled,
+      voice_name: form.voice_name,
+      voice_style_note: form.voice_style_note,
     };
     updated.system_prompt = buildSystemPrompt(updated);
     await base44.entities.Character.update(defaultChar.id, updated);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    navigate("/home");
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    setIsSaving(false);
   };
 
   if (!defaultChar) return null;
@@ -80,12 +100,20 @@ export default function EditDefaultCharacter() {
           existingAvatarUrl={avatarUrl}
         />
 
+        <div className="border-t border-border pt-6">
+          <VoiceSettings 
+            data={form} 
+            onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
+            hasApiKey={hasApiKey} 
+          />
+        </div>
+
         <Button
           onClick={handleSave}
           disabled={!hasChanges || isSaving}
-          className="w-full h-12 rounded-xl"
+          className="w-full h-12 rounded-xl gap-2 mt-4"
         >
-          {isSaving ? "Saving..." : "Save"}
+          {saved ? <><Check className="w-4 h-4" /> Saved</> : isSaving ? "Saving..." : "Save"}
         </Button>
       </div>
       <div className="pb-28" />

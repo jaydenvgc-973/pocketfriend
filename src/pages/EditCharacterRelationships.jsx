@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import VoiceSettings from "@/components/character/VoiceSettings";
 
 const LEVELS = [
   { key: "user_respect_level", label: "Respect", color: "text-blue-400" },
@@ -38,6 +39,14 @@ export default function EditCharacterRelationships() {
 
   const editableChars = characters.filter(c => c.status !== "deleted");
 
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
+  const [form, setForm] = useState({});
+
   const handleSelect = (char) => {
     setSelectedChar(char);
     setLevels({
@@ -47,14 +56,23 @@ export default function EditCharacterRelationships() {
       attraction_level: char.attraction_level ?? 0,
       chosen_family_level: char.chosen_family_level ?? 0,
     });
+    setForm({
+      voice_enabled: char.voice_enabled || false,
+      voice_name: char.voice_name || "",
+      voice_style_note: char.voice_style_note || "",
+    });
     setSaved(false);
   };
 
   const handleSave = async () => {
     if (!selectedChar) return;
     setIsSaving(true);
-    // Relationship levels don't affect the system prompt — just save directly
-    await base44.entities.Character.update(selectedChar.id, levels);
+    await base44.entities.Character.update(selectedChar.id, {
+      ...levels,
+      voice_enabled: form.voice_enabled,
+      voice_name: form.voice_name,
+      voice_style_note: form.voice_style_note,
+    });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
@@ -119,6 +137,14 @@ export default function EditCharacterRelationships() {
                 />
               </div>
             ))}
+
+            <div className="pt-4 border-t border-border">
+              <VoiceSettings 
+                data={form} 
+                onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
+                hasApiKey={hasApiKey} 
+              />
+            </div>
 
             <Button onClick={handleSave} disabled={isSaving} className="w-full h-12 rounded-xl gap-2">
               {saved ? <><Check className="w-4 h-4" /> Saved</> : isSaving ? "Saving..." : "Save Changes"}

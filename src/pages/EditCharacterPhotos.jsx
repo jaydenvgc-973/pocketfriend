@@ -2,7 +2,8 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronRight, Upload, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, Upload, RefreshCw, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
@@ -35,11 +36,13 @@ export default function EditCharacterPhotos() {
   });
 
   const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
-  const [voiceForm, setVoiceForm] = useState({});
+  const [form, setForm] = useState({});
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const handleSelect = (char) => {
     setSelectedChar(char);
-    setVoiceForm({
+    setForm({
       voice_enabled: char.voice_enabled || false,
       voice_name: char.voice_name || "",
       voice_style_note: char.voice_style_note || "",
@@ -55,13 +58,6 @@ export default function EditCharacterPhotos() {
       reference_image_urls: newRefUrls,
       system_prompt: updated.system_prompt,
     });
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
-  };
-
-  const handleVoiceSave = async () => {
-    if (!selectedChar) return;
-    await base44.entities.Character.update(selectedChar.id, voiceForm);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
   };
@@ -174,22 +170,33 @@ export default function EditCharacterPhotos() {
                 </div>
 
                 {/* Voice Settings */}
-                <div className="border border-border rounded-2xl p-4 space-y-3 pt-4 mt-4">
+                <div className="border border-border rounded-2xl p-4">
                   <VoiceSettings 
-                    data={voiceForm} 
-                    onUpdate={(field, value) => setVoiceForm(p => ({ ...p, [field]: value }))} 
+                    data={form} 
+                    onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
                     hasApiKey={hasApiKey} 
                   />
-                  {(voiceForm.voice_enabled !== selectedChar.voice_enabled || voiceForm.voice_name !== selectedChar.voice_name || voiceForm.voice_style_note !== selectedChar.voice_style_note) && (
-                    <button
-                      onClick={handleVoiceSave}
-                      className="w-full py-2 px-3 bg-primary text-primary-foreground rounded-xl text-xs font-medium hover:bg-primary/90 transition-colors"
-                    >
-                      Save Voice Settings
-                    </button>
-                  )}
                 </div>
               </div>
+
+              <Button 
+                onClick={async () => {
+                  setIsSaving(true);
+                  await base44.entities.Character.update(selectedChar.id, {
+                    voice_enabled: form.voice_enabled,
+                    voice_name: form.voice_name,
+                    voice_style_note: form.voice_style_note,
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+                  setIsSaving(false);
+                  setSaved(true);
+                  setTimeout(() => setSaved(false), 2000);
+                }} 
+                disabled={isSaving} 
+                className="w-full h-12 rounded-xl gap-2 mt-4"
+              >
+                {saved ? <><Check className="w-4 h-4" /> Saved</> : isSaving ? "Saving..." : "Save Voice Settings"}
+              </Button>
             </div>
           </div>
         )}
