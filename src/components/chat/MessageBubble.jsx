@@ -110,15 +110,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           whileHover={{ scale: 1.1 }}
           whileTap={{ scale: 0.95 }}
           onClick={onPlayVoice}
-          disabled={isPlayingVoice || !hasVoice}
+          disabled={isPlayingVoice}
           className={`flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full transition-colors ${
             isPlayingVoice 
               ? 'bg-primary text-primary-foreground' 
-              : hasVoice
-              ? 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary'
-              : 'bg-card border border-border text-muted-foreground/40 opacity-40 cursor-not-allowed'
+              : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary'
           }`}
-          title={!hasVoice ? 'Voice not configured' : isPlayingVoice ? 'Playing audio...' : 'Play voice'}
+          title={isPlayingVoice ? 'Playing audio...' : 'Play voice'}
         >
           <Volume2 className="w-4 h-4" />
         </motion.button>
