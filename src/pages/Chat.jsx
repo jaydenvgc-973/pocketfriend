@@ -203,104 +203,108 @@ export default function Chat() {
   // useEffect(() => { ... }, []);
 
   useEffect(() => {
-    if (!characterId || !character || !currentUser.email) return;
+    if (!characterId || !currentUser.email) return;
     
-    // Reset state immediately when switching characters
-    setMessages([]);
-    setConversationId(null);
-    setIsTyping(false);
-    
+    // CRITICAL FIX: Only reset state on ACTUAL character ID change, NOT on character data updates
+    // This prevents the stale re-fetch from wiping newly delivered messages
     const loadConvo = async () => {
-      try {
-        console.log(`[Chat] LOAD: Conversation for ${character.name}`);
-        
-        // Fetch conversations for this character
-        const convos = await base44.entities.Conversation.filter(
-          { type: chatType, character_ids: [characterId], created_by: currentUser.email },
-          "-updated_date",
-          1
-        );
+       try {
+         // Fetch character data fresh (needed for pending messages)
+         const chars = await base44.entities.Character.filter({ id: characterId });
+         const currentCharacter = chars?.[0];
+         if (!currentCharacter) {
+           console.error('[Chat] LOAD ERROR: Character not found');
+           return;
+         }
 
-        let convoId = null;
+         // Fetch conversations for this character using characterId from closure
+         const convos = await base44.entities.Conversation.filter(
+           { type: chatType, character_ids: [characterId], created_by: currentUser.email },
+           "-updated_date",
+           1
+         );
 
-        if (convos.length > 0) {
-          convoId = convos[0].id;
-          
-          // Load the 20 most recent non-archived messages
-          const loadedMsgs = await base44.entities.Message.filter(
-            { conversation_id: convoId, archived_date: { $exists: false } },
-            "-created_date",
-            20
-          );
-          
-          console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
-          
-          if (loadedMsgs && loadedMsgs.length > 0) {
-            // Reverse to chronological order
-            setMessages(loadedMsgs.reverse());
-            setConversationId(convoId);
+         let convoId = null;
 
-            // Mark unread messages as read (non-blocking)
-            const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
-            if (unread.length > 0) {
-              unread.forEach(m => {
-                base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
-              });
-            }
-          } else {
-            setConversationId(convoId);
-          }
-        } else {
-          // Create conversation if none exists
-          const convo = await base44.entities.Conversation.create({
-            title: `${chatType} with ${character.name}`,
-            type: chatType,
-            character_ids: [characterId],
-          });
-          setConversationId(convo.id);
-        }
+         if (convos.length > 0) {
+           convoId = convos[0].id;
 
-        // DISABLED: Archiving temporarily disabled to prevent message loss
-        // Re-enable only after rewriting archiving logic correctly
+           // Load the 20 most recent non-archived messages
+           const loadedMsgs = await base44.entities.Message.filter(
+             { conversation_id: convoId, archived_date: { $exists: false } },
+             "-created_date",
+             20
+           );
 
-        // Load pending messages and deliver them
-        const pending = await base44.entities.PendingMessage.filter(
-          { character_id: characterId, delivered: false }
-        );
+           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
 
-        if (pending.length > 0 && convoId) {
-          console.log(`[Chat] LOAD: Delivering ${pending.length} pending messages`);
-          for (const pm of pending) {
-            const charMsg = await base44.entities.Message.create({
-              conversation_id: convoId,
-              sender_type: "character",
-              character_id: characterId,
-              character_name: character.name,
-              content: pm.content,
-              image_url: pm.image_url || undefined,
-              emotional_state: pm.emotional_state || "calm",
-              timestamp: new Date().toISOString(),
-            });
+           if (loadedMsgs && loadedMsgs.length > 0) {
+             // Reverse to chronological order
+             setMessages(loadedMsgs.reverse());
+             setConversationId(convoId);
 
-            console.log(`[Chat] LOAD: Pending delivered ${charMsg.id.substring(0, 8)}`);
-            setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
-            await base44.entities.PendingMessage.update(pm.id, { delivered: true });
-            await base44.entities.Conversation.update(convoId, {
-              last_message_preview: pm.content.substring(0, 100),
-              last_message_date: new Date().toISOString(),
-            });
-            
-            await new Promise(r => setTimeout(r, 500));
-          }
-        }
-      } catch (err) {
-        console.error('[Chat] LOAD ERROR:', err);
-      }
-    };
+             // Mark unread messages as read (non-blocking)
+             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
+             if (unread.length > 0) {
+               unread.forEach(m => {
+                 base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
+               });
+             }
+           } else {
+             setConversationId(convoId);
+           }
+         } else {
+           // Create conversation if none exists
+           const convo = await base44.entities.Conversation.create({
+             title: `${chatType} with ${currentCharacter.name}`,
+             type: chatType,
+             character_ids: [characterId],
+           });
+           setConversationId(convo.id);
+           convoId = convo.id;
+         }
+
+         // DISABLED: Archiving temporarily disabled to prevent message loss
+         // Re-enable only after rewriting archiving logic correctly
+
+         // Load pending messages and deliver them
+         const pending = await base44.entities.PendingMessage.filter(
+           { character_id: characterId, delivered: false }
+         );
+
+         if (pending.length > 0 && convoId) {
+           console.log(`[Chat] LOAD: Delivering ${pending.length} pending messages`);
+           for (const pm of pending) {
+             const charMsg = await base44.entities.Message.create({
+               conversation_id: convoId,
+               sender_type: "character",
+               character_id: characterId,
+               character_name: currentCharacter.name,
+               content: pm.content,
+               image_url: pm.image_url || undefined,
+               emotional_state: pm.emotional_state || "calm",
+               timestamp: new Date().toISOString(),
+             });
+
+             console.log(`[Chat] LOAD: Pending delivered ${charMsg.id.substring(0, 8)}`);
+             setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
+             await base44.entities.PendingMessage.update(pm.id, { delivered: true });
+             await base44.entities.Conversation.update(convoId, {
+               last_message_preview: pm.content.substring(0, 100),
+               last_message_date: new Date().toISOString(),
+             });
+
+             await new Promise(r => setTimeout(r, 500));
+           }
+         }
+       } catch (err) {
+         console.error('[Chat] LOAD ERROR:', err);
+       }
+     };
 
     const timer = setTimeout(() => loadConvo(), 300);
     return () => clearTimeout(timer);
-  }, [characterId, character, chatType, currentUser.email]);
+  }, [characterId, chatType, currentUser.email]); // CRITICAL: Removed 'character' to prevent re-loads on emotion/relationship updates
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
