@@ -69,13 +69,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fix messages: mark invalid unread messages as read
-    for (const msgFix of messagesToFix) {
-      try {
-        await base44.entities.Message.update(msgFix.id, { is_read: true });
-      } catch (e) {
-        console.error(`Failed to fix message ${msgFix.id}:`, e.message);
-      }
+    // Fix messages: mark invalid unread messages as read (batch update)
+    const fixPromises = messagesToFix.map(msgFix =>
+      base44.entities.Message.update(msgFix.id, { is_read: true })
+        .catch(e => console.error(`Failed to fix message ${msgFix.id}:`, e.message))
+    );
+    await Promise.all(fixPromises);
+
+    // Also mark ALL unread messages older than 30 days as read (safety net)
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const oldUnreadMessages = await base44.entities.Message.filter({
+      character_id: characterId,
+      is_read: false,
+      timestamp: { $lt: thirtyDaysAgo.toISOString() }
+    }, "-created_date", 1000);
+
+    if (oldUnreadMessages.length > 0) {
+      const oldFixPromises = oldUnreadMessages.map(msg =>
+        base44.entities.Message.update(msg.id, { is_read: true })
+          .catch(() => {})
+      );
+      await Promise.all(oldFixPromises);
+      console.log(`[Unread Sync] Marked ${oldUnreadMessages.length} old messages as read`);
     }
 
     // Invalidate conversation queries to refresh unread counts

@@ -102,23 +102,33 @@ export default function Home() {
     });
   }, [characters, currentUser?.email]);
 
-  // Sync unread counts on page load and when characters change
+  // Sync unread counts on page load — CRITICAL: force sync before any other data fetch
   useEffect(() => {
     if (!characters || characters.length === 0) return;
     
-    // Sync unread counts for all characters in parallel
-    characters.forEach(char => {
+    // Sync unread counts for all characters in parallel (blocks on completion)
+    const syncPromises = characters.map(char =>
       base44.functions.invoke('syncUnreadCounts', { characterId: char.id })
         .then(res => {
-          if (res?.data?.diagnostics) {
-            console.log(`[Unread Sync] ${char.name}:`, res.data.diagnostics);
-          }
-          // Invalidate conversation queries to refresh UI
-          queryClient.invalidateQueries({ queryKey: ['conversations', char.id] });
+          console.log(`[Unread Sync COMPLETE] ${char.name}: actual unread = ${res?.data?.diagnostics?.actual_unread_count}, fixed = ${res?.data?.diagnostics?.invalid_unread_fixed}`);
+          // FORCE invalidate and refetch
+          return queryClient.invalidateQueries({ 
+            queryKey: ['conversations', char.id],
+            exact: false
+          });
         })
-        .catch(err => console.error(`[Unread Sync] Failed for ${char.name}:`, err));
+        .catch(err => {
+          console.error(`[Unread Sync] Failed for ${char.name}:`, err);
+          return null;
+        })
+    );
+
+    // Wait for all syncs to complete, then refetch
+    Promise.all(syncPromises).then(() => {
+      console.log('[Unread Sync] All syncs complete, invalidating all conversation queries');
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
     });
-  }, [characters, queryClient]);
+  }, [characters.length, queryClient]);
 
   useEffect(() => {
     if (!isLoading && settings.length === 0) {

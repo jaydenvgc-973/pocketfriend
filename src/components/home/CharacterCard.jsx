@@ -119,8 +119,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   };
 
   useEffect(() => {
-    countUnread();
-  }, [conversations, character.id]);
+    // Force hard invalidate and recount immediately
+    queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+    setTimeout(() => countUnread(), 50);
+  }, [conversations, character.id, queryClient]);
 
   // Re-count when user returns to the tab/window
   useEffect(() => {
