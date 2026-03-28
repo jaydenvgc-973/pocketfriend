@@ -335,18 +335,18 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 const moodLabel = stateLabels[state] || state;
 
                 return (
-                  <div className="flex items-center gap-2">
-                    {/* MOOD: Text + Color */}
-                    <div className="flex items-center gap-1">
-                      <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
-                      <span className="text-xs text-foreground capitalize">{moodLabel}</span>
+                  <div className="flex items-center gap-3">
+                    {/* MOOD: Color dot + text label */}
+                    <div className="flex items-center gap-1.5">
+                      <div className={`w-2 h-2 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
+                      <span className="text-xs text-foreground capitalize font-medium">{moodLabel}</span>
                     </div>
                     
-                    {/* LOCATION/STATUS: Icon + Text (only if not default "available") */}
-                    {statusDisplay?.iconType && statusDisplay.iconType !== 'calm' && (
-                      <div className="flex items-center gap-1">
-                        {IconComponent && <IconComponent className={`w-3 h-3 ${statusDisplay.color}`} />}
-                        <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.label}</span>
+                    {/* LOCATION/STATUS: Icon + text (always show if a location is set) */}
+                    {statusDisplay?.iconType && (
+                      <div className="flex items-center gap-1.5">
+                        {IconComponent && <IconComponent className={`w-3.5 h-3.5 ${statusDisplay.color}`} />}
+                        <span className={`text-xs font-medium ${statusDisplay.color}`}>{statusDisplay.label}</span>
                       </div>
                     )}
                   </div>
