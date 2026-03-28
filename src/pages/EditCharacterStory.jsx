@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, ChevronRight, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -30,6 +31,8 @@ export default function EditCharacterStory() {
       current_situation: char.current_situation || "",
       family_history: char.family_history || "",
       emotional_baggage: char.emotional_baggage || "",
+      age_range: char.age_range || "",
+      personality_notes: char.personality_summary || "",
     });
     setSaved(false);
   };
@@ -39,22 +42,28 @@ export default function EditCharacterStory() {
     setIsSaving(true);
     const merged = { ...selectedChar, ...form };
 
-    // Re-generate personality summary from the updated story content
-    const personality = await base44.integrations.Core.InvokeLLM({
-      prompt: `Create a personality summary (2-3 sentences, raw and real, written in third person) based on this character's updated profile.
+    // Use user-edited personality notes directly if changed, otherwise re-generate from story
+    let personality;
+    if (form.personality_notes.trim() && form.personality_notes.trim() !== (selectedChar.personality_summary || "").trim()) {
+      personality = form.personality_notes.trim();
+    } else {
+      personality = await base44.integrations.Core.InvokeLLM({
+        prompt: `Create a personality summary (2-3 sentences, raw and real, written in third person) based on this character's updated profile.
 Name: ${merged.name}. Age: ${merged.age_range || "adult"}. Gender: ${merged.gender || "person"}.
 Background story: ${merged.background_story || "not specified"}.
 Current situation: ${merged.current_situation || "not specified"}.
 Emotional baggage: ${merged.emotional_baggage || "not specified"}.
 Existing personality traits: ${(merged.personality_traits || []).join(", ") || "not specified"}.
 Make it feel like a real person, not a description. No flowery language.`
-    });
+      });
+    }
 
     merged.personality_summary = personality;
     merged.system_prompt = buildSystemPrompt(merged);
 
+    const { personality_notes, ...formWithoutNotes } = form;
     await base44.entities.Character.update(selectedChar.id, {
-      ...form,
+      ...formWithoutNotes,
       personality_summary: personality,
       system_prompt: merged.system_prompt,
     });
@@ -106,6 +115,25 @@ Make it feel like a real person, not a description. No flowery language.`
           </div>
         ) : (
           <div className="space-y-6">
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Age</label>
+              <Input
+                value={form.age_range}
+                onChange={e => setForm(p => ({ ...p, age_range: e.target.value }))}
+                placeholder="e.g. Early 20s, Mid 30s, Late 40s..."
+                className="rounded-xl text-sm"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Personality Notes</label>
+              <Textarea
+                value={form.personality_notes}
+                onChange={e => setForm(p => ({ ...p, personality_notes: e.target.value }))}
+                placeholder="A short description of who they are — tone, vibe, how they carry themselves..."
+                className="rounded-xl min-h-[90px] text-sm resize-none"
+              />
+              <p className="text-[11px] text-muted-foreground">Edit directly or leave unchanged to auto-regenerate from story fields.</p>
+            </div>
             <div className="space-y-2">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Background Story</label>
               <Textarea
