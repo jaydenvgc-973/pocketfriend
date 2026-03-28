@@ -80,7 +80,7 @@ export default function Chat() {
 
       // Fetch conversations first, then pending messages sequentially to avoid rate limits
       const convos = await retryWithBackoff(() =>
-        base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1)
+        base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId], created_by: currentUser.email }, "-updated_date", 1)
       );
       await new Promise(r => setTimeout(r, 300));
       const pending = await retryWithBackoff(() =>
