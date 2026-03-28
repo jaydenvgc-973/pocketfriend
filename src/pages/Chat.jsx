@@ -13,9 +13,10 @@ import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
-import { BarChart2, BookOpen } from "lucide-react";
+import { BarChart2, BookOpen, Globe } from "lucide-react";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
+import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -30,6 +31,7 @@ export default function Chat() {
   const [previousLevels, setPreviousLevels] = useState(null);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
+  const [showWorldContacts, setShowWorldContacts] = useState(false);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -762,6 +764,16 @@ Reply with ONLY the single emoji or the word "none".`,
         </div>
         {character && <MediaGallery messages={messages} />}
 
+        {character && (character.fictional_relationships || []).length > 0 && (
+          <button
+            onClick={() => setShowWorldContacts(true)}
+            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            title="Speak to people in their world"
+          >
+            <Globe className="w-4 h-4" />
+          </button>
+        )}
+
         {character && (
           <button
             onClick={() => setShowNarrativeBuilder(true)}
@@ -820,6 +832,11 @@ Reply with ONLY the single emoji or the word "none".`,
         conversationId={conversationId}
         chatHistory={messages}
         onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+      />
+      <WorldContactsPopup
+        isOpen={showWorldContacts}
+        onClose={() => setShowWorldContacts(false)}
+        character={character}
       />
       <BottomNav />
     </div>
