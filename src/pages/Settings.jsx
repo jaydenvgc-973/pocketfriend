@@ -16,6 +16,7 @@ import UserPhotoUploader from "@/components/user/UserPhotoUploader";
 import CommonQuestions from "@/components/settings/CommonQuestions";
 import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 import VoiceSettings from "@/components/character/VoiceSettings";
+import ProtectedCharactersManager from "@/components/settings/ProtectedCharactersManager";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -220,6 +221,9 @@ export default function Settings() {
           <UserPhotoUploader referenceImages={user.reference_image_urls || []} generatedAvatars={user.generated_avatar_urls || []} />
         </div>
         <VoiceAudioSettings settings={settings} onUpdate={(field, value) => mutation.mutate({ [field]: value })} isSaving={mutation.isPending} />
+        <div className="space-y-4 pt-4 border-t border-border">
+          <ProtectedCharactersManager />
+        </div>
         <div className="space-y-4 pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Per-Character Nicknames & Voice</p>
           <p className="text-xs text-muted-foreground">Set a nickname and voice for each character.</p>
