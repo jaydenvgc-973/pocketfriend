@@ -1010,7 +1010,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
               hasVoice={msg.sender_type !== "user" && !msg.is_narrative && settings[0]?.voice_enabled && character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key && chatType !== "phone"}
-              onPlayVoice={() => settings.length > 0 && playCharacterVoice(msg.id, msg.content, character, settings[0])}
+              onPlayVoice={() => { if (settings.length > 0) playCharacterVoice(msg.id, msg.content, character, settings[0]); }}
               isPlayingVoice={playingAudioId === msg.id}
             />
           ))}
