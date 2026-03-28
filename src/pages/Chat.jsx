@@ -471,6 +471,7 @@ export default function Chat() {
     const musicLinkMatch = text.match(/https?:\/\/[^\s]+(spotify|apple|music|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0]);
+      return; // Exit after handling song link
     }
 
     // Check if user is asking character to look something up
@@ -506,7 +507,6 @@ export default function Chat() {
     console.log(`[Chat] USER MESSAGE — RENDERED immediately in UI`);
     // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
-    console.log(`[Chat] USER MESSAGE — STATE UPDATED, message count: ${(prev => [...prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]]).length}`);
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
