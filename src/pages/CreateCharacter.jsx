@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Plus, X, Sparkles, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -114,6 +114,7 @@ function loadDraft() {
 
 export default function CreateCharacter() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const draft = loadDraft();
   const [step, setStep] = useState(draft?.step || 0);
   const [isCreating, setIsCreating] = useState(false);
@@ -132,9 +133,15 @@ export default function CreateCharacter() {
   const [isGeneratingOccupation, setIsGeneratingOccupation] = useState(false);
   const [isGeneratingCriminalRecord, setIsGeneratingCriminalRecord] = useState(false);
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: existingCharacters = [] } = useQuery({
     queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list("-created_date"),
+    queryFn: () => currentUser?.email ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date") : [],
+    enabled: !!currentUser?.email,
   });
 
   const saveDraft = (newData, newStep, newAvatarUrl, newReferenceUrls) => {
@@ -414,6 +421,7 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
 
       const charData = {
         name: fullName,
+        created_by: currentUser?.email,
         gender: data.gender?.toLowerCase(),
         archetype: data.archetype || undefined,
         social_energy: data.social_energy || undefined,
@@ -426,7 +434,6 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         background_story: data.background || `${data.age_range} ${ethnicityStr} ${data.gender?.toLowerCase()}. ${data.living_situation}.`,
         current_situation: data.situation_override || data.living_situation,
         emotional_state: "calm",
-        avatar_url: avatarUrl || null,
         reference_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
         birthday: data.birthday || undefined,
         avatar_url: finalAvatarUrl,
@@ -475,6 +482,7 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
 
       if (res?.data?.success) {
         localStorage.removeItem(DRAFT_KEY);
+        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
         navigate("/home");
       } else {
         throw new Error(res?.data?.error || "Failed to create character");
