@@ -1,9 +1,8 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2 } from "lucide-react";
-import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { isCharacterAtWork } from "@/lib/workScheduleUtils";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle } from "lucide-react";
+import { getCharacterStatusDisplay } from "@/lib/characterStatusUtils";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -54,12 +53,7 @@ const stateDots = {
   frustrated: "bg-red-600"
 };
 
-const activityIcons = {
-  work: { icon: Briefcase, label: "at work", color: "text-blue-400" },
-  school: { icon: BookOpen, label: "at school", color: "text-amber-400" },
-  out: { icon: MapPin, label: "out", color: "text-emerald-400" },
-  home: { icon: Home, label: "home", color: "text-pink-400" }
-};
+
 
 export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const state = character.emotional_state || "calm";
@@ -233,41 +227,32 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 )}
               </div>
               {!isMovedAway && (() => {
-                const asleep = isCharacterAsleep(character);
-                const atWork = isCharacterAtWork(character);
-                const activity = character.current_activity?.toLowerCase().trim();
-                const activityKey = activity ? Object.keys(activityIcons).find(key => activity.includes(key)) : null;
-                
-                if (asleep) {
-                  return (
-                    <div className="flex items-center gap-1.5">
-                      <Moon className="w-3 h-3 text-blue-300" />
-                      <span className="text-xs text-blue-300">sleeping</span>
-                    </div>
-                  );
-                } else if (atWork) {
-                  return (
-                    <div className="flex items-center gap-1.5">
-                      <Briefcase className="w-3 h-3 text-blue-400" />
-                      <span className="text-xs text-blue-400">at work</span>
-                    </div>
-                  );
-                } else if (activityKey) {
-                  const ActivityIcon = activityIcons[activityKey].icon;
-                  return (
-                    <div className="flex items-center gap-1.5">
-                      <ActivityIcon className={`w-3 h-3 ${activityIcons[activityKey].color}`} />
-                      <span className={`text-xs ${activityIcons[activityKey].color}`}>{activityIcons[activityKey].label}</span>
-                    </div>
-                  );
-                } else {
-                  return (
-                    <div className="flex items-center gap-1.5">
+                const statusDisplay = getCharacterStatusDisplay(character);
+                const iconComponents = {
+                  'sleep': Moon,
+                  'work': Briefcase,
+                  'school': BookOpen,
+                  'gym': Dumbbell,
+                  'bar': Wine,
+                  'club': Music,
+                  'mall': ShoppingBag,
+                  'home': Home,
+                  'out': MapPin,
+                  'hospital': AlertTriangle,
+                  'calm': null
+                };
+                const IconComponent = iconComponents[statusDisplay?.iconType];
+
+                return (
+                  <div className="flex items-center gap-1.5">
+                    {IconComponent ? (
+                      <IconComponent className={`w-3 h-3 ${statusDisplay.color}`} />
+                    ) : (
                       <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
-                      <span className="text-xs text-muted-foreground">{stateLabels[state] || state}</span>
-                    </div>
-                  );
-                }
+                    )}
+                    <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.label}</span>
+                  </div>
+                );
               })()}
             </div>
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{character.personality_summary}</p>
