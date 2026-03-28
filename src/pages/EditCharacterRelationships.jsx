@@ -23,9 +23,17 @@ export default function EditCharacterRelationships() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list("-created_date"),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const editableChars = characters.filter(c => c.status !== "deleted");
@@ -47,7 +55,7 @@ export default function EditCharacterRelationships() {
     setIsSaving(true);
     // Relationship levels don't affect the system prompt — just save directly
     await base44.entities.Character.update(selectedChar.id, levels);
-    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
     setSaved(true);

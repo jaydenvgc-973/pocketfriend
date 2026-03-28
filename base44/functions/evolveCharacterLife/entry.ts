@@ -15,7 +15,8 @@ Deno.serve(async (req) => {
   const allCharacters = await base44.asServiceRole.entities.Character.list();
   // Only evolve active characters. Moved-away characters exist in the world but don't get active life updates.
   // Deleted characters are fully excluded.
-  const characters = allCharacters.filter(c => !c.status || c.status === "active");
+  // Each character is owned by its creator (created_by) — evolution must remain isolated per user.
+  const characters = allCharacters.filter(c => (!c.status || c.status === "active") && c.created_by);
 
   const results = [];
 

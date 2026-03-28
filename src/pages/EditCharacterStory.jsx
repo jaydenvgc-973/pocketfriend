@@ -17,9 +17,17 @@ export default function EditCharacterStory() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list("-created_date"),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const editableChars = characters.filter(c => !c.is_default && c.status !== "deleted");
@@ -67,7 +75,7 @@ Make it feel like a real person, not a description. No flowery language.`
       personality_summary: personality,
       system_prompt: merged.system_prompt,
     });
-    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
     setSaved(true);

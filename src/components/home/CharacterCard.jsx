@@ -142,7 +142,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
     const prompt = `Portrait photo of a real person. ${character.age_range || "adult"}${ethnicityPart ? ", " + ethnicityPart : ""}. Gender: ${character.gender || "person"}. ${character.personality_traits?.join(", ") || ""} energy. ${character.archetype ? character.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
     const result = await base44.integrations.Core.GenerateImage({ prompt });
     await base44.entities.Character.update(character.id, { avatar_url: result.url });
-    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["characters", character.created_by] });
     setIsGeneratingAvatar(false);
     setShowAvatarModal(false);
   };

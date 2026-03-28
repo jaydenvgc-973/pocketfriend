@@ -6,11 +6,18 @@ import { ACHIEVEMENTS } from "@/lib/achievements";
 export default function AchievementUnlockModal() {
   const [queue, setQueue] = useState([]);
   const [current, setCurrent] = useState(null);
+  const [userEmail, setUserEmail] = useState(null);
 
   useEffect(() => {
+    base44.auth.me().then(u => u?.email && setUserEmail(u.email)).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!userEmail) return;
+
     // Subscribe to new UserAchievement records in real-time
     const unsubscribe = base44.entities.UserAchievement.subscribe((event) => {
-      if (event.type === "create" && event.data?.is_seen === false) {
+      if (event.type === "create" && event.data?.is_seen === false && event.data?.created_by === userEmail) {
         setQueue(prev => {
           // Avoid duplicates in queue
           if (prev.some(r => r.id === event.data.id)) return prev;
@@ -20,7 +27,7 @@ export default function AchievementUnlockModal() {
     });
 
     // Also fetch any unseen achievements on mount (in case app was closed when earned)
-    base44.entities.UserAchievement.filter({ is_seen: false })
+    base44.entities.UserAchievement.filter({ is_seen: false, created_by: userEmail })
       .then(unseen => {
         if (unseen.length > 0) {
           setQueue(prev => {
@@ -33,7 +40,7 @@ export default function AchievementUnlockModal() {
       .catch(() => {});
 
     return () => unsubscribe();
-  }, []);
+  }, [userEmail]);
 
   // Show next in queue when current is cleared
   useEffect(() => {

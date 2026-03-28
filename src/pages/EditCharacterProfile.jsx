@@ -41,9 +41,17 @@ export default function EditCharacterProfile() {
   // For character relationships
   const [expandedRelId, setExpandedRelId] = useState(null);
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list("-created_date"),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const editableChars = characters.filter(c => c.status !== "deleted");
@@ -196,7 +204,7 @@ export default function EditCharacterProfile() {
       await base44.entities.Character.update(rel.related_character_id, { fictional_relationships: updatedRels });
     }));
 
-    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     setIsSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

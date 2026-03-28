@@ -81,7 +81,7 @@ export default function Settings() {
     },
     onSuccess: () => {
       setPendingDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
     },
   });
 
@@ -89,7 +89,7 @@ export default function Settings() {
     mutationFn: async (id) => {
       return base44.entities.Character.update(id, { status: "active" });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }),
   });
 
   const movedAwayChars = characters.filter(c => c.status === "moved_away");
@@ -231,7 +231,7 @@ export default function Settings() {
                     const val = e.target.value.trim();
                     if (val !== (char.nickname_for_user || "")) {
                       base44.entities.Character.update(char.id, { nickname_for_user: val || null })
-                        .then(() => queryClient.invalidateQueries({ queryKey: ["characters"] }));
+                        .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
                     }
                   }}
                   className="flex-1 h-9 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"

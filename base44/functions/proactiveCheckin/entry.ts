@@ -16,17 +16,25 @@ Deno.serve(async (req) => {
   const allCharacters = await base44.asServiceRole.entities.Character.list();
   const characters = allCharacters.filter(c => !c.status || c.status === 'active');
 
-  // Fetch user settings for schedule notes
+  // Fetch ALL user settings keyed by created_by (owner email) for per-user scoping
   const allSettings = await base44.asServiceRole.entities.UserSettings.list();
-  const userSettings = allSettings?.[0] || {};
-  const userScheduleNotes = userSettings.user_schedule_notes || null;
+  // Build a map of owner email -> their settings
+  const settingsByOwner = allSettings.reduce((acc, s) => {
+    if (s.created_by && !acc[s.created_by]) acc[s.created_by] = s;
+    return acc;
+  }, {});
 
   const results = [];
 
   for (const character of characters) {
     try {
-      // Find last conversation for this character
-      const conversations = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [character.id] });
+      // Get per-owner user settings for this character
+      const ownerEmail = character.created_by;
+      const userSettings = ownerEmail ? (settingsByOwner[ownerEmail] || {}) : {};
+      const userScheduleNotes = userSettings.user_schedule_notes || null;
+
+      // Find last conversation for this character — scoped to owner
+      const conversations = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [character.id], created_by: ownerEmail });
       
       let hoursSinceLastMessage = Infinity;
       if (conversations.length > 0) {
@@ -79,8 +87,8 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Check if there's already an undelivered pending message
-      const existing = await base44.asServiceRole.entities.PendingMessage.filter({ character_id: character.id, delivered: false });
+      // Check if there's already an undelivered pending message (scoped to owner)
+      const existing = await base44.asServiceRole.entities.PendingMessage.filter({ character_id: character.id, delivered: false, created_by: ownerEmail });
       if (existing.length > 0) {
         results.push({ id: character.id, name: character.name, status: 'skipped', reason: 'Already has pending message' });
         continue;

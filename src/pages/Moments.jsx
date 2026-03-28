@@ -15,24 +15,41 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS);
 export default function Moments() {
   const [activeCategory, setActiveCategory] = useState("all");
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.filter({ status: "active" }),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ status: "active", created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const { data: unlocked = [] } = useQuery({
-    queryKey: ["userAchievements"],
-    queryFn: () => base44.entities.UserAchievement.list("-unlocked_at"),
+    queryKey: ["userAchievements", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserAchievement.filter({ created_by: currentUser.email }, "-unlocked_at")
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const { data: messages = [] } = useQuery({
-    queryKey: ["recentMessages"],
-    queryFn: () => base44.entities.Message.list("-created_date", 200),
+    queryKey: ["recentMessages", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Message.filter({ created_by: currentUser.email }, "-created_date", 200)
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const { data: userChallenges = [] } = useQuery({
-    queryKey: ["userChallenges"],
-    queryFn: () => base44.entities.UserChallenge.list(),
+    queryKey: ["userChallenges", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserChallenge.filter({ created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   // Map achievement_id -> unlocked record (most recent)
