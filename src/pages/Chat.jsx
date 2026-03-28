@@ -18,8 +18,9 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 
-// Voice playback cache to avoid regenerating the same audio
+// Voice playback cache and active audio tracking
 const voiceCache = new Map();
+const activeAudioRef = new Map(); // messageId -> Audio element
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -36,6 +37,7 @@ export default function Chat() {
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
   const [showWorldContacts, setShowWorldContacts] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
+  const [voiceErrors, setVoiceErrors] = useState({});
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -59,70 +61,129 @@ export default function Chat() {
 
   const userSettings = settings?.[0] || {};
 
-  // Voice playback utility
-  const playCharacterVoice = async (messageId, text, characterData, userSettings) => {
-    // Check ALL voice conditions are met
-    const voiceGloballyEnabled = userSettings?.voice_enabled === true;
-    const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
-    const hasApiKey = userSettings?.openai_api_key;
-    const isNotPhone = chatType !== "phone";
-
-    // All conditions must be true to play voice
-    if (!voiceGloballyEnabled || !charHasVoice || !hasApiKey || !isNotPhone) {
+  // CORE VOICE PLAYBACK FUNCTION - This is the single source of truth for all voice playback
+  const playCharacterVoice = async (messageId, text, characterData, userSettings, bypassCache = false) => {
+    if (!messageId || !text || !characterData || !userSettings) {
+      console.warn('[Voice] Missing parameters', { messageId, text, characterData, userSettings });
       return;
     }
 
-    // Sanitize text: remove image prompts, metadata, system instructions
-    const cleanText = text
-      .replace(/\[USER\]/gi, '')
-      .replace(/\[CHARACTER\]/gi, '')
-      .replace(/\[JOINT\]/gi, '')
-      .trim();
-
-    if (!cleanText) return;
-
-    const cacheKey = `${characterData.id}_${characterData.voice_name}_${cleanText}`;
-    
     try {
+      setVoiceErrors(prev => ({ ...prev, [messageId]: null }));
       setPlayingAudioId(messageId);
-      
+
+      // Step 1: Check conditions
+      const voiceGloballyEnabled = userSettings?.voice_enabled === true;
+      const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
+      const hasApiKey = userSettings?.openai_api_key;
+      const isNotPhone = chatType !== "phone";
+
+      console.log('[Voice] Condition check', {
+        voiceGloballyEnabled,
+        charHasVoice,
+        hasApiKey: !!hasApiKey,
+        isNotPhone,
+      });
+
+      if (!voiceGloballyEnabled || !charHasVoice || !hasApiKey || !isNotPhone) {
+        console.log('[Voice] Conditions not met - skipping playback');
+        setPlayingAudioId(null);
+        return;
+      }
+
+      // Step 2: Check cache first
+      const cacheKey = `${characterData.id}_${characterData.voice_name}_${text}`;
       let audioUrl = voiceCache.get(cacheKey);
-      
-      // Generate if not cached
-      if (!audioUrl) {
-        const res = await base44.functions.invoke('generateSpeech', {
-          text: cleanText.substring(0, 4096),
-          voice: characterData.voice_name,
-          voiceStyleNote: characterData.voice_style_note,
-          apiKey: userSettings.openai_api_key,
-        });
 
-        if (res?.data?.audioUrl) {
-          audioUrl = res.data.audioUrl;
-          voiceCache.set(cacheKey, audioUrl);
-          
-          // Update usage tracking (fire-and-forget)
-          const estimatedMinutes = res.data.estimatedMinutes || 0.1;
-          base44.entities.UserSettings.update(userSettings.id, {
-            voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
-          }).catch(() => {});
-        }
+      if (audioUrl && !bypassCache) {
+        console.log('[Voice] Using cached audio');
+        await playAudio(messageId, audioUrl);
+        return;
       }
 
-      // Play audio
-      if (audioUrl) {
-        const audio = new Audio(audioUrl);
-        audio.onended = () => setPlayingAudioId(null);
-        audio.play().catch(() => {
-          // Playback failed, but message still displays
-          setPlayingAudioId(null);
-        });
+      // Step 3: Generate speech
+      console.log('[Voice] Calling generateSpeech function');
+      const res = await base44.functions.invoke('generateSpeech', {
+        text: text,
+        voice: characterData.voice_name,
+        voiceStyleNote: characterData.voice_style_note,
+        apiKey: userSettings.openai_api_key,
+      });
+
+      if (!res?.data?.audioUrl) {
+        throw new Error('No audio URL returned from generateSpeech');
       }
+
+      audioUrl = res.data.audioUrl;
+      voiceCache.set(cacheKey, audioUrl);
+
+      console.log('[Voice] Audio generated successfully');
+
+      // Step 4: Save audio to message
+      await base44.entities.Message.update(messageId, { audio_url: audioUrl });
+      console.log('[Voice] Audio URL saved to message');
+
+      // Step 5: Update usage tracking
+      const estimatedMinutes = res.data.estimatedMinutes || 0.1;
+      if (userSettings.id) {
+        base44.entities.UserSettings.update(userSettings.id, {
+          voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
+        }).catch(() => {});
+      }
+
+      // Step 6: Play audio
+      await playAudio(messageId, audioUrl);
+
     } catch (err) {
-      // Voice generation failed, but message still displays
+      console.error('[Voice] Error during playback:', err);
+      setVoiceErrors(prev => ({ ...prev, [messageId]: err.message }));
       setPlayingAudioId(null);
     }
   };
+
+  // Helper function to actually play audio
+  const playAudio = async (messageId, audioUrl) => {
+    return new Promise((resolve) => {
+      try {
+        // Stop any existing audio for this message
+        const existingAudio = activeAudioRef.get(messageId);
+        if (existingAudio) {
+          existingAudio.pause();
+          existingAudio.currentTime = 0;
+        }
+
+        const audio = new Audio(audioUrl);
+        activeAudioRef.set(messageId, audio);
+
+        audio.onended = () => {
+          activeAudioRef.delete(messageId);
+          setPlayingAudioId(null);
+          resolve();
+        };
+
+        audio.onerror = (err) => {
+          console.error('[Voice] Audio playback error:', err);
+          activeAudioRef.delete(messageId);
+          setPlayingAudioId(null);
+          resolve();
+        };
+
+        console.log('[Voice] Starting playback');
+        audio.play().catch(err => {
+          console.error('[Voice] Play failed:', err);
+          activeAudioRef.delete(messageId);
+          setPlayingAudioId(null);
+          resolve();
+        });
+      } catch (err) {
+        console.error('[Voice] Audio setup error:', err);
+        setPlayingAudioId(null);
+        resolve();
+      }
+    });
+  };
+
+
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -771,12 +832,11 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     // Add directly to state — subscription deduplication will prevent doubles
     setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
-    // Auto-play character voice if voice enabled (after short delay for UX)
-    if (userSettings.voice_enabled && character?.voice_enabled && character?.voice_name && userSettings.openai_api_key && chatType !== "phone") {
-      setTimeout(() => {
-        playCharacterVoice(charMsg.id, responseText, character, userSettings);
-      }, 500);
-    }
+    // Auto-play character voice (after short delay for UX)
+    console.log('[Chat] Character response created, attempting auto-play');
+    setTimeout(() => {
+      playCharacterVoice(charMsg.id, responseText, character, userSettings, false);
+    }, 500);
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
@@ -1015,8 +1075,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onReact={handleReact} 
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
-              hasVoice={msg.sender_type !== "user" && !msg.is_narrative && userSettings.voice_enabled && character?.voice_enabled && character?.voice_name && userSettings.openai_api_key && chatType !== "phone"}
-              onPlayVoice={() => playCharacterVoice(msg.id, msg.content, character, userSettings)}
+              onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => playCharacterVoice(msg.id, msg.content, character, userSettings, true) : null}
               isPlayingVoice={playingAudioId === msg.id}
             />
           ))}

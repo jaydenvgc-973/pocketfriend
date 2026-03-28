@@ -38,6 +38,10 @@
       "type": "string",
       "description": "Optional image URL attached to the message"
     },
+    "audio_url": {
+      "type": "string",
+      "description": "Base64 or URL of generated voice audio for this message"
+    },
     "emotional_state": {
       "type": "string",
       "enum": [

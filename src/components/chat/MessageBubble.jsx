@@ -11,7 +11,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, hasVoice, onPlayVoice, isPlayingVoice }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   // Use the persisted played_as name if this user message was sent while playing as a character
@@ -104,7 +104,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         )}
       </div>
 
-      {/* Voice button outside bubble on the right */}
+      {/* Voice button outside bubble on the right - visible on all character messages */}
       {!isNarrative && !isUser && onPlayVoice && (
         <motion.button
           whileHover={{ scale: 1.1 }}
@@ -114,9 +114,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           className={`flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full transition-colors ${
             isPlayingVoice 
               ? 'bg-primary text-primary-foreground' 
-              : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary'
+              : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary hover:scale-110'
           }`}
-          title={isPlayingVoice ? 'Playing audio...' : 'Play voice'}
+          title={isPlayingVoice ? 'Playing audio...' : 'Play or generate voice'}
         >
           <Volume2 className="w-4 h-4" />
         </motion.button>
