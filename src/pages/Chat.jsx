@@ -401,9 +401,32 @@ export default function Chat() {
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      const playAsInstruction = activeCharacter
-        ? `\n\nIMPORTANT: The person messaging you right now is NOT the app user — it is ${activeCharacter.name}. You know ${activeCharacter.name} in your world. Respond to them as you would in real life based on your relationship with them. Do NOT treat this message as coming from your usual conversation partner — it is ${activeCharacter.name} reaching out to you directly.`
-        : "";
+      let playAsInstruction = "";
+      if (activeCharacter) {
+        // Find the relationship entry the receiving character has toward the active (sender) character
+        const senderRelEntry = (character.fictional_relationships || []).find(
+          r => r.related_character_id === activeCharacter.id
+        );
+        // Also look for memories mentioning the sender
+        const senderMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 50);
+        const relevantMemories = senderMemories
+          .filter(m => m.description?.toLowerCase().includes(activeCharacter.name.toLowerCase()))
+          .slice(0, 5);
+
+        const relContext = senderRelEntry
+          ? `Your relationship with ${activeCharacter.name}: ${senderRelEntry.relationship_type || "known person"} — Respect: ${senderRelEntry.user_respect_level ?? 50}/100, Friendship: ${senderRelEntry.friendship_level ?? 75}/100, Romantic: ${senderRelEntry.romantic_level ?? 0}/100. Current status: ${senderRelEntry.current_status || "ongoing"}. ${senderRelEntry.last_interaction_summary ? `Last time you interacted: ${senderRelEntry.last_interaction_summary}` : ""} ${senderRelEntry.description ? `Background: ${senderRelEntry.description}` : ""}`
+          : `You know ${activeCharacter.name} from your world.`;
+
+        const memoryContext2 = relevantMemories.length > 0
+          ? `\nMemories involving ${activeCharacter.name}:\n${relevantMemories.map(m => `- ${m.title}: ${m.description}`).join("\n")}`
+          : "";
+
+        playAsInstruction = `\n\nCRITICAL — IDENTITY OF THE SENDER: The message you just received is NOT from the app user. It is from ${activeCharacter.name} (${activeCharacter.personality_summary || activeCharacter.archetype || "someone you know"}). You already know exactly who ${activeCharacter.name} is — do NOT ask for identification or treat them as a stranger.
+
+${relContext}${memoryContext2}
+
+Respond to ${activeCharacter.name} as you genuinely would in real life — drawing on your history, your current relationship state, and your emotional context with them. Your first reply must reflect that you immediately recognize them and respond with continuity from your shared history. Do NOT treat this as a new interaction.`;
+      }
 
       // --- MEDIA FREQUENCY GATING ---
       // Count messages and media sent in this conversation to enforce frequency limits
