@@ -10,7 +10,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { conversationId, keepRecent } = body;
+    const { conversationId, keepRecent, isProtected } = body;
 
     if (!conversationId) {
       return Response.json({ error: 'conversationId required' }, { status: 400 });
@@ -35,10 +35,13 @@ Deno.serve(async (req) => {
     ).then(arr => arr?.[0]) || {};
 
     const characterId = conversation.character_ids?.[0];
-    const isProtected = characterId && (userSettings.protected_character_ids || []).includes(characterId);
+    const charIsProtected = characterId && (userSettings.protected_character_ids || []).includes(characterId);
 
-    // Protected characters: keep more messages (100 instead of 50)
-    const keepCount = isProtected ? parseInt(keepRecent || "100") : parseInt(keepRecent || "50");
+    // Use passed-in isProtected if provided, otherwise calculate
+    const protectedStatus = isProtected !== undefined ? isProtected : charIsProtected;
+    
+    // Protected characters: keep more messages in buffer (50 vs 30)
+    const keepCount = parseInt(keepRecent || (protectedStatus ? "50" : "30"));
 
     // Fetch all messages in conversation
     const allMessages = await base44.entities.Message.filter(
@@ -56,7 +59,17 @@ Deno.serve(async (req) => {
     }
 
     // Messages beyond keepCount are candidates for archival
-    const messagesToArchive = allMessages.slice(keepCount);
+    let messagesToArchive = allMessages.slice(keepCount);
+    
+    // If character is protected, preserve its recent messages by archiving others first
+    if (protectedStatus && characterId) {
+      // Separate protected character messages from others
+      const protectedMsgs = messagesToArchive.filter(m => m.character_id === characterId);
+      const otherMsgs = messagesToArchive.filter(m => m.character_id !== characterId);
+      
+      // Archive other characters' messages first, then older protected character messages
+      messagesToArchive = [...otherMsgs, ...protectedMsgs];
+    }
     
     // Filter to only messages not yet archived
     const notYetArchived = messagesToArchive.filter(m => !m.archived_date);

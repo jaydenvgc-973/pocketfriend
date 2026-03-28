@@ -226,11 +226,11 @@ export default function Chat() {
         if (convos.length > 0) {
           convoId = convos[0].id;
           
-          // Load the 50 most recent non-archived messages
+          // Load the 20 most recent non-archived messages
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId, archived_date: { $exists: false } },
             "-created_date",
-            50
+            20
           );
           
           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
@@ -261,7 +261,7 @@ export default function Chat() {
         }
 
         // Archive old messages & extract memories (non-blocking, delayed)
-        // Protected characters keep more messages visible (100 instead of 50)
+        // Protected characters keep more archived buffer (50 vs 30)
         if (convoId) {
           setTimeout(async () => {
             const settings = await base44.entities.UserSettings.filter(
@@ -271,9 +271,9 @@ export default function Chat() {
             ).then(arr => arr?.[0]) || {};
             
             const isProtected = (settings.protected_character_ids || []).includes(characterId);
-            const keepCount = isProtected ? 100 : 50;
+            const keepCount = isProtected ? 50 : 30;
             
-            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: keepCount }).catch(() => {});
+            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: keepCount, isProtected }).catch(() => {});
             base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
           }, 3000);
         }
