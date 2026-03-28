@@ -102,6 +102,24 @@ export default function Home() {
     });
   }, [characters, currentUser?.email]);
 
+  // Sync unread counts on page load and when characters change
+  useEffect(() => {
+    if (!characters || characters.length === 0) return;
+    
+    // Sync unread counts for all characters in parallel
+    characters.forEach(char => {
+      base44.functions.invoke('syncUnreadCounts', { characterId: char.id })
+        .then(res => {
+          if (res?.data?.diagnostics) {
+            console.log(`[Unread Sync] ${char.name}:`, res.data.diagnostics);
+          }
+          // Invalidate conversation queries to refresh UI
+          queryClient.invalidateQueries({ queryKey: ['conversations', char.id] });
+        })
+        .catch(err => console.error(`[Unread Sync] Failed for ${char.name}:`, err));
+    });
+  }, [characters, queryClient]);
+
   useEffect(() => {
     if (!isLoading && settings.length === 0) {
       navigate("/");

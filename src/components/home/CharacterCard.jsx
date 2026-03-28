@@ -94,11 +94,25 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         is_read: false,
       });
 
+      // Filter out invalid unread messages:
+      // - Messages with failed/undefined images
+      // - Messages with empty content AND no image
+      // - Messages that have invalid states
+      const validUnread = allUnread.filter(msg => {
+        const hasFailedImage = msg.image_url && (msg.image_url.includes('undefined') || msg.image_url === '');
+        const hasValidContent = msg.content && msg.content.trim() !== '';
+        const hasValidImage = msg.image_url && !hasFailedImage;
+        const isPendingState = msg.delivered === false;
+
+        // Keep only if: (has valid text OR has valid image) AND not in pending state
+        return (hasValidContent || hasValidImage) && !isPendingState;
+      });
+
       const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
       const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
 
-      setUnreadChat(allUnread.filter(m => directConvoIds.includes(m.conversation_id)).length);
-      setUnreadPhone(allUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length);
+      setUnreadChat(validUnread.filter(m => directConvoIds.includes(m.conversation_id)).length);
+      setUnreadPhone(validUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length);
     } catch (err) {
       console.warn('Failed to count unread messages', err);
     }
