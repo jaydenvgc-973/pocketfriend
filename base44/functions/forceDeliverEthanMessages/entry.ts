@@ -9,23 +9,38 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Find Ethan character
-    const ethanChars = await base44.entities.Character.filter(
-      { name: 'Ethan', created_by: user.email },
-      "-created_date",
-      1
+    // Get all characters and find one with pending messages
+    const allChars = await base44.entities.Character.filter(
+      { created_by: user.email },
+      "-created_date"
     );
 
-    if (!ethanChars || ethanChars.length === 0) {
-      return Response.json({ error: 'Ethan character not found' }, { status: 404 });
+    if (!allChars || allChars.length === 0) {
+      return Response.json({ error: 'No characters found' }, { status: 404 });
     }
 
-    const ethanId = ethanChars[0].id;
+    // Find character with pending undelivered messages
+    let ethanId = null;
+    for (const char of allChars) {
+      const pending = await base44.entities.PendingMessage.filter(
+        { character_id: char.id, delivered: false }
+      );
+      if (pending.length > 0) {
+        ethanId = char.id;
+        break;
+      }
+    }
 
-    // Find pending messages for Ethan
+    if (!ethanId) {
+      return Response.json({ error: 'No character with pending messages found' }, { status: 404 });
+    }
+
+    // Find pending messages for this character
     const pending = await base44.entities.PendingMessage.filter(
       { character_id: ethanId, delivered: false }
     );
+
+    const charName = allChars.find(c => c.id === ethanId)?.name || 'Character';
 
     if (pending.length === 0) {
       return Response.json({ message: 'No pending messages for Ethan', delivered: 0 });
@@ -52,7 +67,7 @@ Deno.serve(async (req) => {
         conversation_id: convoId,
         sender_type: 'character',
         character_id: ethanId,
-        character_name: 'Ethan',
+        character_name: charName,
         content: pm.content,
         image_url: pm.image_url || undefined,
         emotional_state: pm.emotional_state || 'calm',
