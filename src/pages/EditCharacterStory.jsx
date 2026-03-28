@@ -13,6 +13,9 @@ import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 
 const ZODIAC_SIGNS = ["aries", "taurus", "gemini", "cancer", "leo", "virgo", "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"];
 const AGE_RANGES = ["Early 20s", "Mid 20s", "Late 20s", "Early 30s", "Mid 30s", "Late 30s", "40s+"];
+const GENDERS = ["male", "female", "non-binary", "other"];
+const ETHNICITIES = ["African", "Asian", "Caucasian", "Hispanic", "Middle Eastern", "Pacific Islander", "South Asian", "Mixed"];
+const ORIENTATIONS = ["Straight", "Gay", "Lesbian", "Bisexual", "Asexual", "Demisexual", "Questioning", "Other"];
 
 export default function EditCharacterStory() {
   const queryClient = useQueryClient();
@@ -47,6 +50,10 @@ export default function EditCharacterStory() {
       zodiac_sign: char.zodiac_sign || "",
       birthday: char.birthday || "",
       personality_notes: char.personality_summary || "",
+      appearance_notes: char.appearance_notes || "",
+      gender: char.gender || "",
+      ethnicities: char.ethnicities || [],
+      sexual_orientation: char.sexual_orientation || "",
     });
     setSaved(false);
   };
@@ -100,6 +107,10 @@ Make it feel like a real person, not a description. No flowery language.`
       ...formWithoutNotes,
       personality_summary: personality,
       system_prompt: merged.system_prompt,
+      appearance_notes: form.appearance_notes,
+      gender: form.gender,
+      ethnicities: form.ethnicities,
+      sexual_orientation: form.sexual_orientation,
     });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
@@ -196,6 +207,62 @@ Make it feel like a real person, not a description. No flowery language.`
                 className="rounded-xl min-h-[90px] text-sm resize-none"
               />
               <p className="text-[11px] text-muted-foreground">Edit directly or leave unchanged to auto-regenerate from story fields.</p>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Gender</label>
+              <select
+                value={form.gender}
+                onChange={e => setForm(p => ({ ...p, gender: e.target.value }))}
+                className="w-full h-9 px-3 py-1 rounded-md border border-input bg-transparent text-sm"
+              >
+                <option value="">Select gender...</option>
+                {GENDERS.map(g => (
+                  <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Ethnicities</label>
+              <div className="space-y-2">
+                {ETHNICITIES.map(eth => (
+                  <label key={eth} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.ethnicities.includes(eth)}
+                      onChange={e => {
+                        const updated = e.target.checked
+                          ? [...form.ethnicities, eth]
+                          : form.ethnicities.filter(e => e !== eth);
+                        setForm(p => ({ ...p, ethnicities: updated }));
+                      }}
+                      className="rounded border border-input"
+                    />
+                    {eth}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Sexual Orientation</label>
+              <select
+                value={form.sexual_orientation}
+                onChange={e => setForm(p => ({ ...p, sexual_orientation: e.target.value }))}
+                className="w-full h-9 px-3 py-1 rounded-md border border-input bg-transparent text-sm"
+              >
+                <option value="">Select orientation...</option>
+                {ORIENTATIONS.map(o => (
+                  <option key={o} value={o}>{o}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Appearance Notes</label>
+              <Textarea
+                value={form.appearance_notes}
+                onChange={e => setForm(p => ({ ...p, appearance_notes: e.target.value }))}
+                placeholder="Hair, tattoos, piercings, distinctive features, style..."
+                className="rounded-xl min-h-[90px] text-sm resize-none"
+              />
             </div>
             <div className="space-y-2">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Background Story</label>
