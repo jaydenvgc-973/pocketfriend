@@ -1,0 +1,64 @@
+{
+  "name": "UserSettings",
+  "type": "object",
+  "properties": {
+    "has_completed_onboarding": {
+      "type": "boolean",
+      "default": false
+    },
+    "default_character_id": {
+      "type": "string"
+    },
+    "response_length": {
+      "type": "string",
+      "enum": [
+        "short",
+        "medium",
+        "long"
+      ],
+      "default": "medium"
+    },
+    "emotional_intensity": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "medium"
+    },
+    "voice_enabled": {
+      "type": "boolean",
+      "default": false
+    },
+    "user_birthday": {
+      "type": "string",
+      "format": "date",
+      "description": "User's birthday (YYYY-MM-DD)"
+    },
+    "fictional_world_name": {
+      "type": "string",
+      "description": "The name the user goes by in the fictional world. Used by all characters unless they have a specific nickname_for_user set."
+    },
+    "response_lag_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether characters wait a realistic amount of time before responding"
+    },
+    "typing_speed_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether to simulate realistic typing speed before showing the message"
+    },
+    "words_per_minute": {
+      "type": "number",
+      "default": 41,
+      "description": "Simulated typing speed in words per minute"
+    },
+    "user_schedule_notes": {
+      "type": "string",
+      "description": "User's general availability or schedule in natural language (e.g. 'I work 9-5 weekdays', 'I'm usually free evenings and weekends', 'I'm a night owl'). Used to help characters know when to reach out."
+    }
+  },
+  "required": []
+}

@@ -1,0 +1,38 @@
+{
+  "name": "PendingMessage",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character sending this message"
+    },
+    "content": {
+      "type": "string",
+      "description": "The message content"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Optional image attached"
+    },
+    "emotional_state": {
+      "type": "string",
+      "enum": [
+        "calm",
+        "irritated",
+        "defensive",
+        "reflective",
+        "closed-off"
+      ],
+      "default": "calm"
+    },
+    "delivered": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this message has been shown in chat"
+    }
+  },
+  "required": [
+    "character_id",
+    "content"
+  ]
+}

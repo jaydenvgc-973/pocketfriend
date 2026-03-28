@@ -10,7 +10,7 @@ import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import CharacterInteractionSimulator from "@/components/home/CharacterInteractionSimulator";
 import BottomNav from "@/components/BottomNav";
 import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
-
+import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -82,6 +82,25 @@ export default function Home() {
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }),
   });
+
+  useEffect(() => {
+    const defaultChar = characters.find(c => c.is_default);
+    if (!defaultChar) return;
+    // Only do a one-time migration if the character is missing core data
+    // Never overwrite an already-complete character
+    if (defaultChar.family_history && defaultChar.system_prompt) return;
+    const updated = {
+      ...DEFAULT_CHARACTER_DATA,
+      name: defaultChar.name,
+      avatar_url: defaultChar.avatar_url || undefined,
+      reference_image_urls: defaultChar.reference_image_urls || undefined,
+      emotional_state: defaultChar.emotional_state || "calm",
+    };
+    updated.system_prompt = buildSystemPrompt(updated);
+    base44.entities.Character.update(defaultChar.id, updated).then(() => {
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    });
+  }, [characters, currentUser?.email]);
 
   useEffect(() => {
     if (!isLoading && settings.length === 0) {

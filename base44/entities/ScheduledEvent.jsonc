@@ -1,0 +1,69 @@
+{
+  "name": "ScheduledEvent",
+  "type": "object",
+  "properties": {
+    "character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters involved in this event"
+    },
+    "character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of characters involved"
+    },
+    "description": {
+      "type": "string",
+      "description": "A natural language description of the event"
+    },
+    "trigger_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "The exact UTC time when this event should occur"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "completed",
+        "cancelled"
+      ],
+      "default": "pending"
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "Conversation ID to log the narrative message into when triggered"
+    },
+    "primary_character_id": {
+      "type": "string",
+      "description": "The main character whose chat this event surfaces in"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "narrative",
+        "internal"
+      ],
+      "default": "narrative",
+      "description": "narrative = shown to user in chat; internal = updates character state only"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "chat",
+        "simulation",
+        "narrator"
+      ],
+      "description": "Where this event was created from"
+    }
+  },
+  "required": [
+    "character_ids",
+    "description",
+    "trigger_time"
+  ]
+}

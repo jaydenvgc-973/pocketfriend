@@ -1,0 +1,42 @@
+{
+  "name": "WebLookup",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character who performed the lookup"
+    },
+    "search_query": {
+      "type": "string",
+      "description": "What the character searched for"
+    },
+    "title": {
+      "type": "string",
+      "description": "Title of the article or page found"
+    },
+    "author_source": {
+      "type": "string",
+      "description": "Who posted/wrote it and where"
+    },
+    "summary": {
+      "type": "string",
+      "description": "Summary of the results and key findings"
+    },
+    "url": {
+      "type": "string",
+      "description": "URL of the source"
+    },
+    "lookup_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the lookup was performed"
+    }
+  },
+  "required": [
+    "character_id",
+    "search_query",
+    "title",
+    "author_source",
+    "summary"
+  ]
+}

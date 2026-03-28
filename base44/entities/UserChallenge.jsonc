@@ -1,0 +1,49 @@
+{
+  "name": "UserChallenge",
+  "type": "object",
+  "properties": {
+    "challenge_id": {
+      "type": "string",
+      "description": "Unique key for the challenge"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "daily",
+        "weekly",
+        "playstyle",
+        "wildcard"
+      ],
+      "description": "Challenge type"
+    },
+    "completed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the challenge is completed"
+    },
+    "progress": {
+      "type": "number",
+      "default": 0,
+      "description": "Numerical progress toward completion"
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the challenge was started"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the challenge was completed"
+    },
+    "reset_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this challenge will reset"
+    }
+  },
+  "required": [
+    "challenge_id",
+    "type"
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "Memory",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this memory belongs to"
+    },
+    "title": {
+      "type": "string",
+      "description": "A brief title or summary of the memory"
+    },
+    "description": {
+      "type": "string",
+      "description": "Detailed description of the memory, including who was involved and what happened"
+    },
+    "emotional_impact": {
+      "type": "string",
+      "description": "How this memory emotionally impacts the character (e.g., 'joyful', 'sad', 'neutral', 'exciting', 'stressful')"
+    },
+    "lesson_learned": {
+      "type": "string",
+      "description": "What the character learned or gained from this memory, if applicable"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the memory was created or the event occurred"
+    },
+    "source_context": {
+      "type": "string",
+      "description": "Optional: A reference to the source of the memory (e.g., conversation ID, event ID, 'internal reflection')"
+    },
+    "embedding_vector": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "Vector embedding for semantic search"
+    }
+  },
+  "required": [
+    "character_id",
+    "title",
+    "description"
+  ]
+}

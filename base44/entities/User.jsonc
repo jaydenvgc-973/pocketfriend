@@ -1,0 +1,29 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user"
+      ],
+      "default": "user"
+    },
+    "reference_image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Uploaded reference photos of the user used to guide avatar generation"
+    },
+    "generated_avatar_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "AI-generated avatar images (up to 4) used as high-priority references in character-generated photos"
+    }
+  },
+  "required": []
+}
