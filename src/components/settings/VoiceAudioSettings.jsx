@@ -21,6 +21,12 @@ export default function VoiceAudioSettings({ settings, onUpdate, isSaving }) {
 
   const handleApiKeySave = () => {
     onUpdate('openai_api_key', apiKeyInput);
+    setShowApiKey(false);
+  };
+
+  const handleApiKeyClear = () => {
+    setApiKeyInput('');
+    onUpdate('openai_api_key', '');
   };
 
   const isVoiceReady = settings?.voice_enabled && settings?.openai_api_key;
@@ -71,13 +77,22 @@ export default function VoiceAudioSettings({ settings, onUpdate, isSaving }) {
                 >
                   {showApiKey ? "Hide" : "Show"}
                 </button>
-                {apiKeyInput !== (settings?.openai_api_key || '') && (
+                {apiKeyInput && apiKeyInput !== (settings?.openai_api_key || '') && (
                   <button
                     onClick={handleApiKeySave}
                     disabled={isSaving}
                     className="text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50 font-medium"
                   >
                     {isSaving ? "Saving..." : "Save"}
+                  </button>
+                )}
+                {settings?.openai_api_key && (
+                  <button
+                    onClick={handleApiKeyClear}
+                    disabled={isSaving}
+                    className="text-xs text-destructive hover:text-destructive/80 transition-colors disabled:opacity-50 font-medium"
+                  >
+                    {isSaving ? "Clearing..." : "Clear"}
                   </button>
                 )}
               </div>

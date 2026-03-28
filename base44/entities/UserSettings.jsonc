@@ -31,6 +31,15 @@
       "type": "boolean",
       "default": false
     },
+    "openai_api_key": {
+      "type": "string",
+      "description": "User's OpenAI API key for voice generation"
+    },
+    "voice_minutes_used": {
+      "type": "number",
+      "default": 0,
+      "description": "Approximate minutes of voice generation used"
+    },
     "user_birthday": {
       "type": "string",
       "format": "date",
