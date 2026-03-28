@@ -1,11 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, RefreshCw } from "lucide-react";
+import { RefreshCw, Send } from "lucide-react";
 
 export default function DialogueSelector({ playingAs, targetCharacter, recentMessages, onSelect }) {
   const [options, setOptions] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [customText, setCustomText] = useState("");
+  const textareaRef = useRef(null);
 
   // Find the relationship entry between the two characters
   const relEntry = (targetCharacter?.fictional_relationships || []).find(
@@ -104,9 +106,9 @@ Return ONLY valid JSON: { "options": [{ "text": string, "tone": string }, ...] }
       </div>
 
       {/* Options */}
-      <div className="px-3 pb-4 space-y-2">
+      <div className="px-3 pb-2 space-y-2">
         {isGenerating && options.length === 0 && (
-          <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
+          <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
             <div className="w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
             <span className="text-xs">Generating what {playingAs.name} would say...</span>
           </div>
@@ -127,6 +129,43 @@ Return ONLY valid JSON: { "options": [{ "text": string, "tone": string }, ...] }
             </motion.button>
           ))}
         </AnimatePresence>
+      </div>
+
+      {/* Custom input */}
+      <div className="px-3 pb-4 pt-1">
+        <div className="flex items-end gap-2 bg-secondary rounded-2xl p-2 border border-border/50">
+          <textarea
+            ref={textareaRef}
+            value={customText}
+            onChange={e => setCustomText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (customText.trim()) {
+                  onSelect(customText.trim());
+                  setCustomText("");
+                }
+              }
+            }}
+            placeholder={`Type as ${playingAs.name}...`}
+            rows={1}
+            className="flex-1 bg-transparent text-foreground text-sm resize-none outline-none px-1 py-1.5 max-h-24 placeholder:text-muted-foreground"
+            style={{ minHeight: "36px" }}
+          />
+          <motion.button
+            whileTap={{ scale: 0.9 }}
+            onClick={() => {
+              if (customText.trim()) {
+                onSelect(customText.trim());
+                setCustomText("");
+              }
+            }}
+            disabled={!customText.trim()}
+            className="h-8 w-8 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 flex-shrink-0"
+          >
+            <Send className="w-3.5 h-3.5 text-primary-foreground" />
+          </motion.button>
+        </div>
       </div>
     </div>
   );
