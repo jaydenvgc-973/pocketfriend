@@ -13,6 +13,7 @@ import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploade
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import RelationshipStep from "@/components/character/RelationshipStep";
+import VoiceSettings from "@/components/character/VoiceSettings";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
@@ -106,6 +107,9 @@ friendship_level: 75,
 romantic_level: 0,
 attraction_level: 0,
 chosen_family_level: 0,
+voice_enabled: false,
+voice_name: "",
+voice_style_note: "",
 };
 
 function loadDraft() {
@@ -143,6 +147,13 @@ export default function CreateCharacter() {
     queryFn: () => currentUser?.email ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date") : [],
     enabled: !!currentUser?.email,
   });
+
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
 
   const saveDraft = (newData, newStep, newAvatarUrl, newReferenceUrls) => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ data: newData, step: newStep, avatarUrl: newAvatarUrl, referenceUrls: newReferenceUrls }));
@@ -882,6 +893,15 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       onChange={(field, value) => update(field, value)}
     />,
 
+    // Step 8.5: Voice Settings
+    <div key="voice" className="space-y-4">
+      <div>
+        <h2 className="text-sm font-semibold text-foreground mb-1">Voice Settings (Optional)</h2>
+        <p className="text-xs text-muted-foreground mb-4">Give this character a voice. You can change this later.</p>
+      </div>
+      <VoiceSettings data={data} onUpdate={update} hasApiKey={hasApiKey} />
+    </div>,
+
     // Step 9: Photo
     <div key="photo" className="space-y-4">
       <div>
@@ -949,8 +969,9 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
     data.vibes.length > 0, // 5: vibes+backstory
     true, // 6: family optional
     true, // 7: memories optional
-    true, // 8: relationship optional
-    true, // 9: photo optional
+    true, // 8: voice optional
+    true, // 9: relationship optional
+    true, // 10: photo optional
   ][step];
 
   return (

@@ -18,6 +18,9 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 
+// Voice playback cache to avoid regenerating the same audio
+const voiceCache = new Map();
+
 export default function Chat() {
   const { characterId } = useParams();
   const urlParams = new URLSearchParams(window.location.search);
@@ -32,6 +35,7 @@ export default function Chat() {
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
   const [showWorldContacts, setShowWorldContacts] = useState(false);
+  const [playingAudioId, setPlayingAudioId] = useState(null);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -52,6 +56,58 @@ export default function Chat() {
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
   });
+
+  // Voice playback utility
+  const playCharacterVoice = async (messageId, text, characterData, userSettings) => {
+    // Check all conditions: voices enabled globally, character has voice, user has API key, on Chat page
+    const voicesEnabled = userSettings?.voice_enabled === true;
+    const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
+    const hasApiKey = userSettings?.openai_api_key;
+    const isOnChatPage = chatType === "direct"; // Only play on chat, not on phone/text
+
+    if (!voicesEnabled || !charHasVoice || !hasApiKey || !isOnChatPage) {
+      return;
+    }
+
+    const cacheKey = `${characterData.id}_${characterData.voice_name}_${text}`;
+    
+    try {
+      setPlayingAudioId(messageId);
+      
+      let audioUrl = voiceCache.get(cacheKey);
+      
+      // Generate if not cached
+      if (!audioUrl) {
+        const res = await base44.functions.invoke('generateSpeech', {
+          text: text.substring(0, 4096),
+          voice: characterData.voice_name,
+          voiceStyleNote: characterData.voice_style_note,
+          apiKey: userSettings.openai_api_key,
+        });
+
+        if (res?.data?.audioUrl) {
+          audioUrl = res.data.audioUrl;
+          voiceCache.set(cacheKey, audioUrl);
+          
+          // Update usage tracking
+          const estimatedMinutes = res.data.estimatedMinutes || 0.1;
+          await base44.entities.UserSettings.update(userSettings.id, {
+            voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
+          });
+        }
+      }
+
+      // Play audio
+      if (audioUrl) {
+        const audio = new Audio(audioUrl);
+        audio.onended = () => setPlayingAudioId(null);
+        audio.play().catch(() => setPlayingAudioId(null));
+      }
+    } catch (err) {
+      console.error('Voice playback failed:', err);
+      setPlayingAudioId(null);
+    }
+  };
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -691,6 +747,11 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     // Add directly to state — subscription deduplication will prevent doubles
     setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
+    // Play character voice if conditions are met (delayed slightly for better UX)
+    setTimeout(() => {
+      playCharacterVoice(charMsg.id, responseText, character, settings[0]);
+    }, 300);
+
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
       queryClient.invalidateQueries({ queryKey: ["characters"] });
@@ -921,7 +982,18 @@ Reply with ONLY the single emoji or the word "none".`,
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         <AnimatePresence>
-          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} onDelete={handleDeleteMessage} onDeleteImage={handleDeleteImage} />)}
+          {messages.map(msg => (
+            <MessageBubble 
+              key={msg.id} 
+              message={msg} 
+              onReact={handleReact} 
+              onDelete={handleDeleteMessage} 
+              onDeleteImage={handleDeleteImage}
+              hasVoice={!msg.sender_type === "user" && character?.voice_enabled && character?.voice_name && settings[0]?.voice_enabled}
+              onPlayVoice={() => playCharacterVoice(msg.id, msg.content, character, settings[0])}
+              isPlayingVoice={playingAudioId === msg.id}
+            />
+          ))}
         </AnimatePresence>
         <AnimatePresence>
           {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}

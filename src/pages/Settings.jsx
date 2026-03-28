@@ -14,6 +14,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import UserPhotoUploader from "@/components/user/UserPhotoUploader";
 import CommonQuestions from "@/components/settings/CommonQuestions";
+import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -215,6 +216,7 @@ export default function Settings() {
         <div className="pt-4 border-t border-border">
           <UserPhotoUploader referenceImages={user.reference_image_urls || []} generatedAvatars={user.generated_avatar_urls || []} />
         </div>
+        <VoiceAudioSettings settings={settings} onUpdate={(field, value) => mutation.mutate({ [field]: value })} isSaving={mutation.isPending} />
         <div className="space-y-4 pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Per-Character Nicknames</p>
           <p className="text-xs text-muted-foreground">Set a nickname a specific character uses for you. Overrides your global name for that character only.</p>

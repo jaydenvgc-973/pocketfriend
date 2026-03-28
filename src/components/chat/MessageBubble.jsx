@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { X } from "lucide-react";
+import { X, Volume2 } from "lucide-react";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -11,7 +11,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, hasVoice, onPlayVoice, isPlayingVoice }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   // Use the persisted played_as name if this user message was sent while playing as a character
@@ -99,9 +99,23 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           )}
           </div>
 
-        {time && (
-          <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
-        )}
+        <div className="flex items-center gap-2 mt-1">
+          {time && (
+            <span className={`text-[10px] text-muted-foreground ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
+          )}
+          {hasVoice && !isUser && !isNarrative && (
+            <motion.button
+              whileHover={{ scale: 1.1 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={onPlayVoice}
+              disabled={isPlayingVoice}
+              className="text-muted-foreground hover:text-primary transition-colors disabled:opacity-50 flex-shrink-0"
+              title="Play voice"
+            >
+              <Volume2 className="w-3 h-3" />
+            </motion.button>
+          )}
+        </div>
       </div>
     </motion.div>
   );

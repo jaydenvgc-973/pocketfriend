@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import VoiceSettings from "@/components/character/VoiceSettings";
 
 const JOB_TYPES = [
   "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
@@ -27,7 +28,7 @@ const REL_LEVELS = [
   { key: "chosen_family_level", label: "Chosen Family", color: "text-purple-400" },
 ];
 
-const TABS = ["Occupation", "Education", "Relationships"];
+const TABS = ["Occupation", "Education", "Relationships", "Voice"];
 
 export default function EditCharacterProfile() {
   const queryClient = useQueryClient();
@@ -56,6 +57,13 @@ export default function EditCharacterProfile() {
 
   const editableChars = characters.filter(c => c.status !== "deleted");
 
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
+
   const handleSelect = (char) => {
     setSelectedChar(char);
     setActiveTab("Occupation");
@@ -76,6 +84,10 @@ export default function EditCharacterProfile() {
       job_training_position: char.job_training_details?.position_title || "",
       // Character relationships (fictional_relationships pointing to other characters)
       char_relationships: (char.fictional_relationships || []).filter(r => r.related_character_id),
+      // Voice
+      voice_enabled: char.voice_enabled || false,
+      voice_name: char.voice_name || "",
+      voice_style_note: char.voice_style_note || "",
     });
     setSaved(false);
   };
@@ -173,6 +185,10 @@ export default function EditCharacterProfile() {
         ...(selectedChar.fictional_relationships || []).filter(r => !r.related_character_id),
         ...(form.char_relationships || []),
       ],
+      // Voice
+      voice_enabled: form.voice_enabled,
+      voice_name: form.voice_name,
+      voice_style_note: form.voice_style_note,
     };
 
     // Save the main character
@@ -347,6 +363,18 @@ export default function EditCharacterProfile() {
                     </>
                   )}
                 </div>
+              </div>
+            )}
+
+            {/* VOICE TAB */}
+            {activeTab === "Voice" && (
+              <div className="space-y-4">
+                <p className="text-xs text-muted-foreground">Configure voice settings for this character. Voices only play on the Chat page.</p>
+                <VoiceSettings 
+                  data={form} 
+                  onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
+                  hasApiKey={hasApiKey} 
+                />
               </div>
             )}
 
