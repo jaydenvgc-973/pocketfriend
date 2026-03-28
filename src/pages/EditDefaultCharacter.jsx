@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
@@ -30,6 +30,13 @@ export default function EditDefaultCharacter() {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [referenceUrls, setReferenceUrls] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (defaultChar && !avatarUrl && referenceUrls.length === 0) {
+      setAvatarUrl(defaultChar.avatar_url || null);
+      setReferenceUrls(defaultChar.reference_image_urls || []);
+    }
+  }, [defaultChar, avatarUrl, referenceUrls]);
 
   const handleAvatarGenerated = (url, refs) => {
     setAvatarUrl(url);
@@ -67,10 +74,10 @@ export default function EditDefaultCharacter() {
         </p>
 
         <ReferencePhotoUploader
-          descriptor={`a 31-year-old Latino man, well-groomed, intentional style, urban New Jersey/New York`}
+          descriptor={defaultChar.personality_summary || `a ${defaultChar.age_range} ${defaultChar.gender} from ${defaultChar.city}`}
           onAvatarGenerated={handleAvatarGenerated}
-          existingReferenceUrls={defaultChar.reference_image_urls || []}
-          existingAvatarUrl={defaultChar.avatar_url || null}
+          existingReferenceUrls={referenceUrls}
+          existingAvatarUrl={avatarUrl}
         />
 
         <Button

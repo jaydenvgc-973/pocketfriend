@@ -9,6 +9,10 @@ import { Input } from "@/components/ui/input";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
+
+const ZODIAC_SIGNS = ["aries", "taurus", "gemini", "cancer", "leo", "virgo", "libra", "scorpio", "sagittarius", "capricorn", "aquarius", "pisces"];
+const AGE_RANGES = ["Early 20s", "Mid 20s", "Late 20s", "Early 30s", "Mid 30s", "Late 30s", "40s+"];
 
 export default function EditCharacterStory() {
   const queryClient = useQueryClient();
@@ -40,9 +44,31 @@ export default function EditCharacterStory() {
       family_history: char.family_history || "",
       emotional_baggage: char.emotional_baggage || "",
       age_range: char.age_range || "",
+      zodiac_sign: char.zodiac_sign || "",
+      birthday: char.birthday || "",
       personality_notes: char.personality_summary || "",
     });
     setSaved(false);
+  };
+
+  const handleZodiacChange = (zodiac) => {
+    const newForm = { ...form, zodiac_sign: zodiac };
+    // Auto-generate birthday if zodiac and age_range are set and birthday is empty
+    if (zodiac && form.age_range && !form.birthday) {
+      const generated = calculateBirthdateFromZodiac(zodiac, form.age_range);
+      if (generated) newForm.birthday = generated;
+    }
+    setForm(newForm);
+  };
+
+  const handleAgeRangeChange = (ageRange) => {
+    const newForm = { ...form, age_range: ageRange };
+    // Auto-generate birthday if zodiac and age_range are set and birthday is empty
+    if (form.zodiac_sign && ageRange && !form.birthday) {
+      const generated = calculateBirthdateFromZodiac(form.zodiac_sign, ageRange);
+      if (generated) newForm.birthday = generated;
+    }
+    setForm(newForm);
   };
 
   const handleSave = async () => {
@@ -124,13 +150,42 @@ Make it feel like a real person, not a description. No flowery language.`
         ) : (
           <div className="space-y-6">
             <div className="space-y-2">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Age</label>
-              <Input
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Age Range</label>
+              <select
                 value={form.age_range}
-                onChange={e => setForm(p => ({ ...p, age_range: e.target.value }))}
-                placeholder="e.g. Early 20s, Mid 30s, Late 40s..."
+                onChange={e => handleAgeRangeChange(e.target.value)}
+                className="w-full h-9 px-3 py-1 rounded-md border border-input bg-transparent text-sm"
+              >
+                <option value="">Select age range...</option>
+                {AGE_RANGES.map(age => (
+                  <option key={age} value={age}>{age}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Zodiac Sign</label>
+              <select
+                value={form.zodiac_sign}
+                onChange={e => handleZodiacChange(e.target.value)}
+                className="w-full h-9 px-3 py-1 rounded-md border border-input bg-transparent text-sm"
+              >
+                <option value="">Select zodiac...</option>
+                {ZODIAC_SIGNS.map(sign => (
+                  <option key={sign} value={sign}>{sign.charAt(0).toUpperCase() + sign.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Birthday (YYYY-MM-DD)</label>
+              <Input
+                type="date"
+                value={form.birthday}
+                onChange={e => setForm(p => ({ ...p, birthday: e.target.value }))}
                 className="rounded-xl text-sm"
               />
+              {form.zodiac_sign && form.age_range && !form.birthday && (
+                <p className="text-[11px] text-muted-foreground">Will auto-generate from zodiac + age when saved if left empty.</p>
+              )}
             </div>
             <div className="space-y-2">
               <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Personality Notes</label>
