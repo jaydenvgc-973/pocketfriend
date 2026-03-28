@@ -14,11 +14,7 @@ Deno.serve(async (req) => {
       messageId,
       prompt,
       characterReferenceImages = [],
-      userReferenceImages = [],
-      characterName = '',
-      subjectType = 'character',
-      conversationId,
-      characterId
+      userReferenceImages = []
     } = body;
 
     if (!messageId || !prompt) {
@@ -41,19 +37,6 @@ Deno.serve(async (req) => {
 
     // Update message with generated image
     await base44.entities.Message.update(messageId, { image_url: imageUrl });
-
-    // Persist image to Media entity for permanent retention (independent of message visibility)
-    if (conversationId) {
-      base44.functions.invoke('persistMediaRecord', {
-        conversationId,
-        messageId,
-        characterId,
-        senderType: 'character',
-        imageUrl,
-        filename: `${characterName}_generated_${Date.now()}`,
-        messageContentPreview: `[${subjectType} image]`
-      }).catch(() => {});
-    }
 
     return Response.json({
       success: true,

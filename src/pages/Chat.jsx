@@ -539,18 +539,6 @@ export default function Chat() {
       setSendError("Message failed to save. Try again.");
       return;
     }
-
-    // Persist user's image to Media entity (fire-and-forget)
-    if (userImageUrl && convoId) {
-      base44.functions.invoke('persistMediaRecord', {
-        conversationId: convoId,
-        messageId: userMsg.id,
-        senderType: 'user',
-        imageUrl: userImageUrl,
-        filename: 'user_image',
-        messageContentPreview: text.substring(0, 100)
-      }).catch(() => {});
-    }
     // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
@@ -975,8 +963,6 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
           userReferenceImages: useUserRefs ? userRefImages : [],
           characterName: character.name,
           subjectType,
-          conversationId: convoId,
-          characterId: characterId,
         }).catch(() => {});
       }, 500);
 
@@ -1007,8 +993,6 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
               userReferenceImages: useUserRefs ? userRefImages : [],
               characterName: character.name,
               subjectType,
-              conversationId: convoId,
-              characterId: characterId,
             }).catch(() => {});
           }, delay);
         }
@@ -1132,7 +1116,7 @@ Reply with ONLY the single emoji or the word "none".`,
           <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
-        {character && <MediaGallery conversationId={conversationId} messages={messages} onDeleteImage={handleDeleteImage} />}
+        {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />}
 
         {character && (character.fictional_relationships || []).length > 0 && (
           <button
