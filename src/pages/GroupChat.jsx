@@ -9,6 +9,7 @@ import { AnimatePresence } from 'framer-motion';
 import BottomNav from '@/components/BottomNav';
 import CharacterSelector from '@/components/groupchat/CharacterSelector';
 import MessageBubble from '@/components/chat/MessageBubble';
+import MediaGallery from '@/components/chat/MediaGallery';
 
 export default function GroupChat() {
   const queryClient = useQueryClient();
@@ -156,6 +157,15 @@ export default function GroupChat() {
     await base44.functions.invoke('generateGroupChatResponse', { messageId: userMsg.id });
   };
 
+  const handleDeleteImage = async (messageId) => {
+    setMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, image_url: null } : msg));
+    try {
+      await base44.entities.Message.update(messageId, { image_url: null });
+    } catch {
+      // Update failed, UI will stay in sync with subscription
+    }
+  };
+
   if (conversationsLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -232,11 +242,14 @@ export default function GroupChat() {
 
         {selectedConversation ? (
           <div className="flex-1 flex flex-col border border-border rounded-2xl bg-card/30 overflow-hidden min-w-0">
-            <div className="p-4 border-b border-border flex-shrink-0">
-              <h1 className="text-sm font-semibold text-foreground">{selectedConversation.title}</h1>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {selectedConversation.character_ids?.length || 0} participants
-              </p>
+            <div className="p-4 border-b border-border flex-shrink-0 flex items-center justify-between">
+              <div>
+                <h1 className="text-sm font-semibold text-foreground">{selectedConversation.title}</h1>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {selectedConversation.character_ids?.length || 0} participants
+                </p>
+              </div>
+              <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />
             </div>
 
             <ScrollArea className="flex-1 min-h-0">

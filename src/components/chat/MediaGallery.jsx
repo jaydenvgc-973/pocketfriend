@@ -3,13 +3,14 @@ import { createPortal } from "react-dom";
 import { Images, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-export default function MediaGallery({ messages }) {
+export default function MediaGallery({ messages, onDeleteImage }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
 
   const images = messages
     .filter(msg => msg.image_url)
     .map(msg => ({
+      id: msg.id,
       url: msg.image_url,
       senderType: msg.sender_type,
       senderName: msg.character_name || "You",
@@ -62,24 +63,40 @@ export default function MediaGallery({ messages }) {
                 <div className="flex-1 overflow-y-auto">
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                     {images.map((img, idx) => (
-                      <motion.button
+                      <motion.div
                         key={idx}
                         initial={{ opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        onClick={() => setSelectedImage(img)}
                         className="group relative overflow-hidden rounded-xl aspect-square"
                       >
-                        <img
-                          src={img.url}
-                          alt={`${img.senderName}'s photo`}
-                          className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                        />
-                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
-                          <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                            View
-                          </span>
-                        </div>
-                      </motion.button>
+                        <button
+                          onClick={() => setSelectedImage(img)}
+                          className="w-full h-full"
+                        >
+                          <img
+                            src={img.url}
+                            alt={`${img.senderName}'s photo`}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors flex items-center justify-center">
+                            <span className="text-white text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                              View
+                            </span>
+                          </div>
+                        </button>
+                        {onDeleteImage && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteImage(img.id);
+                            }}
+                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            title="Delete image"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
+                      </motion.div>
                     ))}
                   </div>
                 </div>
@@ -112,12 +129,26 @@ export default function MediaGallery({ messages }) {
                   <X className="w-5 h-5 text-foreground" />
                 </button>
               </div>
-              <img
-                src={selectedImage.url}
-                alt="Full view"
-                className="max-w-full max-h-[90vh] object-contain rounded-xl"
-                onClick={e => e.stopPropagation()}
-              />
+              <div className="flex flex-col items-center gap-4" onClick={e => e.stopPropagation()}>
+                <img
+                  src={selectedImage.url}
+                  alt="Full view"
+                  className="max-w-full max-h-[80vh] object-contain rounded-xl"
+                />
+                {onDeleteImage && (
+                  <button
+                    onClick={() => {
+                      onDeleteImage(selectedImage.id);
+                      setSelectedImage(null);
+                    }}
+                    className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center gap-2"
+                    title="Delete image"
+                  >
+                    <X className="w-4 h-4" />
+                    Delete Image
+                  </button>
+                )}
+              </div>
             </motion.div>
           )}
         </AnimatePresence>,
