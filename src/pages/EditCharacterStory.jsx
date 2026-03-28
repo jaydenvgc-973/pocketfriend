@@ -54,6 +54,7 @@ export default function EditCharacterStory() {
       gender: char.gender || "",
       ethnicities: char.ethnicities || [],
       sexual_orientation: char.sexual_orientation || "",
+      cultural_backgrounds: char.cultural_backgrounds || "",
     });
     setSaved(false);
   };
@@ -111,6 +112,7 @@ Make it feel like a real person, not a description. No flowery language.`
       gender: form.gender,
       ethnicities: form.ethnicities,
       sexual_orientation: form.sexual_orientation,
+      cultural_backgrounds: form.cultural_backgrounds,
     });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
@@ -261,6 +263,15 @@ Make it feel like a real person, not a description. No flowery language.`
                 value={form.appearance_notes}
                 onChange={e => setForm(p => ({ ...p, appearance_notes: e.target.value }))}
                 placeholder="Hair, tattoos, piercings, distinctive features, style..."
+                className="rounded-xl min-h-[90px] text-sm resize-none"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Cultural Backgrounds</label>
+              <Textarea
+                value={form.cultural_backgrounds}
+                onChange={e => setForm(p => ({ ...p, cultural_backgrounds: e.target.value }))}
+                placeholder="Cultural heritage, traditions, languages spoken, beliefs..."
                 className="rounded-xl min-h-[90px] text-sm resize-none"
               />
             </div>
