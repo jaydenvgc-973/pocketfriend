@@ -69,7 +69,8 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [hasPendingMessage, setHasPendingMessage] = useState(false);
-  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadChat, setUnreadChat] = useState(0);
+  const [unreadPhone, setUnreadPhone] = useState(0);
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
@@ -77,42 +78,60 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const { data: pendingMessages = [] } = useQuery({
     queryKey: ['pendingMessages', character.id],
     queryFn: () => base44.entities.PendingMessage.filter({ character_id: character.id, delivered: false }),
-    staleTime: 30000,
+    staleTime: 10000,
   });
 
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', character.id],
     queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id] }),
-    staleTime: 60000,
+    staleTime: 0,
   });
 
   useEffect(() => {
     setHasPendingMessage(pendingMessages.length > 0);
   }, [pendingMessages]);
 
-  useEffect(() => {
+  const countUnread = async () => {
     if (conversations.length === 0) return;
+    try {
+      const allUnread = await base44.entities.Message.filter({
+        sender_type: "character",
+        character_id: character.id,
+        is_read: false,
+      });
 
-    const countUnread = async () => {
-      try {
-        let count = 0;
-        // Fetch all unread messages for this character in one query
-        const allUnread = await base44.entities.Message.filter({
-          sender_type: "character",
-          character_id: character.id,
-          is_read: false,
-        });
-        // Only count messages from conversations we know about
-        const convoIds = conversations.map(c => c.id);
-        count = allUnread.filter(msg => convoIds.includes(msg.conversation_id)).length;
-        setUnreadCount(count);
-      } catch (err) {
-        // Silently fail on rate limit to avoid UI crashes
-        console.warn('Failed to count unread messages', err);
-      }
-    };
+      const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
+      const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
 
+      setUnreadChat(allUnread.filter(m => directConvoIds.includes(m.conversation_id)).length);
+      setUnreadPhone(allUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length);
+    } catch (err) {
+      console.warn('Failed to count unread messages', err);
+    }
+  };
+
+  useEffect(() => {
     countUnread();
+  }, [conversations, character.id]);
+
+  // Re-count when user returns to the tab/window
+  useEffect(() => {
+    const handleFocus = () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+      countUnread();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [conversations, character.id]);
+
+  // Subscribe to message changes for real-time badge updates
+  useEffect(() => {
+    const unsubscribe = base44.entities.Message.subscribe((event) => {
+      if (event.data?.character_id === character.id || event.data?.sender_type === "user") {
+        countUnread();
+      }
+    });
+    return () => unsubscribe();
   }, [conversations, character.id]);
 
   const generateAvatar = async () => {
@@ -270,16 +289,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors">
                 <MessageCircle className="w-4 h-4" /> Chat
               </button>
-              {(hasPendingMessage || unreadCount > 0) && (
+              {(hasPendingMessage || unreadChat > 0) && (
                 <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
-                  {unreadCount > 0 ? (unreadCount > 9 ? "9+" : unreadCount) : "!"}
+                  {unreadChat > 0 ? (unreadChat > 9 ? "9+" : unreadChat) : "!"}
                 </span>
               )}
             </Link>
-            <Link to={`/chat/${character.id}?type=phone`} className="flex-1">
+            <Link to={`/chat/${character.id}?type=phone`} className="flex-1 relative">
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium hover:bg-secondary/80 transition-colors">
                 <Phone className="w-4 h-4" /> Text
               </button>
+              {unreadPhone > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
+                  {unreadPhone > 9 ? "9+" : unreadPhone}
+                </span>
+              )}
             </Link>
             <button
               onClick={(e) => { e.stopPropagation(); setShowStatusPopup(true); }}

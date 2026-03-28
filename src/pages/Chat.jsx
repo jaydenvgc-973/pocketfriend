@@ -80,6 +80,9 @@ export default function Chat() {
           await base44.entities.Message.update(m.id, { is_read: true });
           await new Promise(r => setTimeout(r, 150));
         }
+        if (unread.length > 0) {
+          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+        }
       }
 
       if (pending.length > 0) {
@@ -140,7 +143,9 @@ export default function Chat() {
             return [...prev, event.data];
           });
           if (event.data.sender_type === "character" && !event.data.is_read) {
-            base44.entities.Message.update(event.data.id, { is_read: true });
+            base44.entities.Message.update(event.data.id, { is_read: true }).then(() => {
+              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+            });
           }
         } else if (event.type === "update") {
           setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
