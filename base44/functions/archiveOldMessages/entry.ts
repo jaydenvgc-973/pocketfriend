@@ -16,7 +16,29 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'conversationId required' }, { status: 400 });
     }
 
-    const keepCount = parseInt(keepRecent || "50");
+    // Fetch conversation to get character_id and check if protected
+    const conversation = await base44.entities.Conversation.filter(
+      { id: conversationId },
+      "-created_date",
+      1
+    ).then(arr => arr?.[0]);
+
+    if (!conversation) {
+      return Response.json({ error: 'Conversation not found' }, { status: 404 });
+    }
+
+    // Get user settings to check if character is protected
+    const userSettings = await base44.entities.UserSettings.filter(
+      { created_by: user.email },
+      "-created_date",
+      1
+    ).then(arr => arr?.[0]) || {};
+
+    const characterId = conversation.character_ids?.[0];
+    const isProtected = characterId && (userSettings.protected_character_ids || []).includes(characterId);
+
+    // Protected characters: keep more messages (100 instead of 50)
+    const keepCount = isProtected ? parseInt(keepRecent || "100") : parseInt(keepRecent || "50");
 
     // Fetch all messages in conversation
     const allMessages = await base44.entities.Message.filter(

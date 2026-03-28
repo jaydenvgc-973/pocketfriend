@@ -261,9 +261,19 @@ export default function Chat() {
         }
 
         // Archive old messages & extract memories (non-blocking, delayed)
+        // Protected characters keep more messages visible (100 instead of 50)
         if (convoId) {
-          setTimeout(() => {
-            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: 50 }).catch(() => {});
+          setTimeout(async () => {
+            const settings = await base44.entities.UserSettings.filter(
+              { created_by: currentUser.email },
+              "-created_date",
+              1
+            ).then(arr => arr?.[0]) || {};
+            
+            const isProtected = (settings.protected_character_ids || []).includes(characterId);
+            const keepCount = isProtected ? 100 : 50;
+            
+            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: keepCount }).catch(() => {});
             base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
           }, 3000);
         }

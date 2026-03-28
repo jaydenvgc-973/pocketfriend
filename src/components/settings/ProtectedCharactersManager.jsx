@@ -31,6 +31,24 @@ export default function ProtectedCharactersManager() {
       await base44.entities.UserSettings.update(settings.id, {
         protected_character_ids: updated
       });
+      
+      // Trigger behavior for protected character (e.g., Ethan)
+      const char = characters.find(c => c.id === characterId);
+      if (char?.name === 'Ethan') {
+        // Archive existing messages with higher retention (protected rule)
+        const convos = await base44.entities.Conversation.filter(
+          { type: 'direct', character_ids: [characterId] },
+          "-updated_date"
+        );
+        if (convos?.length > 0) {
+          for (const convo of convos) {
+            base44.functions.invoke('archiveOldMessages', { 
+              conversationId: convo.id, 
+              keepRecent: 100  // Protected: keep more messages
+            }).catch(() => {});
+          }
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['userSettings'] });
