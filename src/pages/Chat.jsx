@@ -700,10 +700,13 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
       // First image attaches to the existing charMsg
       setTimeout(() => {
+        const charRefs = character.avatar_url
+          ? [character.avatar_url, ...(character.reference_image_urls || [])]
+          : (character.reference_image_urls || []);
         base44.functions.invoke('generateImageAsync', {
           messageId: charMsg.id,
           prompt: imagePrompts[0],
-          characterReferenceImages: character.reference_image_urls || [],
+          characterReferenceImages: charRefs,
           userReferenceImages: useUserRefs ? userRefImages : [],
           characterName: character.name,
           subjectType,
@@ -726,11 +729,14 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
           const delay = 500 + i * 800;
           const capturedId = extraMsg.id;
           const capturedPrompt = imagePrompts[i];
+          const charRefs = character.avatar_url
+            ? [character.avatar_url, ...(character.reference_image_urls || [])]
+            : (character.reference_image_urls || []);
           setTimeout(() => {
             base44.functions.invoke('generateImageAsync', {
               messageId: capturedId,
               prompt: capturedPrompt,
-              characterReferenceImages: character.reference_image_urls || [],
+              characterReferenceImages: charRefs,
               userReferenceImages: useUserRefs ? userRefImages : [],
               characterName: character.name,
               subjectType,
