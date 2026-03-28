@@ -226,11 +226,20 @@ export default function Chat() {
         if (convos.length > 0) {
           convoId = convos[0].id;
           
-          // Load the 20 most recent non-archived messages
+          // Check if character is protected to load more messages initially
+          const settings = await base44.entities.UserSettings.filter(
+            { created_by: currentUser.email },
+            "-created_date",
+            1
+          ).then(arr => arr?.[0]) || {};
+          const isProtected = character && (settings.protected_character_ids || []).includes(characterId);
+          const initialLoadCount = isProtected ? 50 : 20;
+          
+          // Load the most recent non-archived messages
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId, archived_date: { $exists: false } },
             "-created_date",
-            20
+            initialLoadCount
           );
           
           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
@@ -336,6 +345,7 @@ export default function Chat() {
           }
           const msgType = event.data.image_url && !event.data.content ? '(image)' : `"${event.data.content?.substring(0, 40)}..."`;
           console.log(`[Chat] SUB: New ${event.data.sender_type} ${event.data.id.substring(0, 8)} ${msgType}`);
+          // Always add new messages, let rendering handle visibility
           return [...prev, event.data];
         });
         
@@ -346,7 +356,15 @@ export default function Chat() {
       } else if (event.type === "update") {
         // Update existing message (e.g., image_url, audio_url being added)
         console.log(`[Chat] SUB: Updated ${event.data.id.substring(0, 8)}`);
-        setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
+        setMessages(prev => {
+          const found = prev.some(m => m.id === event.data.id);
+          if (!found) {
+            // Message was updated but not in visible list — add it
+            console.log(`[Chat] SUB: Update for out-of-view message, adding: ${event.data.id.substring(0, 8)}`);
+            return [...prev, event.data];
+          }
+          return prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m);
+        });
       } else if (event.type === "delete") {
         // Remove deleted messages
         console.log(`[Chat] SUB: Deleted ${event.data.id.substring(0, 8)}`);
