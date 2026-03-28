@@ -28,23 +28,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       animate={{ opacity: 1, y: 0 }}
       className={`flex items-flex-end gap-2 ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
     >
-      {/* Voice button on left for character messages */}
-      {hasVoice && !isUser && !isNarrative && onPlayVoice && (
-        <motion.button
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.95 }}
-          onClick={onPlayVoice}
-          disabled={isPlayingVoice}
-          className={`flex-shrink-0 transition-colors self-end mb-2 ${
-            isPlayingVoice 
-              ? 'text-primary opacity-100' 
-              : 'text-muted-foreground hover:text-primary opacity-70 hover:opacity-100'
-          }`}
-          title={isPlayingVoice ? 'Playing audio...' : 'Play voice message'}
-        >
-          <Volume2 className="w-4 h-4" />
-        </motion.button>
-      )}
+      {/* Voice button on right for character messages (with other actions) */}
 
       <div className={`relative ${isNarrative ? "max-w-2xl" : "max-w-[80%]"} ${isNarrative ? "items-center" : isUser ? "items-end" : "items-start"} flex flex-col`}>
         {showName && !isUser && !isNarrative && message.character_name && (
@@ -106,13 +90,29 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
             )}
           </div>
 
-          {/* Reactions + add button — all anchored to same bottom corner spot */}
-          {onReact && !isNarrative && (
+          {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
+          {(onReact || hasVoice) && !isNarrative && (
             <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-20 flex gap-0.5 items-center`}>
+              {hasVoice && onPlayVoice && (
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={onPlayVoice}
+                  disabled={isPlayingVoice}
+                  className={`flex items-center justify-center w-5 h-5 rounded-full transition-colors ${
+                    isPlayingVoice 
+                      ? 'bg-primary text-primary-foreground' 
+                      : 'bg-card border border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={isPlayingVoice ? 'Playing audio...' : 'Play voice message'}
+                >
+                  <Volume2 className="w-3 h-3" />
+                </motion.button>
+              )}
               {hasReactions && (
                 <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
               )}
-              <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />
+              {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
             </div>
           )}
           </div>
