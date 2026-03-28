@@ -376,7 +376,7 @@ export default function Chat() {
 
     const timer = setTimeout(() => loadConvo(), 300);
     return () => clearTimeout(timer);
-  }, [characterId, chatType, currentUser.email]);
+  }, [characterId, character, chatType, currentUser.email]);
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
@@ -564,6 +564,7 @@ export default function Chat() {
       setSendError("Message failed to save. Try again.");
       return;
     }
+    console.log(`[Chat] USER MESSAGE SAVED: ${userMsg.id.substring(0, 8)} | "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
     // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
@@ -949,28 +950,29 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       // This lets text render immediately while image generates in the background
 
       // 1. Create and send text-only message first
-      primaryCharMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: responseText,
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
+       primaryCharMsg = await base44.entities.Message.create({
+         conversation_id: convoId,
+         sender_type: "character",
+         character_id: characterId,
+         character_name: character.name,
+         content: responseText,
+         emotional_state: emotionalState,
+         timestamp: new Date().toISOString(),
+       });
 
-      if (!primaryCharMsg || !primaryCharMsg.id) {
-        setSendError("Character response failed to save. Try again.");
-        return;
-      }
+       if (!primaryCharMsg || !primaryCharMsg.id) {
+         setSendError("Character response failed to save. Try again.");
+         return;
+       }
 
-      setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
+       console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
+       setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
-      // Auto-play text voice immediately
-      console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
-      setTimeout(() => {
-        playCharacterVoice(primaryCharMsg.id, responseText, character, userSettings, false);
-      }, 500);
+       // Auto-play text voice immediately
+       console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
+       setTimeout(() => {
+         playCharacterVoice(primaryCharMsg.id, responseText, character, userSettings, false);
+       }, 500);
 
       // 2. Create image-only message(s) separately after a delay
       // This gives the text time to render and prevents image generation from blocking text
@@ -1005,9 +1007,10 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
         });
 
         if (secondaryCharMsg?.id) {
+          console.log(`[Chat] IMAGE MESSAGE CREATED (placeholder): ${secondaryCharMsg.id.substring(0, 8)}`);
           setMessages(prev => prev.some(m => m.id === secondaryCharMsg.id) ? prev : [...prev, secondaryCharMsg]);
 
-          // Generate image for the image-only message
+          // Generate image for the image-only message (will update via subscription)
           base44.functions.invoke('generateImageAsync', {
             messageId: secondaryCharMsg.id,
             prompt: imagePrompts[0],
@@ -1015,7 +1018,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
             userReferenceImages: useUserRefs ? userRefImages : [],
             characterName: character.name,
             subjectType,
-          }).catch(() => {});
+          }).catch((err) => console.error(`[Chat] Image generation failed for ${secondaryCharMsg.id.substring(0, 8)}:`, err));
         }
 
         // Additional images (if multiple requested) get their own separate messages too
@@ -1031,6 +1034,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
           });
 
           if (extraImageMsg?.id) {
+            console.log(`[Chat] IMAGE MESSAGE CREATED (placeholder): ${extraImageMsg.id.substring(0, 8)}`);
             setMessages(prev => prev.some(m => m.id === extraImageMsg.id) ? prev : [...prev, extraImageMsg]);
             setTimeout(() => {
               base44.functions.invoke('generateImageAsync', {
@@ -1040,7 +1044,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
                 userReferenceImages: useUserRefs ? userRefImages : [],
                 characterName: character.name,
                 subjectType,
-              }).catch(() => {});
+              }).catch((err) => console.error(`[Chat] Image generation failed for ${extraImageMsg.id.substring(0, 8)}:`, err));
             }, i * 500);
           }
         }
@@ -1063,6 +1067,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
         return;
       }
 
+      console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
       setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
       console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
@@ -1101,6 +1106,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       });
 
       if (primaryCharMsg?.id) {
+        console.log(`[Chat] IMAGE-ONLY MESSAGE CREATED: ${primaryCharMsg.id.substring(0, 8)}`);
         setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
         // Generate first image
@@ -1112,7 +1118,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
             userReferenceImages: useUserRefs ? userRefImages : [],
             characterName: character.name,
             subjectType,
-          }).catch(() => {});
+          }).catch((err) => console.error(`[Chat] Image generation failed for ${primaryCharMsg.id.substring(0, 8)}:`, err));
         }, 300);
 
         // Additional images get their own messages
@@ -1128,6 +1134,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
           });
 
           if (extraImageMsg?.id) {
+            console.log(`[Chat] IMAGE MESSAGE CREATED: ${extraImageMsg.id.substring(0, 8)}`);
             setMessages(prev => prev.some(m => m.id === extraImageMsg.id) ? prev : [...prev, extraImageMsg]);
             const capturedId = extraImageMsg.id;
             const capturedPrompt = imagePrompts[i];
@@ -1139,7 +1146,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
                 userReferenceImages: useUserRefs ? userRefImages : [],
                 characterName: character.name,
                 subjectType,
-              }).catch(() => {});
+              }).catch((err) => console.error(`[Chat] Image generation failed for ${capturedId.substring(0, 8)}:`, err));
             }, 300 + i * 500);
           }
         }
