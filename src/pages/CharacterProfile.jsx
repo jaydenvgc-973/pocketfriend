@@ -518,7 +518,7 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships */}
+          {/* NPC relationships (includes family members synced in) */}
           {(character.fictional_relationships?.filter(r => !r.related_character_id) || []).length > 0 ? (
             <div className="space-y-5">
               {character.fictional_relationships
@@ -526,17 +526,28 @@ export default function CharacterProfile() {
                 .map((rel, idx) => (
                   <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
-                        <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                      <div className="flex items-center gap-2">
+                        {rel.photo_url ? (
+                          <img src={rel.photo_url} alt={rel.person_name} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+                        ) : (
+                          <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                            <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
+                          <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => handleConvertNPC(rel)}
-                        title="Convert to active character"
-                        className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors flex-shrink-0"
-                      >
-                        <Zap className="w-3 h-3" /> Activate
-                      </button>
+                      {!rel._from_family && (
+                        <button
+                          onClick={() => handleConvertNPC(rel)}
+                          title="Convert to active character"
+                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors flex-shrink-0"
+                        >
+                          <Zap className="w-3 h-3" /> Activate
+                        </button>
+                      )}
                     </div>
                     {rel.description && (
                       <div>
