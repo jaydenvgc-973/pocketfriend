@@ -83,7 +83,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
 
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', character.id],
-    queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id] }),
+    queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id], created_by: character.created_by }),
     staleTime: 0,
   });
 

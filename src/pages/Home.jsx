@@ -22,9 +22,17 @@ export default function Home() {
     queryFn: () => base44.entities.UserSettings.list(),
   });
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: characters = [], isLoading } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list("-created_date"),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const deleteMutation = useMutation({
@@ -45,7 +53,7 @@ export default function Home() {
     },
     onSuccess: () => {
       setPendingDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     },
   });
 
@@ -65,14 +73,14 @@ export default function Home() {
       }
       return base44.entities.Character.update(id, { status: "moved_away" });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }),
   });
 
   const moveBackMutation = useMutation({
     mutationFn: async (id) => {
       return base44.entities.Character.update(id, { status: "active" });
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] }),
   });
 
   useEffect(() => {
@@ -90,9 +98,9 @@ export default function Home() {
     };
     updated.system_prompt = buildSystemPrompt(updated);
     base44.entities.Character.update(defaultChar.id, updated).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     });
-  }, [characters]);
+  }, [characters, currentUser?.email]);
 
   useEffect(() => {
     if (!isLoading && settings.length === 0) {

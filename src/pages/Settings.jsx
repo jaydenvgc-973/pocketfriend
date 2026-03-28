@@ -2,7 +2,9 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut } from "lucide-react";
+
+const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -16,21 +18,40 @@ import CommonQuestions from "@/components/settings/CommonQuestions";
 export default function Settings() {
   const queryClient = useQueryClient();
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
 
   const { data: settingsList = [] } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list("-created_date"),
-  });
-
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
   });
+
+  const { data: characters = [] } = useQuery({
+    queryKey: ["characters", user?.email],
+    queryFn: () => user?.email
+      ? base44.entities.Character.filter({ created_by: user.email }, "-created_date")
+      : [],
+    enabled: !!user?.email,
+  });
+
+  const isAdmin = user?.email === ADMIN_EMAIL;
+
+  const handleDeleteAccount = async () => {
+    setIsDeletingAccount(true);
+    try {
+      await base44.functions.invoke('deleteAccount', {});
+      base44.auth.logout();
+    } catch (err) {
+      setIsDeletingAccount(false);
+      setShowDeleteAccountConfirm(false);
+      alert('Failed to delete account. Please try again.');
+    }
+  };
 
   const settings = settingsList[0] || {};
 
@@ -312,13 +333,44 @@ export default function Settings() {
         )}
         <CommonQuestions />
 
-        <div className="pt-4 pb-2">
+        <div className="pt-4 pb-2 space-y-3">
           <button
             onClick={() => base44.auth.logout()}
             className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10 transition-colors"
           >
             Log out
           </button>
+
+          {!isAdmin && !showDeleteAccountConfirm && (
+            <button
+              onClick={() => setShowDeleteAccountConfirm(true)}
+              className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-muted-foreground text-sm hover:text-destructive transition-colors"
+            >
+              Delete Account
+            </button>
+          )}
+
+          {!isAdmin && showDeleteAccountConfirm && (
+            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
+              <p className="text-sm font-medium text-foreground text-center">Delete your account?</p>
+              <p className="text-xs text-muted-foreground text-center">This will permanently delete all your characters, conversations, and data. This cannot be undone.</p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowDeleteAccountConfirm(false)}
+                  className="flex-1 py-2 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={isDeletingAccount}
+                  className="flex-1 py-2 rounded-xl bg-destructive text-destructive-foreground text-sm font-medium hover:bg-destructive/90 transition-colors disabled:opacity-60"
+                >
+                  {isDeletingAccount ? "Deleting..." : "Yes, delete"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
       <div className="pb-28" />
