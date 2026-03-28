@@ -39,7 +39,10 @@ const ENERGY_SCALE = [
   { value: "extrovert", label: "Extrovert", desc: "Thrives with people. Always in the mix." },
 ];
 
-const SEXUAL_ORIENTATIONS = ["Straight", "Gay", "Bisexual", "Pansexual", "Queer", "Asexual", "Prefer not to say"];
+const SEXUAL_ORIENTATIONS = ["Straight", "Gay", "Gay (DL)", "Bisexual", "Bisexual (DL)", "Pansexual", "Queer", "Asexual", "Prefer not to say"];
+
+const DL_ORIENTATIONS = ["Gay (DL)", "Bisexual (DL)"];
+const DL_DEFINITION = `"Down Low" (DL) — presents publicly as heterosexual but privately engages in same-sex relationships. Emphasizes secrecy and discretion. Character may compartmentalize their public and private life, avoid labels, and show internal conflict around their identity.`;
 
 const JOB_TYPES = [
   "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
@@ -701,6 +704,11 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         <div className="grid grid-cols-2 gap-2">
           {SEXUAL_ORIENTATIONS.map(o => <button key={o} onClick={() => update("sexual_orientation", o)} className={chipClass(data.sexual_orientation === o)}>{o}</button>)}
         </div>
+        {DL_ORIENTATIONS.includes(data.sexual_orientation) && (
+          <div className="mt-3 p-3 rounded-xl bg-secondary/60 border border-border">
+            <p className="text-xs text-muted-foreground leading-relaxed">{DL_DEFINITION}</p>
+          </div>
+        )}
       </div>
     </div>,
 

@@ -34,20 +34,32 @@ function getAttractionSpeedMultiplier(characterOrientation, characterGender, oth
     targetGender === 'non_binary';
 
   if (orientation === 'straight') {
-    if (isNonBinary) return 0.15; // very slow — can lead to pansexual shift
-    if (isSameGender) return 0.1; // 90% slower
-    return 1.0; // normal for opposite gender
+    if (isNonBinary) return 0.15;
+    if (isSameGender) return 0.1;
+    return 1.0;
   }
 
   if (orientation === 'gay') {
-    if (isOppositeGender) return 0.1; // 90% slower — can lead to bisexual shift
-    if (isNonBinary) return 0.5; // moderate
-    return 1.0; // normal for same gender
+    if (isOppositeGender) return 0.1;
+    if (isNonBinary) return 0.5;
+    return 1.0;
+  }
+
+  // Gay (DL): primarily attracted to same gender but hides it — full same-gender attraction, very slow opposite
+  if (orientation === 'gay (dl)') {
+    if (isOppositeGender) return 0.05; // extremely slow — maintains straight-presenting facade
+    if (isNonBinary) return 0.4;
+    return 1.0;
   }
 
   if (orientation === 'lesbian') {
     if (isOppositeGender) return 0.1;
     return 1.0;
+  }
+
+  // Bisexual (DL): attracted to both but keeps same-sex side hidden — moderate dampener on same gender visibility
+  if (orientation === 'bisexual (dl)') {
+    return 0.8; // slight dampener — still attracted but guarded
   }
 
   // bisexual, pansexual, queer, asexual, prefer not to say — full speed
@@ -68,8 +80,8 @@ function checkOrientationShift(currentOrientation, currentAttractionLevel, chara
   if (orientation === 'straight') {
     if (isNonBinary) return 'pansexual';
     if (isSameGender) {
-      // Randomly choose bisexual or "prefer not to say" to reflect character variation
-      return Math.random() > 0.5 ? 'bisexual' : 'prefer not to say';
+      // Could shift to bisexual or go DL depending on threshold
+      return currentAttractionLevel >= 60 ? 'gay (dl)' : (Math.random() > 0.5 ? 'bisexual' : 'bisexual (dl)');
     }
   }
 
@@ -78,6 +90,16 @@ function checkOrientationShift(currentOrientation, currentAttractionLevel, chara
       (charGender === 'male' && tgtGender === 'female') ||
       (charGender === 'female' && tgtGender === 'male');
     if (isOppositeGender) return 'bisexual';
+  }
+
+  // Gay (DL) with strong same-gender attraction that's been developing — may come out as gay
+  if (orientation === 'gay (dl)' && currentAttractionLevel >= 75 && isSameGender) {
+    return 'gay'; // gradually stops hiding
+  }
+
+  // Bisexual (DL) with very high romantic/attraction — may open up
+  if (orientation === 'bisexual (dl)' && currentAttractionLevel >= 80) {
+    return 'bisexual';
   }
 
   return null;
@@ -289,8 +311,12 @@ Respond with ONLY a valid JSON object in this exact format:
     const orientation = (character.sexual_orientation || '').toLowerCase();
     let attractionMultiplier = 1.0;
     if (orientation === 'straight' || orientation === 'gay' || orientation === 'lesbian') {
-      // Unknown user gender — apply a mild dampener for exclusive orientations since we can't confirm compatibility
       attractionMultiplier = 0.7;
+    } else if (orientation === 'gay (dl)') {
+      // Very guarded about attraction — extra dampened with unknown user
+      attractionMultiplier = 0.5;
+    } else if (orientation === 'bisexual (dl)') {
+      attractionMultiplier = 0.65;
     }
 
     // Calculate raw attraction delta and apply multiplier
