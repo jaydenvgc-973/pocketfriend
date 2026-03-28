@@ -23,7 +23,7 @@ const stateLabels = {
   defensive: "defensive",
   reflective: "reflective",
   "closed-off": "closed off",
-  flirtatious: "flirtatious",
+  flirtatious: "flirty",
   bored: "bored",
   "burnt out": "burnt out",
   joyful: "joyful",
@@ -32,7 +32,67 @@ const stateLabels = {
   excited: "excited",
   overwhelmed: "overwhelmed",
   content: "content",
-  frustrated: "frustrated"
+  frustrated: "frustrated",
+  joy: "joyful",
+  happiness: "happy",
+  contentment: "content",
+  excitement: "excited",
+  elation: "elated",
+  hope: "hopeful",
+  relief: "relieved",
+  gratitude: "grateful",
+  love: "loving",
+  affection: "affectionate",
+  compassion: "compassionate",
+  empathy: "empathetic",
+  pride: "proud",
+  confidence: "confident",
+  peacefulness: "peaceful",
+  satisfaction: "satisfied",
+  curiosity: "curious",
+  interest: "interested",
+  amusement: "amused",
+  surprise: "surprised",
+  awe: "in awe",
+  anticipation: "anticipating",
+  nostalgia: "nostalgic",
+  longing: "longing",
+  desire: "desiring",
+  passion: "passionate",
+  infatuation: "infatuated",
+  tenderness: "tender",
+  vulnerability: "vulnerable",
+  trust: "trusting",
+  security: "secure",
+  belonging: "belonging",
+  acceptance: "accepted",
+  patience: "patient",
+  annoyance: "annoyed",
+  irritation: "irritated",
+  anger: "angry",
+  rage: "enraged",
+  resentment: "resentful",
+  jealousy: "jealous",
+  envy: "envious",
+  insecurity: "insecure",
+  doubt: "doubtful",
+  confusion: "confused",
+  stress: "stressed",
+  fear: "fearful",
+  panic: "panicked",
+  worry: "worried",
+  guilt: "guilty",
+  shame: "ashamed",
+  embarrassment: "embarrassed",
+  regret: "regretful",
+  disappointment: "disappointed",
+  grief: "grieving",
+  loneliness: "lonely",
+  hopelessness: "hopeless",
+  despair: "despairing",
+  detachment: "detached",
+  numbness: "numb",
+  apathy: "apathetic"
 };
 
 const stateDots = {
@@ -86,7 +146,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   }, [pendingMessages]);
 
   const countUnread = async () => {
-    if (conversations.length === 0) return;
+    if (conversations.length === 0) {
+      setUnreadChat(0);
+      setUnreadPhone(0);
+      return;
+    }
     try {
       const allUnread = await base44.entities.Message.filter({
         sender_type: "character",
@@ -94,27 +158,57 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         is_read: false,
       });
 
-      // Filter out invalid unread messages:
-      // - Messages with failed/undefined images
-      // - Messages with empty content AND no image
-      // - Messages that have invalid states
-      const validUnread = allUnread.filter(msg => {
-        const hasFailedImage = msg.image_url && (msg.image_url.includes('undefined') || msg.image_url === '');
-        const hasValidContent = msg.content && msg.content.trim() !== '';
-        const hasValidImage = msg.image_url && !hasFailedImage;
+      // CRITICAL: Mark all broken/invalid messages as read immediately
+      const brokenMessages = allUnread.filter(msg => {
+        const hasFailedImage = msg.image_url && (msg.image_url.includes('undefined') || msg.image_url === '' || msg.image_url === 'null');
+        const isEmpty = !msg.content || msg.content.trim() === '';
         const isPendingState = msg.delivered === false;
+        const isNarrative = msg.is_narrative === true;
+        
+        // Mark as broken if: (empty AND no image) OR (failed image) OR (pending) OR (narrative)
+        return (isEmpty && !msg.image_url) || hasFailedImage || isPendingState || isNarrative;
+      });
 
-        // Keep only if: (has valid text OR has valid image) AND not in pending state
-        return (hasValidContent || hasValidImage) && !isPendingState;
+      // Force-mark all broken messages as read
+      if (brokenMessages.length > 0) {
+        console.log(`[CharacterCard] Found ${brokenMessages.length} broken/phantom messages for ${character.name}, marking as read`);
+        const markReadPromises = brokenMessages.map(msg =>
+          base44.entities.Message.update(msg.id, { is_read: true })
+            .catch(e => console.warn(`Failed to fix message ${msg.id}:`, e))
+        );
+        await Promise.all(markReadPromises);
+      }
+
+      // Re-fetch after cleanup
+      const validUnread = await base44.entities.Message.filter({
+        sender_type: "character",
+        character_id: character.id,
+        is_read: false,
+      });
+
+      // Final validation filter
+      const finalValidUnread = validUnread.filter(msg => {
+        const hasValidContent = msg.content && msg.content.trim() !== '';
+        const hasValidImage = msg.image_url && !msg.image_url.includes('undefined') && msg.image_url !== '' && msg.image_url !== 'null';
+        const isNotPending = msg.delivered !== false;
+        const isNotNarrative = msg.is_narrative !== true;
+        
+        return (hasValidContent || hasValidImage) && isNotPending && isNotNarrative;
       });
 
       const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
       const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
 
-      setUnreadChat(validUnread.filter(m => directConvoIds.includes(m.conversation_id)).length);
-      setUnreadPhone(validUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length);
+      const chatCount = finalValidUnread.filter(m => directConvoIds.includes(m.conversation_id)).length;
+      const phoneCount = finalValidUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length;
+
+      console.log(`[CharacterCard] ${character.name} - Chat: ${chatCount}, Phone: ${phoneCount}`);
+      setUnreadChat(chatCount);
+      setUnreadPhone(phoneCount);
     } catch (err) {
-      console.warn('Failed to count unread messages', err);
+      console.warn(`[CharacterCard] Failed to count unread for ${character.name}:`, err);
+      setUnreadChat(0);
+      setUnreadPhone(0);
     }
   };
 
@@ -255,18 +349,25 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   'home': Home,
                   'out': MapPin,
                   'hospital': AlertTriangle,
-                  'calm': null
                 };
                 const IconComponent = iconComponents[statusDisplay?.iconType];
+                const moodLabel = stateLabels[state] || state;
 
                 return (
-                  <div className="flex items-center gap-1.5">
-                    {IconComponent ? (
-                      <IconComponent className={`w-3 h-3 ${statusDisplay.color}`} />
-                    ) : (
+                  <div className="flex items-center gap-2">
+                    {/* MOOD: Text + Color */}
+                    <div className="flex items-center gap-1">
                       <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
+                      <span className="text-xs text-foreground capitalize">{moodLabel}</span>
+                    </div>
+                    
+                    {/* LOCATION/STATUS: Icon + Text (only if not default "available") */}
+                    {statusDisplay?.iconType && statusDisplay.iconType !== 'calm' && (
+                      <div className="flex items-center gap-1">
+                        {IconComponent && <IconComponent className={`w-3 h-3 ${statusDisplay.color}`} />}
+                        <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.label}</span>
+                      </div>
                     )}
-                    <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.label}</span>
                   </div>
                 );
               })()}
