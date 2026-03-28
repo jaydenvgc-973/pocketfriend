@@ -260,14 +260,8 @@ export default function Chat() {
           setConversationId(convo.id);
         }
 
-        // Archive old messages & extract memories (non-blocking, delayed)
-        if (convoId) {
-          const charIsProtected = characterId && (userSettings.protected_character_ids || []).includes(characterId);
-          setTimeout(async () => {
-            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, isProtected: charIsProtected }).catch(() => {});
-            base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
-          }, 3000);
-        }
+        // DISABLED: Archiving temporarily disabled to prevent message loss
+        // Re-enable only after rewriting archiving logic correctly
 
         // Load pending messages and deliver them
         const pending = await base44.entities.PendingMessage.filter(
