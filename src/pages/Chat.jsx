@@ -279,7 +279,7 @@ export default function Chat() {
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imagePrompt, detailReferenceImage = null;
+    let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -493,7 +493,7 @@ CRITICAL IMAGE RULES:
       // Support both single image_prompt and multiple image_prompts array
       // Also enforce the gate: if not allowed, discard any image_prompt the LLM snuck in
       imagePrompt = allowImageThisTurn ? (responseObj.image_prompt || null) : null;
-      const imagePrompts = allowImageThisTurn
+      imagePrompts = allowImageThisTurn
         ? (responseObj.image_prompts?.length > 0 ? responseObj.image_prompts : (imagePrompt ? [imagePrompt] : []))
         : [];
 
