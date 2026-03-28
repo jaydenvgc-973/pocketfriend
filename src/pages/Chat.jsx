@@ -766,7 +766,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     // Auto-play character voice if all conditions are met (after short delay for UX)
     // Conditions: global voice enabled + character voice enabled + API key + not phone chat
-    if (settings[0]?.voice_enabled && character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key && chatType !== "phone") {
+    if (settings.length > 0 && settings[0]?.voice_enabled && character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key && chatType !== "phone") {
       setTimeout(() => {
         playCharacterVoice(charMsg.id, responseText, character, settings[0]);
       }, 500);
@@ -1009,8 +1009,8 @@ Reply with ONLY the single emoji or the word "none".`,
               onReact={handleReact} 
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
-              hasVoice={msg.sender_type !== "user" && !msg.is_narrative && character?.voice_enabled && character?.voice_name && chatType !== "phone"}
-              onPlayVoice={() => playCharacterVoice(msg.id, msg.content, character, settings[0])}
+              hasVoice={msg.sender_type !== "user" && !msg.is_narrative && character?.voice_enabled && character?.voice_name && chatType !== "phone" && settings.length > 0}
+              onPlayVoice={() => settings.length > 0 && playCharacterVoice(msg.id, msg.content, character, settings[0])}
               isPlayingVoice={playingAudioId === msg.id}
             />
           ))}
