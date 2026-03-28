@@ -21,6 +21,17 @@ const generateSpeakingStyle = (character) => {
   
   const parts = [];
   
+  // Gender influence
+  const genderMap = {
+    male: 'masculine',
+    female: 'feminine',
+    'non-binary': 'neutral, balanced',
+    other: 'unique',
+  };
+  if (character.gender && genderMap[character.gender]) {
+    parts.push(genderMap[character.gender]);
+  }
+  
   // Age group influence
   const ageMap = {
     'Early 20s': 'youthful, energetic',
@@ -44,11 +55,11 @@ const generateSpeakingStyle = (character) => {
   
   // Social energy influence
   const energyMap = {
-    introvert: 'thoughtful, reserved',
-    mostly_introvert: 'quiet, introspective',
+    introvert: 'reserved, introspective',
+    mostly_introvert: 'quiet, thoughtful',
     ambivert: 'balanced, adaptable',
-    mostly_extrovert: 'outgoing, expressive',
-    extrovert: 'lively, animated',
+    mostly_extrovert: 'outgoing, engaging',
+    extrovert: 'lively, expressive',
   };
   if (character.social_energy && energyMap[character.social_energy]) {
     parts.push(energyMap[character.social_energy]);
@@ -73,12 +84,18 @@ const generateSpeakingStyle = (character) => {
     parts.push(archetypeMap[character.archetype]);
   }
   
-  // Sexual orientation influence (subtle)
-  if (character.sexual_orientation && character.sexual_orientation.toLowerCase().includes('queer')) {
-    parts.push('authentic, candid');
+  // Personality traits (take up to 3)
+  if (character.personality_traits && character.personality_traits.length > 0) {
+    const traits = character.personality_traits.slice(0, 3);
+    parts.push(traits.join(', '));
   }
   
-  // Cultural background influence (if multiple, pick the first)
+  // Communication style
+  if (character.communication_style) {
+    parts.push(character.communication_style);
+  }
+  
+  // Cultural background influence
   if (character.ethnicities && character.ethnicities.length > 0) {
     const ethnicityMap = {
       'African': 'rhythmic, soulful',
@@ -96,13 +113,17 @@ const generateSpeakingStyle = (character) => {
           break;
         }
       }
-      if (parts.length > 3) break;
     }
   }
   
-  // Combine unique parts (remove duplicates)
+  // Sexual orientation influence
+  if (character.sexual_orientation) {
+    parts.push(character.sexual_orientation.toLowerCase());
+  }
+  
+  // Combine unique parts (remove duplicates), limit to 5 descriptors
   const unique = Array.from(new Set(parts.filter(p => p && p.trim())));
-  return unique.slice(0, 4).join(', ');
+  return unique.slice(0, 5).join(', ');
 };
 
 export default function VoiceSettings({ data, onUpdate, hasApiKey, character }) {
