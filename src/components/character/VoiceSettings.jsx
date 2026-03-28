@@ -110,15 +110,15 @@ export default function VoiceSettings({ data, onUpdate, hasApiKey, character }) 
   const [previewError, setPreviewError] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   
-  // Auto-generate speaking style if character provided and voice_style_note is empty
+  // Auto-generate speaking style on component mount or when character changes
   useEffect(() => {
-    if (character && data.voice_enabled && !data.voice_style_note) {
+    if (character && !data.voice_style_note) {
       const generated = generateSpeakingStyle(character);
       if (generated) {
         onUpdate('voice_style_note', generated);
       }
     }
-  }, [character?.age_range, character?.social_energy, character?.archetype, character?.sexual_orientation, character?.ethnicities, data.voice_enabled, character?.id]);
+  }, [character?.id]);
 
   const handlePreviewVoice = async () => {
     if (!hasApiKey || !data.voice_name) return;
