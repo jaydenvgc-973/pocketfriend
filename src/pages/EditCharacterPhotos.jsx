@@ -113,11 +113,11 @@ export default function EditCharacterPhotos() {
                         setUploadingAvatarId(selectedChar.id);
                         try {
                           const result = await base44.integrations.Core.UploadFile({ file });
-                          const updated = { ...selectedChar, avatar_url: result.file_url };
+                          const updated = { ...selectedChar, avatar_url: result.file_url, reference_image_urls: [result.file_url] };
                           updated.system_prompt = buildSystemPrompt(updated);
                           await base44.entities.Character.update(selectedChar.id, {
                             avatar_url: result.file_url,
-                            reference_image_urls: [],
+                            reference_image_urls: [result.file_url],
                             system_prompt: updated.system_prompt,
                           });
                           setSelectedChar(updated);
