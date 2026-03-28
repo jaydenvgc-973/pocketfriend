@@ -152,7 +152,7 @@ export default function Home() {
         {defaultChar && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
-            <CharacterCard character={defaultChar} />
+            <CharacterCard character={defaultChar} loadDelay={0} />
           </div>
         )}
         {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
@@ -182,14 +182,15 @@ export default function Home() {
             </Link>
           ) : (
             <div className="grid gap-3">
-              {activeCustomChars.map(c => (
+              {activeCustomChars.map((c, idx) => (
                 <CharacterCard key={c.id} character={c}
+                  loadDelay={idx * 150}
                   onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
                   onMoveAway={(id) => moveAwayMutation.mutate(id)}
                 />
               ))}
-              {movedAwayChars.map(c => (
-                <CharacterCard key={c.id} character={c} onMoveAway={() => canMoveBack && moveBackMutation.mutate(c.id)} />
+              {movedAwayChars.map((c, idx) => (
+                <CharacterCard key={c.id} character={c} loadDelay={(activeCustomChars.length + idx) * 150} onMoveAway={() => canMoveBack && moveBackMutation.mutate(c.id)} />
               ))}
               {canCreate && (
                 <Link to="/create">

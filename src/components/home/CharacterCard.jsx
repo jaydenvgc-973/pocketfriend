@@ -115,7 +115,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway }) {
+export default function CharacterCard({ character, onDelete, onMoveAway, loadDelay = 0 }) {
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditName, setShowEditName] = useState(false);
@@ -219,9 +219,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         setUnreadChat(0);
         setUnreadPhone(0);
       });
-    }, 200);
+    }, 200 + loadDelay);
     return () => clearTimeout(timer);
-  }, []);
+  }, [loadDelay]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
