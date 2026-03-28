@@ -394,6 +394,22 @@ export default function Chat() {
         }
       }
 
+      // Cultural & Entertainment Awareness: Detect if user references entertainment/culture
+      let culturalContext = "";
+      const culturalKeywords = /\b(show|shows|watch|watching|netflix|hulu|disney|prime|streaming|movie|film|music|song|artist|singer|actor|actress|celebrity|famous|viral|tiktok|youtube|podcast|album|concert|tour|coachella|grammy|oscar|emmy|celebrity|star|band|rapper|actor|influencer|meme|trend|trending|cardi|taylor|drake|beyonce|kanye|rihanna|dua|weekend|post|malone|billie|ariana|this is us|stranger|breaking bad|game of thrones)\b/i;
+      if (culturalKeywords.test(text) || culturalKeywords.test(recentMsgs.slice(-3).map(m => m.content).join(" "))) {
+        try {
+          const culturalRes = await base44.integrations.Core.InvokeLLM({
+            prompt: `What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`,
+            add_context_from_internet: true,
+            model: 'gemini_3_flash'
+          });
+          culturalContext = `\n\nCULTURAL AWARENESS: Current entertainment & culture trends: ${culturalRes}. You're aware of these topics and can discuss them naturally if they come up. Recognize references to celebrities, shows, and music without confusion.`;
+        } catch (culturalErr) {
+          // Cultural awareness lookup failed, continue without it
+        }
+      }
+
       // Get recent memories for long-term recall
       let memoryContext = "";
       const recentMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 10);
@@ -516,7 +532,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Only include if sending exactly 1 image AND allowed this turn — a vivid description of the image",\n  "image_prompts": ["Only include if user requested multiple images — one entry per image"],\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation. Your response should reflect your personality — some characters care deeply about entertainment, others less so — but you never pretend not to know widely recognized figures or trends.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Only include if sending exactly 1 image AND allowed this turn — a vivid description of the image",\n  "image_prompts": ["Only include if user requested multiple images — one entry per image"],\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
