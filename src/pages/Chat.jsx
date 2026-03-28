@@ -64,192 +64,128 @@ export default function Chat() {
 
   const userSettings = settings?.[0] || {};
 
-  // CORE VOICE PLAYBACK FUNCTION - This is the single source of truth for all voice playback
-  const playCharacterVoice = async (messageId, text, characterData, userSettings, bypassCache = false) => {
-    // DIAGNOSTIC: Log everything from the start
-    const diagnosticId = `[VOICE-${messageId.substring(0, 8)}]`;
+  // VOICE GENERATION & PLAYBACK - Completely independent from message delivery
+  // Voice is optional. Message delivery is required.
+  // If voice fails, the message STAYS visible and delivered.
+  const generateAndPlayVoice = async (messageId, text, characterData, userSettings) => {
+    const voiceId = `[VOICE-${messageId.substring(0, 8)}]`;
     
-    console.log(`${diagnosticId} VOICE PLAYBACK INITIATED`);
-    console.log(`${diagnosticId} messageId: ${messageId}`);
-    console.log(`${diagnosticId} text source: ${text ? `"${text.substring(0, 100)}..."` : 'MISSING'}`);
-    console.log(`${diagnosticId} text from message.content (final saved chat text)`);
-    console.log(`${diagnosticId} characterData.name: ${characterData?.name}`);
-    console.log(`${diagnosticId} characterData.voice_name: ${characterData?.voice_name}`);
-    console.log(`${diagnosticId} userSettings.voice_enabled: ${userSettings?.voice_enabled}`);
-    console.log(`${diagnosticId} userSettings.openai_api_key present: ${!!userSettings?.openai_api_key}`);
-    
-    if (!messageId || !text || !characterData || !userSettings) {
-      console.warn(`${diagnosticId} ABORT: Missing critical parameters`, { 
-        messageId: !!messageId, 
-        text: !!text, 
-        characterData: !!characterData, 
-        userSettings: !!userSettings 
-      });
-      setPlayingAudioId(null);
+    // Exit early if voice is disabled globally or no API key
+    if (!userSettings?.voice_enabled || !userSettings?.openai_api_key) {
+      console.log(`${voiceId} Voice disabled or no API key - skipping audio generation`);
+      return;
+    }
+
+    // Exit early if character doesn't have voice configured
+    if (!characterData?.voice_enabled || !characterData?.voice_name) {
+      console.log(`${voiceId} Character voice not configured - skipping audio`);
+      return;
+    }
+
+    // Exit early if in phone mode
+    if (chatType === "phone") {
+      console.log(`${voiceId} Phone mode - voice disabled`);
+      return;
+    }
+
+    if (!messageId || !text) {
+      console.log(`${voiceId} Missing messageId or text - cannot generate voice`);
       return;
     }
 
     try {
-      setVoiceErrors(prev => ({ ...prev, [messageId]: null }));
-      setPlayingAudioId(messageId);
+      console.log(`${voiceId} Voice generation starting for: "${text.substring(0, 80)}..."`);
 
-      // Step 1: Check conditions
-      const voiceGloballyEnabled = userSettings?.voice_enabled === true;
-      const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
-      const hasApiKey = userSettings?.openai_api_key;
-      const isNotPhone = chatType !== "phone";
-
-      console.log(`${diagnosticId} CONDITION CHECK:`);
-      console.log(`${diagnosticId}   - voice_enabled (global): ${voiceGloballyEnabled}`);
-      console.log(`${diagnosticId}   - character.voice_enabled: ${characterData?.voice_enabled}`);
-      console.log(`${diagnosticId}   - character.voice_name: ${characterData?.voice_name}`);
-      console.log(`${diagnosticId}   - API key present: ${hasApiKey ? 'YES' : 'NO'}`);
-      console.log(`${diagnosticId}   - chatType !== 'phone': ${isNotPhone} (chatType=${chatType})`);
-
-      if (!voiceGloballyEnabled) {
-        console.log(`${diagnosticId} ABORT: voice_enabled is false at user settings level`);
-        setPlayingAudioId(null);
-        setVoiceErrors(prev => ({ ...prev, [messageId]: 'Voice disabled in settings' }));
-        return;
-      }
-      
-      if (!charHasVoice) {
-        console.log(`${diagnosticId} ABORT: character voice not enabled or no voice_name`);
-        setPlayingAudioId(null);
-        setVoiceErrors(prev => ({ ...prev, [messageId]: 'Character voice not configured' }));
-        return;
-      }
-      
-      if (!hasApiKey) {
-        console.log(`${diagnosticId} ABORT: No OpenAI API key found`);
-        setPlayingAudioId(null);
-        setVoiceErrors(prev => ({ ...prev, [messageId]: 'No API key configured' }));
-        return;
-      }
-      
-      if (!isNotPhone) {
-        console.log(`${diagnosticId} ABORT: Phone chat mode, voice disabled`);
-        setPlayingAudioId(null);
-        return;
-      }
-
-      console.log(`${diagnosticId} ✓ All conditions passed`);
-
-      // Step 2: Check cache first
+      // Check cache
       const cacheKey = `${characterData.id}_${characterData.voice_name}_${text}`;
       let audioUrl = voiceCache.get(cacheKey);
 
-      if (audioUrl && !bypassCache) {
-        console.log(`${diagnosticId} CACHE HIT: Using previously generated audio`);
-        await playAudio(messageId, audioUrl);
-        return;
+      if (!audioUrl) {
+        // Generate audio
+        const res = await base44.functions.invoke('generateSpeech', {
+          text: text,
+          voice: characterData.voice_name,
+          voiceStyleNote: characterData.voice_style_note,
+          apiKey: userSettings.openai_api_key,
+        });
+
+        if (!res?.data?.audioUrl) {
+          throw new Error('No audio URL returned');
+        }
+
+        audioUrl = res.data.audioUrl;
+        voiceCache.set(cacheKey, audioUrl);
+        console.log(`${voiceId} Voice generated and cached`);
+
+        // Update usage
+        if (userSettings.id && res.data.estimatedMinutes) {
+          base44.entities.UserSettings.update(userSettings.id, {
+            voice_minutes_used: (userSettings.voice_minutes_used || 0) + res.data.estimatedMinutes,
+          }).catch(() => {});
+        }
+      } else {
+        console.log(`${voiceId} Using cached audio`);
       }
 
-      if (audioUrl && bypassCache) {
-        console.log(`${diagnosticId} Cache bypassed - forcing regeneration`);
-      }
-
-      // Step 3: Generate speech
-      console.log(`${diagnosticId} GENERATING SPEECH via OpenAI TTS`);
-      console.log(`${diagnosticId}   - text to speak: "${text.substring(0, 150)}${text.length > 150 ? '...' : ''}"`);
-      console.log(`${diagnosticId}   - voice: ${characterData.voice_name}`);
-      console.log(`${diagnosticId}   - voice_style_note: ${characterData.voice_style_note || '(none)'}`);
-      
-      const res = await base44.functions.invoke('generateSpeech', {
-        text: text,
-        voice: characterData.voice_name,
-        voiceStyleNote: characterData.voice_style_note,
-        apiKey: userSettings.openai_api_key,
+      // Save audio URL to message (fire-and-forget, doesn't block anything)
+      base44.entities.Message.update(messageId, { audio_url: audioUrl }).catch(err => {
+        console.error(`${voiceId} Failed to save audio URL:`, err.message);
       });
 
-      console.log(`${diagnosticId} generateSpeech response:`, res?.data ? 'SUCCESS' : 'FAILED');
-
-      if (!res?.data?.audioUrl) {
-        throw new Error('No audio URL returned from generateSpeech');
-      }
-
-      audioUrl = res.data.audioUrl;
-      voiceCache.set(cacheKey, audioUrl);
-
-      console.log(`${diagnosticId} ✓ Audio generated successfully (${(audioUrl.length / 1024).toFixed(1)}KB)`);
-
-      // Step 4: Verify stored audio URL (now a proper file URL, not base64)
-      console.log(`${diagnosticId} VERIFYING audio URL before storage...`);
-      console.log(`${diagnosticId} Audio URL type: ${typeof audioUrl}`);
-      console.log(`${diagnosticId} Audio URL length: ${audioUrl.length} chars (within database field limit)`);
-      console.log(`${diagnosticId} Audio URL is valid file URL: ${audioUrl.startsWith('http')}`);
-      console.log(`${diagnosticId} Audio URL preview: ${audioUrl.substring(0, 80)}...`);
-
-      // Step 5: Save audio to message
-      console.log(`${diagnosticId} SAVING audio URL to message entity...`);
-      await base44.entities.Message.update(messageId, { audio_url: audioUrl });
-      console.log(`${diagnosticId} ✓ Audio URL saved to message.audio_url`);
-
-      // Step 6: Update usage tracking
-      const estimatedMinutes = res.data.estimatedMinutes || 0.1;
-      if (userSettings.id) {
-        base44.entities.UserSettings.update(userSettings.id, {
-          voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
-        }).catch(() => {});
-      }
-
-      // Step 7: Play audio from stored URL
-      console.log(`${diagnosticId} PLAYING audio from stored URL...`);
+      // Try to play audio
       await playAudio(messageId, audioUrl);
-      console.log(`${diagnosticId} ✓ Playback complete`);
+      console.log(`${voiceId} ✓ Voice playback complete`);
 
     } catch (err) {
-      console.error(`${diagnosticId} ✗ ERROR:`, err.message);
+      // Voice failed - but MESSAGE IS ALREADY DELIVERED
+      // Log the error but do NOT remove the message or block anything
+      console.warn(`${voiceId} Voice generation failed: ${err.message}`);
+      console.warn(`${voiceId} NOTE: Message is still delivered and visible. Voice is optional.`);
       setVoiceErrors(prev => ({ ...prev, [messageId]: err.message }));
-      setPlayingAudioId(null);
     }
   };
 
-  // Helper function to actually play audio
+  // Helper function to play audio (does not block message delivery)
   const playAudio = async (messageId, audioUrl) => {
     const diagnosticId = `[PLAYBACK-${messageId.substring(0, 8)}]`;
     
     return new Promise((resolve) => {
       try {
-        console.log(`${diagnosticId} Creating Audio element from: ${audioUrl.substring(0, 50)}...`);
+        console.log(`${diagnosticId} Creating Audio element`);
         
         // Stop any existing audio for this message
         const existingAudio = activeAudioRef.get(messageId);
         if (existingAudio) {
-          console.log(`${diagnosticId} Stopping previous audio for this message`);
           existingAudio.pause();
           existingAudio.currentTime = 0;
         }
 
         const audio = new Audio(audioUrl);
         activeAudioRef.set(messageId, audio);
-        console.log(`${diagnosticId} Audio element created and registered`);
 
         audio.onended = () => {
-          console.log(`${diagnosticId} ✓ Playback finished`);
+          console.log(`${diagnosticId} Playback ended`);
           activeAudioRef.delete(messageId);
           setPlayingAudioId(null);
           resolve();
         };
 
         audio.onerror = (err) => {
-          console.error(`${diagnosticId} ✗ Audio playback error:`, err);
+          console.warn(`${diagnosticId} Playback error (message still visible):`, err);
           activeAudioRef.delete(messageId);
           setPlayingAudioId(null);
           resolve();
         };
 
-        console.log(`${diagnosticId} Calling audio.play()...`);
-        audio.play().then(() => {
-          console.log(`${diagnosticId} ✓ Play promise resolved, audio streaming`);
-        }).catch(err => {
-          console.error(`${diagnosticId} ✗ Play failed:`, err.message);
+        setPlayingAudioId(messageId);
+        audio.play().catch(err => {
+          console.warn(`${diagnosticId} Play failed (message still visible):`, err.message);
           activeAudioRef.delete(messageId);
           setPlayingAudioId(null);
           resolve();
         });
       } catch (err) {
-        console.error(`${diagnosticId} ✗ Audio setup error:`, err);
+        console.warn(`${diagnosticId} Audio setup error (message still visible):`, err);
         setPlayingAudioId(null);
         resolve();
       }
@@ -269,14 +205,14 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character || !currentUser.email) return;
     
-    // Reset state immediately when switching characters to prevent cross-contamination
+    // Reset state immediately when switching characters
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
     
     const loadConvo = async () => {
       try {
-        console.log(`[Chat] Loading conversation for character: ${character.name}`);
+        console.log(`[Chat] LOAD: Conversation for ${character.name}`);
         
         // Fetch conversations for this character
         const convos = await base44.entities.Conversation.filter(
@@ -289,37 +225,32 @@ export default function Chat() {
 
         if (convos.length > 0) {
           convoId = convos[0].id;
-          console.log(`[Chat] Found conversation: ${convoId}`);
           
-          // Load only the 50 most recent messages for active display (excludes archived)
+          // Load the 50 most recent non-archived messages
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId, archived_date: { $exists: false } },
             "-created_date",
-            50 // Keep only most recent 50 visible for performance
+            50
           );
           
-          console.log(`[Chat] Loaded ${loadedMsgs?.length || 0} messages from conversation`);
+          console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
           
           if (loadedMsgs && loadedMsgs.length > 0) {
-            // Reverse to chronological order for display
+            // Reverse to chronological order
             setMessages(loadedMsgs.reverse());
             setConversationId(convoId);
 
-            // Mark unread character messages as read (fire-and-forget, don't invalidate queries)
+            // Mark unread messages as read (non-blocking)
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {
-              console.log(`[Chat] Marking ${unread.length} messages as read`);
               unread.forEach(m => {
                 base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
               });
-              // DON'T invalidate queries here — prevents stale data overwrite
             }
           } else {
-            console.log(`[Chat] No messages in conversation, setting ID only`);
             setConversationId(convoId);
           }
         } else {
-          console.log(`[Chat] No conversation found, creating new one`);
           // Create conversation if none exists
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
@@ -329,12 +260,12 @@ export default function Chat() {
           setConversationId(convo.id);
         }
 
-        // Archive old messages and extract memories asynchronously (fire-and-forget)
+        // Archive old messages & extract memories (non-blocking, delayed)
         if (convoId) {
           setTimeout(() => {
             base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: 50 }).catch(() => {});
             base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
-          }, 2000);
+          }, 3000);
         }
 
         // Load pending messages and deliver them
@@ -343,7 +274,7 @@ export default function Chat() {
         );
 
         if (pending.length > 0 && convoId) {
-          console.log(`[Chat] Delivering ${pending.length} pending messages`);
+          console.log(`[Chat] LOAD: Delivering ${pending.length} pending messages`);
           for (const pm of pending) {
             const charMsg = await base44.entities.Message.create({
               conversation_id: convoId,
@@ -356,7 +287,7 @@ export default function Chat() {
               timestamp: new Date().toISOString(),
             });
 
-            console.log(`[Chat] Pending message delivered: ${charMsg.id.substring(0, 8)}`);
+            console.log(`[Chat] LOAD: Pending delivered ${charMsg.id.substring(0, 8)}`);
             setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
             await base44.entities.PendingMessage.update(pm.id, { delivered: true });
             await base44.entities.Conversation.update(convoId, {
@@ -364,13 +295,11 @@ export default function Chat() {
               last_message_date: new Date().toISOString(),
             });
             
-            // Add slight delay between deliveries
             await new Promise(r => setTimeout(r, 500));
           }
-          queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
         }
       } catch (err) {
-        console.error('Failed to load conversation:', err);
+        console.error('[Chat] LOAD ERROR:', err);
       }
     };
 
@@ -390,26 +319,27 @@ export default function Chat() {
 
       if (event.type === "create") {
         setMessages(prev => {
-          // Prevent duplicates: check if message already exists
+          // Check if message already exists
           if (prev.some(m => m.id === event.data.id)) {
-            console.log(`[Chat] Duplicate prevented: ${event.data.id.substring(0, 8)}`);
+            console.log(`[Chat] SUB: Duplicate ignored ${event.data.id.substring(0, 8)}`);
             return prev;
           }
-          console.log(`[Chat] NEW MESSAGE: ${event.data.sender_type} | ${event.data.id.substring(0, 8)} | "${event.data.content?.substring(0, 50) || '(image)'}"`);
+          const msgType = event.data.image_url && !event.data.content ? '(image)' : `"${event.data.content?.substring(0, 40)}..."`;
+          console.log(`[Chat] SUB: New ${event.data.sender_type} ${event.data.id.substring(0, 8)} ${msgType}`);
           return [...prev, event.data];
         });
         
-        // Auto-mark character messages as read (fire-and-forget, no query invalidation)
+        // Auto-read character messages
         if (event.data.sender_type === "character" && !event.data.is_read) {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
         }
       } else if (event.type === "update") {
-        // Update existing message (e.g., image_url being added)
-        console.log(`[Chat] MESSAGE UPDATED: ${event.data.id.substring(0, 8)}`);
+        // Update existing message (e.g., image_url, audio_url being added)
+        console.log(`[Chat] SUB: Updated ${event.data.id.substring(0, 8)}`);
         setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
       } else if (event.type === "delete") {
         // Remove deleted messages
-        console.log(`[Chat] MESSAGE DELETED: ${event.data.id.substring(0, 8)}`);
+        console.log(`[Chat] SUB: Deleted ${event.data.id.substring(0, 8)}`);
         setMessages(prev => prev.filter(m => m.id !== event.data.id));
       }
     });
@@ -946,10 +876,10 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     let secondaryCharMsg = null; // The second message if sending both
 
     if (hasBothTextAndImage) {
-      // STRATEGY: Send text first, then image
-      // This lets text render immediately while image generates in the background
+      // STRATEGY: Deliver text message, then queue voice generation
+      // Voice is optional and will NOT block the message from appearing
 
-      // 1. Create and send text-only message first
+      // 1. Create and save text message immediately
        primaryCharMsg = await base44.entities.Message.create({
          conversation_id: convoId,
          sender_type: "character",
@@ -966,13 +896,14 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
        }
 
        console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
+       // Message is delivered and visible immediately
        setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
-       // Auto-play text voice immediately
-       console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
+       // Voice generation happens AFTER message delivery (fire-and-forget)
+       const textMsgId = primaryCharMsg.id;
        setTimeout(() => {
-         playCharacterVoice(primaryCharMsg.id, responseText, character, userSettings, false);
-       }, 500);
+         generateAndPlayVoice(textMsgId, responseText, character, userSettings);
+       }, 300);
 
       // 2. Create image-only message(s) separately after a delay
       // This gives the text time to render and prevents image generation from blocking text
@@ -1051,29 +982,31 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       }, 1800); // Delay before sending image message(s) so text renders first
 
     } else if (responseText && !imagePrompts.length) {
-      // TEXT-ONLY MESSAGE
-      primaryCharMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: responseText,
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
+       // TEXT-ONLY MESSAGE - deliver immediately
+       primaryCharMsg = await base44.entities.Message.create({
+         conversation_id: convoId,
+         sender_type: "character",
+         character_id: characterId,
+         character_name: character.name,
+         content: responseText,
+         emotional_state: emotionalState,
+         timestamp: new Date().toISOString(),
+       });
 
-      if (!primaryCharMsg || !primaryCharMsg.id) {
-        setSendError("Character response failed to save. Try again.");
-        return;
-      }
+       if (!primaryCharMsg || !primaryCharMsg.id) {
+         setSendError("Character response failed to save. Try again.");
+         return;
+       }
 
-      console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
-      setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
+       console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
+       // Message delivered and visible immediately
+       setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
 
-      console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
-      setTimeout(() => {
-        playCharacterVoice(primaryCharMsg.id, responseText, character, userSettings, false);
-      }, 500);
+       // Voice generation happens AFTER message is safe (fire-and-forget)
+       const textMsgId = primaryCharMsg.id;
+       setTimeout(() => {
+         generateAndPlayVoice(textMsgId, responseText, character, userSettings);
+       }, 300);
 
     } else if (!responseText && imagePrompts.length > 0) {
       // IMAGE-ONLY MESSAGE(S)
@@ -1158,8 +1091,9 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
 
-    // DON'T invalidate message queries — this causes stale data to overwrite newly added messages
-    // Subscription handles all message state updates in real-time
+    // CRITICAL: Do NOT invalidate message queries
+    // Subscription handles all message updates in real-time
+    // Query invalidation would fetch stale data and overwrite newly delivered messages
 
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
@@ -1253,7 +1187,8 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
-    // Only invalidate character (not messages) to update relationship/emotional state
+    // Invalidate character to update relationships/emotions (NOT messages)
+    // Subscription will handle message updates, not query invalidation
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     // Update conversation metadata
@@ -1326,7 +1261,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onReact={handleReact} 
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
-              onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => playCharacterVoice(msg.id, msg.content, character, userSettings, true) : null}
+              onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => generateAndPlayVoice(msg.id, msg.content, character, userSettings) : null}
               isPlayingVoice={playingAudioId === msg.id}
               voiceError={voiceErrors[msg.id]}
             />
