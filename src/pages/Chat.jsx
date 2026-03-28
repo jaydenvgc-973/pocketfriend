@@ -442,10 +442,12 @@ export default function Chat() {
 
       const imageRule = allowImageThisTurn
         ? `IMAGE SENDING (OPTIONAL): You MAY include an image_prompt this turn if it genuinely fits the conversation — a moment worth capturing, something you just did, or something the user asked to see. ${isPhotogenic ? "You enjoy sharing photos of yourself and your life." : "Only send a photo if it truly adds to the conversation."} ${imageCountInstruction}
-CRITICAL IMAGE RULES:
-- If the user asks for a picture of "me", "myself" — describe THE USER in image_prompt, not yourself.
-- If the user asks for "you", "yourself", or your name — describe yourself.
-- "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.`
+CRITICAL IMAGE SUBJECT RULES — follow these exactly:
+- "Send me a pic of me / myself" → subject is the USER. Describe the user in the prompt. Start image_prompt with "[USER]".
+- "Send me a pic of you / yourself / your name" → subject is YOU (the character). Describe yourself. Start image_prompt with "[CHARACTER]".
+- "Send me a pic of us / both / together / you and me" → subject is BOTH. Describe both of you together. Start image_prompt with "[JOINT]".
+- If no explicit subject: default to yourself (the character). Start image_prompt with "[CHARACTER]".
+- Always start image_prompt with the correct tag: [USER], [CHARACTER], or [JOINT]. This is required.`
         : `IMAGE SENDING: Do NOT include image_prompt this turn. Send text only. Images should be occasional — you have already sent enough recently or this message doesn't call for one.`;
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
@@ -563,15 +565,28 @@ CRITICAL IMAGE RULES:
         ? currentUser.generated_avatar_urls
         : (currentUser.reference_image_urls || []);
 
+      // Detect subject type from the user's original message (applies to this whole request)
+      const msgLower = text.toLowerCase();
+      const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
+      const isUserRequest = !isJointRequest && (
+        /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
+        /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
+        /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
+      );
+      const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
+
+      // Only pass user refs when the subject requires them
+      const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
+
       // First image attaches to the existing charMsg
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
           messageId: charMsg.id,
           prompt: imagePrompts[0],
           characterReferenceImages: character.reference_image_urls || [],
-          userReferenceImages: userRefImages,
+          userReferenceImages: useUserRefs ? userRefImages : [],
           characterName: character.name,
-          userMessage: text,
+          subjectType,
         }).catch(() => {});
       }, 500);
 
@@ -596,9 +611,9 @@ CRITICAL IMAGE RULES:
               messageId: capturedId,
               prompt: capturedPrompt,
               characterReferenceImages: character.reference_image_urls || [],
-              userReferenceImages: userRefImages,
+              userReferenceImages: useUserRefs ? userRefImages : [],
               characterName: character.name,
-              userMessage: text,
+              subjectType,
             }).catch(() => {});
           }, delay);
         }
