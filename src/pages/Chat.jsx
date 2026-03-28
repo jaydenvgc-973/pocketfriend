@@ -1192,9 +1192,8 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
-    // Do not invalidate character query — relationships are updated but messages must stay stable
-    // Only refresh character data if explicitly needed, not after every send
-    // queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+    // Invalidate character query to update relationships/emotions
+    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
     // Update conversation metadata
     await base44.entities.Conversation.update(convoId, {

@@ -50,15 +50,28 @@ Deno.serve(async (req) => {
       1000
     );
 
-    // CRITICAL: Only archive messages older than 7 days
-    // Do NOT archive by position — this prevents new messages from being immediately archived
-    // New messages must stay visible and in memory, regardless of count
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // Archive messages older than 1 day, but only after keepCount threshold is exceeded
+    // This protects new messages while maintaining the visible thread limit
+    const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString();
     
-    const messagesToArchive = allMessages.filter(m => 
-      !m.archived_date && 
-      m.created_date < sevenDaysAgo
-    );
+    let messagesToArchive = [];
+    
+    // Only consider archiving if we exceed keepCount
+    if (allMessages.length > keepCount) {
+      // Archive old messages (1+ days old) beyond the keepCount threshold
+      messagesToArchive = allMessages.filter(m => 
+        !m.archived_date && 
+        m.created_date < oneDayAgo
+      );
+      
+      // If still over limit and no old messages to archive, archive the oldest unread message only
+      if (messagesToArchive.length === 0 && allMessages.length > keepCount) {
+        const oldest = allMessages[allMessages.length - 1];
+        if (oldest && !oldest.archived_date) {
+          messagesToArchive = [oldest];
+        }
+      }
+    }
 
     if (notYetArchived.length === 0) {
       return Response.json({ 
