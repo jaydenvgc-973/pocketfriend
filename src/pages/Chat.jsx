@@ -102,7 +102,7 @@ export default function Chat() {
         const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
         for (const m of unread) {
           await base44.entities.Message.update(m.id, { is_read: true });
-          await new Promise(r => setTimeout(r, 150));
+          await new Promise(r => setTimeout(r, 300));
         }
         if (unread.length > 0) {
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
