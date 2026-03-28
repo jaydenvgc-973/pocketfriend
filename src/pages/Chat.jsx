@@ -495,10 +495,10 @@ export default function Chat() {
     if (!character) return;
     setSendError(null);
 
-    // Rate limit: prevent sending more than 1 message per 3 seconds to avoid rate limit errors
+    // Rate limit: prevent sending more than 1 message per 1 second to avoid rate limit errors
     const now = Date.now();
     const timeSinceLastMessage = now - lastMessageTimeRef.current;
-    if (timeSinceLastMessage < 3000) {
+    if (timeSinceLastMessage < 1000) {
       setSendError("Please wait a moment before sending another message.");
       return;
     }
