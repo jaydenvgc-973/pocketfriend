@@ -23,20 +23,31 @@ export default function GroupChat() {
   const scrollRef = useRef(null);
   const messagesRef = useRef([]);
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: conversationsData = [], isLoading: conversationsLoading } = useQuery({
-    queryKey: ['conversations'],
-    queryFn: () => base44.entities.Conversation.filter({ type: 'group' }),
+    queryKey: ['conversations', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Conversation.filter({ type: 'group', created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const { data: characters = [] } = useQuery({
-    queryKey: ['characters'],
-    queryFn: () => base44.entities.Character.list('-created_date'),
+    queryKey: ['characters', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date')
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const deleteGroupMutation = useMutation({
     mutationFn: (convId) => base44.entities.Conversation.delete(convId),
     onSuccess: (_, convId) => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', currentUser?.email] });
       if (selectedConversation?.id === convId) {
         setSelectedConversation(null);
         setMessages([]);
@@ -58,7 +69,7 @@ export default function GroupChat() {
       });
     },
     onSuccess: (conversation) => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', currentUser?.email] });
       setShowCharacterSelector(false);
       setSelectedConversation(conversation);
     },

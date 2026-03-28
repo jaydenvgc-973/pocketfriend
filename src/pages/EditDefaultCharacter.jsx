@@ -12,9 +12,17 @@ export default function EditDefaultCharacter() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list(),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const defaultChar = characters.find(c => c.is_default);
@@ -38,7 +46,7 @@ export default function EditDefaultCharacter() {
     };
     updated.system_prompt = buildSystemPrompt(updated);
     await base44.entities.Character.update(defaultChar.id, updated);
-    queryClient.invalidateQueries({ queryKey: ["characters"] });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/home");
   };
 

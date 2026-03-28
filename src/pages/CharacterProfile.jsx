@@ -101,9 +101,17 @@ export default function CharacterProfile() {
     staleTime: 0,
   });
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: allCharacters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => base44.entities.Character.list(),
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);

@@ -15,20 +15,31 @@ export default function Groups() {
   const [editTitle, setEditTitle] = useState('');
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: groupConversations = [], isLoading } = useQuery({
-    queryKey: ['groupConversations'],
-    queryFn: () => base44.entities.Conversation.filter({ type: 'group' }, '-last_message_date'),
+    queryKey: ['groupConversations', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Conversation.filter({ type: 'group', created_by: currentUser.email }, '-last_message_date')
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const { data: characters = [] } = useQuery({
-    queryKey: ['characters'],
-    queryFn: () => base44.entities.Character.list(),
+    queryKey: ['characters', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const updateGroupMutation = useMutation({
     mutationFn: (args) => base44.entities.Conversation.update(args.id, { title: args.title }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['groupConversations'] });
+      queryClient.invalidateQueries({ queryKey: ['groupConversations', currentUser?.email] });
       setEditingId(null);
       setEditTitle('');
     },
@@ -37,7 +48,7 @@ export default function Groups() {
   const deleteGroupMutation = useMutation({
     mutationFn: (id) => base44.entities.Conversation.delete(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['groupConversations'] });
+      queryClient.invalidateQueries({ queryKey: ['groupConversations', currentUser?.email] });
       setConfirmDeleteId(null);
     },
   });
