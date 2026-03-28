@@ -1,0 +1,43 @@
+{
+  "name": "Conversation",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Conversation title"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "direct",
+        "phone",
+        "group",
+        "npc"
+      ],
+      "default": "direct"
+    },
+    "character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters in this conversation"
+    },
+    "last_message_preview": {
+      "type": "string"
+    },
+    "last_message_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "emotional_context": {
+      "type": "string",
+      "description": "Current emotional tone of conversation"
+    }
+  },
+  "required": [
+    "title",
+    "type",
+    "character_ids"
+  ]
+}

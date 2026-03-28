@@ -1,52 +1,122 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Send, Globe, ArrowLeft, User } from "lucide-react";
+import { X, Send, Globe, ArrowLeft, User, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+
+// Derive a stable conversation key for an NPC chat
+function npcConvoTitle(character, contactName) {
+  return `npc_chat__${character.id}__${contactName}`;
+}
 
 export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [selectedContact, setSelectedContact] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [conversationId, setConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const bottomRef = useRef(null);
 
   const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
 
-  const selectContact = (contact) => {
+  // Load or create a persistent conversation for the selected NPC
+  const selectContact = async (contact) => {
     setSelectedContact(contact);
     setMessages([]);
+    setConversationId(null);
     setInputText("");
+    setIsLoadingHistory(true);
+
+    try {
+      const title = npcConvoTitle(character, contact.person_name);
+      // Look for an existing NPC conversation
+      const existing = await base44.entities.Conversation.filter(
+        { type: "npc", character_ids: [character.id] },
+        "-updated_date",
+        50
+      );
+      const found = existing.find(c => c.title === title);
+
+      if (found) {
+        setConversationId(found.id);
+        const history = await base44.entities.Message.filter(
+          { conversation_id: found.id },
+          "created_date"
+        );
+        // Normalize to local format
+        setMessages(history.map(m => ({
+          id: m.id,
+          dbId: m.id,
+          role: m.sender_type === "user" ? "user" : "npc",
+          content: m.content,
+        })));
+      }
+    } catch {
+      // Could not load history — start fresh
+    }
+
+    setIsLoadingHistory(false);
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
   };
 
   const handleBack = () => {
     setSelectedContact(null);
     setMessages([]);
+    setConversationId(null);
   };
 
   const handleClose = () => {
     setSelectedContact(null);
     setMessages([]);
+    setConversationId(null);
     setInputText("");
     onClose();
+  };
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    }
+  }, [messages, isTyping]);
+
+  const ensureConversation = async () => {
+    if (conversationId) return conversationId;
+    const title = npcConvoTitle(character, selectedContact.person_name);
+    const convo = await base44.entities.Conversation.create({
+      title,
+      type: "npc",
+      character_ids: [character.id],
+    });
+    setConversationId(convo.id);
+    return convo.id;
   };
 
   const sendMessage = async () => {
     if (!inputText.trim() || isTyping) return;
     const text = inputText.trim();
     setInputText("");
-
-    const userMsg = { role: "user", content: text, id: Date.now() };
-    setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
 
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+    // Persist user message
+    const convoId = await ensureConversation();
+    const savedUserMsg = await base44.entities.Message.create({
+      conversation_id: convoId,
+      sender_type: "user",
+      content: text,
+      timestamp: new Date().toISOString(),
+    });
 
-    const history = [...messages, userMsg]
+    const userMsg = { id: savedUserMsg.id, dbId: savedUserMsg.id, role: "user", content: text };
+    setMessages(prev => [...prev, userMsg]);
+
+    // Build history string for LLM (using persisted messages + new one)
+    const allMsgs = [...messages, userMsg];
+    const historyStr = allMsgs
       .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
       .join("\n");
 
-    const prompt = `You are ${selectedContact.person_name}, a person in ${character.name}'s life.
+    const prompt = `You are ${selectedContact.person_name}, a real person in ${character.name}'s life.
 
 ABOUT YOU (${selectedContact.person_name}):
 - Relationship to ${character.name}: ${selectedContact.relationship_type || "acquaintance"}
@@ -56,24 +126,70 @@ ABOUT YOU (${selectedContact.person_name}):
 - Your history with ${character.name}: ${selectedContact.history_summary || "You have shared history."}
 - Last interaction: ${selectedContact.last_interaction_summary || ""}
 
-You are NOT an AI. You are a real person. Speak naturally, as a real human would in a text/chat. Keep replies short and conversational. Do NOT use bullet points or formal language.
+You are NOT an AI. You are a real person. Speak naturally in short conversational texts. Do NOT use bullet points or formal language. Do NOT start with your name.
 
-The user is now speaking to you directly (not through ${character.name}).
+The user is speaking with you directly. Remember everything said in this conversation.
 
 Conversation so far:
-${history}
+${historyStr}
 
-Reply as ${selectedContact.person_name} — short, real, human. Do NOT start with your name.`;
+Reply as ${selectedContact.person_name}:`;
 
+    let npcText = "...";
     try {
       const response = await base44.integrations.Core.InvokeLLM({ prompt });
-      setMessages(prev => [...prev, { role: "npc", content: response?.trim() || "...", id: Date.now() + 1 }]);
+      npcText = response?.trim() || "...";
     } catch {
-      setMessages(prev => [...prev, { role: "npc", content: "...", id: Date.now() + 1 }]);
+      npcText = "...";
     }
 
+    // Persist NPC reply
+    const savedNpcMsg = await base44.entities.Message.create({
+      conversation_id: convoId,
+      sender_type: "character",
+      character_id: character.id,
+      character_name: selectedContact.person_name,
+      content: npcText,
+      timestamp: new Date().toISOString(),
+    });
+
+    const npcMsg = { id: savedNpcMsg.id, dbId: savedNpcMsg.id, role: "npc", content: npcText };
+    setMessages(prev => [...prev, npcMsg]);
+
+    // Update conversation timestamp
+    await base44.entities.Conversation.update(convoId, {
+      last_message_preview: npcText.substring(0, 100),
+      last_message_date: new Date().toISOString(),
+    }).catch(() => {});
+
     setIsTyping(false);
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+
+    // Save a memory on the HOST character so they remember this NPC interaction
+    // even if the NPC later disappears — fire-and-forget
+    if (allMsgs.length >= 2 && allMsgs.length % 3 === 0) {
+      const recentExchange = allMsgs.slice(-6)
+        .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
+        .join("\n");
+
+      base44.integrations.Core.InvokeLLM({
+        prompt: `${character.name} recently had this conversation with ${selectedContact.person_name} (${selectedContact.relationship_type || "known person"}):
+
+${recentExchange}
+
+Write a single short memory sentence (1-2 sentences) from ${character.name}'s perspective summarizing what happened or was shared. Be specific. Write in third person about ${character.name}.`,
+      }).then(async (memoryText) => {
+        if (memoryText?.trim()) {
+          await base44.entities.Memory.create({
+            character_id: character.id,
+            title: `Conversation with ${selectedContact.person_name}`,
+            description: memoryText.trim(),
+            emotional_impact: "neutral",
+            timestamp: new Date().toISOString(),
+            source_context: `npc_chat__${selectedContact.person_name}`,
+          });
+        }
+      }).catch(() => {});
+    }
   };
 
   const handleKeyDown = (e) => {
@@ -88,6 +204,7 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
   return createPortal(
     <AnimatePresence>
       <motion.div
+        key="world-contacts-overlay"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -119,7 +236,9 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
                 {selectedContact ? selectedContact.person_name : `${character?.name}'s World`}
               </h3>
               <p className="text-xs text-muted-foreground">
-                {selectedContact ? selectedContact.relationship_type || "known contact" : `${contacts.length} known contact${contacts.length !== 1 ? "s" : ""}`}
+                {selectedContact
+                  ? selectedContact.relationship_type || "known contact"
+                  : `${contacts.length} known contact${contacts.length !== 1 ? "s" : ""}`}
               </p>
             </div>
             <button onClick={handleClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -135,7 +254,9 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
                 <div className="flex flex-col items-center justify-center h-full text-center px-6">
                   <Globe className="w-10 h-10 text-muted-foreground mb-3" />
                   <p className="text-sm text-muted-foreground">No known contacts yet.</p>
-                  <p className="text-xs text-muted-foreground mt-1">As {character?.name} builds relationships, they'll appear here.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    As {character?.name} builds relationships, they'll appear here.
+                  </p>
                 </div>
               ) : (
                 contacts.map((contact, i) => (
@@ -159,9 +280,11 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
                         {contact.current_status ? ` · ${contact.current_status}` : ""}
                       </p>
                     </div>
-                    <div className="flex-shrink-0">
+                    <div className="flex-shrink-0 flex gap-1">
                       {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}
-                      {contact.friendship_level > 70 && !contact.romantic_level > 30 && <span className="text-xs text-emerald-400">✦</span>}
+                      {contact.friendship_level > 70 && contact.romantic_level <= 30 && (
+                        <span className="text-xs text-emerald-400">✦</span>
+                      )}
                     </div>
                   </motion.button>
                 ))
@@ -170,7 +293,6 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
           ) : (
             /* Chat View */
             <>
-              {/* Contact info bar */}
               {selectedContact.description && (
                 <div className="px-4 py-2 bg-secondary/40 border-b border-border flex-shrink-0">
                   <p className="text-xs text-muted-foreground line-clamp-2">{selectedContact.description}</p>
@@ -179,7 +301,11 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
 
               {/* Messages */}
               <div className="flex-1 overflow-y-auto py-4 space-y-2 px-4">
-                {messages.length === 0 && (
+                {isLoadingHistory ? (
+                  <div className="flex items-center justify-center h-full">
+                    <Loader2 className="w-5 h-5 text-muted-foreground animate-spin" />
+                  </div>
+                ) : messages.length === 0 ? (
                   <div className="flex justify-center mt-8">
                     <div className="flex flex-col items-center gap-2 text-center px-4">
                       <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -187,11 +313,14 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
                       </div>
                       <p className="text-sm font-medium text-foreground">{selectedContact.person_name}</p>
                       <p className="text-xs text-muted-foreground max-w-xs">
-                        {selectedContact.history_summary || selectedContact.description || `A ${selectedContact.relationship_type || "contact"} of ${character?.name}.`}
+                        {selectedContact.history_summary ||
+                          selectedContact.description ||
+                          `A ${selectedContact.relationship_type || "contact"} of ${character?.name}.`}
                       </p>
                     </div>
                   </div>
-                )}
+                ) : null}
+
                 <AnimatePresence>
                   {messages.map(msg => (
                     <motion.div
@@ -210,6 +339,7 @@ Reply as ${selectedContact.person_name} — short, real, human. Do NOT start wit
                     </motion.div>
                   ))}
                 </AnimatePresence>
+
                 {isTyping && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
                     <div className="bg-secondary rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
