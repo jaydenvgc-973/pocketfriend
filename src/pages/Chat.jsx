@@ -320,29 +320,6 @@ export default function Chat() {
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
 
-    // Check if user is asking for a previously sent photo
-    const oldPhotoMatch = text.match(/(?:old|previous|earlier|that|the one|remember|resend).{0,30}(?:photo|pic|picture|image)/i);
-    let existingPhotoToResend = null;
-    
-    if (oldPhotoMatch) {
-      // Search recent character messages for images to resend
-      const characterImagesInConvo = messages
-        .filter(m => m.sender_type === "character" && m.character_id === characterId && m.image_url)
-        .slice(-20);
-      
-      if (characterImagesInConvo.length > 0) {
-        // Try to match description if provided, otherwise just take the most recent
-        const descriptionMatch = text.match(/(?:where|when|that|the one).{0,50}/i);
-        if (descriptionMatch) {
-          // For now, use the most recent matching image; in future could add semantic search
-          existingPhotoToResend = characterImagesInConvo[characterImagesInConvo.length - 1].image_url;
-        } else {
-          // No specific description, use the most recent character photo
-          existingPhotoToResend = characterImagesInConvo[characterImagesInConvo.length - 1].image_url;
-        }
-      }
-    }
-
     let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
@@ -703,12 +680,6 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
     
-    // If user asked for an old photo and we found one, attach it instead of generating
-    if (existingPhotoToResend && !imagePrompts.length) {
-      await base44.entities.Message.update(charMsg.id, { image_url: existingPhotoToResend });
-      setMessages(prev => prev.map(m => m.id === charMsg.id ? { ...m, image_url: existingPhotoToResend } : m));
-    }
-
     // Generate images asynchronously — first image goes on the main message, extras get their own messages
     if (imagePrompts.length > 0) {
       const userRefImages = currentUser.generated_avatar_urls?.length > 0
