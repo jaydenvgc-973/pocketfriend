@@ -55,13 +55,12 @@ export default function EditCharacterProfile() {
     enabled: !!currentUser?.email,
   });
 
-  const editableChars = characters.filter(c => c.status !== "deleted");
-
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
   });
 
+  const editableChars = characters.filter(c => c.status !== "deleted");
   const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
 
   const handleSelect = (char) => {
