@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import VoiceSettings from "@/components/character/VoiceSettings";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 
 function TagListEditor({ label, items, onChange }) {
@@ -74,6 +75,13 @@ export default function EditCharacterEmotions() {
 
   const editableChars = characters.filter(c => c.status !== "deleted");
 
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
+
   const handleSelect = (char) => {
     setSelectedChar(char);
     setForm({
@@ -83,6 +91,9 @@ export default function EditCharacterEmotions() {
       emotional_triggers_deep: char.emotional_triggers_deep || [],
       emotional_baggage: char.emotional_baggage || "",
       upset_reaction: char.upset_reaction || "",
+      voice_enabled: char.voice_enabled || false,
+      voice_name: char.voice_name || "",
+      voice_style_note: char.voice_style_note || "",
     });
     setSaved(false);
   };
@@ -108,8 +119,12 @@ Make it feel like a real person, not a description. No flowery language.`
     merged.personality_summary = personality;
     merged.system_prompt = buildSystemPrompt(merged);
 
+    const { voice_enabled, voice_name, voice_style_note, ...formWithoutVoice } = form;
     await base44.entities.Character.update(selectedChar.id, {
-      ...form,
+      ...formWithoutVoice,
+      voice_enabled,
+      voice_name,
+      voice_style_note,
       personality_summary: personality,
       system_prompt: merged.system_prompt,
     });
@@ -212,6 +227,14 @@ Make it feel like a real person, not a description. No flowery language.`
                 onChange={e => setForm(p => ({ ...p, upset_reaction: e.target.value }))}
                 placeholder="How they respond when triggered..."
                 className="rounded-xl min-h-[80px] text-sm resize-none"
+              />
+            </div>
+
+            <div className="pt-4 border-t border-border">
+              <VoiceSettings 
+                data={form} 
+                onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
+                hasApiKey={hasApiKey} 
               />
             </div>
 

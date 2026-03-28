@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import VoiceSettings from "@/components/character/VoiceSettings";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 
@@ -39,6 +40,13 @@ export default function EditCharacterStory() {
 
   const editableChars = characters.filter(c => !c.is_default && c.status !== "deleted");
 
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
+
   const handleSelect = (char) => {
     setSelectedChar(char);
     setForm({
@@ -55,6 +63,9 @@ export default function EditCharacterStory() {
       ethnicities: char.ethnicities || [],
       sexual_orientation: char.sexual_orientation || "",
       cultural_backgrounds: char.cultural_backgrounds || "",
+      voice_enabled: char.voice_enabled || false,
+      voice_name: char.voice_name || "",
+      voice_style_note: char.voice_style_note || "",
     });
     setSaved(false);
   };
@@ -113,6 +124,9 @@ Make it feel like a real person, not a description. No flowery language.`
       ethnicities: form.ethnicities,
       sexual_orientation: form.sexual_orientation,
       cultural_backgrounds: form.cultural_backgrounds,
+      voice_enabled: form.voice_enabled,
+      voice_name: form.voice_name,
+      voice_style_note: form.voice_style_note,
     });
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
@@ -309,6 +323,13 @@ Make it feel like a real person, not a description. No flowery language.`
                 onChange={e => setForm(p => ({ ...p, emotional_baggage: e.target.value }))}
                 placeholder="What they carry, trust issues, wounds, patterns..."
                 className="rounded-xl min-h-[100px] text-sm resize-none"
+              />
+            </div>
+            <div className="pt-4 border-t border-border">
+              <VoiceSettings 
+                data={form} 
+                onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
+                hasApiKey={hasApiKey} 
               />
             </div>
             <Button

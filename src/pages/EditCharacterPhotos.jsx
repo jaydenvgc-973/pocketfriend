@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, ChevronRight, Upload, RefreshCw } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import VoiceSettings from "@/components/character/VoiceSettings";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 
@@ -28,8 +29,21 @@ export default function EditCharacterPhotos() {
 
   const editableChars = characters.filter(c => c.status !== "deleted");
 
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
+  const [voiceForm, setVoiceForm] = useState({});
+
   const handleSelect = (char) => {
     setSelectedChar(char);
+    setVoiceForm({
+      voice_enabled: char.voice_enabled || false,
+      voice_name: char.voice_name || "",
+      voice_style_note: char.voice_style_note || "",
+    });
   };
 
   const handleAvatarGenerated = async (newAvatarUrl, newRefUrls) => {
@@ -41,6 +55,13 @@ export default function EditCharacterPhotos() {
       reference_image_urls: newRefUrls,
       system_prompt: updated.system_prompt,
     });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+  };
+
+  const handleVoiceSave = async () => {
+    if (!selectedChar) return;
+    await base44.entities.Character.update(selectedChar.id, voiceForm);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
   };
@@ -150,6 +171,23 @@ export default function EditCharacterPhotos() {
                     existingReferenceUrls={selectedChar.reference_image_urls || []}
                     onAvatarGenerated={handleAvatarGenerated}
                   />
+                </div>
+
+                {/* Voice Settings */}
+                <div className="border border-border rounded-2xl p-4 space-y-3 pt-4 mt-4">
+                  <VoiceSettings 
+                    data={voiceForm} 
+                    onUpdate={(field, value) => setVoiceForm(p => ({ ...p, [field]: value }))} 
+                    hasApiKey={hasApiKey} 
+                  />
+                  {(voiceForm.voice_enabled !== selectedChar.voice_enabled || voiceForm.voice_name !== selectedChar.voice_name || voiceForm.voice_style_note !== selectedChar.voice_style_note) && (
+                    <button
+                      onClick={handleVoiceSave}
+                      className="w-full py-2 px-3 bg-primary text-primary-foreground rounded-xl text-xs font-medium hover:bg-primary/90 transition-colors"
+                    >
+                      Save Voice Settings
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
