@@ -437,9 +437,9 @@ export default function Chat() {
           character_name: character.name,
           content: `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`,
           timestamp: new Date().toISOString()
-          }]);
-          // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-          }
+        }]);
+        // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+      }
     } catch (err) {
       setSendError("Failed to process song link. Try again.");
     }
