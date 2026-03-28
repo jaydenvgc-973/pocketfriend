@@ -13,7 +13,7 @@ import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
-import { BarChart2, BookOpen, Gamepad2 } from "lucide-react";
+import { BarChart2, BookOpen } from "lucide-react";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 
@@ -30,7 +30,7 @@ export default function Chat() {
   const [previousLevels, setPreviousLevels] = useState(null);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
-  const [showDialogueSelector, setShowDialogueSelector] = useState(false);
+
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
   const queryClient = useQueryClient();
@@ -281,6 +281,8 @@ export default function Chat() {
       const chatHistory = recentMsgs.map(m => ({
         role: m.sender_type === "user" ? "user" : "assistant",
         content: m.content,
+        // Track who the "user" slot actually represents for prompt labeling
+        _speakerName: m.sender_type === "user" ? (activeCharacter?.name || "User") : character.name,
       }));
 
       const userSettings = settings?.[0] || {};
@@ -442,7 +444,9 @@ CRITICAL IMAGE RULES:
 - "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.`
         : `IMAGE SENDING: Do NOT include image_prompt this turn. Send text only. Images should be occasional — you have already sent enough recently or this message doesn't call for one.`;
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Only include if sending exactly 1 image AND allowed this turn — a vivid description of the image",\n  "image_prompts": ["Only include if user requested multiple images — one entry per image"],\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message. Omit fields you don't use.\n\n${imageRule}`;
+      const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
+
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Only include if sending exactly 1 image AND allowed this turn — a vivid description of the image",\n  "image_prompts": ["Only include if user requested multiple images — one entry per image"],\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
@@ -715,15 +719,7 @@ Reply with ONLY the single emoji or the word "none".`,
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
         {character && <MediaGallery messages={messages} />}
-        {character && activeCharacter && (
-          <button
-            onClick={() => setShowDialogueSelector(true)}
-            className="p-2 rounded-xl bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-            title={`Dialogue options for ${activeCharacter.name}`}
-          >
-            <Gamepad2 className="w-4 h-4" />
-          </button>
-        )}
+
         {character && (
           <button
             onClick={() => setShowNarrativeBuilder(true)}
@@ -765,16 +761,16 @@ Reply with ONLY the single emoji or the word "none".`,
         )}
         <div ref={bottomRef} />
       </div>
-      {showDialogueSelector && activeCharacter && character && (
+      {activeCharacter && character ? (
         <DialogueSelector
           playingAs={activeCharacter}
           targetCharacter={character}
           recentMessages={messages}
-          onSelect={(text) => { setShowDialogueSelector(false); sendMessage(text, null); }}
-          onClose={() => setShowDialogueSelector(false)}
+          onSelect={(text) => sendMessage(text, null)}
         />
+      ) : (
+        <ChatInput onSend={sendMessage} draftKey={characterId} />
       )}
-      <ChatInput onSend={sendMessage} draftKey={characterId} />
       <NarrativeBuilderPopup
         isOpen={showNarrativeBuilder}
         onClose={() => setShowNarrativeBuilder(false)}

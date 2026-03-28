@@ -1,42 +1,59 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
-import { Sparkles, Send, Edit3, X } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Sparkles, RefreshCw } from "lucide-react";
 
-export default function DialogueSelector({ playingAs, targetCharacter, recentMessages, onSelect, onClose }) {
+export default function DialogueSelector({ playingAs, targetCharacter, recentMessages, onSelect }) {
   const [options, setOptions] = useState([]);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [showCustom, setShowCustom] = useState(false);
-  const [customText, setCustomText] = useState("");
-  const [generated, setGenerated] = useState(false);
+
+  // Find the relationship entry between the two characters
+  const relEntry = (targetCharacter?.fictional_relationships || []).find(
+    r => r.related_character_id === playingAs?.id
+  );
+  const friendshipLevel = relEntry?.friendship_level ?? 75;
+  const romanticLevel = relEntry?.romantic_level ?? 0;
+  const respectLevel = relEntry?.user_respect_level ?? 50;
 
   const generateOptions = async () => {
     setIsGenerating(true);
+    setOptions([]);
+
+    // Label history correctly — "user" messages ARE the playing-as character
     const history = recentMessages.slice(-10).map(m => {
-      const speaker = m.sender_type === "user" ? "User" : m.character_name;
-      return `${speaker}: ${m.content}`;
+      const speaker = m.sender_type === "user" ? playingAs.name : (m.character_name || targetCharacter?.name || "Character");
+      return `${speaker}: ${m.content || "(image)"}`;
     }).join("\n");
 
     const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `You are generating dialogue options for a user who is PLAYING AS the character "${playingAs.name}".
+      prompt: `You are generating dialogue options for the character "${playingAs.name}" who is speaking to "${targetCharacter?.name || "another character"}".
 
-CHARACTER PLAYING AS:
-Name: ${playingAs.name}
+SPEAKER — ${playingAs.name}:
 Personality: ${playingAs.personality_summary || "unknown"}
 Emotional state: ${playingAs.emotional_state || "calm"}
-Traits: ${(playingAs.personality_traits || []).join(", ") || "unknown"}
+Traits: ${(playingAs.personality_traits || []).join(", ") || "none"}
+Archetype: ${playingAs.archetype || "unknown"}
+Communication style: ${playingAs.communication_style || "unknown"}
 
-TALKING TO: ${targetCharacter?.name || "the group"}
-${targetCharacter?.personality_summary ? `Their personality: ${targetCharacter.personality_summary}` : ""}
+RECIPIENT — ${targetCharacter?.name || "Character"}:
+Personality: ${targetCharacter?.personality_summary || "unknown"}
+Emotional state: ${targetCharacter?.emotional_state || "calm"}
+
+RELATIONSHIP (${targetCharacter?.name}'s feelings toward ${playingAs.name}):
+- Respect: ${respectLevel}/100
+- Friendship: ${friendshipLevel}/100
+- Romantic: ${romanticLevel}/100
 
 RECENT CONVERSATION:
-${history || "(no messages yet)"}
+${history || "(conversation just started)"}
 
-Generate 4 distinct dialogue response options that ${playingAs.name} might say next. Each should vary in tone (e.g. warm, guarded, playful, direct). Make them short and natural — how this character actually talks. Each option should have a brief tone label.
+Generate EXACTLY 3 dialogue options that ${playingAs.name} would realistically say next. Each option must:
+- Match ${playingAs.name}'s personality, voice, and emotional state
+- Be appropriate given the relationship and conversation context
+- Vary in tone (e.g. warm, direct, guarded — pick tones that make sense for this character)
+- Be short and natural — how this person actually texts
 
-Return ONLY a JSON object with an "options" array. Each: { text: string, tone: string }`,
+Return ONLY valid JSON: { "options": [{ "text": string, "tone": string }, ...] } with exactly 3 items.`,
       response_json_schema: {
         type: "object",
         properties: {
@@ -47,91 +64,70 @@ Return ONLY a JSON object with an "options" array. Each: { text: string, tone: s
               properties: {
                 text: { type: "string" },
                 tone: { type: "string" }
-              }
+              },
+              required: ["text", "tone"]
             }
           }
-        }
+        },
+        required: ["options"]
       }
     });
 
-    setOptions(result?.options || []);
+    const generated = (result?.options || []).slice(0, 3);
+    setOptions(generated);
     setIsGenerating(false);
-    setGenerated(true);
   };
 
+  // Auto-generate on mount
+  useEffect(() => {
+    generateOptions();
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-40 flex flex-col justify-end bg-black/50" onClick={onClose}>
-      <motion.div
-        initial={{ y: 100, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 100, opacity: 0 }}
-        onClick={e => e.stopPropagation()}
-        className="bg-card border-t border-border rounded-t-2xl p-4 space-y-3 max-h-[80vh] overflow-y-auto"
-      >
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-foreground">Playing as {playingAs.name}</p>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+    <div className="border-t border-border bg-card/95 backdrop-blur-xl">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 pt-3 pb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+            Playing as {playingAs.name}
+          </span>
         </div>
+        <button
+          onClick={generateOptions}
+          disabled={isGenerating}
+          className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-40"
+        >
+          <RefreshCw className={`w-3 h-3 ${isGenerating ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
 
-        {!generated && !isGenerating && (
-          <Button onClick={generateOptions} className="w-full gap-2 rounded-xl">
-            <Sparkles className="w-4 h-4" /> Generate dialogue options
-          </Button>
-        )}
-
-        {isGenerating && (
-          <div className="text-center py-6">
-            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            <p className="text-xs text-muted-foreground">Generating options for {playingAs.name}...</p>
+      {/* Options */}
+      <div className="px-3 pb-4 space-y-2">
+        {isGenerating && options.length === 0 && (
+          <div className="flex items-center justify-center gap-2 py-6 text-muted-foreground">
+            <div className="w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
+            <span className="text-xs">Generating what {playingAs.name} would say...</span>
           </div>
         )}
 
         <AnimatePresence>
           {options.map((opt, i) => (
             <motion.button
-              key={i}
-              initial={{ opacity: 0, y: 10 }}
+              key={`${opt.text}-${i}`}
+              initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.07 }}
+              transition={{ delay: i * 0.06 }}
               onClick={() => onSelect(opt.text)}
-              className="w-full text-left p-3 rounded-xl bg-secondary border border-border hover:border-primary/40 transition-colors space-y-1"
+              className="w-full text-left px-3 py-2.5 rounded-xl bg-secondary border border-border hover:border-primary/50 hover:bg-secondary/80 transition-all space-y-0.5 active:scale-[0.99]"
             >
-              <span className="text-[10px] uppercase tracking-wider text-primary font-medium">{opt.tone}</span>
+              <span className="text-[10px] uppercase tracking-wider text-primary/80 font-semibold">{opt.tone}</span>
               <p className="text-sm text-foreground leading-relaxed">"{opt.text}"</p>
             </motion.button>
           ))}
         </AnimatePresence>
-
-        {generated && (
-          <Button variant="outline" onClick={generateOptions} disabled={isGenerating} className="w-full gap-2 rounded-xl text-xs">
-            <Sparkles className="w-3 h-3" /> Regenerate
-          </Button>
-        )}
-
-        <div className="border-t border-border pt-3">
-          {showCustom ? (
-            <div className="space-y-2">
-              <Textarea
-                value={customText}
-                onChange={e => setCustomText(e.target.value)}
-                placeholder={`Type as ${playingAs.name}...`}
-                className="rounded-xl min-h-[80px] text-sm resize-none"
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => { setShowCustom(false); setCustomText(""); }} className="flex-1 rounded-xl text-xs">Cancel</Button>
-                <Button onClick={() => customText.trim() && onSelect(customText.trim())} disabled={!customText.trim()} className="flex-1 rounded-xl gap-1 text-xs">
-                  <Send className="w-3 h-3" /> Send
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <button onClick={() => setShowCustom(true)} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors">
-              <Edit3 className="w-3 h-3" /> Type a custom response
-            </button>
-          )}
-        </div>
-      </motion.div>
+      </div>
     </div>
   );
 }
