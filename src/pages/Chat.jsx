@@ -9,7 +9,7 @@ import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import MediaGallery from "@/components/chat/MediaGallery";
-import VoiceDiagnosticsPanel from "@/components/chat/VoiceDiagnosticsPanel";
+
 import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -1330,7 +1330,6 @@ Reply with ONLY the single emoji or the word "none".`,
         character={character}
       />
       <BottomNav />
-      <VoiceDiagnosticsPanel />
     </div>
   );
 }
