@@ -896,49 +896,46 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     setIsTyping(false);
 
-    // Create main message with text
-    const charMsg = await base44.entities.Message.create({
-      conversation_id: convoId,
-      sender_type: "character",
-      character_id: characterId,
-      character_name: character.name,
-      content: responseText,
-      emotional_state: emotionalState,
-      timestamp: new Date().toISOString(),
-    });
-    if (!charMsg || !charMsg.id) {
-      setSendError("Character response failed to save. Try again.");
-      return;
-    }
-    // Add directly to state — subscription deduplication will prevent doubles
-    setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
+    // DECISION: If we have both text and image, send them as two separate messages
+    const hasBothTextAndImage = responseText && imagePrompts.length > 0;
 
-    // Auto-play character voice (after short delay for UX)
-    console.log(`[Chat] CHARACTER RESPONSE CREATED (ID: ${charMsg.id.substring(0, 8)})`);
-    console.log(`[Chat] Response text: "${responseText.substring(0, 100)}${responseText.length > 100 ? '...' : ''}"`);
-    console.log(`[Chat] Character: ${character.name}`);
-    console.log(`[Chat] Character voice_enabled: ${character.voice_enabled}`);
-    console.log(`[Chat] Character voice_name: ${character.voice_name}`);
-    console.log(`[Chat] User voice_enabled: ${userSettings.voice_enabled}`);
-    console.log(`[Chat] TRIGGERING AUTO-PLAY in 500ms...`);
-    
-    setTimeout(() => {
-      console.log(`[Chat] AUTO-PLAY TIMER FIRED - calling playCharacterVoice`);
-      playCharacterVoice(charMsg.id, responseText, character, userSettings, false);
-    }, 500);
+    let primaryCharMsg = null; // The first message (text or image)
+    let secondaryCharMsg = null; // The second message if sending both
 
-    if (emotionalState !== character.emotional_state) {
-      await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
-    }
-    
-    // Generate images asynchronously — first image goes on the main message, extras get their own messages
-    if (imagePrompts.length > 0) {
+    if (hasBothTextAndImage) {
+      // STRATEGY: Send text first, then image
+      // This lets text render immediately while image generates in the background
+
+      // 1. Create and send text-only message first
+      primaryCharMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: responseText,
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (!primaryCharMsg || !primaryCharMsg.id) {
+        setSendError("Character response failed to save. Try again.");
+        return;
+      }
+
+      setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
+
+      // Auto-play text voice immediately
+      console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
+      setTimeout(() => {
+        playCharacterVoice(primaryCharMsg.id, responseText, character, userSettings, false);
+      }, 500);
+
+      // 2. Create image-only message(s) separately after a delay
+      // This gives the text time to render and prevents image generation from blocking text
       const userRefImages = currentUser.generated_avatar_urls?.length > 0
         ? currentUser.generated_avatar_urls
         : (currentUser.reference_image_urls || []);
 
-      // Detect subject type from the user's original message (applies to this whole request)
       const msgLower = text.toLowerCase();
       const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
       const isUserRequest = !isJointRequest && (
@@ -947,58 +944,171 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
         /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
       );
       const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-
-      // Only pass user refs when the subject requires them
       const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
+      const charRefs = character.avatar_url
+        ? [character.avatar_url, ...(character.reference_image_urls || [])]
+        : (character.reference_image_urls || []);
 
-      // First image attaches to the existing charMsg
-      setTimeout(() => {
-        const charRefs = character.avatar_url
-          ? [character.avatar_url, ...(character.reference_image_urls || [])]
-          : (character.reference_image_urls || []);
-        base44.functions.invoke('generateImageAsync', {
-          messageId: charMsg.id,
-          prompt: imagePrompts[0],
-          characterReferenceImages: charRefs,
-          userReferenceImages: useUserRefs ? userRefImages : [],
-          characterName: character.name,
-          subjectType,
-        }).catch(() => {});
-      }, 500);
-
-      // Additional images get their own separate messages
-      for (let i = 1; i < imagePrompts.length; i++) {
-        const extraMsg = await base44.entities.Message.create({
+      // Create separate image message(s) after text has rendered
+      setTimeout(async () => {
+        // First image gets its own message
+        secondaryCharMsg = await base44.entities.Message.create({
           conversation_id: convoId,
           sender_type: "character",
           character_id: characterId,
           character_name: character.name,
-          content: "",
+          content: "", // Image-only message: no text
           emotional_state: emotionalState,
           timestamp: new Date().toISOString(),
         });
-        if (extraMsg?.id) {
-          setMessages(prev => prev.some(m => m.id === extraMsg.id) ? prev : [...prev, extraMsg]);
-          const delay = 500 + i * 800;
-          const capturedId = extraMsg.id;
-          const capturedPrompt = imagePrompts[i];
-          const charRefs = character.avatar_url
-            ? [character.avatar_url, ...(character.reference_image_urls || [])]
-            : (character.reference_image_urls || []);
-          setTimeout(() => {
-            base44.functions.invoke('generateImageAsync', {
-              messageId: capturedId,
-              prompt: capturedPrompt,
-              characterReferenceImages: charRefs,
-              userReferenceImages: useUserRefs ? userRefImages : [],
-              characterName: character.name,
-              subjectType,
-            }).catch(() => {});
-          }, delay);
+
+        if (secondaryCharMsg?.id) {
+          setMessages(prev => prev.some(m => m.id === secondaryCharMsg.id) ? prev : [...prev, secondaryCharMsg]);
+
+          // Generate image for the image-only message
+          base44.functions.invoke('generateImageAsync', {
+            messageId: secondaryCharMsg.id,
+            prompt: imagePrompts[0],
+            characterReferenceImages: charRefs,
+            userReferenceImages: useUserRefs ? userRefImages : [],
+            characterName: character.name,
+            subjectType,
+          }).catch(() => {});
+        }
+
+        // Additional images (if multiple requested) get their own separate messages too
+        for (let i = 1; i < imagePrompts.length; i++) {
+          const extraImageMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: characterId,
+            character_name: character.name,
+            content: "",
+            emotional_state: emotionalState,
+            timestamp: new Date().toISOString(),
+          });
+
+          if (extraImageMsg?.id) {
+            setMessages(prev => prev.some(m => m.id === extraImageMsg.id) ? prev : [...prev, extraImageMsg]);
+            setTimeout(() => {
+              base44.functions.invoke('generateImageAsync', {
+                messageId: extraImageMsg.id,
+                prompt: imagePrompts[i],
+                characterReferenceImages: charRefs,
+                userReferenceImages: useUserRefs ? userRefImages : [],
+                characterName: character.name,
+                subjectType,
+              }).catch(() => {});
+            }, i * 500);
+          }
+        }
+      }, 1800); // Delay before sending image message(s) so text renders first
+
+    } else if (responseText && !imagePrompts.length) {
+      // TEXT-ONLY MESSAGE
+      primaryCharMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: responseText,
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (!primaryCharMsg || !primaryCharMsg.id) {
+        setSendError("Character response failed to save. Try again.");
+        return;
+      }
+
+      setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
+
+      console.log(`[Chat] TEXT MESSAGE CREATED (ID: ${primaryCharMsg.id.substring(0, 8)})`);
+      setTimeout(() => {
+        playCharacterVoice(primaryCharMsg.id, responseText, character, userSettings, false);
+      }, 500);
+
+    } else if (!responseText && imagePrompts.length > 0) {
+      // IMAGE-ONLY MESSAGE(S)
+      const userRefImages = currentUser.generated_avatar_urls?.length > 0
+        ? currentUser.generated_avatar_urls
+        : (currentUser.reference_image_urls || []);
+
+      const msgLower = text.toLowerCase();
+      const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
+      const isUserRequest = !isJointRequest && (
+        /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
+        /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
+        /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
+      );
+      const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
+      const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
+      const charRefs = character.avatar_url
+        ? [character.avatar_url, ...(character.reference_image_urls || [])]
+        : (character.reference_image_urls || []);
+
+      // Create image message
+      primaryCharMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: "",
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+
+      if (primaryCharMsg?.id) {
+        setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
+
+        // Generate first image
+        setTimeout(() => {
+          base44.functions.invoke('generateImageAsync', {
+            messageId: primaryCharMsg.id,
+            prompt: imagePrompts[0],
+            characterReferenceImages: charRefs,
+            userReferenceImages: useUserRefs ? userRefImages : [],
+            characterName: character.name,
+            subjectType,
+          }).catch(() => {});
+        }, 300);
+
+        // Additional images get their own messages
+        for (let i = 1; i < imagePrompts.length; i++) {
+          const extraImageMsg = await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: "character",
+            character_id: characterId,
+            character_name: character.name,
+            content: "",
+            emotional_state: emotionalState,
+            timestamp: new Date().toISOString(),
+          });
+
+          if (extraImageMsg?.id) {
+            setMessages(prev => prev.some(m => m.id === extraImageMsg.id) ? prev : [...prev, extraImageMsg]);
+            const capturedId = extraImageMsg.id;
+            const capturedPrompt = imagePrompts[i];
+            setTimeout(() => {
+              base44.functions.invoke('generateImageAsync', {
+                messageId: capturedId,
+                prompt: capturedPrompt,
+                characterReferenceImages: charRefs,
+                userReferenceImages: useUserRefs ? userRefImages : [],
+                characterName: character.name,
+                subjectType,
+              }).catch(() => {});
+            }, 300 + i * 500);
+          }
         }
       }
     }
-    
+
+    if (emotionalState !== character.emotional_state) {
+      await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+    }
+
     // Invalidate messages so async image updates appear when ready
     queryClient.invalidateQueries({ queryKey: ["messages", convoId] });
 
