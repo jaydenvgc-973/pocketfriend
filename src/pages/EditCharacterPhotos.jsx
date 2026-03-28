@@ -84,12 +84,60 @@ export default function EditCharacterPhotos() {
             ))}
           </div>
         ) : (
-          <ReferencePhotoUploader
-            descriptor={selectedChar.personality_summary || selectedChar.name}
-            existingAvatarUrl={selectedChar.avatar_url}
-            existingReferenceUrls={selectedChar.reference_image_urls || []}
-            onAvatarGenerated={handleAvatarGenerated}
-          />
+          <div className="space-y-6">
+            <div>
+              <h3 className="text-sm font-semibold mb-4">Edit {selectedChar.name}'s Photos</h3>
+              
+              <div className="space-y-6">
+                {/* Option 1: Replace avatar directly */}
+                <div className="border border-border rounded-2xl p-4 space-y-3">
+                  <p className="text-xs font-medium text-foreground uppercase tracking-wider">Replace Avatar</p>
+                  <p className="text-xs text-muted-foreground">Upload a photo to use as their avatar instead of the generated one.</p>
+                  {selectedChar.avatar_url && (
+                    <div className="flex justify-center">
+                      <div className="relative w-24 h-24 rounded-full overflow-hidden ring-2 ring-primary/30">
+                        <img src={selectedChar.avatar_url} alt="avatar" className="w-full h-full object-cover" />
+                      </div>
+                    </div>
+                  )}
+                  <label className="block">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const result = await base44.integrations.Core.UploadFile({ file });
+                        const updated = { ...selectedChar, avatar_url: result.file_url };
+                        updated.system_prompt = (await import('@/lib/defaultCharacter')).buildSystemPrompt(updated);
+                        await base44.entities.Character.update(selectedChar.id, {
+                          avatar_url: result.file_url,
+                          system_prompt: updated.system_prompt,
+                        });
+                        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+                        queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+                      }}
+                    />
+                    <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors">
+                      <span className="text-xs text-muted-foreground">Click to upload a photo</span>
+                    </div>
+                  </label>
+                </div>
+
+                {/* Option 2: Generate from reference photos */}
+                <div className="border border-border rounded-2xl p-4 space-y-3">
+                  <p className="text-xs font-medium text-foreground uppercase tracking-wider">Generate Avatar from Photos</p>
+                  <ReferencePhotoUploader
+                    descriptor={selectedChar.personality_summary || selectedChar.name}
+                    existingAvatarUrl={selectedChar.avatar_url}
+                    existingReferenceUrls={selectedChar.reference_image_urls || []}
+                    onAvatarGenerated={handleAvatarGenerated}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
       <div className="pb-28" />
