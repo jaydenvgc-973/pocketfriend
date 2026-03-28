@@ -194,6 +194,31 @@ export default function Settings() {
         <div className="pt-4 border-t border-border">
           <UserPhotoUploader referenceImages={user.reference_image_urls || []} generatedAvatars={user.generated_avatar_urls || []} />
         </div>
+        <div className="space-y-4 pt-4 border-t border-border">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Per-Character Nicknames</p>
+          <p className="text-xs text-muted-foreground">Set a nickname a specific character uses for you. Overrides your global name for that character only.</p>
+          <div className="space-y-3">
+            {characters.filter(c => c.status !== "deleted" && c.status !== "moved_away").map(char => (
+              <div key={char.id} className="flex items-center gap-3">
+                <CharacterAvatar character={char} size="sm" />
+                <span className="text-sm text-foreground w-24 shrink-0 truncate">{char.name}</span>
+                <input
+                  type="text"
+                  placeholder={settings.fictional_world_name || "nickname..."}
+                  defaultValue={char.nickname_for_user || ""}
+                  onBlur={e => {
+                    const val = e.target.value.trim();
+                    if (val !== (char.nickname_for_user || "")) {
+                      base44.entities.Character.update(char.id, { nickname_for_user: val || null })
+                        .then(() => queryClient.invalidateQueries({ queryKey: ["characters"] }));
+                    }
+                  }}
+                  className="flex-1 h-9 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
+                />
+              </div>
+            ))}
+          </div>
+        </div>
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
           <Link to="/edit-character-story">
