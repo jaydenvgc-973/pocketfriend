@@ -129,6 +129,11 @@ export default function Chat() {
     queryFn: () => base44.auth.me(),
   });
 
+  // Initialize voice settings on first load
+  useEffect(() => {
+    base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (!characterId || !character || !currentUser.email) return;
     
