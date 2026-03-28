@@ -118,7 +118,7 @@ export default function VoiceSettings({ data, onUpdate, hasApiKey, character }) 
         onUpdate('voice_style_note', generated);
       }
     }
-  }, [character?.age_range, character?.social_energy, character?.archetype, character?.sexual_orientation, character?.ethnicities]);
+  }, [character?.age_range, character?.social_energy, character?.archetype, character?.sexual_orientation, character?.ethnicities, data.voice_enabled, character?.id]);
 
   const handlePreviewVoice = async () => {
     if (!hasApiKey || !data.voice_name) return;
