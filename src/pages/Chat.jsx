@@ -494,6 +494,63 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       }
 
 
+      // Robust parser: always returns a clean { text, image_prompt, image_prompts, scheduled_events }
+      const parseCharacterResponse = (raw) => {
+        if (!raw) return { text: "" };
+
+        // 1. Try direct JSON parse (handles clean responses)
+        try {
+          const obj = JSON.parse(raw);
+          if (obj && typeof obj === "object") return obj;
+        } catch {}
+
+        // 2. Try to extract JSON block from markdown code fences or partial wrapping
+        const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+        if (fenceMatch) {
+          try {
+            const obj = JSON.parse(fenceMatch[1].trim());
+            if (obj && typeof obj === "object") return obj;
+          } catch {}
+        }
+
+        // 3. Try to find a JSON object anywhere in the string
+        const braceMatch = raw.match(/\{[\s\S]*\}/);
+        if (braceMatch) {
+          try {
+            const obj = JSON.parse(braceMatch[0]);
+            if (obj && typeof obj === "object") return obj;
+          } catch {}
+        }
+
+        // 4. Regex-extract just the "text" field value from malformed JSON
+        const textFieldMatch = raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (textFieldMatch) {
+          try {
+            return { text: JSON.parse(`"${textFieldMatch[1]}"`) };
+          } catch {
+            return { text: textFieldMatch[1] };
+          }
+        }
+
+        // 5. Last resort: strip obvious JSON scaffolding and return what's left
+        const stripped = raw
+          .replace(/```(?:json)?/gi, "")
+          .replace(/```/g, "")
+          .replace(/"?(text|image_prompt|image_prompts|scheduled_events|trigger_time|description)"\s*:\s*/gi, "")
+          .replace(/^\s*[\[{\]},]+\s*/gm, "")
+          .replace(/[{}\[\]]/g, "")
+          .replace(/\\n/g, " ")
+          .replace(/\\"/g, '"')
+          .trim();
+
+        // If what remains looks like readable text (not just symbols/whitespace), use it
+        if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
+          return { text: stripped };
+        }
+
+        return { text: "" };
+      };
+
       let retries = 2;
       let responseObj = { text: "", image_prompt: null };
       while (retries >= 0) {
@@ -503,12 +560,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
             add_context_from_internet: true,
             model: 'gemini_3_flash'
           });
-          try {
-            responseObj = JSON.parse(response);
-          } catch (parseErr) {
-            // Fallback: if not valid JSON, treat as plain text
-            responseObj = { text: response.replace(/^[\w\s]+:\s*/i, "").trim() };
-          }
+          responseObj = parseCharacterResponse(response);
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
@@ -516,7 +568,12 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
           await new Promise(r => setTimeout(r, 3000));
         }
       }
-      responseText = responseObj.text?.trim() || "";
+      responseText = responseObj.text?.trim() || "Sorry, something went wrong with that response.";
+
+      // Safety net: if responseText still looks like raw JSON, replace it
+      if (responseText.startsWith("{") || responseText.startsWith("```")) {
+        responseText = "Sorry, something went wrong with that response.";
+      }
       // Support both single image_prompt and multiple image_prompts array
       // Also enforce the gate: if not allowed, discard any image_prompt the LLM snuck in
       imagePrompt = allowImageThisTurn ? (responseObj.image_prompt || null) : null;
