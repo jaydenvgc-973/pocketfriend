@@ -29,9 +29,9 @@ export default function AchievementDebugPanel({ userEmail }) {
   const handleRebuild = async () => {
     setRebuilding(true);
     try {
-      const result = await base44.functions.invoke('rebuildUserAchievements', {});
+      const result = await base44.functions.invoke('rebuildAchievementsFromHistory', {});
       console.log('[AchievementDebug] Rebuild result:', result.data);
-      alert(`Rebuilt achievements. Awarded: ${result.data.achievements_awarded.join(', ') || 'none new'}`);
+      alert(`Rebuilt achievements.\nAwarded: ${result.data.achievements_awarded.join(', ') || 'none new'}\nAnalyzed: ${result.data.messages_analyzed} messages, ${result.data.events_reconstructed} events`);
     } catch (err) {
       console.error('[AchievementDebug] Rebuild failed:', err);
       alert('Rebuild failed: ' + err.message);

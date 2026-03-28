@@ -897,7 +897,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     // Capture achievement events from this interaction (fire-and-forget)
     if (userMsg?.id && character?.id) {
       setTimeout(() => {
-        base44.functions.invoke('captureAchievementEvent', {
+        base44.functions.invoke('captureAchievementEventV2', {
           event_type: 'message_sent',
           character_id: character.id,
           conversation_id: convoId,
@@ -907,7 +907,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
             text_length: text.length,
             response_received: !!responseText
           }
-        }).catch(() => {});
+        }).catch(err => console.warn('[Chat] Achievement capture error:', err.message));
       }, 100);
     }
 

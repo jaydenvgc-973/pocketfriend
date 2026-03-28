@@ -9,6 +9,7 @@ import LockedAchievements from "@/components/moments/LockedAchievements";
 import GoalsSection from "@/components/moments/GoalsSection";
 import ChallengesSection from "@/components/moments/ChallengesSection";
 import AchievementDebugPanel from "@/components/moments/AchievementDebugPanel";
+import AchievementVerificationPanel from "@/components/moments/AchievementVerificationPanel";
 import { ACHIEVEMENTS, CATEGORY_LABELS } from "@/lib/achievements";
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
@@ -41,7 +42,7 @@ export default function Moments() {
     queryKey: ["userAchievementProgress", currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.UserAchievementProgress.filter(
-          { user_email: currentUser.email, unlocked: true },
+          { user_email: currentUser.email },
           "-unlocked_at"
         )
       : [],
@@ -64,19 +65,22 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
-  // Map achievement_id -> unlocked record from progress or UserAchievement (prefer progress)
+  // Map achievement_id -> unlocked record
+  // Prefer UserAchievementProgress (user-scoped, real-time) over UserAchievement
   const unlockedMap = {};
-  
-  // First populate from UserAchievementProgress (user-scoped, real-time)
+  const progressMap = {};
+
+  // Populate progress map for all records (for display/progress tracking)
   progressRecords.forEach(r => {
-    if (r.unlocked && !unlockedMap[r.achievement_id]) {
+    progressMap[r.achievement_id] = r;
+    if (r.unlocked) {
       unlockedMap[r.achievement_id] = r;
     }
   });
-  
-  // Fallback to UserAchievement for backwards compatibility
+
+  // Fallback to UserAchievement for backwards compatibility (only if no progress record)
   unlocked.forEach(r => {
-    if (!unlockedMap[r.achievement_id]) {
+    if (!unlockedMap[r.achievement_id] && !progressMap[r.achievement_id]) {
       unlockedMap[r.achievement_id] = r;
     }
   });
@@ -184,6 +188,7 @@ export default function Moments() {
       </div>
 
       <AchievementDebugPanel userEmail={currentUser?.email} />
+      <AchievementVerificationPanel userEmail={currentUser?.email} />
       <BottomNav />
     </div>
   );
