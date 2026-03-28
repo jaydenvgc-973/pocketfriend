@@ -122,17 +122,21 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id]);
+  }, [conversations, character.id, queryClient]);
 
-  // Subscribe to message changes for real-time badge updates
+  // Subscribe to message changes for real-time badge updates (create, update, delete)
   useEffect(() => {
     const unsubscribe = base44.entities.Message.subscribe((event) => {
+      // Re-count on any message event for this character or any conversation update
       if (event.data?.character_id === character.id || event.data?.sender_type === "user") {
-        countUnread();
+        // Invalidate conversations to ensure fresh data
+        queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+        // Small delay to ensure DB has updated
+        setTimeout(() => countUnread(), 100);
       }
     });
     return () => unsubscribe();
-  }, [conversations, character.id]);
+  }, [character.id, queryClient]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
@@ -289,21 +293,35 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors">
                 <MessageCircle className="w-4 h-4" /> Chat
               </button>
-              {(hasPendingMessage || unreadChat > 0) && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
-                  {unreadChat > 0 ? (unreadChat > 9 ? "9+" : unreadChat) : "!"}
-                </span>
-              )}
+              <AnimatePresence>
+                {(hasPendingMessage || unreadChat > 0) && (
+                  <motion.span
+                    key="chat-badge"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.8, opacity: 0 }}
+                    className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
+                    {unreadChat > 0 ? (unreadChat > 9 ? "9+" : unreadChat) : "!"}
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </Link>
             <Link to={`/chat/${character.id}?type=phone`} className="flex-1 relative">
               <button className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-secondary text-secondary-foreground text-sm font-medium hover:bg-secondary/80 transition-colors">
                 <Phone className="w-4 h-4" /> Text
               </button>
-              {unreadPhone > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
-                  {unreadPhone > 9 ? "9+" : unreadPhone}
-                </span>
-              )}
+              <AnimatePresence>
+                {unreadPhone > 0 && (
+                  <motion.span
+                    key="phone-badge"
+                    initial={{ scale: 0.8, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.8, opacity: 0 }}
+                    className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
+                    {unreadPhone > 9 ? "9+" : unreadPhone}
+                  </motion.span>
+                )}
+              </AnimatePresence>
             </Link>
             <button
               onClick={(e) => { e.stopPropagation(); setShowStatusPopup(true); }}
