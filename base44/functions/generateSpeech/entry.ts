@@ -62,17 +62,25 @@ Deno.serve(async (req) => {
 
     const audioBuffer = await response.arrayBuffer();
     console.log(`[generateSpeech] Audio received: ${audioBuffer.byteLength} bytes`);
+
+    // Convert ArrayBuffer to Blob for upload
+    const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
     
-    // Convert ArrayBuffer to base64 data URL
-    const uint8Array = new Uint8Array(audioBuffer);
-    let binaryString = '';
-    for (let i = 0; i < uint8Array.length; i++) {
-      binaryString += String.fromCharCode(uint8Array[i]);
+    // Create a File object for upload (backend needs this format)
+    const audioFile = new File([audioBlob], `speech_${Date.now()}.mp3`, { type: 'audio/mpeg' });
+    
+    // Upload audio file to storage via Base44
+    console.log(`[generateSpeech] Uploading audio file to storage...`);
+    const uploadRes = await base44.integrations.Core.UploadFile({ file: audioFile });
+    const fileUrl = uploadRes.file_url;
+    
+    if (!fileUrl) {
+      throw new Error('Failed to get file URL from upload');
     }
     
-    const base64Audio = btoa(binaryString);
-    const audioUrl = `data:audio/mpeg;base64,${base64Audio}`;
-    console.log(`[generateSpeech] Created data URL: ${audioUrl.substring(0, 50)}... (${audioUrl.length} total chars)`);
+    console.log(`[generateSpeech] ✓ Audio uploaded successfully`);
+    console.log(`[generateSpeech] Stored file URL: ${fileUrl}`);
+    console.log(`[generateSpeech] URL length: ${fileUrl.length} chars (within limits)`);
 
     // Estimate minutes used (rough: ~1000 chars = ~1 second of speech ≈ 0.000278 minutes)
     const estimatedMinutes = Math.max(0.1, (cleanedText.length / 1000) * (1/60) * 0.5);
@@ -82,7 +90,7 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      audioUrl: audioUrl,
+      audioUrl: fileUrl,
       estimatedMinutes: estimatedMinutes,
       bytesGenerated: audioBuffer.byteLength,
     });

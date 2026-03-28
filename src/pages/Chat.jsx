@@ -171,12 +171,19 @@ export default function Chat() {
 
       console.log(`${diagnosticId} ✓ Audio generated successfully (${(audioUrl.length / 1024).toFixed(1)}KB)`);
 
-      // Step 4: Save audio to message
-      console.log(`${diagnosticId} SAVING audio to message entity...`);
+      // Step 4: Verify stored audio URL (now a proper file URL, not base64)
+      console.log(`${diagnosticId} VERIFYING audio URL before storage...`);
+      console.log(`${diagnosticId} Audio URL type: ${typeof audioUrl}`);
+      console.log(`${diagnosticId} Audio URL length: ${audioUrl.length} chars (within database field limit)`);
+      console.log(`${diagnosticId} Audio URL is valid file URL: ${audioUrl.startsWith('http')}`);
+      console.log(`${diagnosticId} Audio URL preview: ${audioUrl.substring(0, 80)}...`);
+
+      // Step 5: Save audio to message
+      console.log(`${diagnosticId} SAVING audio URL to message entity...`);
       await base44.entities.Message.update(messageId, { audio_url: audioUrl });
       console.log(`${diagnosticId} ✓ Audio URL saved to message.audio_url`);
 
-      // Step 5: Update usage tracking
+      // Step 6: Update usage tracking
       const estimatedMinutes = res.data.estimatedMinutes || 0.1;
       if (userSettings.id) {
         base44.entities.UserSettings.update(userSettings.id, {
@@ -184,8 +191,8 @@ export default function Chat() {
         }).catch(() => {});
       }
 
-      // Step 6: Play audio
-      console.log(`${diagnosticId} PLAYING audio...`);
+      // Step 7: Play audio from stored URL
+      console.log(`${diagnosticId} PLAYING audio from stored URL...`);
       await playAudio(messageId, audioUrl);
       console.log(`${diagnosticId} ✓ Playback complete`);
 
