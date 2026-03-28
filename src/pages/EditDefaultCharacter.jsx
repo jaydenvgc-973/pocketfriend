@@ -104,7 +104,8 @@ export default function EditDefaultCharacter() {
           <VoiceSettings 
             data={form} 
             onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
-            hasApiKey={hasApiKey} 
+            hasApiKey={hasApiKey}
+            character={defaultChar}
           />
         </div>
 

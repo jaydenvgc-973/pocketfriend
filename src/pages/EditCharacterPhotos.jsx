@@ -174,7 +174,8 @@ export default function EditCharacterPhotos() {
                   <VoiceSettings 
                     data={form} 
                     onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
-                    hasApiKey={hasApiKey} 
+                    hasApiKey={hasApiKey}
+                    character={selectedChar}
                   />
                 </div>
               </div>

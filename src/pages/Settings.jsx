@@ -255,6 +255,7 @@ export default function Settings() {
                       data={charVoiceForm} 
                       onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
                       hasApiKey={true}
+                      character={char}
                     />
                     {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
                       <Button 

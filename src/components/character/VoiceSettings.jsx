@@ -1,10 +1,10 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Volume2, Play } from "lucide-react";
+import { Volume2, Play, Wand2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const OPENAI_VOICES = [
@@ -16,9 +16,109 @@ const OPENAI_VOICES = [
   { value: 'shimmer', label: 'Shimmer (Clear, crisp)' },
 ];
 
-export default function VoiceSettings({ data, onUpdate, hasApiKey }) {
+const generateSpeakingStyle = (character) => {
+  if (!character) return '';
+  
+  const parts = [];
+  
+  // Age group influence
+  const ageMap = {
+    'Early 20s': 'youthful, energetic',
+    'Mid 20s': 'confident, engaging',
+    'Late 20s': 'mature, assured',
+    'Early 30s': 'grounded, thoughtful',
+    'Mid 30s': 'experienced, poised',
+    'Late 30s': 'seasoned, composed',
+    'Early 40s': 'measured, authoritative',
+    'Mid 40s': 'wise, deliberate',
+    'Late 40s': 'seasoned, reflective',
+    'Early 50s': 'calm, settled',
+    'Mid 50s': 'steady, confident',
+    'Late 50s': 'sage, measured',
+    '60s': 'wise, contemplative',
+    '70s+': 'reflective, gentle',
+  };
+  if (character.age_range && ageMap[character.age_range]) {
+    parts.push(ageMap[character.age_range]);
+  }
+  
+  // Social energy influence
+  const energyMap = {
+    introvert: 'thoughtful, reserved',
+    mostly_introvert: 'quiet, introspective',
+    ambivert: 'balanced, adaptable',
+    mostly_extrovert: 'outgoing, expressive',
+    extrovert: 'lively, animated',
+  };
+  if (character.social_energy && energyMap[character.social_energy]) {
+    parts.push(energyMap[character.social_energy]);
+  }
+  
+  // Archetype influence
+  const archetypeMap = {
+    'The Hero': 'bold, determined',
+    'The Lover': 'warm, affectionate',
+    'The Sage': 'intellectual, articulate',
+    'The Innocent': 'optimistic, cheerful',
+    'The Explorer': 'adventurous, curious',
+    'The Creator': 'passionate, expressive',
+    'The Ruler': 'authoritative, commanding',
+    'The Magician': 'charismatic, mysterious',
+    'The Lover Archetype': 'sensual, intimate',
+    'The Everyman': 'friendly, relatable',
+    'The Jester': 'playful, witty',
+    'The Caregiver': 'compassionate, gentle',
+  };
+  if (character.archetype && archetypeMap[character.archetype]) {
+    parts.push(archetypeMap[character.archetype]);
+  }
+  
+  // Sexual orientation influence (subtle)
+  if (character.sexual_orientation && character.sexual_orientation.toLowerCase().includes('queer')) {
+    parts.push('authentic, candid');
+  }
+  
+  // Cultural background influence (if multiple, pick the first)
+  if (character.ethnicities && character.ethnicities.length > 0) {
+    const ethnicityMap = {
+      'African': 'rhythmic, soulful',
+      'Asian': 'measured, respectful',
+      'European': 'articulate, refined',
+      'Latin': 'warm, expressive',
+      'Middle Eastern': 'eloquent, passionate',
+      'Native American': 'grounded, contemplative',
+      'Pacific Islander': 'laid-back, warm',
+    };
+    for (const eth of character.ethnicities) {
+      for (const [key, val] of Object.entries(ethnicityMap)) {
+        if (eth.includes(key)) {
+          parts.push(val);
+          break;
+        }
+      }
+      if (parts.length > 3) break;
+    }
+  }
+  
+  // Combine unique parts (remove duplicates)
+  const unique = Array.from(new Set(parts.filter(p => p && p.trim())));
+  return unique.slice(0, 4).join(', ');
+};
+
+export default function VoiceSettings({ data, onUpdate, hasApiKey, character }) {
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  
+  // Auto-generate speaking style if character provided and voice_style_note is empty
+  useEffect(() => {
+    if (character && data.voice_enabled && !data.voice_style_note) {
+      const generated = generateSpeakingStyle(character);
+      if (generated) {
+        onUpdate('voice_style_note', generated);
+      }
+    }
+  }, [character?.age_range, character?.social_energy, character?.archetype, character?.sexual_orientation, character?.ethnicities]);
 
   const handlePreviewVoice = async () => {
     if (!hasApiKey || !data.voice_name) return;
@@ -103,9 +203,29 @@ export default function VoiceSettings({ data, onUpdate, hasApiKey }) {
 
               {/* Voice style note */}
               <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground">Speaking Style (optional)</Label>
+                <div className="flex items-center justify-between">
+                  <Label className="text-xs text-muted-foreground">Speaking Style</Label>
+                  {character && (
+                    <button
+                      onClick={async () => {
+                        setIsGenerating(true);
+                        const generated = generateSpeakingStyle(character);
+                        if (generated) {
+                          onUpdate('voice_style_note', generated);
+                        }
+                        setIsGenerating(false);
+                      }}
+                      disabled={isGenerating}
+                      className="text-[10px] text-primary hover:text-primary/80 transition-colors flex items-center gap-1"
+                      title="Auto-generate from character traits"
+                    >
+                      <Wand2 className="w-3 h-3" />
+                      Regenerate
+                    </button>
+                  )}
+                </div>
                 <p className="text-[10px] text-muted-foreground">
-                  e.g., warm, confident, playful, calm, sarcastic, soft-spoken
+                  Based on age, personality, background & orientation. Edit or replace as needed.
                 </p>
                 <Input
                   value={data.voice_style_note || ''}

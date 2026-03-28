@@ -372,7 +372,8 @@ export default function EditCharacterProfile() {
                 <VoiceSettings 
                   data={form} 
                   onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
-                  hasApiKey={hasApiKey} 
+                  hasApiKey={hasApiKey}
+                  character={selectedChar}
                 />
               </div>
             )}

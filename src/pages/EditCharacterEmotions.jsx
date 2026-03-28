@@ -234,7 +234,8 @@ Make it feel like a real person, not a description. No flowery language.`
               <VoiceSettings 
                 data={form} 
                 onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
-                hasApiKey={hasApiKey} 
+                hasApiKey={hasApiKey}
+                character={selectedChar}
               />
             </div>
 
