@@ -62,6 +62,11 @@
       "default": false,
       "description": "Whether the user has read this message"
     },
+    "archived_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this message was archived from active chat view (not deleted)"
+    },
     "timestamp": {
       "type": "string",
       "format": "date-time"

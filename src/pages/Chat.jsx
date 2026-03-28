@@ -10,6 +10,7 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import MediaGallery from "@/components/chat/MediaGallery";
 import VoiceDiagnosticsPanel from "@/components/chat/VoiceDiagnosticsPanel";
+import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -287,15 +288,16 @@ export default function Chat() {
 
         if (convos.length > 0) {
           convoId = convos[0].id;
-          // Load all messages for this conversation
+          // Load only the 50 most recent messages for active display
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId },
-            "created_date",
-            500 // Load more messages to ensure full history
+            "-created_date",
+            50 // Keep only most recent 50 visible for performance
           );
           
           if (loadedMsgs && loadedMsgs.length > 0) {
-            setMessages(loadedMsgs);
+            // Reverse to chronological order for display
+            setMessages(loadedMsgs.reverse());
             setConversationId(convoId);
 
             // Mark unread character messages as read (fire-and-forget)
@@ -317,6 +319,14 @@ export default function Chat() {
             character_ids: [characterId],
           });
           setConversationId(convo.id);
+        }
+
+        // Archive old messages and extract memories asynchronously (fire-and-forget)
+        if (convoId) {
+          setTimeout(() => {
+            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: 50 }).catch(() => {});
+            base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
+          }, 2000);
         }
 
         // Load pending messages and deliver them
@@ -1146,6 +1156,7 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
+        {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterName={character?.name} />}
         <AnimatePresence>
           {messages.map(msg => (
             <MessageBubble 

@@ -55,7 +55,39 @@ const FAQS = [
     q: "Do simulated interactions actually affect my characters?",
     a: "Yes — simulations are real. Friendship, attraction, romantic, and respect levels all update based on what happens in the scene. If characters make plans, those plans get scheduled and will surface later in their chats. Memories from the interaction are stored too, so characters may reference what happened when you talk to them individually.",
   },
-];
+  {
+    q: "Why do I only see the last 50 messages in chat?",
+    a: "To keep the app fast and stable, only the most recent 50 messages show in your active chat. Older messages are safely archived and not lost — they're just hidden to improve performance. Character memories, relationship levels, and personality awareness all continue working normally using archived data and memory records. If you need to see older messages, contact support.",
+  },
+  {
+    q: "Are my old messages deleted?",
+    a: "No. Messages older than 50 are archived, not deleted. They're preserved in our system and used to maintain character memories and personality continuity. Your full conversation history is safe.",
+  },
+  {
+    q: "How do characters remember old conversations?",
+    a: "Character memories are stored separately from active chat messages. As you interact, significant moments are saved as memories that characters can reference later. This means they'll naturally bring up things from earlier conversations without needing those messages visible in the active chat.",
+  },
+  {
+    q: "Can I expand storage and keep more messages visible?",
+    a: "Yes — this is optional. If you want to keep more chat history visible and expand media storage, you can connect your own cloud storage (Google Drive or similar) in your account settings. This lets you store unlimited archived messages and media without relying on the app's default limits. Setup instructions are in the Storage & Backup section below.",
+  },
+  {
+    q: "How do I set up optional cloud storage?",
+    a: "In Settings, look for \"Storage & Backup.\" You can authorize your Google Drive or similar cloud storage service. Once connected, older messages and media are automatically archived to your account instead of the app's servers. This is completely optional — the app works fine without it, but gives you more control if you want to keep extended history.",
+  },
+  {
+    q: "Do I need to set up voice generation (TTS)?",
+    a: "No — voice is optional. If you don't set it up, characters will reply in text only. If you want characters to speak, you can optionally connect your own OpenAI API key in Settings under \"Voice Setup.\" This lets you generate voice audio without the app using shared resources. Setup takes 2 minutes and requires an OpenAI account with a small API credit balance.",
+  },
+  {
+    q: "Where do I find my OpenAI API key?",
+    a: "Go to platform.openai.com, sign in with your OpenAI account, click \"API keys\" in the sidebar, and create a new key. Copy it, then paste it into the Voice Setup section in your app Settings. OpenAI charges per request — typically a few cents per character voice line.",
+  },
+  {
+    q: "What happens if I don't connect optional features?",
+    a: "The app works perfectly fine without them. You'll get the default experience: text-only chats, limited message history visible (most recent 50), and standard performance. Optional features like cloud storage and voice just expand what's possible. They're there if you want them, not required to enjoy the app.",
+  },
+  ];
 
 function FAQItem({ q, a }) {
   const [open, setOpen] = useState(false);
