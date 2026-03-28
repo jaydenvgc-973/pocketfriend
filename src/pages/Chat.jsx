@@ -894,6 +894,23 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     setIsTyping(false);
 
+    // Capture achievement events from this interaction (fire-and-forget)
+    if (userMsg?.id && character?.id) {
+      setTimeout(() => {
+        base44.functions.invoke('captureAchievementEvent', {
+          event_type: 'message_sent',
+          character_id: character.id,
+          conversation_id: convoId,
+          message_id: userMsg.id,
+          metadata: {
+            has_image: !!userImageUrl,
+            text_length: text.length,
+            response_received: !!responseText
+          }
+        }).catch(() => {});
+      }, 100);
+    }
+
     // DECISION: If we have both text and image, send them as two separate messages
     const hasBothTextAndImage = responseText && imagePrompts.length > 0;
 

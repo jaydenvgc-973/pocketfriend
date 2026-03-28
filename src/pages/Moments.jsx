@@ -8,6 +8,7 @@ import AchievementBadge from "@/components/moments/AchievementBadge";
 import LockedAchievements from "@/components/moments/LockedAchievements";
 import GoalsSection from "@/components/moments/GoalsSection";
 import ChallengesSection from "@/components/moments/ChallengesSection";
+import AchievementDebugPanel from "@/components/moments/AchievementDebugPanel";
 import { ACHIEVEMENTS, CATEGORY_LABELS } from "@/lib/achievements";
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
@@ -36,6 +37,17 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
+  const { data: progressRecords = [] } = useQuery({
+    queryKey: ["userAchievementProgress", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserAchievementProgress.filter(
+          { user_email: currentUser.email, unlocked: true },
+          "-unlocked_at"
+        )
+      : [],
+    enabled: !!currentUser?.email,
+  });
+
   const { data: messages = [] } = useQuery({
     queryKey: ["recentMessages", currentUser?.email],
     queryFn: () => currentUser?.email
@@ -52,11 +64,22 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
-  // Map achievement_id -> unlocked record (most recent)
-  const unlockedMap = unlocked.reduce((acc, r) => {
-    if (!acc[r.achievement_id]) acc[r.achievement_id] = r;
-    return acc;
-  }, {});
+  // Map achievement_id -> unlocked record from progress or UserAchievement (prefer progress)
+  const unlockedMap = {};
+  
+  // First populate from UserAchievementProgress (user-scoped, real-time)
+  progressRecords.forEach(r => {
+    if (r.unlocked && !unlockedMap[r.achievement_id]) {
+      unlockedMap[r.achievement_id] = r;
+    }
+  });
+  
+  // Fallback to UserAchievement for backwards compatibility
+  unlocked.forEach(r => {
+    if (!unlockedMap[r.achievement_id]) {
+      unlockedMap[r.achievement_id] = r;
+    }
+  });
 
   const allAchievements = Object.values(ACHIEVEMENTS);
   const filtered = activeCategory === "all"
@@ -160,6 +183,7 @@ export default function Moments() {
 
       </div>
 
+      <AchievementDebugPanel userEmail={currentUser?.email} />
       <BottomNav />
     </div>
   );

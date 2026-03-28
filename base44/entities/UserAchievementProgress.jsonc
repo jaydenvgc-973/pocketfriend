@@ -1,0 +1,53 @@
+{
+  "name": "UserAchievementProgress",
+  "type": "object",
+  "properties": {
+    "user_email": {
+      "type": "string",
+      "description": "Email of the user (for user-scoped tracking)"
+    },
+    "achievement_id": {
+      "type": "string",
+      "description": "The achievement being tracked"
+    },
+    "current_progress": {
+      "type": "number",
+      "default": 0,
+      "description": "Current progress value (e.g., 0-5 for 5 character interactions)"
+    },
+    "target_progress": {
+      "type": "number",
+      "description": "Required progress value to unlock"
+    },
+    "unlocked": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this user has earned this achievement"
+    },
+    "unlocked_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this achievement was unlocked"
+    },
+    "last_evaluated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time progress was re-evaluated"
+    },
+    "source_event_count": {
+      "type": "number",
+      "default": 0,
+      "description": "How many qualifying events contributed to this progress"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Achievement-specific tracking (e.g., list of interacted character IDs)",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "user_email",
+    "achievement_id",
+    "target_progress"
+  ]
+}
