@@ -311,6 +311,15 @@ export default function Settings() {
           </div>
         )}
         <CommonQuestions />
+
+        <div className="pt-4 pb-2">
+          <button
+            onClick={() => base44.auth.logout()}
+            className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10 transition-colors"
+          >
+            Log out
+          </button>
+        </div>
       </div>
       <div className="pb-28" />
       <BottomNav />
