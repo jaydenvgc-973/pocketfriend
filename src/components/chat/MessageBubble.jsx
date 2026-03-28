@@ -26,10 +26,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`flex items-flex-end gap-2 ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
+      className={`flex items-end gap-2 ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
     >
-      {/* Voice button on right for character messages (with other actions) */}
-
       <div className={`relative ${isNarrative ? "max-w-2xl" : "max-w-[80%]"} ${isNarrative ? "items-center" : isUser ? "items-end" : "items-start"} flex flex-col`}>
         {showName && !isUser && !isNarrative && message.character_name && (
           <span className="text-xs text-primary/70 ml-3 mb-1 font-medium">{message.character_name}</span>
@@ -59,7 +57,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         </AnimatePresence>
 
         {/* Message bubble with reaction trigger */}
-        <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)}>
+        <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
           <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {message.image_url && (
               <div className="relative group/image">
@@ -93,34 +91,36 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
           {!isNarrative && !isUser && (
             <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
-              {hasVoice && onPlayVoice && (
-                <motion.button
-                  whileHover={{ scale: 1.1 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={onPlayVoice}
-                  disabled={isPlayingVoice}
-                  className={`flex items-center justify-center w-5 h-5 rounded-full transition-colors ${
-                    isPlayingVoice 
-                      ? 'bg-primary text-primary-foreground' 
-                      : 'bg-card border border-border text-muted-foreground hover:text-foreground'
-                  }`}
-                  title={isPlayingVoice ? 'Playing audio...' : 'Play voice message'}
-                >
-                  <Volume2 className="w-3 h-3" />
-                </motion.button>
-              )}
               {hasReactions && (
                 <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
               )}
               {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
             </div>
           )}
-          </div>
+        </div>
 
         {time && (
           <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
         )}
       </div>
+
+      {/* Voice button outside bubble on the right */}
+      {!isNarrative && !isUser && hasVoice && onPlayVoice && (
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={onPlayVoice}
+          disabled={isPlayingVoice}
+          className={`flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full transition-colors ${
+            isPlayingVoice 
+              ? 'bg-primary text-primary-foreground' 
+              : 'bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary'
+          }`}
+          title={isPlayingVoice ? 'Playing audio...' : 'Play voice'}
+        >
+          <Volume2 className="w-4 h-4" />
+        </motion.button>
+      )}
     </motion.div>
   );
 }
