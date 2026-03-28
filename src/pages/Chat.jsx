@@ -59,13 +59,11 @@ export default function Chat() {
 
   // Voice playback utility
   const playCharacterVoice = async (messageId, text, characterData, userSettings) => {
-    // Check all conditions: voices enabled globally, character has voice, user has API key, on Chat page
-    const voicesEnabled = userSettings?.voice_enabled === true;
+    // Check conditions: character has voice, user has API key
     const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
     const hasApiKey = userSettings?.openai_api_key;
-    const isOnChatPage = chatType === "direct"; // Only play on chat, not on phone/text
 
-    if (!voicesEnabled || !charHasVoice || !hasApiKey || !isOnChatPage) {
+    if (!charHasVoice || !hasApiKey) {
       return;
     }
 
@@ -749,7 +747,9 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     // Play character voice if conditions are met (delayed slightly for better UX)
     setTimeout(() => {
-      playCharacterVoice(charMsg.id, responseText, character, settings[0]);
+      if (character && settings[0]) {
+        playCharacterVoice(charMsg.id, responseText, character, settings[0]);
+      }
     }, 300);
 
     if (emotionalState !== character.emotional_state) {
@@ -989,7 +989,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onReact={handleReact} 
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
-              hasVoice={msg.sender_type !== "user" && character?.voice_enabled && character?.voice_name && settings[0]?.voice_enabled}
+              hasVoice={msg.sender_type !== "user" && character?.voice_enabled && character?.voice_name}
               onPlayVoice={() => playCharacterVoice(msg.id, msg.content, character, settings[0])}
               isPlayingVoice={playingAudioId === msg.id}
             />
