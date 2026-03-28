@@ -93,9 +93,9 @@ export default function Chat() {
         convoId = convos[0].id;
 
         const loadedMsgs = await retryWithBackoff(() =>
-          base44.entities.Message.filter({ conversation_id: convoId }, "created_date")
+          base44.entities.Message.filter({ conversation_id: convoId }, "created_date", 100)
         );
-        setMessages(loadedMsgs);
+        setMessages(loadedMsgs || []);
         setConversationId(convoId);
 
         // Mark unread messages as read sequentially with delays to avoid rate limits
