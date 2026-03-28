@@ -1213,9 +1213,10 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
-    // PHASE 3: Invalidate character query ONLY for relationship/emotion updates, NOT for message state
-    // This prevents stale data from polluting message visibility
-    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+    // PHASE 3: CRITICAL FIX - Do NOT invalidate character query during sendMessage
+    // This prevents the stale conversation reload from wiping newly delivered messages
+    // Character updates (emotions, relationships) are handled asynchronously and don't need immediate UI refresh
+    // queryClient.invalidateQueries({ queryKey: ["character", characterId] }); // DISABLED
 
     // Update conversation metadata
     await base44.entities.Conversation.update(convoId, {
