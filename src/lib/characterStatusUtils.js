@@ -18,7 +18,25 @@ export function getCharacterStatusDisplay(character) {
     };
   }
 
-  // 2. AT WORK — if currently in work schedule and at their workplace
+  // 2. CHECK CURRENT ACTIVITY & HEALTH STATUS FOR PATIENT STATUS
+  const activity = character.current_activity?.toLowerCase().trim();
+  const isPatient = character.health_status?.toLowerCase().includes('sick') || 
+                    character.health_status?.toLowerCase().includes('hospitali') ||
+                    character.health_status?.toLowerCase().includes('patient') ||
+                    activity?.includes('hospital') ||
+                    activity?.includes('sick') ||
+                    activity?.includes('patient');
+
+  // PATIENT AT HOSPITAL — priority over work status
+  if (isPatient) {
+    return {
+      iconType: 'hospital',
+      label: 'at hospital',
+      color: 'text-red-400'
+    };
+  }
+
+  // 3. AT WORK — if currently in work schedule and at their workplace
   const atWork = isCharacterAtWork(character);
   if (atWork) {
     return {
@@ -28,7 +46,7 @@ export function getCharacterStatusDisplay(character) {
     };
   }
 
-  // 3. AT SCHOOL — if currently in education activity
+  // 4. AT SCHOOL — if currently in education activity
   if (character.current_education_activity && character.current_education_activity !== 'none') {
     return {
       iconType: 'school',
@@ -37,7 +55,7 @@ export function getCharacterStatusDisplay(character) {
     };
   }
 
-  // 4. IN JOB TRAINING — if currently in job training
+  // 5. IN JOB TRAINING — if currently in job training
   if (character.current_job_training_activity && character.current_job_training_activity !== 'none') {
     return {
       iconType: 'work',
@@ -46,29 +64,9 @@ export function getCharacterStatusDisplay(character) {
     };
   }
 
-  // 5. EVALUATE CURRENT ACTIVITY & CONTEXT
-  const activity = character.current_activity?.toLowerCase().trim();
-  
-  // Check if character is sick/hospitalized
-  const isPatient = character.health_status?.toLowerCase().includes('sick') || 
-                    character.health_status?.toLowerCase().includes('hospitali') ||
-                    character.health_status?.toLowerCase().includes('patient') ||
-                    activity?.includes('hospital') ||
-                    activity?.includes('sick') ||
-                    activity?.includes('patient');
+  // 6. EVALUATE OTHER ACTIVITIES
 
-  // Special hospital logic: if they work there, check if they're working or being treated
-  const worksAtHospital = character.work_details?.workplace_type?.toLowerCase().includes('hospital');
-  if (isPatient && (!worksAtHospital || !atWork)) {
-    // They're at hospital as a patient, not as staff
-    return {
-      iconType: 'hospital',
-      label: 'at hospital',
-      color: 'text-red-400'
-    };
-  }
-
-  // 6. MAP CURRENT_ACTIVITY TO DISPLAY STATUS
+  // 7. MAP CURRENT_ACTIVITY TO DISPLAY STATUS
   if (activity) {
     // Exact matches
     if (activity.includes('gym') || activity.includes('workout') || activity.includes('exercis')) {
@@ -115,7 +113,7 @@ export function getCharacterStatusDisplay(character) {
     }
   }
 
-  // 7. DEFAULT — show neutral status
+  // 8. DEFAULT — show neutral status
   return {
     iconType: 'calm',
     label: 'available',
