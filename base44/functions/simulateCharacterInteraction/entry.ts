@@ -75,9 +75,8 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
     }
 
-    const characters = await Promise.all(
-      character_ids.map(id => base44.entities.Character.list().then(chars => chars.find(c => c.id === id)))
-    );
+    const allCharacters = await base44.entities.Character.list();
+    const characters = character_ids.map(id => allCharacters.find(c => c.id === id));
 
     if (characters.some(c => !c)) {
       return Response.json({ error: 'One or more characters not found' }, { status: 404 });
