@@ -26,8 +26,26 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`flex ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
+      className={`flex items-flex-end gap-2 ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
     >
+      {/* Voice button on left for character messages */}
+      {hasVoice && !isUser && !isNarrative && onPlayVoice && (
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={onPlayVoice}
+          disabled={isPlayingVoice}
+          className={`flex-shrink-0 transition-colors self-end mb-2 ${
+            isPlayingVoice 
+              ? 'text-primary opacity-100' 
+              : 'text-muted-foreground hover:text-primary opacity-70 hover:opacity-100'
+          }`}
+          title={isPlayingVoice ? 'Playing audio...' : 'Play voice message'}
+        >
+          <Volume2 className="w-4 h-4" />
+        </motion.button>
+      )}
+
       <div className={`relative ${isNarrative ? "max-w-2xl" : "max-w-[80%]"} ${isNarrative ? "items-center" : isUser ? "items-end" : "items-start"} flex flex-col`}>
         {showName && !isUser && !isNarrative && message.character_name && (
           <span className="text-xs text-primary/70 ml-3 mb-1 font-medium">{message.character_name}</span>
@@ -99,27 +117,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           )}
           </div>
 
-        <div className="flex items-center gap-2 mt-1">
-          {time && (
-            <span className={`text-[10px] text-muted-foreground ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
-          )}
-          {hasVoice && !isUser && !isNarrative && onPlayVoice && (
-            <motion.button
-              whileHover={{ scale: 1.1 }}
-              whileTap={{ scale: 0.95 }}
-              onClick={onPlayVoice}
-              disabled={isPlayingVoice}
-              className={`flex-shrink-0 transition-colors ${
-                isPlayingVoice 
-                  ? 'text-primary opacity-100' 
-                  : 'text-muted-foreground hover:text-primary opacity-70 hover:opacity-100'
-              }`}
-              title={isPlayingVoice ? 'Playing audio...' : 'Play voice message'}
-            >
-              <Volume2 className="w-4 h-4" />
-            </motion.button>
-          )}
-        </div>
+        {time && (
+          <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
+        )}
       </div>
     </motion.div>
   );
