@@ -15,7 +15,7 @@ const ZODIAC_SIGNS = ["aries", "taurus", "gemini", "cancer", "leo", "virgo", "li
 const AGE_RANGES = ["Early 20s", "Mid 20s", "Late 20s", "Early 30s", "Mid 30s", "Late 30s", "40s+"];
 const GENDERS = ["male", "female", "non-binary", "other"];
 const ETHNICITIES = ["African", "Asian", "Caucasian", "Hispanic", "Middle Eastern", "Pacific Islander", "South Asian", "Mixed"];
-const ORIENTATIONS = ["Straight", "Gay", "Lesbian", "Bisexual", "Asexual", "Demisexual", "Questioning", "Other"];
+const ORIENTATIONS = ["Straight", "Gay", "Gay (DL)", "Bisexual", "Bisexual (DL)", "Pansexual", "Queer", "Asexual", "Prefer not to say"];
 
 export default function EditCharacterStory() {
   const queryClient = useQueryClient();
