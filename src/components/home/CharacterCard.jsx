@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2 } from "lucide-react";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
+import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -71,6 +72,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const [unreadCount, setUnreadCount] = useState(0);
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
+  const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
   const { data: pendingMessages = [] } = useQuery({
     queryKey: ['pendingMessages', character.id],
@@ -309,6 +311,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                       <Pencil className="w-4 h-4" /> Edit photos
                     </Link>
                   </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setActiveCharacter(activeCharacter?.id === character.id ? null : character)}
+                    className="gap-2 text-muted-foreground"
+                  >
+                    <Gamepad2 className="w-4 h-4" />
+                    {activeCharacter?.id === character.id ? "Stop playing as" : "Play as"} {character.name}
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (onDelete || onMoveAway) && (
@@ -327,6 +337,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setShowEditName(true)} className="gap-2 text-muted-foreground">
                     <Pencil className="w-4 h-4" /> Edit name
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setActiveCharacter(activeCharacter?.id === character.id ? null : character)}
+                    className="gap-2 text-muted-foreground"
+                  >
+                    <Gamepad2 className="w-4 h-4" />
+                    {activeCharacter?.id === character.id ? "Stop playing as" : "Play as"} {character.name}
                   </DropdownMenuItem>
                   {!character.avatar_url && (
                     <>

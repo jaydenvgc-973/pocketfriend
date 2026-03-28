@@ -4,6 +4,8 @@ import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
+import { ActiveCharacterProvider } from '@/lib/ActiveCharacterContext';
+import PlayAsCharacterBanner from '@/components/chat/PlayAsCharacterBanner';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 
 import Onboarding from './pages/Onboarding';
@@ -68,13 +70,16 @@ const AuthenticatedApp = () => {
 function App() {
   return (
     <AuthProvider>
-      <QueryClientProvider client={queryClientInstance}>
-        <Router>
-          <AuthenticatedApp />
-        </Router>
-        <AchievementUnlockModal />
-        <Toaster />
-      </QueryClientProvider>
+      <ActiveCharacterProvider>
+        <QueryClientProvider client={queryClientInstance}>
+          <Router>
+            <PlayAsCharacterBanner />
+            <AuthenticatedApp />
+          </Router>
+          <AchievementUnlockModal />
+          <Toaster />
+        </QueryClientProvider>
+      </ActiveCharacterProvider>
     </AuthProvider>
   )
 }

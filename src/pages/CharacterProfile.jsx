@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
@@ -83,8 +84,11 @@ function NicknameForUserField({ character }) {
   );
 }
 
+const NPC_DRAFT_KEY = "create_character_draft";
+
 export default function CharacterProfile() {
   const { characterId } = useParams();
+  const navigate = useNavigate();
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   
   const { data: character, isLoading, refetch } = useQuery({
@@ -105,6 +109,43 @@ export default function CharacterProfile() {
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
   const zodiacData = zodiacSign ? ZODIAC_SIGNS[zodiacSign] : null;
   const age = character?.birthday ? calculateAge(character.birthday) : null;
+
+  const handleConvertNPC = useCallback((rel) => {
+    // Preload NPC data into Create Character draft so user can refine and finalize
+    const draft = {
+      step: 0,
+      avatarUrl: null,
+      referenceUrls: [],
+      data: {
+        first_name: rel.person_name?.split(" ")[0] || rel.person_name || "",
+        middle_name: "",
+        last_name: rel.person_name?.split(" ").slice(1).join(" ") || "",
+        gender: "", age_range: "", ethnicities: [], living_situation: "",
+        city: character?.city || "", state: character?.state || "",
+        vibes: [], background: rel.description || rel.history_summary || "",
+        archetype: "", social_energy: "", sexual_orientation: "",
+        personality_override: rel.emotional_impact || "",
+        situation_override: rel.current_status || "",
+        memories: [],
+        job_title: "", workplace_type: "", work_environment: "",
+        occupation_description: "", criminal_record: "", zodiac_sign: "",
+        frequented_places: [],
+        // Pre-wire relationship back to the source character
+        known_character_relationships: character ? [{ character_id: character.id, relationship_type: rel.relationship_type || "Friend" }] : [],
+        family_members: [],
+        birthday: "",
+        user_respect_level: 50,
+        friendship_level: rel.friendship_level ?? 75,
+        romantic_level: rel.romantic_level ?? 0,
+        attraction_level: rel.attraction_level ?? 0,
+        chosen_family_level: rel.chosen_family_level ?? 0,
+        _npc_source_character_id: character?.id,
+        _npc_source_rel: rel,
+      }
+    };
+    localStorage.setItem(NPC_DRAFT_KEY, JSON.stringify(draft));
+    navigate("/create");
+  }, [character, navigate]);
 
   const handleZodiacSelect = async (sign) => {
     if (!character || character.is_default) return;
@@ -484,9 +525,18 @@ export default function CharacterProfile() {
                 .filter(r => !r.related_character_id)
                 .map((rel, idx) => (
                   <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
-                    <div>
-                      <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
-                      <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
+                        <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                      </div>
+                      <button
+                        onClick={() => handleConvertNPC(rel)}
+                        title="Convert to active character"
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors flex-shrink-0"
+                      >
+                        <Zap className="w-3 h-3" /> Activate
+                      </button>
                     </div>
                     {rel.description && (
                       <div>

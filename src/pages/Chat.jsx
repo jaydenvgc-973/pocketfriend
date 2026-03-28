@@ -13,7 +13,9 @@ import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
-import { BarChart2, BookOpen } from "lucide-react";
+import { BarChart2, BookOpen, Gamepad2 } from "lucide-react";
+import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
+import DialogueSelector from "@/components/chat/DialogueSelector";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -28,7 +30,9 @@ export default function Chat() {
   const [previousLevels, setPreviousLevels] = useState(null);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
+  const [showDialogueSelector, setShowDialogueSelector] = useState(false);
   const bottomRef = useRef(null);
+  const { activeCharacter } = useActiveCharacter();
   const queryClient = useQueryClient();
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
@@ -228,6 +232,14 @@ export default function Chat() {
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
+
+    // Fix: command — treat as admin backend directive, do NOT store or process as chat
+    if (text.trim().toLowerCase().startsWith("fix:")) {
+      const directive = text.trim().slice(4).trim();
+      // Just acknowledge silently — no message stored, no memory, no narrative
+      console.info("[Fix: directive]", directive);
+      return;
+    }
 
     // Check for music platform links (Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, etc.)
     const musicLinkMatch = text.match(/https?:\/\/[^\s]+(spotify|apple|music|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
@@ -619,6 +631,15 @@ Reply with ONLY the single emoji or the word "none".`,
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
         {character && <MediaGallery messages={messages} />}
+        {character && activeCharacter && (
+          <button
+            onClick={() => setShowDialogueSelector(true)}
+            className="p-2 rounded-xl bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+            title={`Dialogue options for ${activeCharacter.name}`}
+          >
+            <Gamepad2 className="w-4 h-4" />
+          </button>
+        )}
         {character && (
           <button
             onClick={() => setShowNarrativeBuilder(true)}
@@ -660,6 +681,15 @@ Reply with ONLY the single emoji or the word "none".`,
         )}
         <div ref={bottomRef} />
       </div>
+      {showDialogueSelector && activeCharacter && character && (
+        <DialogueSelector
+          playingAs={activeCharacter}
+          targetCharacter={character}
+          recentMessages={messages}
+          onSelect={(text) => { setShowDialogueSelector(false); sendMessage(text, null); }}
+          onClose={() => setShowDialogueSelector(false)}
+        />
+      )}
       <ChatInput onSend={sendMessage} draftKey={characterId} />
       <NarrativeBuilderPopup
         isOpen={showNarrativeBuilder}
