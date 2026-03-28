@@ -416,7 +416,7 @@ export default function Chat() {
         recentMessages: messages.slice(-10),
       }).then(res => {
         if (res?.data?.reason) setLastChangeReason(res.data.reason);
-        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }).catch(() => {});
     }
   };
@@ -437,9 +437,9 @@ export default function Chat() {
           character_name: character.name,
           content: `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`,
           timestamp: new Date().toISOString()
-        }]);
-        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-      }
+          }]);
+          // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+          }
     } catch (err) {
       setSendError("Failed to process song link. Try again.");
     }
@@ -622,7 +622,7 @@ export default function Chat() {
               const validStates = ["calm","irritated","defensive","reflective","closed-off","flirtatious","bored","burnt out","joyful","anxious","sad","excited","overwhelmed","content","frustrated"];
               if (validStates.includes(cleaned)) {
                 await base44.entities.Character.update(characterId, { emotional_state: cleaned });
-                queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+                // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
               }
             }).catch(() => {});
           }, 0);
@@ -1118,7 +1118,7 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
-      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      // DISABLED: queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
 
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
@@ -1320,7 +1320,7 @@ Reply with ONLY the single emoji or the word "none".`,
         characterId={characterId}
         conversationId={conversationId}
         chatHistory={messages}
-        onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+        onNarrativeSubmitted={() => {} /* DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] }) */}
       />
       <WorldContactsPopup
         isOpen={showWorldContacts}
