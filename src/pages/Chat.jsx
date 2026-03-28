@@ -1226,6 +1226,16 @@ Reply with ONLY the single emoji or the word "none".`,
     });
   };
 
+  // Show loading state if character isn't loaded yet
+  if (!character || !characterId) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-background">
+        <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+        <p className="mt-4 text-muted-foreground text-sm">Loading chat...</p>
+      </div>
+    );
+  }
+
   return (
     <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
       <div className={`flex items-center gap-3 px-4 py-3 border-b border-border ${isPhone ? "bg-card" : "bg-background/80 backdrop-blur-xl"}`}>
@@ -1233,13 +1243,13 @@ Reply with ONLY the single emoji or the word "none".`,
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <Link to={`/profile/${characterId}`}>
-          {character && <CharacterAvatar character={character} size="sm" />}
+          <CharacterAvatar character={character} size="sm" />
         </Link>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
+          <h2 className="text-sm font-semibold text-foreground truncate">{character.name}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
-        {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />}
+        <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />
 
         {character && (character.fictional_relationships || []).length > 0 && (
           <button
