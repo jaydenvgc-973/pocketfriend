@@ -102,33 +102,8 @@ export default function Home() {
     });
   }, [characters, currentUser?.email]);
 
-  // Sync unread counts on page load — CRITICAL: force sync before any other data fetch
-  useEffect(() => {
-    if (!characters || characters.length === 0) return;
-    
-    // Sync unread counts for all characters in parallel (blocks on completion)
-    const syncPromises = characters.map(char =>
-      base44.functions.invoke('syncUnreadCounts', { characterId: char.id })
-        .then(res => {
-          console.log(`[Unread Sync COMPLETE] ${char.name}: actual unread = ${res?.data?.diagnostics?.actual_unread_count}, fixed = ${res?.data?.diagnostics?.invalid_unread_fixed}`);
-          // FORCE invalidate and refetch
-          return queryClient.invalidateQueries({ 
-            queryKey: ['conversations', char.id],
-            exact: false
-          });
-        })
-        .catch(err => {
-          console.error(`[Unread Sync] Failed for ${char.name}:`, err);
-          return null;
-        })
-    );
-
-    // Wait for all syncs to complete, then refetch
-    Promise.all(syncPromises).then(() => {
-      console.log('[Unread Sync] All syncs complete, invalidating all conversation queries');
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
-    });
-  }, [characters.length, queryClient]);
+  // Disabled: unread sync caused rate limiting — badges now update on interaction only
+  // useEffect(() => { ... }, []);
 
   useEffect(() => {
     if (!isLoading && settings.length === 0) {

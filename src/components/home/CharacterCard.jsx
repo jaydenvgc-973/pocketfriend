@@ -212,42 +212,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
     }
   };
 
+  // Only count unread once on initial load to avoid rate limits
   useEffect(() => {
-    // Debounce the unread count to avoid rate limits
     const timer = setTimeout(() => {
-      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
       countUnread().catch(() => {
-        // Silently fail on rate limit — unread badges will just show stale count
         setUnreadChat(0);
         setUnreadPhone(0);
       });
-    }, 100);
+    }, 200);
     return () => clearTimeout(timer);
-  }, [conversations, character.id, queryClient]);
-
-  // Re-count when user returns to the tab/window
-  useEffect(() => {
-    const handleFocus = () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
-      countUnread();
-    };
-    window.addEventListener('focus', handleFocus);
-    return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id, queryClient]);
-
-  // Subscribe to message changes for real-time badge updates (create, update, delete)
-  useEffect(() => {
-    const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Re-count on any message event for this character or any conversation update
-      if (event.data?.character_id === character.id || event.data?.sender_type === "user") {
-        // Invalidate conversations to ensure fresh data
-        queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
-        // Small delay to ensure DB has updated
-        setTimeout(() => countUnread(), 100);
-      }
-    });
-    return () => unsubscribe();
-  }, [character.id, queryClient]);
+  }, []);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
