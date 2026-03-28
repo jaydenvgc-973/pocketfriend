@@ -91,8 +91,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           </div>
 
           {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
-          {(onReact || hasVoice) && !isNarrative && (
-            <div className={`absolute -bottom-2.5 ${isUser ? "left-1" : "right-1"} z-20 flex gap-0.5 items-center`}>
+          {!isNarrative && !isUser && (
+            <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
               {hasVoice && onPlayVoice && (
                 <motion.button
                   whileHover={{ scale: 1.1 }}
