@@ -1,0 +1,93 @@
+{
+  "name": "Message",
+  "type": "object",
+  "properties": {
+    "conversation_id": {
+      "type": "string",
+      "description": "ID of the parent conversation"
+    },
+    "sender_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "character"
+      ],
+      "description": "Who sent this message"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "ID of character if sender_type is character"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "played_as_character_id": {
+      "type": "string",
+      "description": "If the user sent this while playing as a character, the ID of that character"
+    },
+    "played_as_character_name": {
+      "type": "string",
+      "description": "If the user sent this while playing as a character, the display name of that character"
+    },
+    "content": {
+      "type": "string",
+      "description": "Message text content"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "Optional image URL attached to the message"
+    },
+    "emotional_state": {
+      "type": "string",
+      "enum": [
+        "calm",
+        "irritated",
+        "defensive",
+        "reflective",
+        "closed-off"
+      ],
+      "description": "Character emotional state when sending"
+    },
+    "is_narrative": {
+      "type": "boolean",
+      "description": "True if this message represents a narrative event"
+    },
+    "is_read": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether the user has read this message"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "reactions": {
+      "type": "array",
+      "description": "Emoji reactions to this message",
+      "items": {
+        "type": "object",
+        "properties": {
+          "emoji": {
+            "type": "string"
+          },
+          "reactor_type": {
+            "type": "string",
+            "enum": [
+              "user",
+              "character"
+            ]
+          },
+          "reactor_id": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "conversation_id",
+    "sender_type",
+    "content"
+  ]
+}

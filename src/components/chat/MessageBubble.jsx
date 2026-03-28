@@ -11,9 +11,11 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, playingAsName = null }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
+  // Use the persisted played_as name if this user message was sent while playing as a character
+  const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
   const bgColor = isUser ? "bg-primary" : (emotionalColors[message.emotional_state] || "bg-secondary");
   const time = message.timestamp ? format(new Date(message.timestamp), "h:mm a") : "";
   const hasReactions = message.reactions?.length > 0;
@@ -29,8 +31,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         {showName && !isUser && !isNarrative && message.character_name && (
           <span className="text-xs text-primary/70 ml-3 mb-1 font-medium">{message.character_name}</span>
         )}
-        {isUser && !isNarrative && playingAsName && (
-          <span className="text-xs text-amber-400/80 mr-3 mb-1 font-medium">playing as {playingAsName}</span>
+        {isUser && !isNarrative && playingAsLabel && (
+          <span className="text-xs text-amber-400/80 mr-3 mb-1 font-medium">{playingAsLabel}</span>
         )}
 
         {/* Delete button */}

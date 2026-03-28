@@ -267,6 +267,10 @@ export default function Chat() {
       content: text,
       image_url: userImageUrl || undefined,
       timestamp: new Date().toISOString(),
+      ...(activeCharacter ? {
+        played_as_character_id: activeCharacter.id,
+        played_as_character_name: activeCharacter.name,
+      } : {}),
     });
     if (!userMsg || !userMsg.id) {
        setSendError("Message failed to save. Try again.");
@@ -749,7 +753,7 @@ Reply with ONLY the single emoji or the word "none".`,
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         <AnimatePresence>
-          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} onDelete={handleDeleteMessage} playingAsName={activeCharacter ? activeCharacter.name : null} />)}
+          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} onDelete={handleDeleteMessage} />)}
         </AnimatePresence>
         <AnimatePresence>
           {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}
