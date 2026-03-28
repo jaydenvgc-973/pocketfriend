@@ -288,9 +288,9 @@ export default function Chat() {
 
         if (convos.length > 0) {
           convoId = convos[0].id;
-          // Load only the 50 most recent messages for active display
+          // Load only the 50 most recent messages for active display (excludes archived)
           const loadedMsgs = await base44.entities.Message.filter(
-            { conversation_id: convoId },
+            { conversation_id: convoId, archived_date: { $exists: false } },
             "-created_date",
             50 // Keep only most recent 50 visible for performance
           );

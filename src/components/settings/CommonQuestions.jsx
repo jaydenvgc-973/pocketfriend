@@ -73,7 +73,7 @@ const FAQS = [
   },
   {
     q: "How do I set up optional cloud storage?",
-    a: "In Settings, look for \"Storage & Backup.\" You can authorize your Google Drive or similar cloud storage service. Once connected, older messages and media are automatically archived to your account instead of the app's servers. This is completely optional — the app works fine without it, but gives you more control if you want to keep extended history.",
+    a: "In Settings, look for \"Storage & Backup.\" You can authorize your Google Drive or similar cloud storage service. Once connected, older messages and media are automatically archived to your account instead of the app's servers. This is completely optional — the app works fine without it. Without it, the app stores messages in its default archive after 50 messages become visible, keeping performance light. If you want to keep extended history accessible, setting up optional cloud storage lets you do that.",
   },
   {
     q: "Do I need to set up voice generation (TTS)?",
