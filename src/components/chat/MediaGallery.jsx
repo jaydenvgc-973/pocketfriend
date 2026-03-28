@@ -1,21 +1,33 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Images, X } from "lucide-react";
+import { Images, X, Trash2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { base44 } from "@/api/base44Client";
+import { useQuery } from "@tanstack/react-query";
 
-export default function MediaGallery({ messages, onDeleteImage }) {
+export default function MediaGallery({ conversationId, messages, onDeleteImage }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
 
-  const images = messages
-    .filter(msg => msg.image_url)
-    .map(msg => ({
-      id: msg.id,
-      url: msg.image_url,
-      senderType: msg.sender_type,
-      senderName: msg.character_name || "You",
-      timestamp: msg.timestamp,
-    }));
+  // Load all media records for this conversation (independent of message visibility)
+  const { data: mediaRecords = [] } = useQuery({
+    queryKey: ["media", conversationId],
+    queryFn: () => base44.entities.Media.filter({ 
+      conversation_id: conversationId,
+      is_deleted: false 
+    }),
+    enabled: !!conversationId,
+  });
+
+  const images = mediaRecords.map(media => ({
+    id: media.id,
+    messageId: media.message_id,
+    url: media.image_url,
+    senderType: media.sender_type,
+    senderName: media.sender_type === "user" ? "You" : "Them",
+    timestamp: media.sent_at,
+    filename: media.filename,
+  }));
 
   if (images.length === 0) return null;
 
@@ -84,18 +96,16 @@ export default function MediaGallery({ messages, onDeleteImage }) {
                             </span>
                           </div>
                         </button>
-                        {onDeleteImage && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDeleteImage(img.id);
-                            }}
-                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                            title="Delete image"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            base44.entities.Media.update(img.id, { is_deleted: true });
+                          }}
+                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          title="Delete image"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
                       </motion.div>
                     ))}
                   </div>
@@ -135,19 +145,20 @@ export default function MediaGallery({ messages, onDeleteImage }) {
                   alt="Full view"
                   className="max-w-full max-h-[80vh] object-contain rounded-xl"
                 />
-                {onDeleteImage && (
-                  <button
-                    onClick={() => {
-                      onDeleteImage(selectedImage.id);
+                <button
+                  onClick={async () => {
+                    if (selectedImage?.id) {
+                      // Mark media as deleted (user-explicit deletion)
+                      await base44.entities.Media.update(selectedImage.id, { is_deleted: true });
                       setSelectedImage(null);
-                    }}
-                    className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center gap-2"
-                    title="Delete image"
-                  >
-                    <X className="w-4 h-4" />
-                    Delete Image
-                  </button>
-                )}
+                    }
+                  }}
+                  className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center gap-2"
+                  title="Delete image"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete Image
+                </button>
               </div>
             </motion.div>
           )}
