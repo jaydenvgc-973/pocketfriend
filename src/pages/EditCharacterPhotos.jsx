@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight, Upload, RefreshCw } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -11,6 +11,7 @@ import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploade
 export default function EditCharacterPhotos() {
   const queryClient = useQueryClient();
   const [selectedChar, setSelectedChar] = useState(null);
+  const [uploadingAvatarId, setUploadingAvatarId] = useState(null);
 
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
@@ -105,22 +106,37 @@ export default function EditCharacterPhotos() {
                       type="file"
                       accept="image/*"
                       className="hidden"
+                      disabled={uploadingAvatarId === selectedChar.id}
                       onChange={async (e) => {
                         const file = e.target.files?.[0];
                         if (!file) return;
-                        const result = await base44.integrations.Core.UploadFile({ file });
-                        const updated = { ...selectedChar, avatar_url: result.file_url };
-                        updated.system_prompt = (await import('@/lib/defaultCharacter')).buildSystemPrompt(updated);
-                        await base44.entities.Character.update(selectedChar.id, {
-                          avatar_url: result.file_url,
-                          system_prompt: updated.system_prompt,
-                        });
-                        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-                        queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+                        setUploadingAvatarId(selectedChar.id);
+                        try {
+                          const result = await base44.integrations.Core.UploadFile({ file });
+                          const updated = { ...selectedChar, avatar_url: result.file_url };
+                          updated.system_prompt = buildSystemPrompt(updated);
+                          await base44.entities.Character.update(selectedChar.id, {
+                            avatar_url: result.file_url,
+                            reference_image_urls: [],
+                            system_prompt: updated.system_prompt,
+                          });
+                          setSelectedChar(updated);
+                          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+                          queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+                        } finally {
+                          setUploadingAvatarId(null);
+                        }
                       }}
                     />
-                    <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors">
-                      <span className="text-xs text-muted-foreground">Click to upload a photo</span>
+                    <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50">
+                      {uploadingAvatarId === selectedChar.id ? (
+                        <RefreshCw className="w-4 h-4 text-muted-foreground animate-spin" />
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <Upload className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-xs text-muted-foreground">Click to upload a photo</span>
+                        </div>
+                      )}
                     </div>
                   </label>
                 </div>
