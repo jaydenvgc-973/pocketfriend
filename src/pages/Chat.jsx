@@ -374,17 +374,18 @@ export default function Chat() {
     if (unsubscribeRef.current) unsubscribeRef.current();
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Only process events for this conversation and character combo
+      // Only process events for this conversation
       if (event.data?.conversation_id !== conversationId) return;
 
       if (event.type === "create") {
         setMessages(prev => {
           // Prevent duplicates: check if message already exists
           if (prev.some(m => m.id === event.data.id)) return prev;
+          console.log(`[Chat] Message added via subscription: ${event.data.id.substring(0, 8)}`);
           return [...prev, event.data];
         });
         
-        // Auto-mark character messages as read
+        // Auto-mark character messages as read (fire-and-forget)
         if (event.data.sender_type === "character" && !event.data.is_read) {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
