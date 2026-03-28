@@ -213,9 +213,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   };
 
   useEffect(() => {
-    // Force hard invalidate and recount immediately
-    queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
-    setTimeout(() => countUnread(), 50);
+    // Debounce the unread count to avoid rate limits
+    const timer = setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+      countUnread().catch(() => {
+        // Silently fail on rate limit — unread badges will just show stale count
+        setUnreadChat(0);
+        setUnreadPhone(0);
+      });
+    }, 100);
+    return () => clearTimeout(timer);
   }, [conversations, character.id, queryClient]);
 
   // Re-count when user returns to the tab/window

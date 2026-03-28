@@ -262,9 +262,21 @@ export default function Chat() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Initialize voice settings on first load
+  // Initialize voice settings on first load (with rate limit protection)
   useEffect(() => {
-    base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
+    let retries = 0;
+    const tryInit = async () => {
+      try {
+        await base44.functions.invoke('initializeVoiceSettings', {});
+      } catch (err) {
+        // Silently fail on rate limit — voice is optional
+        if (retries < 2 && err.status === 429) {
+          retries++;
+          setTimeout(tryInit, 2000 * retries); // Exponential backoff
+        }
+      }
+    };
+    tryInit();
   }, []);
 
   useEffect(() => {
