@@ -64,6 +64,7 @@ export default function Chat() {
     const hasApiKey = userSettings?.openai_api_key;
 
     if (!charHasVoice || !hasApiKey) {
+      console.log('[Voice Debug]', { charHasVoice, hasApiKey, voice_enabled: characterData?.voice_enabled, voice_name: characterData?.voice_name });
       return;
     }
 
@@ -217,16 +218,19 @@ export default function Chat() {
       if (event.data.conversation_id === conversationId) {
         if (event.type === "create") {
           setMessages(prev => {
+            // Only add if not already present
             if (prev.some(m => m.id === event.data.id)) return prev;
             return [...prev, event.data];
           });
+          // Mark character messages as read
           if (event.data.sender_type === "character" && !event.data.is_read) {
-            base44.entities.Message.update(event.data.id, { is_read: true }).then(() => {
-              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-            });
+            base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
+            queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
           }
         } else if (event.type === "update") {
-          setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
+          setMessages(prev => prev.map(m => m.id === event.data.id ? event.data : m));
+        } else if (event.type === "delete") {
+          setMessages(prev => prev.filter(m => m.id !== event.data.id));
         }
       }
     });
@@ -235,7 +239,7 @@ export default function Chat() {
     return () => {
       if (unsubscribeRef.current) unsubscribeRef.current();
     };
-  }, [conversationId]);
+  }, [conversationId, characterId]);
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -368,9 +372,10 @@ export default function Chat() {
       } : {}),
     });
     if (!userMsg || !userMsg.id) {
-       setSendError("Message failed to save. Try again.");
-       return;
-     }
+      setSendError("Message failed to save. Try again.");
+      return;
+    }
+    // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
 
@@ -746,11 +751,12 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
     // Play character voice if conditions are met (delayed slightly for better UX)
-    setTimeout(() => {
-      if (character && settings[0]) {
+    // Use the actual character data to check voice_enabled
+    if (character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key) {
+      setTimeout(() => {
         playCharacterVoice(charMsg.id, responseText, character, settings[0]);
-      }
-    }, 300);
+      }, 300);
+    }
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
