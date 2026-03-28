@@ -50,11 +50,21 @@ Deno.serve(async (req) => {
       1000
     );
 
-    // CRITICAL: Never archive messages from today (created since midnight UTC)
+    // CRITICAL: Never archive messages from today (in user's timezone America/New_York)
     // Today's messages are always protected and stay visible immediately
-    const todayStartUTC = new Date();
-    todayStartUTC.setUTCHours(0, 0, 0, 0);
-    const todayStart = todayStartUTC.toISOString();
+    // Calculate midnight of today in America/New_York timezone
+    const now = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', { 
+      year: 'numeric', 
+      month: '2-digit', 
+      day: '2-digit', 
+      timeZone: 'America/New_York' 
+    });
+    const parts = formatter.formatToParts(now);
+    const year = parts.find(p => p.type === 'year').value;
+    const month = parts.find(p => p.type === 'month').value;
+    const day = parts.find(p => p.type === 'day').value;
+    const todayStart = new Date(`${year}-${month}-${day}T00:00:00Z`).toISOString();
     
     let messagesToArchive = [];
     
@@ -66,7 +76,7 @@ Deno.serve(async (req) => {
     
     // Archive only if we exceed keepCount AND have old messages available
     if (archiveableMessages.length > 0 && allMessages.length > keepCount) {
-      messagesToArchive = archiveableMessages.slice(-(archiveableMessages.length - Math.max(0, keepCount - (allMessages.length - archiveableMessages.length))));
+      messagesToArchive = archiveableMessages.slice(0, allMessages.length - keepCount);
     }
 
     if (notYetArchived.length === 0) {
