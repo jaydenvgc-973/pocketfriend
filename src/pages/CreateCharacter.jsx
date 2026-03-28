@@ -14,6 +14,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import RelationshipStep from "@/components/character/RelationshipStep";
 import VoiceSettings from "@/components/character/VoiceSettings";
+import ValidatedTextField from "@/components/character/ValidatedTextField";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
@@ -332,7 +333,46 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
 
   const removeMemory = (title) => update("memories", data.memories.filter(m => m.title !== title));
 
+  const validateFields = () => {
+    const LIMITS = {
+      background_story: 2000,
+      personality_override: 1500,
+      situation_override: 1500,
+      occupation_description: 800,
+      criminal_record: 1000,
+      work_environment: 600,
+    };
+
+    const errors = [];
+    Object.entries(LIMITS).forEach(([field, max]) => {
+      const value = data[field] || "";
+      if (value.length > max) {
+        const fieldLabel = {
+          background_story: "Backstory",
+          personality_override: "Personality notes",
+          situation_override: "Current situation",
+          occupation_description: "Occupation description",
+          criminal_record: "Criminal record",
+          work_environment: "Work environment",
+        }[field];
+        errors.push(`${fieldLabel} is too long (${value.length}/${max} characters)`);
+      }
+    });
+
+    return errors;
+  };
+
   const handleCreate = async () => {
+    const validationErrors = validateFields();
+    if (validationErrors.length > 0) {
+      alert(
+        "Character creation could not continue because one or more fields exceeded the maximum allowed length:\n\n" +
+        validationErrors.join("\n") +
+        "\n\nPlease shorten the fields and try again."
+      );
+      return;
+    }
+
     setIsCreating(true);
     try {
       // Auto-generate avatar if none provided
@@ -601,21 +641,40 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
           ))}
         </div>
         <Input value={data.job_title} onChange={e => update("job_title", e.target.value)} placeholder="Specific job title (e.g. cashier, nurse, designer)" className="h-11 rounded-xl text-sm mt-2" />
-        <Textarea value={data.work_environment} onChange={e => update("work_environment", e.target.value)} placeholder="Describe the work environment... (optional)" className="rounded-xl mt-2 min-h-[70px] text-sm resize-none" />
-        <div className="flex items-center justify-between mt-3 mb-1">
-          <label className="text-xs text-muted-foreground uppercase tracking-wider">Occupation description (optional)</label>
-          <button onClick={generateOccupationDescription} disabled={isGeneratingOccupation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
-            <Sparkles className="w-3 h-3" />{isGeneratingOccupation ? "Generating..." : "Auto-generate"}
-          </button>
-        </div>
-        <Textarea value={data.occupation_description} onChange={e => update("occupation_description", e.target.value)} placeholder="What does a typical day at work look like for them?" className="rounded-xl min-h-[70px] text-sm resize-none" />
-        <div className="flex items-center justify-between mt-3 mb-1">
-          <label className="text-xs text-muted-foreground uppercase tracking-wider">Criminal record (optional)</label>
-          <button onClick={generateCriminalRecord} disabled={isGeneratingCriminalRecord} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
-            <Sparkles className="w-3 h-3" />{isGeneratingCriminalRecord ? "Generating..." : "Auto-generate"}
-          </button>
-        </div>
-        <Textarea value={data.criminal_record} onChange={e => update("criminal_record", e.target.value)} placeholder="Leave blank for no criminal record..." className="rounded-xl min-h-[70px] text-sm resize-none" />
+        <ValidatedTextField
+          fieldName="work_environment"
+          value={data.work_environment}
+          onChange={(val) => update("work_environment", val)}
+          label="Work environment (optional)"
+          placeholder="Describe the work environment... (optional)"
+          minHeight="70px"
+        />
+        <ValidatedTextField
+          fieldName="occupation_description"
+          value={data.occupation_description}
+          onChange={(val) => update("occupation_description", val)}
+          label="Occupation description (optional)"
+          placeholder="What does a typical day at work look like for them?"
+          minHeight="70px"
+          generateButton={
+            <button onClick={generateOccupationDescription} disabled={isGeneratingOccupation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
+              <Sparkles className="w-3 h-3" />{isGeneratingOccupation ? "Generating..." : "Auto-generate"}
+            </button>
+          }
+        />
+        <ValidatedTextField
+          fieldName="criminal_record"
+          value={data.criminal_record}
+          onChange={(val) => update("criminal_record", val)}
+          label="Criminal record (optional)"
+          placeholder="Leave blank for no criminal record..."
+          minHeight="70px"
+          generateButton={
+            <button onClick={generateCriminalRecord} disabled={isGeneratingCriminalRecord} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-50">
+              <Sparkles className="w-3 h-3" />{isGeneratingCriminalRecord ? "Generating..." : "Auto-generate"}
+            </button>
+          }
+        />
       </div>
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Places they frequent</label>
@@ -744,34 +803,52 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         </div>
       </div>
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-xs text-muted-foreground uppercase tracking-wider">Backstory (optional)</label>
-          <button onClick={generateBackstory} disabled={isGeneratingBackstory} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
-            <Sparkles className="w-3 h-3" />{isGeneratingBackstory ? "Generating..." : "Auto-generate"}
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground mb-2">Write freely — this shapes who they are. The AI will blend it in.</p>
-        <Textarea value={data.background} onChange={e => update("background", e.target.value)} placeholder="Anything about their past, family, where they came from..." className="rounded-xl min-h-[90px] text-sm resize-none" />
+        <ValidatedTextField
+          fieldName="background_story"
+          value={data.background}
+          onChange={(val) => update("background", val)}
+          label="Backstory (optional)"
+          placeholder="Anything about their past, family, where they came from..."
+          helpText="Write freely — this shapes who they are. The AI will blend it in."
+          minHeight="90px"
+          generateButton={
+            <button onClick={generateBackstory} disabled={isGeneratingBackstory} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+              <Sparkles className="w-3 h-3" />{isGeneratingBackstory ? "Generating..." : "Auto-generate"}
+            </button>
+          }
+        />
       </div>
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-xs text-muted-foreground uppercase tracking-wider">Personality notes (optional)</label>
-          <button onClick={generatePersonality} disabled={isGeneratingPersonality} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
-            <Sparkles className="w-3 h-3" />{isGeneratingPersonality ? "Generating..." : "Auto-generate"}
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground mb-2">Override or add to the generated personality. Write it raw — exactly how you'd describe them.</p>
-        <Textarea value={data.personality_override} onChange={e => update("personality_override", e.target.value)} placeholder="e.g. She holds grudges but never admits it. Laughs loudly then goes quiet when something actually matters to her..." className="rounded-xl min-h-[90px] text-sm resize-none" />
+        <ValidatedTextField
+          fieldName="personality_override"
+          value={data.personality_override}
+          onChange={(val) => update("personality_override", val)}
+          label="Personality notes (optional)"
+          placeholder="e.g. She holds grudges but never admits it. Laughs loudly then goes quiet when something actually matters to her..."
+          helpText="Override or add to the generated personality. Write it raw — exactly how you'd describe them."
+          minHeight="90px"
+          generateButton={
+            <button onClick={generatePersonality} disabled={isGeneratingPersonality} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+              <Sparkles className="w-3 h-3" />{isGeneratingPersonality ? "Generating..." : "Auto-generate"}
+            </button>
+          }
+        />
       </div>
       <div>
-        <div className="flex items-center justify-between mb-1">
-          <label className="text-xs text-muted-foreground uppercase tracking-wider">Current situation (optional)</label>
-          <button onClick={generateSituation} disabled={isGeneratingSituation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
-            <Sparkles className="w-3 h-3" />{isGeneratingSituation ? "Generating..." : "Auto-generate"}
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground mb-2">What's going on in their life right now — job situation, housing, something they're dealing with.</p>
-        <Textarea value={data.situation_override} onChange={e => update("situation_override", e.target.value)} placeholder="e.g. Just got out of a 3-year relationship. Moved back to her hometown. Working two jobs to save up..." className="rounded-xl min-h-[80px] text-sm resize-none" />
+        <ValidatedTextField
+          fieldName="situation_override"
+          value={data.situation_override}
+          onChange={(val) => update("situation_override", val)}
+          label="Current situation (optional)"
+          placeholder="e.g. Just got out of a 3-year relationship. Moved back to her hometown. Working two jobs to save up..."
+          helpText="What's going on in their life right now — job situation, housing, something they're dealing with."
+          minHeight="80px"
+          generateButton={
+            <button onClick={generateSituation} disabled={isGeneratingSituation} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors disabled:opacity-50">
+              <Sparkles className="w-3 h-3" />{isGeneratingSituation ? "Generating..." : "Auto-generate"}
+            </button>
+          }
+        />
       </div>
     </div>,
 
