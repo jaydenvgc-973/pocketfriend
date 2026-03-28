@@ -70,7 +70,8 @@ export default function Chat() {
           } catch (err) {
             if (!err.message?.includes("Rate limit")) throw err;
             lastErr = err;
-            const delayMs = Math.pow(2, i) * 1000 + Math.random() * 500;
+            // Exponential backoff: 5s, 10s for rate limits
+            const delayMs = Math.pow(2, i + 2) * 1000 + Math.random() * 1000;
             await new Promise(r => setTimeout(r, delayMs));
           }
         }
