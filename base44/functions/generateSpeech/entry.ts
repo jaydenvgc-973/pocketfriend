@@ -68,11 +68,9 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing text or API key' }, { status: 400 });
     }
     
-    // Prepare prompt enhancement if style note provided
-    let finalText = text;
-    if (voiceStyleNote) {
-      finalText = `${text} (Voice style: ${voiceStyleNote})`;
-    }
+    // Only speak the actual text — do not include voice style note in the spoken words
+    // The voice style note is only metadata for OpenAI TTS quality, not part of the speech
+    const finalText = text;
     
     // Split text into chunks
     const chunks = chunkText(finalText);
