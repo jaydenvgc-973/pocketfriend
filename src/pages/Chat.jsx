@@ -226,20 +226,11 @@ export default function Chat() {
         if (convos.length > 0) {
           convoId = convos[0].id;
           
-          // Check if character is protected to load more messages initially
-          const settings = await base44.entities.UserSettings.filter(
-            { created_by: currentUser.email },
-            "-created_date",
-            1
-          ).then(arr => arr?.[0]) || {};
-          const isProtected = character && (settings.protected_character_ids || []).includes(characterId);
-          const initialLoadCount = isProtected ? 50 : 20;
-          
-          // Load the most recent non-archived messages
+          // Load the 20 most recent non-archived messages
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId, archived_date: { $exists: false } },
             "-created_date",
-            initialLoadCount
+            20
           );
           
           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);

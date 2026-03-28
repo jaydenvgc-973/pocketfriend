@@ -58,21 +58,15 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Messages beyond keepCount are candidates for archival
-    let messagesToArchive = allMessages.slice(keepCount);
+    // Only archive messages that are at least 24 hours old AND beyond keepCount
+    // This prevents new messages from being immediately archived
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     
-    // If character is protected, preserve its recent messages by archiving others first
-    if (protectedStatus && characterId) {
-      // Separate protected character messages from others
-      const protectedMsgs = messagesToArchive.filter(m => m.character_id === characterId);
-      const otherMsgs = messagesToArchive.filter(m => m.character_id !== characterId);
-      
-      // Archive other characters' messages first, then older protected character messages
-      messagesToArchive = [...otherMsgs, ...protectedMsgs];
-    }
-    
-    // Filter to only messages not yet archived
-    const notYetArchived = messagesToArchive.filter(m => !m.archived_date);
+    let messagesToArchive = allMessages.filter(m => 
+      !m.archived_date && 
+      m.created_date < oneDayAgo && 
+      allMessages.indexOf(m) >= keepCount
+    );
 
     if (notYetArchived.length === 0) {
       return Response.json({ 
