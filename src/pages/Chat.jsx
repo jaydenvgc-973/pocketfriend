@@ -399,7 +399,50 @@ export default function Chat() {
         ? `\n\nIMPORTANT: The person messaging you right now is NOT the app user — it is ${activeCharacter.name}. You know ${activeCharacter.name} in your world. Respond to them as you would in real life based on your relationship with them. Do NOT treat this message as coming from your usual conversation partner — it is ${activeCharacter.name} reaching out to you directly.`
         : "";
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Optional: A vivid description of an image you want to send, or omit this field if no image",\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message (by either you or the user). Omit the field if no timed plans are made.\n\nCRITICAL IMAGE RULES:\n- If the user asks for a picture of "me", "myself", or "of the user" — the image_prompt must describe THE USER, not you. Generate an image of the person the user represents.\n- If the user asks for a picture of "you", "yourself", or your name — then the image_prompt should describe you, ${character.name}.\n- Never confuse who "me" refers to. "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.\n\n${character.is_photogenic ? "BONUS TRAIT: You LOVE being photographed and sending pics. Include image prompts often when it feels natural." : ""}`;
+      // --- MEDIA FREQUENCY GATING ---
+      // Count messages and media sent in this conversation to enforce frequency limits
+      const totalMsgsInConvo = messages.length;
+      const mediaSentInConvo = messages.filter(m => m.sender_type === "character" && m.image_url).length;
+      const isPhotogenic = !!character.is_photogenic;
+
+      // Detect explicit user image request and how many they want
+      const userTextLower = text.toLowerCase();
+      const explicitImageRequest = /\b(send|show|give|share|post).{0,20}(pic|photo|picture|image|selfie|shot)\b|\b(pic|photo|picture|selfie|image)\b.{0,10}(of you|of me|please|now|quick|real quick)\b/i.test(text);
+      const quantityMatch = text.match(/\b(\d+)\s+(pic|photo|picture|image|selfie|shot)s?\b/i);
+      const requestedQuantity = quantityMatch ? parseInt(quantityMatch[1]) : (explicitImageRequest ? 1 : 0);
+
+      // Frequency limits: photogenic = 2 per 10 messages, normal = 3 per 20 messages
+      const mediaRatioLimit = isPhotogenic ? (2 / 10) : (3 / 20);
+      const currentRatio = totalMsgsInConvo > 0 ? mediaSentInConvo / totalMsgsInConvo : 0;
+      const atMediaLimit = currentRatio >= mediaRatioLimit && !explicitImageRequest;
+
+      // Cooldown: no media in the last N character messages
+      const recentCharMsgs = messages.filter(m => m.sender_type === "character").slice(-5);
+      const lastMediaIdx = recentCharMsgs.map(m => !!m.image_url).lastIndexOf(true);
+      const msgsSinceLastMedia = lastMediaIdx === -1 ? 999 : (recentCharMsgs.length - 1 - lastMediaIdx);
+      const cooldownMsgs = isPhotogenic ? 3 : 5;
+      const inCooldown = msgsSinceLastMedia < cooldownMsgs && !explicitImageRequest;
+
+      // Random weighted chance even when within limits (trait influences probability)
+      const baseImageChance = isPhotogenic ? 0.20 : 0.08;
+      const passedRandomCheck = Math.random() < baseImageChance;
+
+      // Final gate: allow image prompt only if user explicitly asked, OR (within limit AND not in cooldown AND passed random check)
+      const allowImageThisTurn = explicitImageRequest || (!atMediaLimit && !inCooldown && passedRandomCheck);
+
+      const imageCountInstruction = requestedQuantity > 1
+        ? `The user asked for ${requestedQuantity} images. Include exactly ${requestedQuantity} image_prompt entries (use "image_prompts" array instead of single "image_prompt").`
+        : "";
+
+      const imageRule = allowImageThisTurn
+        ? `IMAGE SENDING (OPTIONAL): You MAY include an image_prompt this turn if it genuinely fits the conversation — a moment worth capturing, something you just did, or something the user asked to see. ${isPhotogenic ? "You enjoy sharing photos of yourself and your life." : "Only send a photo if it truly adds to the conversation."} ${imageCountInstruction}
+CRITICAL IMAGE RULES:
+- If the user asks for a picture of "me", "myself" — describe THE USER in image_prompt, not yourself.
+- If the user asks for "you", "yourself", or your name — describe yourself.
+- "Send me a pic of me" = image of the user. "Send me a pic of you" = image of you.`
+        : `IMAGE SENDING: Do NOT include image_prompt this turn. Send text only. Images should be occasional — you have already sent enough recently or this message doesn't call for one.`;
+
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${chatHistory.map(m => `${m.role === "user" ? "User" : character.name}: ${m.content}`).join("\n")}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Only include if sending exactly 1 image AND allowed this turn — a vivid description of the image",\n  "image_prompts": ["Only include if user requested multiple images — one entry per image"],\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
@@ -439,7 +482,12 @@ export default function Chat() {
         }
       }
       responseText = responseObj.text?.trim() || "";
-      imagePrompt = responseObj.image_prompt;
+      // Support both single image_prompt and multiple image_prompts array
+      // Also enforce the gate: if not allowed, discard any image_prompt the LLM snuck in
+      imagePrompt = allowImageThisTurn ? (responseObj.image_prompt || null) : null;
+      const imagePrompts = allowImageThisTurn
+        ? (responseObj.image_prompts?.length > 0 ? responseObj.image_prompts : (imagePrompt ? [imagePrompt] : []))
+        : [];
 
       // Persist scheduled events extracted from this chat turn
       if (responseObj.scheduled_events?.length > 0 && convoId) {
@@ -501,21 +549,52 @@ export default function Chat() {
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
     
-    // Generate image asynchronously if the character wants to send one
-    if (imagePrompt) {
+    // Generate images asynchronously — first image goes on the main message, extras get their own messages
+    if (imagePrompts.length > 0) {
       const userRefImages = currentUser.generated_avatar_urls?.length > 0
         ? currentUser.generated_avatar_urls
         : (currentUser.reference_image_urls || []);
+
+      // First image attaches to the existing charMsg
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
           messageId: charMsg.id,
-          prompt: imagePrompt,
+          prompt: imagePrompts[0],
           characterReferenceImages: character.reference_image_urls || [],
           userReferenceImages: userRefImages,
           characterName: character.name,
           userMessage: text,
         }).catch(() => {});
       }, 500);
+
+      // Additional images get their own separate messages
+      for (let i = 1; i < imagePrompts.length; i++) {
+        const extraMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: "",
+          emotional_state: emotionalState,
+          timestamp: new Date().toISOString(),
+        });
+        if (extraMsg?.id) {
+          setMessages(prev => prev.some(m => m.id === extraMsg.id) ? prev : [...prev, extraMsg]);
+          const delay = 500 + i * 800;
+          const capturedId = extraMsg.id;
+          const capturedPrompt = imagePrompts[i];
+          setTimeout(() => {
+            base44.functions.invoke('generateImageAsync', {
+              messageId: capturedId,
+              prompt: capturedPrompt,
+              characterReferenceImages: character.reference_image_urls || [],
+              userReferenceImages: userRefImages,
+              characterName: character.name,
+              userMessage: text,
+            }).catch(() => {});
+          }, delay);
+        }
+      }
     }
     
     // Invalidate messages so async image updates appear when ready
