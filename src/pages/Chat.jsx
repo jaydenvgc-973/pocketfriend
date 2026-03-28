@@ -130,6 +130,11 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character || !currentUser.email) return;
     
+    // Reset state immediately when switching characters to prevent cross-contamination
+    setMessages([]);
+    setConversationId(null);
+    setIsTyping(false);
+    
     const loadConvo = async () => {
       try {
         // Fetch conversations for this character
@@ -215,12 +220,13 @@ export default function Chat() {
   }, [characterId, character, chatType, currentUser.email]);
 
   useEffect(() => {
-    if (!conversationId) return;
+    if (!conversationId || !characterId) return;
 
+    // Unsubscribe from previous subscription
     if (unsubscribeRef.current) unsubscribeRef.current();
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Only process events for this conversation
+      // Only process events for this conversation and character combo
       if (event.data?.conversation_id !== conversationId) return;
 
       if (event.type === "create") {
