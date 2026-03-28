@@ -111,8 +111,12 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
 
       let responseText = '';
       try {
-        const response = await base44.integrations.Core.InvokeLLM({ prompt: fullPrompt });
-        responseText = response.replace(/^[\w\s]+:\s*/i, '').trim();
+        const response = await base44.integrations.Core.InvokeLLM({ 
+          prompt: fullPrompt,
+          add_context_from_internet: false 
+        });
+        responseText = (response || '').replace(/^[\w\s]+:\s*/i, '').trim();
+        if (!responseText) continue;
       } catch (err) {
         continue;
       }
