@@ -201,6 +201,16 @@ export default function Chat() {
     }
   };
 
+  const handleDeleteImage = async (messageId) => {
+    // Update message to remove image_url but keep content
+    setMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, image_url: null } : msg));
+    try {
+      await base44.entities.Message.update(messageId, { image_url: null });
+    } catch {
+      // Update failed, UI will stay in sync with subscription
+    }
+  };
+
   const handleReact = async (messageId, emoji) => {
     const msg = messages.find(m => m.id === messageId);
     if (!msg) return;
@@ -888,7 +898,7 @@ Reply with ONLY the single emoji or the word "none".`,
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
         <AnimatePresence>
-          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} onDelete={handleDeleteMessage} />)}
+          {messages.map(msg => <MessageBubble key={msg.id} message={msg} onReact={handleReact} onDelete={handleDeleteMessage} onDeleteImage={handleDeleteImage} />)}
         </AnimatePresence>
         <AnimatePresence>
           {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}

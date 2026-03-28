@@ -11,7 +11,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   // Use the persisted played_as name if this user message was sent while playing as a character
@@ -20,6 +20,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const time = message.timestamp ? format(new Date(message.timestamp), "h:mm a") : "";
   const hasReactions = message.reactions?.length > 0;
   const [showDelete, setShowDelete] = useState(false);
+  const [showImageDelete, setShowImageDelete] = useState(false);
 
   return (
     <motion.div
@@ -59,11 +60,28 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)}>
           <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {message.image_url && (
-              <img
-                src={message.image_url}
-                alt="shared photo"
-                className="w-full max-w-xs rounded-t-2xl object-cover"
-              />
+              <div className="relative group/image">
+                <img
+                  src={message.image_url}
+                  alt="shared photo"
+                  className="w-full max-w-xs rounded-t-2xl object-cover"
+                  onMouseEnter={() => setShowImageDelete(true)}
+                  onMouseLeave={() => setShowImageDelete(false)}
+                />
+                {showImageDelete && onDeleteImage && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDeleteImage(message.id);
+                      setShowImageDelete(false);
+                    }}
+                    className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-t-2xl transition-colors hover:bg-black/70"
+                    title="Delete image"
+                  >
+                    <X className="w-6 h-6 text-white" />
+                  </button>
+                )}
+              </div>
             )}
             {message.content && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
