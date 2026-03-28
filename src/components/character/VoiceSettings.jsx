@@ -121,9 +121,14 @@ const generateSpeakingStyle = (character) => {
     parts.push(character.sexual_orientation.toLowerCase());
   }
   
-  // Combine unique parts (remove duplicates), limit to 5 descriptors
-  const unique = Array.from(new Set(parts.filter(p => p && p.trim())));
-  return unique.slice(0, 5).join(', ');
+  // Combine all words and deduplicate at word level
+  const allWords = parts
+    .filter(p => p && p.trim())
+    .flatMap(p => p.split(',').map(w => w.trim().toLowerCase()))
+    .filter(w => w);
+  
+  const uniqueWords = Array.from(new Set(allWords));
+  return uniqueWords.slice(0, 5).join(', ');
 };
 
 export default function VoiceSettings({ data, onUpdate, hasApiKey, character }) {
