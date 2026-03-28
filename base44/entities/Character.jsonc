@@ -76,6 +76,20 @@
       "format": "date-time",
       "description": "When the weather_summary was last refreshed."
     },
+    "voice_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether this character can speak with voice"
+    },
+    "voice_name": {
+      "type": "string",
+      "default": "alloy",
+      "description": "OpenAI voice name: alloy, echo, fable, onyx, nova, shimmer"
+    },
+    "voice_style_note": {
+      "type": "string",
+      "description": "Optional style notes for voice generation (e.g., 'enthusiastic', 'calm', 'casual')"
+    },
     "status": {
       "type": "string",
       "enum": [

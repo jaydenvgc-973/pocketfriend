@@ -1,129 +1,52 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-const OPENAI_TTS_API = 'https://api.openai.com/v1/audio/speech';
-const TTS_MODEL = 'tts-1';
-const MAX_CHARS = 4096;
-const CHUNK_SIZE = 2000;
-
-// Split text into chunks respecting sentence boundaries
-function chunkText(text, maxChars = CHUNK_SIZE) {
-  if (text.length <= maxChars) return [text];
-  
-  const chunks = [];
-  let currentChunk = '';
-  const sentences = text.match(/[^.!?]+[.!?]+/g) || [text];
-  
-  for (const sentence of sentences) {
-    if ((currentChunk + sentence).length > maxChars) {
-      if (currentChunk) chunks.push(currentChunk.trim());
-      currentChunk = sentence;
-    } else {
-      currentChunk += sentence;
-    }
-  }
-  if (currentChunk) chunks.push(currentChunk.trim());
-  return chunks;
-}
-
-// Generate speech for a text chunk
-async function generateChunk(text, voice, apiKey) {
-  if (!text.trim()) return null;
-  
-  const body = JSON.stringify({
-    model: TTS_MODEL,
-    input: text.substring(0, MAX_CHARS),
-    voice: voice || 'alloy',
-    response_format: 'mp3'
-  });
-  
-  const res = await fetch(OPENAI_TTS_API, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body,
-  });
-  
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`OpenAI API error: ${res.status} - ${errText}`);
-  }
-  
-  return res.arrayBuffer();
-}
-
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    
+
     if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    
+
     const { text, voice, voiceStyleNote, apiKey } = await req.json();
-    
-    if (!text || !apiKey) {
-      return Response.json({ error: 'Missing text or API key' }, { status: 400 });
+
+    if (!text || !voice || !apiKey) {
+      return Response.json({ error: 'Missing required parameters' }, { status: 400 });
     }
-    
-    // Clean text: remove image prompts, metadata, system instructions, tags
-    // Only speak the actual user-facing dialogue
-    let finalText = text
-      .replace(/\[USER\]/gi, '')
-      .replace(/\[CHARACTER\]/gi, '')
-      .replace(/\[JOINT\]/gi, '')
-      .replace(/\[AUDIO\]/gi, '')
-      .replace(/image_prompt[^]*/gi, '')
-      .replace(/image_prompts[^]*/gi, '')
-      .replace(/```[\s\S]*?```/g, '')
-      .trim();
-    
-    // If text is empty after cleaning, don't generate
-    if (!finalText) {
-      return Response.json({ error: 'No dialogue text to speak after filtering' }, { status: 400 });
+
+    // Call OpenAI TTS API
+    const response = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'tts-1',
+        input: text.substring(0, 4096),
+        voice: voice,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      return Response.json({ error: `OpenAI API error: ${error}` }, { status: response.status });
     }
-    
-    // Split text into chunks (max 4096 chars per OpenAI TTS)
-    const chunks = chunkText(finalText);
-    if (chunks.length === 0) {
-      return Response.json({ error: 'No text to generate' }, { status: 400 });
-    }
-    
-    // Generate audio (concatenate if multiple chunks, but TTS can handle up to 4096)
-    // For now, use first chunk since most messages are under the limit
-    let audioData;
-    try {
-      audioData = await generateChunk(chunks[0], voice, apiKey);
-    } catch (genErr) {
-      return Response.json({ error: genErr.message }, { status: 500 });
-    }
-    
-    if (!audioData) {
-      return Response.json({ error: 'Failed to generate audio' }, { status: 500 });
-    }
-    
-    // Convert to base64 for transmission
-    const audioArray = new Uint8Array(audioData);
-    let binaryString = '';
-    for (let i = 0; i < audioArray.length; i += 8192) {
-      binaryString += String.fromCharCode(...audioArray.slice(i, i + 8192));
-    }
-    const audioBase64 = btoa(binaryString);
-    const audioDataUrl = `data:audio/mpeg;base64,${audioBase64}`;
-    
-    // Calculate approximate duration (rough: ~150 words per minute)
-    const wordCount = chunks[0].split(/\s+/).length;
-    const estimatedMinutes = wordCount / 150;
-    
+
+    const audioBuffer = await response.arrayBuffer();
+    const base64Audio = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+    const audioUrl = `data:audio/mpeg;base64,${base64Audio}`;
+
+    // Estimate minutes used (rough calculation: ~5 minutes per 1M characters)
+    const estimatedMinutes = (text.length / 1000000) * 5;
+
     return Response.json({
       success: true,
-      audioUrl: audioDataUrl,
-      estimatedMinutes: Math.max(0.1, Math.round(estimatedMinutes * 10) / 10),
+      audioUrl: audioUrl,
+      estimatedMinutes: estimatedMinutes,
     });
   } catch (error) {
-    console.error('Speech generation error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

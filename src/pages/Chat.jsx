@@ -771,11 +771,10 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
     // Add directly to state — subscription deduplication will prevent doubles
     setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
-    // Auto-play character voice if all conditions are met (after short delay for UX)
-    // Conditions: global voice enabled + character voice enabled + API key + not phone chat
-    if (settings.length > 0 && settings[0]?.voice_enabled && character?.voice_enabled && character?.voice_name && settings[0]?.openai_api_key && chatType !== "phone") {
+    // Auto-play character voice if voice enabled (after short delay for UX)
+    if (userSettings.voice_enabled && character?.voice_enabled && character?.voice_name && userSettings.openai_api_key && chatType !== "phone") {
       setTimeout(() => {
-        playCharacterVoice(charMsg.id, responseText, character, settings[0]);
+        playCharacterVoice(charMsg.id, responseText, character, userSettings);
       }, 500);
     }
 
