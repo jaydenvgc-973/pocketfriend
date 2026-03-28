@@ -39,16 +39,9 @@ function getAttractionSpeedMultiplier(characterOrientation, characterGender, oth
     return 1.0;
   }
 
-  if (orientation === 'gay') {
+  if (orientation === 'gay' || orientation === 'gay (dl)') {
     if (isOppositeGender) return 0.1;
     if (isNonBinary) return 0.5;
-    return 1.0;
-  }
-
-  // Gay (DL): primarily attracted to same gender but hides it — full same-gender attraction, very slow opposite
-  if (orientation === 'gay (dl)') {
-    if (isOppositeGender) return 0.05; // extremely slow — maintains straight-presenting facade
-    if (isNonBinary) return 0.4;
     return 1.0;
   }
 
@@ -57,9 +50,9 @@ function getAttractionSpeedMultiplier(characterOrientation, characterGender, oth
     return 1.0;
   }
 
-  // Bisexual (DL): attracted to both but keeps same-sex side hidden — moderate dampener on same gender visibility
   if (orientation === 'bisexual (dl)') {
-    return 0.8; // slight dampener — still attracted but guarded
+    // DL bisexual: full attraction to compatible genders, but secretive — same mechanics as bisexual
+    return 1.0;
   }
 
   // bisexual, pansexual, queer, asexual, prefer not to say — full speed
@@ -80,26 +73,18 @@ function checkOrientationShift(currentOrientation, currentAttractionLevel, chara
   if (orientation === 'straight') {
     if (isNonBinary) return 'pansexual';
     if (isSameGender) {
-      // Could shift to bisexual or go DL depending on threshold
-      return currentAttractionLevel >= 60 ? 'gay (dl)' : (Math.random() > 0.5 ? 'bisexual' : 'bisexual (dl)');
+      // For male characters, DL is a realistic shift when cultural/social pressure is implied
+      const isDLCandidate = charGender === 'male' && currentAttractionLevel >= 50;
+      if (isDLCandidate && Math.random() > 0.6) return 'gay (dl)';
+      return Math.random() > 0.5 ? 'bisexual' : 'prefer not to say';
     }
   }
 
-  if (orientation === 'gay' || orientation === 'lesbian') {
+  if (orientation === 'gay' || orientation === 'gay (dl)' || orientation === 'lesbian') {
     const isOppositeGender =
       (charGender === 'male' && tgtGender === 'female') ||
       (charGender === 'female' && tgtGender === 'male');
     if (isOppositeGender) return 'bisexual';
-  }
-
-  // Gay (DL) with strong same-gender attraction that's been developing — may come out as gay
-  if (orientation === 'gay (dl)' && currentAttractionLevel >= 75 && isSameGender) {
-    return 'gay'; // gradually stops hiding
-  }
-
-  // Bisexual (DL) with very high romantic/attraction — may open up
-  if (orientation === 'bisexual (dl)' && currentAttractionLevel >= 80) {
-    return 'bisexual';
   }
 
   return null;
@@ -311,12 +296,8 @@ Respond with ONLY a valid JSON object in this exact format:
     const orientation = (character.sexual_orientation || '').toLowerCase();
     let attractionMultiplier = 1.0;
     if (orientation === 'straight' || orientation === 'gay' || orientation === 'lesbian') {
+      // Unknown user gender — apply a mild dampener for exclusive orientations since we can't confirm compatibility
       attractionMultiplier = 0.7;
-    } else if (orientation === 'gay (dl)') {
-      // Very guarded about attraction — extra dampened with unknown user
-      attractionMultiplier = 0.5;
-    } else if (orientation === 'bisexual (dl)') {
-      attractionMultiplier = 0.65;
     }
 
     // Calculate raw attraction delta and apply multiplier
@@ -340,8 +321,19 @@ Respond with ONLY a valid JSON object in this exact format:
       chosen_family_level: clampedChosenFamily,
     };
 
-    // Check for orientation shift (user gender unknown — skip orientation shift for user-character)
-    // Orientation shifts only apply in inter-character interactions where genders are known
+    // Check for orientation shift — only for inter-character interactions where genders are known
+    let orientationShift = null;
+    if (playingAsCharacter && adjustedAttraction >= 55) {
+      const potentialShift = checkOrientationShift(
+        character.sexual_orientation,
+        updated.attraction_level,
+        character.gender,
+        playingAsCharacter.gender
+      );
+      if (potentialShift && potentialShift !== (character.sexual_orientation || '').toLowerCase()) {
+        orientationShift = potentialShift;
+      }
+    }
 
     // Check for milestones crossed
     const milestonesTriggered = [];
@@ -368,6 +360,20 @@ Respond with ONLY a valid JSON object in this exact format:
     // Persist milestones as narrative messages in the conversation (returned to caller to inject)
     const newTriggeredKeys = [...triggeredMilestoneKeys, ...milestonesTriggered.map(m => m.key)];
 
+    // Apply orientation shift if triggered
+    if (orientationShift) {
+      const shiftMemoryText = `${character.name} began to realize their feelings for ${playingAsCharacter.name} were shifting something they had always taken for granted about themselves. The attraction was undeniable — and it quietly changed how they understood who they are.`;
+      base44.asServiceRole.entities.Memory.create({
+        character_id: characterId,
+        title: `Orientation shift — feelings for ${playingAsCharacter.name}`,
+        description: shiftMemoryText,
+        emotional_impact: 'significant internal shift',
+        timestamp: new Date().toISOString(),
+        source_context: 'relationship development',
+      }).catch(() => {});
+      // Will be merged into characterUpdatePayload below
+    }
+
     let characterUpdatePayload;
     if (playingAsCharacter && charRelEntry) {
       // Update the fictional_relationships entry for the playing-as character on this character
@@ -379,6 +385,7 @@ Respond with ONLY a valid JSON object in this exact format:
       characterUpdatePayload = {
         fictional_relationships: updatedFictionalRels,
         triggered_milestones: newTriggeredKeys,
+        ...(orientationShift ? { sexual_orientation: orientationShift } : {}),
       };
 
       // Also update the reverse relationship entry on the playing-as character

@@ -41,8 +41,7 @@ const ENERGY_SCALE = [
 
 const SEXUAL_ORIENTATIONS = ["Straight", "Gay", "Gay (DL)", "Bisexual", "Bisexual (DL)", "Pansexual", "Queer", "Asexual", "Prefer not to say"];
 
-const DL_ORIENTATIONS = ["Gay (DL)", "Bisexual (DL)"];
-const DL_DEFINITION = `"Down Low" (DL) — presents publicly as heterosexual but privately engages in same-sex relationships. Emphasizes secrecy and discretion. Character may compartmentalize their public and private life, avoid labels, and show internal conflict around their identity.`;
+const DL_INFO = `"Down Low" (DL) refers to someone who presents publicly as heterosexual but privately engages in same-sex relationships. It emphasizes secrecy and discretion — not just attraction. DL characters may compartmentalize their life, avoid labels, show internal conflict, and resist public visibility of same-sex connections. Rooted in AAVE; common in communities where cultural, family, or religious pressure shapes identity expression.`;
 
 const JOB_TYPES = [
   "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
@@ -700,13 +699,16 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         </div>
       </div>
       <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Sexual Orientation (optional)</label>
+        <div className="flex items-center gap-2 mb-2">
+          <label className="text-xs text-muted-foreground uppercase tracking-wider">Sexual Orientation (optional)</label>
+        </div>
         <div className="grid grid-cols-2 gap-2">
           {SEXUAL_ORIENTATIONS.map(o => <button key={o} onClick={() => update("sexual_orientation", o)} className={chipClass(data.sexual_orientation === o)}>{o}</button>)}
         </div>
-        {DL_ORIENTATIONS.includes(data.sexual_orientation) && (
+        {(data.sexual_orientation === "Gay (DL)" || data.sexual_orientation === "Bisexual (DL)") && (
           <div className="mt-3 p-3 rounded-xl bg-secondary/60 border border-border">
-            <p className="text-xs text-muted-foreground leading-relaxed">{DL_DEFINITION}</p>
+            <p className="text-xs font-semibold text-foreground mb-1">About "DL" (Down Low)</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">{DL_INFO}</p>
           </div>
         )}
       </div>

@@ -203,7 +203,11 @@ WHO YOU ARE:
 ${character.personality_summary}
 ${character.archetype ? `\nARCHETYPE: ${character.archetype}` : ""}
 ${character.social_energy ? `SOCIAL ENERGY: ${socialEnergyLabels[character.social_energy] || character.social_energy}` : ""}
-${character.sexual_orientation ? `SEXUAL ORIENTATION: ${character.sexual_orientation}` : ""}
+${character.sexual_orientation ? `SEXUAL ORIENTATION: ${character.sexual_orientation}${
+  character.sexual_orientation?.toLowerCase().includes('dl') || character.sexual_orientation?.toLowerCase().includes('down low')
+    ? `\nDL IDENTITY RULES: You are "on the down low." This means you present publicly as straight and keep your same-sex attraction and relationships completely private. You do NOT label yourself openly. You compartmentalize — your public life and private life are separate. You may show internal conflict or defensiveness if pushed on your identity. You resist public visibility of same-sex connections. You are NOT ashamed, but you are private. Do not volunteer this information. If pressed, deflect or shut it down. This shapes how you talk about relationships, dating, and attraction — always with caution and discretion.`
+    : ""
+}` : ""}
 
 YOUR TRAITS:
 ${(character.personality_traits || []).join(', ')}
