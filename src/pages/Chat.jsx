@@ -82,11 +82,11 @@ export default function Chat() {
       const convos = await retryWithBackoff(() =>
         base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId], created_by: currentUser.email }, "-updated_date", 1)
       );
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 1200));
       const pending = await retryWithBackoff(() =>
         base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false })
       );
-      await new Promise(r => setTimeout(r, 800));
+      await new Promise(r => setTimeout(r, 1200));
       let convoId = null;
 
       if (convos.length > 0) {
