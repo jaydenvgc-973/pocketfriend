@@ -61,16 +61,38 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character) return;
     const loadConvo = async () => {
+      // Helper: retry with exponential backoff for rate limit errors
+      const retryWithBackoff = async (fn, maxRetries = 3) => {
+        let lastErr;
+        for (let i = 0; i < maxRetries; i++) {
+          try {
+            return await fn();
+          } catch (err) {
+            if (!err.message?.includes("Rate limit")) throw err;
+            lastErr = err;
+            const delayMs = Math.pow(2, i) * 1000 + Math.random() * 500;
+            await new Promise(r => setTimeout(r, delayMs));
+          }
+        }
+        throw lastErr;
+      };
+
       // Fetch conversations first, then pending messages sequentially to avoid rate limits
-      const convos = await base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1);
-      await new Promise(r => setTimeout(r, 200));
-      const pending = await base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false });
+      const convos = await retryWithBackoff(() =>
+        base44.entities.Conversation.filter({ type: chatType, character_ids: [characterId] }, "-updated_date", 1)
+      );
+      await new Promise(r => setTimeout(r, 300));
+      const pending = await retryWithBackoff(() =>
+        base44.entities.PendingMessage.filter({ character_id: characterId, delivered: false })
+      );
       let convoId = null;
 
       if (convos.length > 0) {
         convoId = convos[0].id;
         
-        const loadedMsgs = await base44.entities.Message.filter({ conversation_id: convoId }, "created_date");
+        const loadedMsgs = await retryWithBackoff(() =>
+          base44.entities.Message.filter({ conversation_id: convoId }, "created_date")
+        );
         setMessages(loadedMsgs);
         setConversationId(convoId);
 
