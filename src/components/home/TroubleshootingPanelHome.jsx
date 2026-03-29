@@ -1,16 +1,16 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, CheckCircle2, Loader2 } from 'lucide-react';
+import { X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
-  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing card information' },
-  { id: 'emotional_state', label: 'Mood not showing on cards', description: 'Repair emotional state display' },
-  { id: 'location_display', label: 'Location missing from cards', description: 'Verify location data' },
-  { id: 'availability_display', label: 'Availability display incorrect', description: 'Fix availability and status' },
-  { id: 'notification_dots', label: 'Notification indicators stuck', description: 'Correct unread count' },
-  { id: 'protected_character', label: 'Protected character issues', description: 'Verify protected status' },
+  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
+  { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
+  { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },
+  { id: 'availability_display', label: 'Availability incorrect', description: 'Verify work schedule display' },
+  { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
+  { id: 'protected_character', label: 'Protected character status', description: 'Verify protection is active' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
@@ -64,13 +64,13 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: 80, opacity: 0 }}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md bg-card border border-border rounded-t-2xl max-h-[80vh] overflow-y-auto"
+            className="w-full max-w-2xl bg-card border border-border rounded-t-2xl max-h-[80vh] overflow-y-auto"
           >
             {/* Header */}
             <div className="sticky top-0 bg-card/80 backdrop-blur-sm border-b border-border p-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">Home Page Troubleshooting</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Diagnose and fix display issues</p>
+                <p className="text-xs text-muted-foreground mt-1">Diagnose character card and display issues</p>
               </div>
               <button
                 onClick={onClose}
@@ -81,9 +81,9 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
             </div>
 
             {/* Content */}
-            <div className="p-4">
+            <div className="p-4 space-y-4">
               {!results && !isRunning && (
-                <div className="space-y-4">
+                <>
                   <p className="text-sm text-muted-foreground">
                     Select the issues you'd like to check and fix:
                   </p>
@@ -131,11 +131,11 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                       Close
                     </button>
                   </div>
-                </div>
+                </>
               )}
 
               {isRunning && (
-                <div className="flex flex-col items-center justify-center py-8 space-y-4">
+                <div className="flex flex-col items-center justify-center py-8 gap-3">
                   <Loader2 className="w-6 h-6 text-primary animate-spin" />
                   <p className="text-sm text-muted-foreground">Checking Home page systems...</p>
                 </div>
@@ -143,70 +143,56 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
 
               {results && !isRunning && (
                 <div className="space-y-4">
-                  <div className="bg-secondary/50 rounded-lg p-4 space-y-3">
-                    <div>
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Checked</p>
-                      <ul className="space-y-1 text-sm text-foreground">
-                        {results.checked.map((check, i) => (
-                          <li key={i}>✓ {check}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    {results.fixed.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider mb-2">Fixed</p>
-                        <ul className="space-y-1 text-sm text-foreground">
-                          {results.fixed.map((fix, i) => (
-                            <li key={i}>✓ {fix}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    {results.issues_found.length > 0 && (
-                      <div>
-                        <p className="text-xs font-semibold text-yellow-500 uppercase tracking-wider mb-2">Issues Found</p>
-                        <ul className="space-y-1 text-sm text-foreground">
-                          {results.issues_found.map((issue, i) => (
-                            <li key={i}>⚠ {issue}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-
-                    <div className="border-t border-border pt-3 mt-3">
-                      <p className="text-xs font-medium text-foreground">{results.summary}</p>
-                    </div>
+                  {/* Summary */}
+                  <div className="bg-primary/10 border border-primary/30 rounded-lg p-3">
+                    <p className="text-sm font-medium text-foreground">{results.summary}</p>
                   </div>
+
+                  {/* Fixed */}
+                  {results.fixed.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Fixed</p>
+                      <div className="space-y-1">
+                        {results.fixed.map((item, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs text-foreground">
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Issues Found */}
+                  {results.issues_found.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Issues Found</p>
+                      <div className="space-y-1">
+                        {results.issues_found.map((item, i) => (
+                          <div key={i} className="flex items-start gap-2 text-xs text-foreground">
+                            <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                            <span>{item}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   <button
                     onClick={() => {
                       setResults(null);
                       setSelectedIssues([]);
                     }}
-                    className="w-full px-4 py-3 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors"
+                    className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm"
                   >
                     Run Again
-                  </button>
-                  <button
-                    onClick={onClose}
-                    className="w-full px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
-                  >
-                    Close
                   </button>
                 </div>
               )}
 
               {error && (
-                <div className="bg-destructive/10 border border-destructive rounded-lg p-4">
+                <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
                   <p className="text-sm text-destructive">{error}</p>
-                  <button
-                    onClick={() => setError(null)}
-                    className="mt-3 text-xs text-destructive underline hover:no-underline"
-                  >
-                    Dismiss
-                  </button>
                 </div>
               )}
             </div>
