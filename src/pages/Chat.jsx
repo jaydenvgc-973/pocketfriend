@@ -19,6 +19,14 @@ import { BarChart2, BookOpen, Globe } from "lucide-react";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
+import {
+  getCharacterStatus,
+  getChatDelayMs,
+  getTextDelayMs,
+  getTextSystemMessage,
+  buildStatusPromptContext,
+  buildSleepInterruptionContext,
+} from "@/lib/responseTimingUtils";
 
 // Voice playback cache and active audio tracking
 const voiceCache = new Map();
@@ -546,6 +554,32 @@ export default function Chat() {
     }
     // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
+
+    // TEXT MODE: Insert status system message immediately if applicable
+    if (isPhone) {
+      const sysMsg = getTextSystemMessage(character);
+      if (sysMsg) {
+        const systemNotice = {
+          id: `sys_status_${Date.now()}`,
+          conversation_id: convoId,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character.name,
+          content: sysMsg,
+          is_narrative: true,
+          timestamp: new Date().toISOString(),
+        };
+        setMessages(prev => [...prev, systemNotice]);
+        console.log(`[SYSTEM-MSG] Text mode status message: "${sysMsg}"`);
+      }
+
+      // If asleep in text mode — stop here, no typing indicator or response
+      if (getCharacterStatus(character) === 'asleep') {
+        console.log(`[TIMING] TEXT blocked — character is asleep. Showing system message only.`);
+        return;
+      }
+    }
+
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
@@ -713,6 +747,21 @@ export default function Chat() {
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
+      // Status-aware nuance (chat only) and sleep interruption context
+      const charStatus = getCharacterStatus(character);
+      const statusContext = !isPhone ? buildStatusPromptContext(character, isPhone, recentMsgs.slice(-10)) : "";
+      const sleepContext = charStatus === 'asleep' ? buildSleepInterruptionContext(character) : "";
+
+      // Awareness context: if character was unavailable and is now responding, acknowledge it naturally
+      const awarenessContext = (() => {
+        if (charStatus === 'work') return `\n\nAWARENESS: You are at work right now. If this is the first reply since being at work, you may briefly and naturally acknowledge it (e.g. "I'm at work rn" or "just got a sec"). Do NOT repeat this every message.`;
+        if (charStatus === 'school') return `\n\nAWARENESS: You are at school right now. If this is the first reply since being at school, you may briefly and naturally acknowledge it. Do NOT repeat this every message.`;
+        if (charStatus === 'gym') return `\n\nAWARENESS: You are at the gym. You can briefly mention it if natural, but don't force it or repeat it.`;
+        if (charStatus === 'bar') return `\n\nAWARENESS: You are at the bar. You can briefly mention it if natural, but don't force it or repeat it.`;
+        if (charStatus === 'out') return `\n\nAWARENESS: You are out right now. You can briefly mention it if natural, but don't force it or repeat it.`;
+        return '';
+      })();
+
       let playAsInstruction = "";
       if (activeCharacter) {
         // Find the relationship entry the receiving character has toward the active (sender) character
@@ -797,20 +846,31 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
-      const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
-      const isUncomfortable = uncomfortableStates.includes(character.emotional_state);
-
-      // Apply response lag if enabled
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
+
       if (responseLagEnabled) {
-        const lookupDelayMs = (weatherContext || recentEventsContext) ? 2500 : 0;
-        const baseThinkingDelayMs = isUncomfortable
-          ? (30 + Math.random() * 30) * 1000
-          : (5 + Math.random() * 15) * 1000;
-        await new Promise(r => setTimeout(r, baseThinkingDelayMs + lookupDelayMs));
+        if (isPhone) {
+          // TEXT MODE: exact timing per status rules
+          const textDelayMs = getTextDelayMs(character);
+
+          if (textDelayMs === null) {
+            // Character is ASLEEP — no response allowed in text mode
+            console.log(`[TIMING] TEXT blocked — character is asleep. No response sent.`);
+            setIsTyping(false);
+            return;
+          }
+
+          console.log(`[TIMING] TEXT delay: ${Math.round(textDelayMs / 1000)}s | status=${getCharacterStatus(character)}`);
+          await new Promise(r => setTimeout(r, textDelayMs));
+        } else {
+          // CHAT MODE: always 0–60 seconds, no status blocking
+          const chatDelayMs = getChatDelayMs(character);
+          console.log(`[TIMING] CHAT delay: ${Math.round(chatDelayMs / 1000)}s`);
+          await new Promise(r => setTimeout(r, chatDelayMs));
+        }
       }
 
 
