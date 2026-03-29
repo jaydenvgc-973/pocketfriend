@@ -1,5 +1,6 @@
 import { isCharacterAsleep } from './sleepUtils';
 import { isCharacterAtWork } from './workScheduleUtils';
+import { isCharacterInPrayer } from './religionUtils';
 
 /**
  * Derives the current status category for a character.
@@ -9,6 +10,10 @@ export function getCharacterStatus(character) {
   if (!character) return 'available';
 
   if (isCharacterAsleep(character)) return 'asleep';
+
+  // Prayer check: devout/moderate characters may be in a blocking prayer window
+  const prayer = isCharacterInPrayer(character);
+  if (prayer.active && prayer.blocks_response) return 'prayer';
 
   const activity = character.current_activity?.toLowerCase().trim() || '';
 
@@ -48,6 +53,9 @@ export function getTextDelayMs(character) {
     case 'asleep':
       delaySeconds = null; // blocked — no response
       break;
+    case 'prayer':
+      delaySeconds = null; // blocked — devout character is praying
+      break;
     case 'work':
       delaySeconds = 120; // exact: 120 seconds
       break;
@@ -85,6 +93,10 @@ export function getTextSystemMessage(character) {
     case 'asleep': {
       const wakeTime = character.wake_up_time || '07:00';
       return `${name} is asleep and plans to wake up at ${wakeTime}`;
+    }
+    case 'prayer': {
+      const prayer = isCharacterInPrayer(character);
+      return `${name} is currently praying${prayer.name ? ` (${prayer.name})` : ''}`;
     }
     case 'work':
       return `${name} is at work`;

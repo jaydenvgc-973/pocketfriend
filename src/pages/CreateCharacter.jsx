@@ -14,6 +14,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import RelationshipStep from "@/components/character/RelationshipStep";
 import VoiceSettings from "@/components/character/VoiceSettings";
+import ReligionStep from "@/components/create/ReligionStep";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
@@ -110,6 +111,9 @@ chosen_family_level: 0,
 voice_enabled: false,
 voice_name: "",
 voice_style_note: "",
+religion: "None",
+belief_level: "moderate",
+religion_custom: "",
 };
 
 function loadDraft() {
@@ -480,6 +484,9 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         chosen_family_level: data.chosen_family_level,
         sleep_start_time: sleepSchedule?.sleep_start_time || "23:00",
         wake_up_time: sleepSchedule?.wake_up_time || "07:00",
+        religion: data.religion || "None",
+        belief_level: data.belief_level || "moderate",
+        religion_custom: data.religion_custom || undefined,
         status: "active",
         is_finalized: true,
       };
@@ -893,7 +900,14 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       onChange={(field, value) => update(field, value)}
     />,
 
-    // Step 8.5: Voice Settings
+    // Step 8.5: Religion & Belief
+    <ReligionStep
+      key="religion"
+      data={data}
+      onChange={(field, value) => update(field, value)}
+    />,
+
+    // Step 9: Voice Settings
     <div key="voice" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">Voice Settings (Optional)</h2>
@@ -969,9 +983,10 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
     data.vibes.length > 0, // 5: vibes+backstory
     true, // 6: family optional
     true, // 7: memories optional
-    true, // 8: voice optional
-    true, // 9: relationship optional
-    true, // 10: photo optional
+    true, // 8: relationship optional
+    true, // 9: religion optional
+    true, // 10: voice optional
+    true, // 11: photo optional
   ][step];
 
   return (

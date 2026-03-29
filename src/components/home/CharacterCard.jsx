@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle } from "lucide-react";
+// Note: Sparkles is reused for prayer icon
 import { getCharacterStatusDisplay } from "@/lib/characterStatusUtils";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -245,6 +246,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                   'home': Home,
                   'out': MapPin,
                   'hospital': AlertTriangle,
+                  'prayer': Sparkles,
                   'calm': null
                 };
                 const IconComponent = iconComponents[statusDisplay?.iconType];

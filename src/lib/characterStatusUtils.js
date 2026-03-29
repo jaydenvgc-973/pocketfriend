@@ -1,5 +1,6 @@
 import { isCharacterAsleep } from './sleepUtils';
 import { isCharacterAtWork } from './workScheduleUtils';
+import { isCharacterInPrayer } from './religionUtils';
 
 /**
  * Determines what status/location to display on a character card
@@ -18,7 +19,17 @@ export function getCharacterStatusDisplay(character) {
     };
   }
 
-  // 2. CHECK CURRENT ACTIVITY & HEALTH STATUS FOR PATIENT STATUS
+  // 2. PRAYER — devout characters in a blocking prayer window
+  const prayer = isCharacterInPrayer(character);
+  if (prayer.active) {
+    return {
+      iconType: 'prayer',
+      label: 'praying',
+      color: 'text-violet-300'
+    };
+  }
+
+  // 3. CHECK CURRENT ACTIVITY & HEALTH STATUS FOR PATIENT STATUS
   const activity = character.current_activity?.toLowerCase().trim();
   const isPatient = character.health_status?.toLowerCase().includes('sick') || 
                     character.health_status?.toLowerCase().includes('hospitali') ||
@@ -136,5 +147,6 @@ export const statusIconMap = {
   home: 'Home',
   out: 'MapPin',
   hospital: 'AlertTriangle',
+  prayer: 'Sparkles',
   calm: 'Circle'
 };

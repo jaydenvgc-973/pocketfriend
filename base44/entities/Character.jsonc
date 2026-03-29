@@ -38,13 +38,32 @@
       "type": "string",
       "description": "Character's zodiac sign, derived from birthday"
     },
+    "religion": {
+      "type": "string",
+      "description": "The character's religion or belief system. Options: Christianity, Islam, Judaism, Hinduism, Buddhism, Sikhism, Taoism, Confucianism, Shinto, Jainism, Bah\u00e1'\u00ed Faith, Zoroastrianism, Spiritual / Non-Denominational, Other, None",
+      "default": "None"
+    },
+    "belief_level": {
+      "type": "string",
+      "enum": [
+        "in_name_only",
+        "moderate",
+        "devout"
+      ],
+      "description": "How strongly the character adheres to their religion. in_name_only=0% influence, moderate=20%, devout=50%.",
+      "default": "moderate"
+    },
+    "religion_custom": {
+      "type": "string",
+      "description": "Custom religion name if religion='Other'"
+    },
     "sleep_start_time": {
       "type": "string",
-      "description": "Time this character typically goes to sleep (HH:MM, 24h format). e.g. '23:00' or '02:30' for a night owl."
+      "description": "Time this character typically goes to sleep (HH:MM, 24h format)."
     },
     "wake_up_time": {
       "type": "string",
-      "description": "Time this character typically wakes up (HH:MM, 24h format). e.g. '07:00' or '11:00' for someone who sleeps in."
+      "description": "Time this character typically wakes up (HH:MM, 24h format)."
     },
     "work_start_time": {
       "type": "string",
@@ -61,15 +80,15 @@
         "minimum": 0,
         "maximum": 6
       },
-      "description": "Days of the week character works (0=Sunday, 1=Monday, ..., 6=Saturday). Defaults to [1,2,3,4,5] (weekdays) if not set."
+      "description": "Days of the week character works (0=Sunday, 1=Monday, ..., 6=Saturday)."
     },
     "current_activity": {
       "type": "string",
-      "description": "What the character is currently doing (e.g. 'showering', 'swimming', 'at work', 'sleeping'). If blank, character is available to respond. Blocking activities (shower, swimming, bathroom, sick) prevent text responses."
+      "description": "What the character is currently doing. Blocking activities (shower, swimming, bathroom, sick, prayer) prevent text responses."
     },
     "weather_summary": {
       "type": "string",
-      "description": "Current day's weather for the character's location, e.g. 'light rain, 58\u00b0F (feels like 54\u00b0F), humidity 80%, wind 12 mph'. Fetched daily at 5am."
+      "description": "Current day's weather for the character's location."
     },
     "weather_last_updated": {
       "type": "string",
@@ -88,7 +107,7 @@
     },
     "voice_style_note": {
       "type": "string",
-      "description": "Optional style notes for voice generation (e.g., 'enthusiastic', 'calm', 'casual')"
+      "description": "Optional style notes for voice generation"
     },
     "status": {
       "type": "string",
@@ -110,21 +129,21 @@
     },
     "fictional_entity_images": {
       "type": "object",
-      "description": "Stores generated images for fictional entities (NPCs/family members) to ensure consistency across conversations.",
+      "description": "Stores generated images for fictional entities.",
       "additionalProperties": {
         "type": "string"
       }
     },
     "scene_images": {
       "type": "object",
-      "description": "Stores reference images for recurring locations (e.g. bedroom, kitchen, workplace) so the same place always looks the same across photos.",
+      "description": "Stores reference images for recurring locations.",
       "additionalProperties": {
         "type": "string"
       }
     },
     "appearance_notes": {
       "type": "string",
-      "description": "Current physical appearance details: hair length/style, facial hair, tattoos, piercings, etc. Updated when character makes appearance changes."
+      "description": "Current physical appearance details."
     },
     "gender": {
       "type": "string",
@@ -137,22 +156,19 @@
     },
     "age_range": {
       "type": "string",
-      "description": "Age range selected at creation. E.g. 'Early 20s', 'Mid 30s'."
+      "description": "Age range selected at creation."
     },
     "ethnicities": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "Cultural/ethnic backgrounds selected at creation."
+      }
     },
     "city": {
-      "type": "string",
-      "description": "City where the character lives."
+      "type": "string"
     },
     "state": {
-      "type": "string",
-      "description": "State where the character lives."
+      "type": "string"
     },
     "archetype": {
       "type": "string"
@@ -211,7 +227,7 @@
     },
     "family_members": {
       "type": "array",
-      "description": "List of family members with their relationship type",
+      "description": "List of family members",
       "items": {
         "type": "object",
         "properties": {
@@ -322,7 +338,7 @@
     },
     "criminal_record": {
       "type": "string",
-      "description": "Details about criminal history, if any. Leave blank for no record."
+      "description": "Details about criminal history, if any."
     },
     "system_prompt": {
       "type": "string"
