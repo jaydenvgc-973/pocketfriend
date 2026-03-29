@@ -288,11 +288,13 @@ export default function Chat() {
 
         if (convos.length > 0) {
           convoId = convos[0].id;
-          // Load only the 50 most recent messages for active display
+          // Protected characters (e.g. Ethan) load ALL messages; others load recent 50
+          const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
+          const msgLimit = PROTECTED_CHARACTER_IDS.includes(characterId) ? 1000 : 50;
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId },
             "-created_date",
-            50 // Keep only most recent 50 visible for performance
+            msgLimit
           );
           
           if (loadedMsgs && loadedMsgs.length > 0) {
@@ -322,7 +324,9 @@ export default function Chat() {
         }
 
         // Archive old messages and extract memories asynchronously (fire-and-forget)
-        if (convoId) {
+        // Never archive for protected characters
+        const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
+        if (convoId && !PROTECTED_CHARACTER_IDS.includes(characterId)) {
           setTimeout(() => {
             base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: 50 }).catch(() => {});
             base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
