@@ -92,19 +92,34 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
 
   const save = async () => {
     setSaving(true);
-    const valid = members.filter(m => m.name?.trim());
-    const updatedRelationships = await syncFamilyToRelationships(character, valid);
-    const updated = { ...character, family_members: valid };
-    updated.system_prompt = buildSystemPrompt(updated);
+    try {
+      const valid = members.filter(m => m.name?.trim());
+      const updatedRelationships = await syncFamilyToRelationships(character, valid);
+      const updated = { ...character, family_members: valid };
+      const systemPrompt = buildSystemPrompt(updated);
 
-    await base44.entities.Character.update(character.id, {
-      family_members: valid,
-      fictional_relationships: updatedRelationships,
-      system_prompt: updated.system_prompt,
-    });
-    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-    queryClient.invalidateQueries({ queryKey: ["characters"] });
-    setSaving(false);
+      // Upload system prompt as a file if it's too large
+      let updateData = {
+        family_members: valid,
+        fictional_relationships: updatedRelationships,
+      };
+
+      // If system_prompt is large, upload it and store the URL
+      if (systemPrompt && systemPrompt.length > 5000) {
+        const file = new Blob([systemPrompt], { type: "text/plain" });
+        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        updateData.system_prompt_url = file_url;
+        // Don't store raw text — use URL instead
+      } else {
+        updateData.system_prompt = systemPrompt;
+      }
+
+      await base44.entities.Character.update(character.id, updateData);
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const hasChanges = JSON.stringify(members) !== JSON.stringify(character.family_members || []);
