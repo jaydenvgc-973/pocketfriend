@@ -10,7 +10,6 @@ import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import MediaGallery from "@/components/chat/MediaGallery";
 
-import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
