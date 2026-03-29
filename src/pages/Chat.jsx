@@ -424,22 +424,50 @@ export default function Chat() {
 
   // FORCE-TO-ZERO: When page opens and we have a conversation + messages loaded,
   // call backend markThreadRead for instant, authoritative clearing.
-  // Also update local state immediately — no refresh required.
+  // Awaits backend, verifies success, updates local state, invalidates badge.
   useEffect(() => {
-    if (!conversationId || messages.length === 0) return;
-    const unread = messages.filter(m => m.sender_type === "character" && !m.is_read);
-    if (unread.length === 0) return;
-    console.log(`[BADGE] Force-to-zero on page open: ${unread.length} unread | conversationId=${conversationId} | chatType=${chatType}`);
+    if (!conversationId) return;
 
-    // Backend call — authoritative mark-read (handles any messages we don't have in local state too)
-    base44.functions.invoke('markThreadRead', { conversationId, characterId }).catch(() => {});
+    let isMounted = true;
 
-    // Optimistic local update — instant UI, no refresh required
-    setMessages(prev => prev.map(m =>
-      m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m
-    ));
-    queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-  }, [conversationId, messages.length > 0]);
+    (async () => {
+      try {
+        // BACKEND CALL — authoritative. Handles any unread messages in DB (not just local)
+        const res = await base44.functions.invoke('markThreadRead', { conversationId, characterId });
+
+        if (!isMounted) return;
+
+        const markedCount = res?.data?.marked_read || 0;
+        const finalUnread = res?.data?.final_unread_count || 0;
+
+        console.log(`[BADGE] Backend markThreadRead returned: marked=${markedCount} | finalUnread=${finalUnread} | conversationId=${conversationId}`);
+
+        // Update local state to match backend reality
+        setMessages(prev => prev.map(m =>
+          m.sender_type === "character" ? { ...m, is_read: true } : m
+        ));
+
+        // CRITICAL: Invalidate conversations query so CharacterCard recounts
+        // This forces CharacterCard.countUnread() to run again and see zero unread
+        queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+
+        console.log(`[BADGE] Conversation ${conversationId} marked as read. CharacterCard will recount on next render.`);
+      } catch (err) {
+        console.error(`[BADGE] markThreadRead failed:`, err.message);
+        // Still update local state even if backend call failed
+        if (isMounted) {
+          setMessages(prev => prev.map(m =>
+            m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m
+          ));
+          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+        }
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });

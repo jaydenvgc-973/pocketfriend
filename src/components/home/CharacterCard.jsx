@@ -75,41 +75,67 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
     staleTime: 0,
   });
 
-  // STRICT unread count: only delivered, visible, non-read character messages
+  // STRICT unread count: only delivered, visible, non-read character messages per thread
   // Never counts: pending (undelivered), hidden, or non-character messages
   const countUnread = async () => {
     if (conversations.length === 0) {
+      console.log(`[BADGE] ${character.name} has no conversations — unread = 0`);
       setUnreadChat(0);
       setUnreadPhone(0);
       return;
     }
+
     try {
-      const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
-      const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
+      const directConvos = conversations.filter(c => c.type === "direct");
+      const phoneConvos = conversations.filter(c => c.type === "phone");
 
-      // Fetch only DELIVERED character messages that are unread
-      // Pending (undelivered) messages never appear here — they live in PendingMessage entity until delivered
-      const allUnread = await base44.entities.Message.filter({
-        sender_type: "character",
-        character_id: character.id,
-        is_read: false,
-      });
+      // Count unread messages per thread, not global
+      let chatTotal = 0;
+      let phoneTotal = 0;
 
-      // Only count messages that are in a known conversation thread (delivered and visible)
-      const chatUnread = allUnread.filter(m => directConvoIds.includes(m.conversation_id)).length;
-      const phoneUnread = allUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length;
+      // For each direct conversation, count its unread character messages
+      for (const convo of directConvos) {
+        const threadUnread = await base44.entities.Message.filter({
+          conversation_id: convo.id,
+          sender_type: "character",
+          character_id: character.id,
+          is_read: false,
+        });
+        chatTotal += threadUnread.length;
+        if (threadUnread.length > 0) {
+          console.log(`[BADGE] ${character.name} direct convo ${convo.id.substring(0, 8)}... has ${threadUnread.length} unread`);
+        }
+      }
 
-      console.log(`[BADGE] ${character.name} | chat_unread=${chatUnread} | phone_unread=${phoneUnread} | delivered_unread_total=${allUnread.length}`);
-      setUnreadChat(chatUnread);
-      setUnreadPhone(phoneUnread);
+      // For each phone conversation, count its unread character messages
+      for (const convo of phoneConvos) {
+        const threadUnread = await base44.entities.Message.filter({
+          conversation_id: convo.id,
+          sender_type: "character",
+          character_id: character.id,
+          is_read: false,
+        });
+        phoneTotal += threadUnread.length;
+        if (threadUnread.length > 0) {
+          console.log(`[BADGE] ${character.name} phone convo ${convo.id.substring(0, 8)}... has ${threadUnread.length} unread`);
+        }
+      }
+
+      console.log(`[BADGE] ${character.name} | FINAL: chat_unread=${chatTotal} | phone_unread=${phoneTotal}`);
+      setUnreadChat(chatTotal);
+      setUnreadPhone(phoneTotal);
     } catch (err) {
-      console.warn('[BADGE] Failed to count unread messages', err);
+      console.error('[BADGE] Failed to count unread messages:', err.message);
+      setUnreadChat(0);
+      setUnreadPhone(0);
     }
   };
 
+  // Recount immediately when conversations list changes (includes invalidations from chat page)
   useEffect(() => {
+    console.log(`[BADGE] Conversations updated for ${character.name} — recounting unread`);
     countUnread();
-  }, [conversations, character.id]);
+  }, [conversations.length, character.id]);
 
   // Re-count when user returns to the tab/window
   useEffect(() => {
