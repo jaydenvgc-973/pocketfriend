@@ -67,14 +67,6 @@
     "user_schedule_notes": {
       "type": "string",
       "description": "User's general availability or schedule in natural language (e.g. 'I work 9-5 weekdays', 'I'm usually free evenings and weekends', 'I'm a night owl'). Used to help characters know when to reach out."
-    },
-    "protected_character_ids": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "default": [],
-      "description": "List of character IDs that receive default-like protection on this user's account: stronger message persistence, memory continuity, and thread stability. User-scoped only."
     }
   },
   "required": []

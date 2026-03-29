@@ -16,15 +16,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'conversationId and characterId required' }, { status: 400 });
     }
 
-    // Check if this character is protected on the user's account
-    const userSettings = await base44.entities.UserSettings.filter(
-      { created_by: user.email },
-      "-created_date",
-      1
-    ).then(arr => arr?.[0]) || {};
-
-    const isProtected = (userSettings.protected_character_ids || []).includes(characterId);
-
     // Fetch archived messages (those with archived_date set)
     const archivedMessages = await base44.entities.Message.filter(
       { conversation_id: conversationId, character_id: characterId, archived_date: { $exists: true } },
@@ -56,10 +47,7 @@ Deno.serve(async (req) => {
     // Use LLM to identify key moments to preserve as character memories
     const memoriesToCreate = [];
     
-    // Protected characters: extract more memories (up to 20 instead of 5 archived messages)
-    const memoriesToExtract = isProtected ? archivedMessages.slice(0, 20) : archivedMessages.slice(0, 5);
-
-    for (const msg of memoriesToExtract) {
+    for (const msg of archivedMessages.slice(0, 5)) {
       // Only store significant character messages as memories
       if (msg.sender_type === 'character' && msg.content && !msg.is_narrative) {
         memoriesToCreate.push({

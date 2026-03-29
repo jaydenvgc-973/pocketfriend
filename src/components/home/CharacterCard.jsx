@@ -23,7 +23,7 @@ const stateLabels = {
   defensive: "defensive",
   reflective: "reflective",
   "closed-off": "closed off",
-  flirtatious: "flirty",
+  flirtatious: "flirtatious",
   bored: "bored",
   "burnt out": "burnt out",
   joyful: "joyful",
@@ -32,67 +32,7 @@ const stateLabels = {
   excited: "excited",
   overwhelmed: "overwhelmed",
   content: "content",
-  frustrated: "frustrated",
-  joy: "joyful",
-  happiness: "happy",
-  contentment: "content",
-  excitement: "excited",
-  elation: "elated",
-  hope: "hopeful",
-  relief: "relieved",
-  gratitude: "grateful",
-  love: "loving",
-  affection: "affectionate",
-  compassion: "compassionate",
-  empathy: "empathetic",
-  pride: "proud",
-  confidence: "confident",
-  peacefulness: "peaceful",
-  satisfaction: "satisfied",
-  curiosity: "curious",
-  interest: "interested",
-  amusement: "amused",
-  surprise: "surprised",
-  awe: "in awe",
-  anticipation: "anticipating",
-  nostalgia: "nostalgic",
-  longing: "longing",
-  desire: "desiring",
-  passion: "passionate",
-  infatuation: "infatuated",
-  tenderness: "tender",
-  vulnerability: "vulnerable",
-  trust: "trusting",
-  security: "secure",
-  belonging: "belonging",
-  acceptance: "accepted",
-  patience: "patient",
-  annoyance: "annoyed",
-  irritation: "irritated",
-  anger: "angry",
-  rage: "enraged",
-  resentment: "resentful",
-  jealousy: "jealous",
-  envy: "envious",
-  insecurity: "insecure",
-  doubt: "doubtful",
-  confusion: "confused",
-  stress: "stressed",
-  fear: "fearful",
-  panic: "panicked",
-  worry: "worried",
-  guilt: "guilty",
-  shame: "ashamed",
-  embarrassment: "embarrassed",
-  regret: "regretful",
-  disappointment: "disappointed",
-  grief: "grieving",
-  loneliness: "lonely",
-  hopelessness: "hopeless",
-  despair: "despairing",
-  detachment: "detached",
-  numbness: "numb",
-  apathy: "apathetic"
+  frustrated: "frustrated"
 };
 
 const stateDots = {
@@ -115,7 +55,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway, loadDelay = 0 }) {
+export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditName, setShowEditName] = useState(false);
@@ -146,11 +86,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, loadDel
   }, [pendingMessages]);
 
   const countUnread = async () => {
-    if (conversations.length === 0) {
-      setUnreadChat(0);
-      setUnreadPhone(0);
-      return;
-    }
+    if (conversations.length === 0) return;
     try {
       const allUnread = await base44.entities.Message.filter({
         sender_type: "character",
@@ -158,70 +94,43 @@ export default function CharacterCard({ character, onDelete, onMoveAway, loadDel
         is_read: false,
       });
 
-      // CRITICAL: Mark all broken/invalid messages as read immediately
-      const brokenMessages = allUnread.filter(msg => {
-        const hasFailedImage = msg.image_url && (msg.image_url.includes('undefined') || msg.image_url === '' || msg.image_url === 'null');
-        const isEmpty = !msg.content || msg.content.trim() === '';
-        const isPendingState = msg.delivered === false;
-        const isNarrative = msg.is_narrative === true;
-        
-        // Mark as broken if: (empty AND no image) OR (failed image) OR (pending) OR (narrative)
-        return (isEmpty && !msg.image_url) || hasFailedImage || isPendingState || isNarrative;
-      });
-
-      // Force-mark all broken messages as read
-      if (brokenMessages.length > 0) {
-        console.log(`[CharacterCard] Found ${brokenMessages.length} broken/phantom messages for ${character.name}, marking as read`);
-        const markReadPromises = brokenMessages.map(msg =>
-          base44.entities.Message.update(msg.id, { is_read: true })
-            .catch(e => console.warn(`Failed to fix message ${msg.id}:`, e))
-        );
-        await Promise.all(markReadPromises);
-      }
-
-      // Re-fetch after cleanup
-      const validUnread = await base44.entities.Message.filter({
-        sender_type: "character",
-        character_id: character.id,
-        is_read: false,
-      });
-
-      // Final validation filter
-      const finalValidUnread = validUnread.filter(msg => {
-        const hasValidContent = msg.content && msg.content.trim() !== '';
-        const hasValidImage = msg.image_url && !msg.image_url.includes('undefined') && msg.image_url !== '' && msg.image_url !== 'null';
-        const isNotPending = msg.delivered !== false;
-        const isNotNarrative = msg.is_narrative !== true;
-        
-        return (hasValidContent || hasValidImage) && isNotPending && isNotNarrative;
-      });
-
       const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
       const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
 
-      const chatCount = finalValidUnread.filter(m => directConvoIds.includes(m.conversation_id)).length;
-      const phoneCount = finalValidUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length;
-
-      console.log(`[CharacterCard] ${character.name} - Chat: ${chatCount}, Phone: ${phoneCount}`);
-      setUnreadChat(chatCount);
-      setUnreadPhone(phoneCount);
+      setUnreadChat(allUnread.filter(m => directConvoIds.includes(m.conversation_id)).length);
+      setUnreadPhone(allUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length);
     } catch (err) {
-      console.warn(`[CharacterCard] Failed to count unread for ${character.name}:`, err);
-      setUnreadChat(0);
-      setUnreadPhone(0);
+      console.warn('Failed to count unread messages', err);
     }
   };
 
-  // Only count unread once on initial load to avoid rate limits
   useEffect(() => {
-    const timer = setTimeout(() => {
-      countUnread().catch(() => {
-        setUnreadChat(0);
-        setUnreadPhone(0);
-      });
-    }, 200 + loadDelay);
-    return () => clearTimeout(timer);
-  }, [loadDelay]);
+    countUnread();
+  }, [conversations, character.id]);
+
+  // Re-count when user returns to the tab/window
+  useEffect(() => {
+    const handleFocus = () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+      countUnread();
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [conversations, character.id, queryClient]);
+
+  // Subscribe to message changes for real-time badge updates (create, update, delete)
+  useEffect(() => {
+    const unsubscribe = base44.entities.Message.subscribe((event) => {
+      // Re-count on any message event for this character or any conversation update
+      if (event.data?.character_id === character.id || event.data?.sender_type === "user") {
+        // Invalidate conversations to ensure fresh data
+        queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+        // Small delay to ensure DB has updated
+        setTimeout(() => countUnread(), 100);
+      }
+    });
+    return () => unsubscribe();
+  }, [character.id, queryClient]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
@@ -330,25 +239,18 @@ export default function CharacterCard({ character, onDelete, onMoveAway, loadDel
                   'home': Home,
                   'out': MapPin,
                   'hospital': AlertTriangle,
+                  'calm': null
                 };
                 const IconComponent = iconComponents[statusDisplay?.iconType];
-                const moodLabel = stateLabels[state] || state;
 
                 return (
-                  <div className="flex items-center gap-3">
-                    {/* MOOD: Color dot + text label */}
-                    <div className="flex items-center gap-1.5">
-                      <div className={`w-2 h-2 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
-                      <span className="text-xs text-foreground capitalize font-medium">{moodLabel}</span>
-                    </div>
-                    
-                    {/* LOCATION/STATUS: Icon + text (always show if a location is set) */}
-                    {statusDisplay?.iconType && (
-                      <div className="flex items-center gap-1.5">
-                        {IconComponent && <IconComponent className={`w-3.5 h-3.5 ${statusDisplay.color}`} />}
-                        <span className={`text-xs font-medium ${statusDisplay.color}`}>{statusDisplay.label}</span>
-                      </div>
+                  <div className="flex items-center gap-1.5">
+                    {IconComponent ? (
+                      <IconComponent className={`w-3 h-3 ${statusDisplay.color}`} />
+                    ) : (
+                      <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
                     )}
+                    <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.label}</span>
                   </div>
                 );
               })()}

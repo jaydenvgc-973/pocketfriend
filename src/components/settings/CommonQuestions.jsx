@@ -8,19 +8,7 @@ const FAQS = [
     a: `The "!" means that character has a message queued and ready to be delivered to your chat — think of it as them "about to say something." It's different from an unread message (one that's already appeared). The badge disappears once that pending message actually shows up in your conversation, which may take a moment depending on timing settings.`,
   },
   {
-    q: "What do the mood and location indicators on character cards mean?",
-    a: "Each character card shows two pieces of information: their current mood (in text, like 'calm', 'irritated', 'happy') and their current location or activity (like 'at work', 'at gym', 'sleeping'). The mood is shown as a colored dot and text label. If they have a location or activity, it appears as an icon + text next to their mood. Together, these tell you their emotional state and where they are.",
-  },
-  {
-    q: "What do the colored dots next to mood text mean?",
-    a: "The colored dot is a visual reinforcement of their mood. Green dot = calm, orange = irritated, red = defensive, blue = reflective, yellow = excited, pink = flirty, and so on. The text label (like 'calm' or 'irritated') is the primary way to understand their mood, and the color is a visual accent.",
-  },
-  {
-    q: "What are the location icons and what do they mean?",
-    a: "Location icons show where a character is or what they're doing: moon = sleeping, briefcase = at work, book = at school, weights = at gym, wine glass = at bar, house = at home, and hospital = at hospital. If none of these apply, only their mood will show. These are updated based on the character's schedule and activities.",
-  },
-  {
-    q: "What does the colored rings around character avatars mean?",
+    q: "What do the colored rings around character avatars mean?",
     a: "The ring color reflects a character's current emotional state. Green means calm, orange means irritated, red means defensive, blue means reflective, and so on. It's a quick visual cue for how they're feeling before you even open the chat.",
   },
   {
@@ -85,7 +73,7 @@ const FAQS = [
   },
   {
     q: "How do I set up optional cloud storage?",
-    a: "In Settings, look for \"Storage & Backup.\" You can authorize your Google Drive or similar cloud storage service. Once connected, older messages and media are automatically archived to your account instead of the app's servers. This is completely optional — the app works fine without it. Without it, the app stores messages in its default archive after 50 messages become visible, keeping performance light. If you want to keep extended history accessible, setting up optional cloud storage lets you do that.",
+    a: "In Settings, look for \"Storage & Backup.\" You can authorize your Google Drive or similar cloud storage service. Once connected, older messages and media are automatically archived to your account instead of the app's servers. This is completely optional — the app works fine without it, but gives you more control if you want to keep extended history.",
   },
   {
     q: "Do I need to set up voice generation (TTS)?",

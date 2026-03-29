@@ -154,8 +154,7 @@ export default function GroupChat() {
       last_message_date: new Date().toISOString(),
     });
 
-    // Generate response async (non-blocking) — errors don't affect user message
-    base44.functions.invoke('generateGroupChatResponse', { messageId: userMsg.id }).catch(() => {});
+    await base44.functions.invoke('generateGroupChatResponse', { messageId: userMsg.id });
   };
 
   const handleDeleteImage = async (messageId) => {

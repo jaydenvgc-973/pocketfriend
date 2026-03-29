@@ -9,13 +9,49 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // PHASE 1 BASELINE: Do nothing. Messages stay visible.
-    // All archiving logic disabled until rewritten correctly.
-    
+    const body = await req.json().catch(() => ({}));
+    const { conversationId, keepRecent = 50 } = body;
+
+    if (!conversationId) {
+      return Response.json({ error: 'conversationId required' }, { status: 400 });
+    }
+
+    // Fetch all messages for this conversation, sorted by creation date
+    const allMessages = await base44.entities.Message.filter(
+      { conversation_id: conversationId },
+      "-created_date",
+      1000
+    );
+
+    if (!allMessages || allMessages.length <= keepRecent) {
+      return Response.json({ 
+        success: true, 
+        archived: 0, 
+        message: 'No messages to archive' 
+      });
+    }
+
+    // Mark older messages as archived (add archive_date, keep them in DB)
+    const toArchive = allMessages.slice(keepRecent);
+    let archivedCount = 0;
+
+    for (const msg of toArchive) {
+      try {
+        // Mark message as archived without deleting it
+        await base44.entities.Message.update(msg.id, {
+          archived_date: new Date().toISOString()
+        }).catch(() => {});
+        archivedCount++;
+      } catch (e) {
+        // Continue even if individual archive fails
+      }
+    }
+
     return Response.json({
       success: true,
-      archived: 0,
-      message: 'Archiving disabled for stability'
+      archived: archivedCount,
+      totalMessages: allMessages.length,
+      visibleMessages: keepRecent
     });
 
   } catch (error) {

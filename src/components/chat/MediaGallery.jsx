@@ -7,15 +7,13 @@ export default function MediaGallery({ messages, onDeleteImage }) {
   const [isOpen, setIsOpen] = useState(false);
   const [selectedImage, setSelectedImage] = useState(null);
 
-  // Extract images from messages only
   const images = messages
-    .filter(m => m.image_url)
+    .filter(msg => msg.image_url)
     .map(msg => ({
       id: msg.id,
-      messageId: msg.id,
       url: msg.image_url,
       senderType: msg.sender_type,
-      senderName: msg.sender_type === "user" ? "You" : (msg.character_name || "Them"),
+      senderName: msg.character_name || "You",
       timestamp: msg.timestamp,
     }));
 
@@ -86,17 +84,18 @@ export default function MediaGallery({ messages, onDeleteImage }) {
                             </span>
                           </div>
                         </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteImage(img.messageId);
-                            setIsOpen(false);
-                          }}
-                          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          title="Delete image"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                        {onDeleteImage && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDeleteImage(img.id);
+                            }}
+                            className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                            title="Delete image"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </motion.div>
                     ))}
                   </div>
@@ -136,20 +135,19 @@ export default function MediaGallery({ messages, onDeleteImage }) {
                   alt="Full view"
                   className="max-w-full max-h-[80vh] object-contain rounded-xl"
                 />
-                <button
-                  onClick={() => {
-                    if (selectedImage?.messageId) {
-                      onDeleteImage(selectedImage.messageId);
+                {onDeleteImage && (
+                  <button
+                    onClick={() => {
+                      onDeleteImage(selectedImage.id);
                       setSelectedImage(null);
-                      setIsOpen(false);
-                    }
-                  }}
-                  className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center gap-2"
-                  title="Delete image"
-                >
-                  <X className="w-4 h-4" />
-                  Delete Image
-                </button>
+                    }}
+                    className="px-4 py-2 rounded-lg bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors flex items-center gap-2"
+                    title="Delete image"
+                  >
+                    <X className="w-4 h-4" />
+                    Delete Image
+                  </button>
+                )}
               </div>
             </motion.div>
           )}

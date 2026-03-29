@@ -102,9 +102,6 @@ export default function Home() {
     });
   }, [characters, currentUser?.email]);
 
-  // Disabled: unread sync caused rate limiting — badges now update on interaction only
-  // useEffect(() => { ... }, []);
-
   useEffect(() => {
     if (!isLoading && settings.length === 0) {
       navigate("/");
@@ -152,7 +149,7 @@ export default function Home() {
         {defaultChar && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
-            <CharacterCard character={defaultChar} loadDelay={0} />
+            <CharacterCard character={defaultChar} />
           </div>
         )}
         {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
@@ -182,15 +179,14 @@ export default function Home() {
             </Link>
           ) : (
             <div className="grid gap-3">
-              {activeCustomChars.map((c, idx) => (
+              {activeCustomChars.map(c => (
                 <CharacterCard key={c.id} character={c}
-                  loadDelay={idx * 150}
                   onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
                   onMoveAway={(id) => moveAwayMutation.mutate(id)}
                 />
               ))}
-              {movedAwayChars.map((c, idx) => (
-                <CharacterCard key={c.id} character={c} loadDelay={(activeCustomChars.length + idx) * 150} onMoveAway={() => canMoveBack && moveBackMutation.mutate(c.id)} />
+              {movedAwayChars.map(c => (
+                <CharacterCard key={c.id} character={c} onMoveAway={() => canMoveBack && moveBackMutation.mutate(c.id)} />
               ))}
               {canCreate && (
                 <Link to="/create">

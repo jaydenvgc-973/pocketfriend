@@ -9,7 +9,8 @@ import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import MediaGallery from "@/components/chat/MediaGallery";
-
+import VoiceDiagnosticsPanel from "@/components/chat/VoiceDiagnosticsPanel";
+import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
@@ -39,7 +40,6 @@ export default function Chat() {
   const [showWorldContacts, setShowWorldContacts] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
-  const lastMessageTimeRef = useRef(0);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -63,128 +63,192 @@ export default function Chat() {
 
   const userSettings = settings?.[0] || {};
 
-  // VOICE GENERATION & PLAYBACK - Completely independent from message delivery
-  // Voice is optional. Message delivery is required.
-  // If voice fails, the message STAYS visible and delivered.
-  const generateAndPlayVoice = async (messageId, text, characterData, userSettings) => {
-    const voiceId = `[VOICE-${messageId.substring(0, 8)}]`;
+  // CORE VOICE PLAYBACK FUNCTION - This is the single source of truth for all voice playback
+  const playCharacterVoice = async (messageId, text, characterData, userSettings, bypassCache = false) => {
+    // DIAGNOSTIC: Log everything from the start
+    const diagnosticId = `[VOICE-${messageId.substring(0, 8)}]`;
     
-    // Exit early if voice is disabled globally or no API key
-    if (!userSettings?.voice_enabled || !userSettings?.openai_api_key) {
-      console.log(`${voiceId} Voice disabled or no API key - skipping audio generation`);
-      return;
-    }
-
-    // Exit early if character doesn't have voice configured
-    if (!characterData?.voice_enabled || !characterData?.voice_name) {
-      console.log(`${voiceId} Character voice not configured - skipping audio`);
-      return;
-    }
-
-    // Exit early if in phone mode
-    if (chatType === "phone") {
-      console.log(`${voiceId} Phone mode - voice disabled`);
-      return;
-    }
-
-    if (!messageId || !text) {
-      console.log(`${voiceId} Missing messageId or text - cannot generate voice`);
+    console.log(`${diagnosticId} VOICE PLAYBACK INITIATED`);
+    console.log(`${diagnosticId} messageId: ${messageId}`);
+    console.log(`${diagnosticId} text source: ${text ? `"${text.substring(0, 100)}..."` : 'MISSING'}`);
+    console.log(`${diagnosticId} text from message.content (final saved chat text)`);
+    console.log(`${diagnosticId} characterData.name: ${characterData?.name}`);
+    console.log(`${diagnosticId} characterData.voice_name: ${characterData?.voice_name}`);
+    console.log(`${diagnosticId} userSettings.voice_enabled: ${userSettings?.voice_enabled}`);
+    console.log(`${diagnosticId} userSettings.openai_api_key present: ${!!userSettings?.openai_api_key}`);
+    
+    if (!messageId || !text || !characterData || !userSettings) {
+      console.warn(`${diagnosticId} ABORT: Missing critical parameters`, { 
+        messageId: !!messageId, 
+        text: !!text, 
+        characterData: !!characterData, 
+        userSettings: !!userSettings 
+      });
+      setPlayingAudioId(null);
       return;
     }
 
     try {
-      console.log(`${voiceId} Voice generation starting for: "${text.substring(0, 80)}..."`);
+      setVoiceErrors(prev => ({ ...prev, [messageId]: null }));
+      setPlayingAudioId(messageId);
 
-      // Check cache
+      // Step 1: Check conditions
+      const voiceGloballyEnabled = userSettings?.voice_enabled === true;
+      const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
+      const hasApiKey = userSettings?.openai_api_key;
+      const isNotPhone = chatType !== "phone";
+
+      console.log(`${diagnosticId} CONDITION CHECK:`);
+      console.log(`${diagnosticId}   - voice_enabled (global): ${voiceGloballyEnabled}`);
+      console.log(`${diagnosticId}   - character.voice_enabled: ${characterData?.voice_enabled}`);
+      console.log(`${diagnosticId}   - character.voice_name: ${characterData?.voice_name}`);
+      console.log(`${diagnosticId}   - API key present: ${hasApiKey ? 'YES' : 'NO'}`);
+      console.log(`${diagnosticId}   - chatType !== 'phone': ${isNotPhone} (chatType=${chatType})`);
+
+      if (!voiceGloballyEnabled) {
+        console.log(`${diagnosticId} ABORT: voice_enabled is false at user settings level`);
+        setPlayingAudioId(null);
+        setVoiceErrors(prev => ({ ...prev, [messageId]: 'Voice disabled in settings' }));
+        return;
+      }
+      
+      if (!charHasVoice) {
+        console.log(`${diagnosticId} ABORT: character voice not enabled or no voice_name`);
+        setPlayingAudioId(null);
+        setVoiceErrors(prev => ({ ...prev, [messageId]: 'Character voice not configured' }));
+        return;
+      }
+      
+      if (!hasApiKey) {
+        console.log(`${diagnosticId} ABORT: No OpenAI API key found`);
+        setPlayingAudioId(null);
+        setVoiceErrors(prev => ({ ...prev, [messageId]: 'No API key configured' }));
+        return;
+      }
+      
+      if (!isNotPhone) {
+        console.log(`${diagnosticId} ABORT: Phone chat mode, voice disabled`);
+        setPlayingAudioId(null);
+        return;
+      }
+
+      console.log(`${diagnosticId} ✓ All conditions passed`);
+
+      // Step 2: Check cache first
       const cacheKey = `${characterData.id}_${characterData.voice_name}_${text}`;
       let audioUrl = voiceCache.get(cacheKey);
 
-      if (!audioUrl) {
-        // Generate audio
-        const res = await base44.functions.invoke('generateSpeech', {
-          text: text,
-          voice: characterData.voice_name,
-          voiceStyleNote: characterData.voice_style_note,
-          apiKey: userSettings.openai_api_key,
-        });
-
-        if (!res?.data?.audioUrl) {
-          throw new Error('No audio URL returned');
-        }
-
-        audioUrl = res.data.audioUrl;
-        voiceCache.set(cacheKey, audioUrl);
-        console.log(`${voiceId} Voice generated and cached`);
-
-        // Update usage
-        if (userSettings.id && res.data.estimatedMinutes) {
-          base44.entities.UserSettings.update(userSettings.id, {
-            voice_minutes_used: (userSettings.voice_minutes_used || 0) + res.data.estimatedMinutes,
-          }).catch(() => {});
-        }
-      } else {
-        console.log(`${voiceId} Using cached audio`);
+      if (audioUrl && !bypassCache) {
+        console.log(`${diagnosticId} CACHE HIT: Using previously generated audio`);
+        await playAudio(messageId, audioUrl);
+        return;
       }
 
-      // Save audio URL to message (fire-and-forget, doesn't block anything)
-      base44.entities.Message.update(messageId, { audio_url: audioUrl }).catch(err => {
-        console.error(`${voiceId} Failed to save audio URL:`, err.message);
+      if (audioUrl && bypassCache) {
+        console.log(`${diagnosticId} Cache bypassed - forcing regeneration`);
+      }
+
+      // Step 3: Generate speech
+      console.log(`${diagnosticId} GENERATING SPEECH via OpenAI TTS`);
+      console.log(`${diagnosticId}   - text to speak: "${text.substring(0, 150)}${text.length > 150 ? '...' : ''}"`);
+      console.log(`${diagnosticId}   - voice: ${characterData.voice_name}`);
+      console.log(`${diagnosticId}   - voice_style_note: ${characterData.voice_style_note || '(none)'}`);
+      
+      const res = await base44.functions.invoke('generateSpeech', {
+        text: text,
+        voice: characterData.voice_name,
+        voiceStyleNote: characterData.voice_style_note,
+        apiKey: userSettings.openai_api_key,
       });
 
-      // Try to play audio
+      console.log(`${diagnosticId} generateSpeech response:`, res?.data ? 'SUCCESS' : 'FAILED');
+
+      if (!res?.data?.audioUrl) {
+        throw new Error('No audio URL returned from generateSpeech');
+      }
+
+      audioUrl = res.data.audioUrl;
+      voiceCache.set(cacheKey, audioUrl);
+
+      console.log(`${diagnosticId} ✓ Audio generated successfully (${(audioUrl.length / 1024).toFixed(1)}KB)`);
+
+      // Step 4: Verify stored audio URL (now a proper file URL, not base64)
+      console.log(`${diagnosticId} VERIFYING audio URL before storage...`);
+      console.log(`${diagnosticId} Audio URL type: ${typeof audioUrl}`);
+      console.log(`${diagnosticId} Audio URL length: ${audioUrl.length} chars (within database field limit)`);
+      console.log(`${diagnosticId} Audio URL is valid file URL: ${audioUrl.startsWith('http')}`);
+      console.log(`${diagnosticId} Audio URL preview: ${audioUrl.substring(0, 80)}...`);
+
+      // Step 5: Save audio to message
+      console.log(`${diagnosticId} SAVING audio URL to message entity...`);
+      await base44.entities.Message.update(messageId, { audio_url: audioUrl });
+      console.log(`${diagnosticId} ✓ Audio URL saved to message.audio_url`);
+
+      // Step 6: Update usage tracking
+      const estimatedMinutes = res.data.estimatedMinutes || 0.1;
+      if (userSettings.id) {
+        base44.entities.UserSettings.update(userSettings.id, {
+          voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
+        }).catch(() => {});
+      }
+
+      // Step 7: Play audio from stored URL
+      console.log(`${diagnosticId} PLAYING audio from stored URL...`);
       await playAudio(messageId, audioUrl);
-      console.log(`${voiceId} ✓ Voice playback complete`);
+      console.log(`${diagnosticId} ✓ Playback complete`);
 
     } catch (err) {
-      // Voice failed - but MESSAGE IS ALREADY DELIVERED
-      // Log the error but do NOT remove the message or block anything
-      console.warn(`${voiceId} Voice generation failed: ${err.message}`);
-      console.warn(`${voiceId} NOTE: Message is still delivered and visible. Voice is optional.`);
+      console.error(`${diagnosticId} ✗ ERROR:`, err.message);
       setVoiceErrors(prev => ({ ...prev, [messageId]: err.message }));
+      setPlayingAudioId(null);
     }
   };
 
-  // Helper function to play audio (does not block message delivery)
+  // Helper function to actually play audio
   const playAudio = async (messageId, audioUrl) => {
     const diagnosticId = `[PLAYBACK-${messageId.substring(0, 8)}]`;
     
     return new Promise((resolve) => {
       try {
-        console.log(`${diagnosticId} Creating Audio element`);
+        console.log(`${diagnosticId} Creating Audio element from: ${audioUrl.substring(0, 50)}...`);
         
         // Stop any existing audio for this message
         const existingAudio = activeAudioRef.get(messageId);
         if (existingAudio) {
+          console.log(`${diagnosticId} Stopping previous audio for this message`);
           existingAudio.pause();
           existingAudio.currentTime = 0;
         }
 
         const audio = new Audio(audioUrl);
         activeAudioRef.set(messageId, audio);
+        console.log(`${diagnosticId} Audio element created and registered`);
 
         audio.onended = () => {
-          console.log(`${diagnosticId} Playback ended`);
+          console.log(`${diagnosticId} ✓ Playback finished`);
           activeAudioRef.delete(messageId);
           setPlayingAudioId(null);
           resolve();
         };
 
         audio.onerror = (err) => {
-          console.warn(`${diagnosticId} Playback error (message still visible):`, err);
+          console.error(`${diagnosticId} ✗ Audio playback error:`, err);
           activeAudioRef.delete(messageId);
           setPlayingAudioId(null);
           resolve();
         };
 
-        setPlayingAudioId(messageId);
-        audio.play().catch(err => {
-          console.warn(`${diagnosticId} Play failed (message still visible):`, err.message);
+        console.log(`${diagnosticId} Calling audio.play()...`);
+        audio.play().then(() => {
+          console.log(`${diagnosticId} ✓ Play promise resolved, audio streaming`);
+        }).catch(err => {
+          console.error(`${diagnosticId} ✗ Play failed:`, err.message);
           activeAudioRef.delete(messageId);
           setPlayingAudioId(null);
           resolve();
         });
       } catch (err) {
-        console.warn(`${diagnosticId} Audio setup error (message still visible):`, err);
+        console.error(`${diagnosticId} ✗ Audio setup error:`, err);
         setPlayingAudioId(null);
         resolve();
       }
@@ -198,128 +262,111 @@ export default function Chat() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Disabled: initializeVoiceSettings was causing rate limiting — voice init deferred to on-demand
-  // useEffect(() => { ... }, []);
-
-  const hasLoadedRef = useRef(false);
-  const loadedForCharacterRef = useRef(null);
+  // Initialize voice settings on first load
+  useEffect(() => {
+    base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
+  }, []);
 
   useEffect(() => {
-    if (!characterId || !currentUser.email) return;
-    // Only load once per character — never reload mid-conversation
-    if (hasLoadedRef.current && loadedForCharacterRef.current === characterId) return;
-    hasLoadedRef.current = true;
-    loadedForCharacterRef.current = characterId;
-
+    if (!characterId || !character || !currentUser.email) return;
+    
+    // Reset state immediately when switching characters to prevent cross-contamination
+    setMessages([]);
+    setConversationId(null);
+    setIsTyping(false);
+    
     const loadConvo = async () => {
-       try {
-         // Fetch character data fresh (needed for pending messages)
-         const chars = await base44.entities.Character.filter({ id: characterId });
-         const currentCharacter = chars?.[0];
-         if (!currentCharacter) {
-           console.error('[Chat] LOAD ERROR: Character not found');
-           return;
-         }
+      try {
+        // Fetch conversations for this character
+        const convos = await base44.entities.Conversation.filter(
+          { type: chatType, character_ids: [characterId], created_by: currentUser.email },
+          "-updated_date",
+          1
+        );
 
-         // Fetch conversations for this character using characterId from closure
-         const convos = await base44.entities.Conversation.filter(
-           { type: chatType, character_ids: [characterId], created_by: currentUser.email },
-           "-updated_date",
-           1
-         );
+        let convoId = null;
 
-         let convoId = null;
+        if (convos.length > 0) {
+          convoId = convos[0].id;
+          // Load only the 50 most recent messages for active display
+          const loadedMsgs = await base44.entities.Message.filter(
+            { conversation_id: convoId },
+            "-created_date",
+            50 // Keep only most recent 50 visible for performance
+          );
+          
+          if (loadedMsgs && loadedMsgs.length > 0) {
+            // Reverse to chronological order for display
+            setMessages(loadedMsgs.reverse());
+            setConversationId(convoId);
 
-         if (convos.length > 0) {
-           convoId = convos[0].id;
-
-           // Load the 20 most recent non-archived messages FOR THIS THREAD ONLY
-           const loadedMsgs = await base44.entities.Message.filter(
-             { conversation_id: convoId, archived_date: { $exists: false } },
-             "-created_date",
-             20
-           );
-
-           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded for conversation ${convoId}`);
-
-           if (loadedMsgs && loadedMsgs.length > 0) {
-              // Reverse to chronological order, then MERGE with any messages already in state
-              const reversed = loadedMsgs.reverse();
-              setMessages(prev => {
-                if (prev.length === 0) return reversed;
-                // Merge: keep all existing messages, add any from DB not already present
-                const existingIds = new Set(prev.map(m => m.id));
-                const newOnes = reversed.filter(m => !existingIds.has(m.id));
-                // Also update existing ones that may have changed (e.g. reactions, audio_url)
-                const updated = prev.map(m => {
-                  const fresh = reversed.find(r => r.id === m.id);
-                  return fresh ? { ...fresh, ...m } : m; // keep local state over stale DB
-                });
-                return [...newOnes, ...updated].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+            // Mark unread character messages as read (fire-and-forget)
+            const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
+            if (unread.length > 0) {
+              unread.forEach(m => {
+                base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
               });
-              setConversationId(convoId);
+              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+            }
+          } else {
+            setConversationId(convoId);
+          }
+        } else {
+          // Create conversation if none exists
+          const convo = await base44.entities.Conversation.create({
+            title: `${chatType} with ${character.name}`,
+            type: chatType,
+            character_ids: [characterId],
+          });
+          setConversationId(convo.id);
+        }
 
-             // Mark unread messages as read (non-blocking)
-             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
-             if (unread.length > 0) {
-               unread.forEach(m => {
-                 base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
-               });
-             }
-           } else {
-             setConversationId(convoId);
-           }
-         } else {
-           // Create conversation if none exists
-           const convo = await base44.entities.Conversation.create({
-             title: `${chatType} with ${currentCharacter.name}`,
-             type: chatType,
-             character_ids: [characterId],
-           });
-           setConversationId(convo.id);
-           convoId = convo.id;
-         }
+        // Archive old messages and extract memories asynchronously (fire-and-forget)
+        if (convoId) {
+          setTimeout(() => {
+            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: 50 }).catch(() => {});
+            base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
+          }, 2000);
+        }
 
-         // DISABLED: Archiving temporarily disabled to prevent message loss
-         // Re-enable only after rewriting archiving logic correctly
+        // Load pending messages and deliver them
+        const pending = await base44.entities.PendingMessage.filter(
+          { character_id: characterId, delivered: false }
+        );
 
-         // Load pending messages and deliver them
-         const pending = await base44.entities.PendingMessage.filter(
-           { character_id: characterId, delivered: false }
-         );
+        if (pending.length > 0 && convoId) {
+          for (const pm of pending) {
+            const charMsg = await base44.entities.Message.create({
+              conversation_id: convoId,
+              sender_type: "character",
+              character_id: characterId,
+              character_name: character.name,
+              content: pm.content,
+              image_url: pm.image_url || undefined,
+              emotional_state: pm.emotional_state || "calm",
+              timestamp: new Date().toISOString(),
+            });
 
-         if (pending.length > 0 && convoId) {
-           console.log(`[Chat] LOAD: Delivering ${pending.length} pending messages`);
-           for (const pm of pending) {
-             const charMsg = await base44.entities.Message.create({
-               conversation_id: convoId,
-               sender_type: "character",
-               character_id: characterId,
-               character_name: currentCharacter.name,
-               content: pm.content,
-               image_url: pm.image_url || undefined,
-               emotional_state: pm.emotional_state || "calm",
-               timestamp: new Date().toISOString(),
-             });
+            setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
+            await base44.entities.PendingMessage.update(pm.id, { delivered: true });
+            await base44.entities.Conversation.update(convoId, {
+              last_message_preview: pm.content.substring(0, 100),
+              last_message_date: new Date().toISOString(),
+            });
+            
+            // Add slight delay between deliveries
+            await new Promise(r => setTimeout(r, 500));
+          }
+          queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
+        }
+      } catch (err) {
+        console.error('Failed to load conversation:', err);
+      }
+    };
 
-             console.log(`[Chat] LOAD: Pending delivered ${charMsg.id.substring(0, 8)}`);
-             setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
-             await base44.entities.PendingMessage.update(pm.id, { delivered: true });
-             await base44.entities.Conversation.update(convoId, {
-               last_message_preview: pm.content.substring(0, 100),
-               last_message_date: new Date().toISOString(),
-             });
-
-             await new Promise(r => setTimeout(r, 500));
-           }
-         }
-       } catch (err) {
-         console.error('[Chat] LOAD ERROR:', err);
-       }
-     };
-
-    loadConvo();
-  }, [characterId, chatType, currentUser.email]); // CRITICAL: Removed 'character' to prevent re-loads on emotion/relationship updates
+    const timer = setTimeout(() => loadConvo(), 300);
+    return () => clearTimeout(timer);
+  }, [characterId, character, chatType, currentUser.email]);
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
@@ -328,47 +375,26 @@ export default function Chat() {
     if (unsubscribeRef.current) unsubscribeRef.current();
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Only process events for this conversation
+      // Only process events for this conversation and character combo
       if (event.data?.conversation_id !== conversationId) return;
 
       if (event.type === "create") {
         setMessages(prev => {
-          // Check if message already exists
-          if (prev.some(m => m.id === event.data.id)) {
-            console.log(`[Chat] SUB: Duplicate ignored ${event.data.id.substring(0, 8)}`);
-            return prev;
-          }
-          const msgType = event.data.image_url && !event.data.content ? '(image)' : `"${event.data.content?.substring(0, 40)}..."`;
-          console.log(`[Chat] SUB: New ${event.data.sender_type} ${event.data.id.substring(0, 8)} ${msgType}`);
-          // Always add new messages, let rendering handle visibility
+          // Prevent duplicates: check if message already exists
+          if (prev.some(m => m.id === event.data.id)) return prev;
           return [...prev, event.data];
         });
         
-        // Auto-read character messages
+        // Auto-mark character messages as read
         if (event.data.sender_type === "character" && !event.data.is_read) {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
+          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       } else if (event.type === "update") {
-        // If message was archived (trimmed), remove it from visible list
-        if (event.data?.archived_date) {
-          console.log(`[Chat] SUB: Archived (trimmed) ${event.data.id.substring(0, 8)} — removing from view`);
-          setMessages(prev => prev.filter(m => m.id !== event.data.id));
-          return;
-        }
-        // Update existing message (e.g., image_url, audio_url being added)
-        console.log(`[Chat] SUB: Updated ${event.data.id.substring(0, 8)}`);
-        setMessages(prev => {
-          const found = prev.some(m => m.id === event.data.id);
-          if (!found) {
-            // Message was updated but not in visible list — add it (e.g. image arrived)
-            console.log(`[Chat] SUB: Update for out-of-view message, adding: ${event.data.id.substring(0, 8)}`);
-            return [...prev, event.data];
-          }
-          return prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m);
-        });
+        // Update existing message without losing state
+        setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
       } else if (event.type === "delete") {
         // Remove deleted messages
-        console.log(`[Chat] SUB: Deleted ${event.data.id.substring(0, 8)}`);
         setMessages(prev => prev.filter(m => m.id !== event.data.id));
       }
     });
@@ -399,7 +425,7 @@ export default function Chat() {
   };
 
   const handleDeleteImage = async (messageId) => {
-    // Remove image from visible message, but Media record is preserved via is_deleted flag in gallery
+    // Update message to remove image_url but keep content
     setMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, image_url: null } : msg));
     try {
       await base44.entities.Message.update(messageId, { image_url: null });
@@ -437,7 +463,7 @@ export default function Chat() {
         recentMessages: messages.slice(-10),
       }).then(res => {
         if (res?.data?.reason) setLastChangeReason(res.data.reason);
-        // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }).catch(() => {});
     }
   };
@@ -459,7 +485,7 @@ export default function Chat() {
           content: `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`,
           timestamp: new Date().toISOString()
         }]);
-        // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }
     } catch (err) {
       setSendError("Failed to process song link. Try again.");
@@ -469,16 +495,6 @@ export default function Chat() {
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
-
-    // Rate limit: space out messages to prevent "Rate limit exceeded" errors
-    // Messages still send immediately to UI, but API calls are throttled
-    const now = Date.now();
-    const timeSinceLastMessage = now - lastMessageTimeRef.current;
-    if (timeSinceLastMessage < 2000) {
-      setSendError("Please wait a moment before sending another message.");
-      return;
-    }
-    lastMessageTimeRef.current = now;
 
     // Fix: command — treat as admin backend directive, do NOT store or process as chat
     if (text.trim().toLowerCase().startsWith("fix:")) {
@@ -492,7 +508,6 @@ export default function Chat() {
     const musicLinkMatch = text.match(/https?:\/\/[^\s]+(spotify|apple|music|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0]);
-      return; // Exit after handling song link
     }
 
     // Check if user is asking character to look something up
@@ -524,12 +539,8 @@ export default function Chat() {
       setSendError("Message failed to save. Try again.");
       return;
     }
-    console.log(`[Chat] USER MESSAGE SAVED: ${userMsg.id.substring(0, 8)} | "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
-    // Add user message immediately — subscription may also fire, dedup handles it
-    setMessages(prev => {
-      if (prev.some(m => m.id === userMsg.id)) return prev;
-      return [...prev, { ...userMsg, sender_type: "user" }]; // force sender_type to prevent any collision
-    });
+    // Message is persisted to database immediately, subscription will add it if needed
+    setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
@@ -645,7 +656,7 @@ export default function Chat() {
               const validStates = ["calm","irritated","defensive","reflective","closed-off","flirtatious","bored","burnt out","joyful","anxious","sad","excited","overwhelmed","content","frustrated"];
               if (validStates.includes(cleaned)) {
                 await base44.entities.Character.update(characterId, { emotional_state: cleaned });
-                // DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+                queryClient.invalidateQueries({ queryKey: ["character", characterId] });
               }
             }).catch(() => {});
           }, 0);
@@ -666,8 +677,8 @@ export default function Chat() {
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
-      const userDisplayName = userSettings?.fictional_world_name || null;
-       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
+      const userDisplayName = userSettings.fictional_world_name || null;
+      const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
       let playAsInstruction = "";
@@ -885,80 +896,49 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     setIsTyping(false);
 
-    // Capture achievement events from this interaction (fire-and-forget)
-    if (userMsg?.id && character?.id) {
-      setTimeout(() => {
-        base44.functions.invoke('captureAchievementEventV2', {
-          event_type: 'message_sent',
-          character_id: character.id,
-          conversation_id: convoId,
-          message_id: userMsg.id,
-          metadata: {
-            has_image: !!userImageUrl,
-            text_length: text.length,
-            response_received: !!responseText
-          }
-        }).catch(err => console.warn('[Chat] Achievement capture error:', err.message));
-      }, 100);
+    // Create main message with text
+    const charMsg = await base44.entities.Message.create({
+      conversation_id: convoId,
+      sender_type: "character",
+      character_id: characterId,
+      character_name: character.name,
+      content: responseText,
+      emotional_state: emotionalState,
+      timestamp: new Date().toISOString(),
+    });
+    if (!charMsg || !charMsg.id) {
+      setSendError("Character response failed to save. Try again.");
+      return;
     }
+    // Add directly to state — subscription deduplication will prevent doubles
+    setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
 
-    // DECISION: If we have both text and image, send them as two separate messages
-    const hasBothTextAndImage = responseText && imagePrompts.length > 0;
+    // Auto-play character voice (after short delay for UX)
+    console.log(`[Chat] CHARACTER RESPONSE CREATED (ID: ${charMsg.id.substring(0, 8)})`);
+    console.log(`[Chat] Response text: "${responseText.substring(0, 100)}${responseText.length > 100 ? '...' : ''}"`);
+    console.log(`[Chat] Character: ${character.name}`);
+    console.log(`[Chat] Character voice_enabled: ${character.voice_enabled}`);
+    console.log(`[Chat] Character voice_name: ${character.voice_name}`);
+    console.log(`[Chat] User voice_enabled: ${userSettings.voice_enabled}`);
+    console.log(`[Chat] TRIGGERING AUTO-PLAY in 500ms...`);
+    
+    setTimeout(() => {
+      console.log(`[Chat] AUTO-PLAY TIMER FIRED - calling playCharacterVoice`);
+      playCharacterVoice(charMsg.id, responseText, character, userSettings, false);
+    }, 500);
 
-    let primaryCharMsg = null; // The first message (text or image)
-    let secondaryCharMsg = null; // The second message if sending both
-
-    if (hasBothTextAndImage) {
-      // STRATEGY: Deliver text message, then queue voice generation
-      // Voice is optional and will NOT block the message from appearing
-
-      // 1. Create and save text message immediately
-       primaryCharMsg = await base44.entities.Message.create({
-         conversation_id: convoId,
-         sender_type: "character",
-         character_id: characterId,
-         character_name: character.name,
-         content: responseText,
-         emotional_state: emotionalState,
-         timestamp: new Date().toISOString(),
-       });
-
-       if (!primaryCharMsg || !primaryCharMsg.id) {
-         setSendError("Character response failed to save. Try again.");
-         return;
-       }
-
-       console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
-       // Message is delivered and visible immediately
-       setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
-
-       // PHASE 3: Commit message to memory (fire-and-forget, non-blocking)
-       const textMsgId = primaryCharMsg.id;
-       setTimeout(() => {
-         base44.functions.invoke('commitMessageToMemory', {
-           messageId: textMsgId,
-           characterId,
-           content: responseText,
-           conversationId: convoId
-         }).catch(() => {});
-       }, 100);
-
-       // Trim oldest message in THIS thread only if over 20 (fire-and-forget)
-       setTimeout(() => {
-         base44.functions.invoke('trimOldMessages', { conversationId: convoId, characterId }).catch(() => {});
-       }, 500);
-
-       // Voice generation happens AFTER message delivery (fire-and-forget)
-       setTimeout(() => {
-         generateAndPlayVoice(textMsgId, responseText, character, userSettings);
-       }, 300);
-
-      // 2. Create image-only message(s) separately after a delay
-      // This gives the text time to render and prevents image generation from blocking text
+    if (emotionalState !== character.emotional_state) {
+      await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+    }
+    
+    // Generate images asynchronously — first image goes on the main message, extras get their own messages
+    if (imagePrompts.length > 0) {
       const userRefImages = currentUser.generated_avatar_urls?.length > 0
         ? currentUser.generated_avatar_urls
         : (currentUser.reference_image_urls || []);
 
+      // Detect subject type from the user's original message (applies to this whole request)
       const msgLower = text.toLowerCase();
       const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
       const isUserRequest = !isJointRequest && (
@@ -967,192 +947,60 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
         /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
       );
       const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-      const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
-      const charRefs = character.avatar_url
-        ? [character.avatar_url, ...(character.reference_image_urls || [])]
-        : (character.reference_image_urls || []);
 
-      // Create separate image message(s) after text has rendered
-      setTimeout(async () => {
-        // First image gets its own message
-        secondaryCharMsg = await base44.entities.Message.create({
+      // Only pass user refs when the subject requires them
+      const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
+
+      // First image attaches to the existing charMsg
+      setTimeout(() => {
+        const charRefs = character.avatar_url
+          ? [character.avatar_url, ...(character.reference_image_urls || [])]
+          : (character.reference_image_urls || []);
+        base44.functions.invoke('generateImageAsync', {
+          messageId: charMsg.id,
+          prompt: imagePrompts[0],
+          characterReferenceImages: charRefs,
+          userReferenceImages: useUserRefs ? userRefImages : [],
+          characterName: character.name,
+          subjectType,
+        }).catch(() => {});
+      }, 500);
+
+      // Additional images get their own separate messages
+      for (let i = 1; i < imagePrompts.length; i++) {
+        const extraMsg = await base44.entities.Message.create({
           conversation_id: convoId,
           sender_type: "character",
           character_id: characterId,
           character_name: character.name,
-          content: "", // Image-only message: no text
+          content: "",
           emotional_state: emotionalState,
           timestamp: new Date().toISOString(),
         });
-
-        if (secondaryCharMsg?.id) {
-          console.log(`[Chat] IMAGE MESSAGE CREATED (placeholder): ${secondaryCharMsg.id.substring(0, 8)}`);
-          setMessages(prev => prev.some(m => m.id === secondaryCharMsg.id) ? prev : [...prev, secondaryCharMsg]);
-
-          // Generate image for the image-only message (will update via subscription)
-          base44.functions.invoke('generateImageAsync', {
-            messageId: secondaryCharMsg.id,
-            prompt: imagePrompts[0],
-            characterReferenceImages: charRefs,
-            userReferenceImages: useUserRefs ? userRefImages : [],
-            characterName: character.name,
-            subjectType,
-          }).catch((err) => console.error(`[Chat] Image generation failed for ${secondaryCharMsg.id.substring(0, 8)}:`, err));
-        }
-
-        // Additional images (if multiple requested) get their own separate messages too
-        for (let i = 1; i < imagePrompts.length; i++) {
-          const extraImageMsg = await base44.entities.Message.create({
-            conversation_id: convoId,
-            sender_type: "character",
-            character_id: characterId,
-            character_name: character.name,
-            content: "",
-            emotional_state: emotionalState,
-            timestamp: new Date().toISOString(),
-          });
-
-          if (extraImageMsg?.id) {
-            console.log(`[Chat] IMAGE MESSAGE CREATED (placeholder): ${extraImageMsg.id.substring(0, 8)}`);
-            setMessages(prev => prev.some(m => m.id === extraImageMsg.id) ? prev : [...prev, extraImageMsg]);
-            setTimeout(() => {
-              base44.functions.invoke('generateImageAsync', {
-                messageId: extraImageMsg.id,
-                prompt: imagePrompts[i],
-                characterReferenceImages: charRefs,
-                userReferenceImages: useUserRefs ? userRefImages : [],
-                characterName: character.name,
-                subjectType,
-              }).catch((err) => console.error(`[Chat] Image generation failed for ${extraImageMsg.id.substring(0, 8)}:`, err));
-            }, i * 500);
-          }
-        }
-      }, 1800); // Delay before sending image message(s) so text renders first
-
-    } else if (responseText && !imagePrompts.length) {
-       // TEXT-ONLY MESSAGE - deliver immediately
-       primaryCharMsg = await base44.entities.Message.create({
-         conversation_id: convoId,
-         sender_type: "character",
-         character_id: characterId,
-         character_name: character.name,
-         content: responseText,
-         emotional_state: emotionalState,
-         timestamp: new Date().toISOString(),
-       });
-
-       if (!primaryCharMsg || !primaryCharMsg.id) {
-         setSendError("Character response failed to save. Try again.");
-         return;
-       }
-
-       console.log(`[Chat] CHARACTER TEXT MESSAGE SAVED: ${primaryCharMsg.id.substring(0, 8)} | "${responseText.substring(0, 50)}${responseText.length > 50 ? '...' : ''}"`);
-       // Message delivered and visible immediately
-       setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
-
-       // PHASE 3: Commit message to memory (fire-and-forget, non-blocking)
-       const textMsgId = primaryCharMsg.id;
-       setTimeout(() => {
-         base44.functions.invoke('commitMessageToMemory', {
-           messageId: textMsgId,
-           characterId,
-           content: responseText,
-           conversationId: convoId
-         }).catch(() => {});
-       }, 100);
-
-       // Trim oldest message in THIS thread only if over 20 (fire-and-forget)
-       setTimeout(() => {
-         base44.functions.invoke('trimOldMessages', { conversationId: convoId, characterId }).catch(() => {});
-       }, 500);
-
-       // Voice generation happens AFTER message is safe (fire-and-forget)
-       setTimeout(() => {
-         generateAndPlayVoice(textMsgId, responseText, character, userSettings);
-       }, 300);
-
-    } else if (!responseText && imagePrompts.length > 0) {
-      // IMAGE-ONLY MESSAGE(S)
-      const userRefImages = currentUser.generated_avatar_urls?.length > 0
-        ? currentUser.generated_avatar_urls
-        : (currentUser.reference_image_urls || []);
-
-      const msgLower = text.toLowerCase();
-      const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
-      const isUserRequest = !isJointRequest && (
-        /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
-        /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
-        /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
-      );
-      const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-      const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
-      const charRefs = character.avatar_url
-        ? [character.avatar_url, ...(character.reference_image_urls || [])]
-        : (character.reference_image_urls || []);
-
-      // Create image message
-      primaryCharMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: "",
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
-
-      if (primaryCharMsg?.id) {
-        console.log(`[Chat] IMAGE-ONLY MESSAGE CREATED: ${primaryCharMsg.id.substring(0, 8)}`);
-        setMessages(prev => prev.some(m => m.id === primaryCharMsg.id) ? prev : [...prev, primaryCharMsg]);
-
-        // Generate first image
-        setTimeout(() => {
-          base44.functions.invoke('generateImageAsync', {
-            messageId: primaryCharMsg.id,
-            prompt: imagePrompts[0],
-            characterReferenceImages: charRefs,
-            userReferenceImages: useUserRefs ? userRefImages : [],
-            characterName: character.name,
-            subjectType,
-          }).catch((err) => console.error(`[Chat] Image generation failed for ${primaryCharMsg.id.substring(0, 8)}:`, err));
-        }, 300);
-
-        // Additional images get their own messages
-        for (let i = 1; i < imagePrompts.length; i++) {
-          const extraImageMsg = await base44.entities.Message.create({
-            conversation_id: convoId,
-            sender_type: "character",
-            character_id: characterId,
-            character_name: character.name,
-            content: "",
-            emotional_state: emotionalState,
-            timestamp: new Date().toISOString(),
-          });
-
-          if (extraImageMsg?.id) {
-            console.log(`[Chat] IMAGE MESSAGE CREATED: ${extraImageMsg.id.substring(0, 8)}`);
-            setMessages(prev => prev.some(m => m.id === extraImageMsg.id) ? prev : [...prev, extraImageMsg]);
-            const capturedId = extraImageMsg.id;
-            const capturedPrompt = imagePrompts[i];
-            setTimeout(() => {
-              base44.functions.invoke('generateImageAsync', {
-                messageId: capturedId,
-                prompt: capturedPrompt,
-                characterReferenceImages: charRefs,
-                userReferenceImages: useUserRefs ? userRefImages : [],
-                characterName: character.name,
-                subjectType,
-              }).catch((err) => console.error(`[Chat] Image generation failed for ${capturedId.substring(0, 8)}:`, err));
-            }, 300 + i * 500);
-          }
+        if (extraMsg?.id) {
+          setMessages(prev => prev.some(m => m.id === extraMsg.id) ? prev : [...prev, extraMsg]);
+          const delay = 500 + i * 800;
+          const capturedId = extraMsg.id;
+          const capturedPrompt = imagePrompts[i];
+          const charRefs = character.avatar_url
+            ? [character.avatar_url, ...(character.reference_image_urls || [])]
+            : (character.reference_image_urls || []);
+          setTimeout(() => {
+            base44.functions.invoke('generateImageAsync', {
+              messageId: capturedId,
+              prompt: capturedPrompt,
+              characterReferenceImages: charRefs,
+              userReferenceImages: useUserRefs ? userRefImages : [],
+              characterName: character.name,
+              subjectType,
+            }).catch(() => {});
+          }, delay);
         }
       }
     }
-
-    if (emotionalState !== character.emotional_state) {
-      await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
-      // DISABLED: queryClient.invalidateQueries({ queryKey: ["characters"] });
-    }
+    
+    // Invalidate messages so async image updates appear when ready
+    queryClient.invalidateQueries({ queryKey: ["messages", convoId] });
 
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
@@ -1246,28 +1094,14 @@ Reply with ONLY the single emoji or the word "none".`,
       }
     }).catch(() => {});
 
-    // PHASE 3: CRITICAL FIX - Do NOT invalidate character query during sendMessage
-    // This prevents the stale conversation reload from wiping newly delivered messages
-    // Character updates (emotions, relationships) are handled asynchronously and don't need immediate UI refresh
-    // queryClient.invalidateQueries({ queryKey: ["character", characterId] }); // DISABLED
+    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
-    // Update conversation metadata
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: responseText.substring(0, 100),
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
     });
   };
-
-  // Show loading state if character isn't loaded yet
-  if (!character || !characterId) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-background">
-        <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
-        <p className="mt-4 text-muted-foreground text-sm">Loading chat...</p>
-      </div>
-    );
-  }
 
   return (
     <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
@@ -1276,13 +1110,13 @@ Reply with ONLY the single emoji or the word "none".`,
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <Link to={`/profile/${characterId}`}>
-          <CharacterAvatar character={character} size="sm" />
+          {character && <CharacterAvatar character={character} size="sm" />}
         </Link>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-foreground truncate">{character.name}</h2>
+          <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
-        <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />
+        {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />}
 
         {character && (character.fictional_relationships || []).length > 0 && (
           <button
@@ -1322,8 +1156,8 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
-         {/* ArchiveNotice hidden until Phase 4: Message Limit reintroduction */}
-         <AnimatePresence>
+        {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterName={character?.name} />}
+        <AnimatePresence>
           {messages.map(msg => (
             <MessageBubble 
               key={msg.id} 
@@ -1331,7 +1165,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onReact={handleReact} 
               onDelete={handleDeleteMessage} 
               onDeleteImage={handleDeleteImage}
-              onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => generateAndPlayVoice(msg.id, msg.content, character, userSettings) : null}
+              onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => playCharacterVoice(msg.id, msg.content, character, userSettings, true) : null}
               isPlayingVoice={playingAudioId === msg.id}
               voiceError={voiceErrors[msg.id]}
             />
@@ -1363,7 +1197,7 @@ Reply with ONLY the single emoji or the word "none".`,
         characterId={characterId}
         conversationId={conversationId}
         chatHistory={messages}
-        onNarrativeSubmitted={() => {} /* DISABLED: queryClient.invalidateQueries({ queryKey: ["character", characterId] }) */}
+        onNarrativeSubmitted={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
       />
       <WorldContactsPopup
         isOpen={showWorldContacts}
@@ -1371,6 +1205,7 @@ Reply with ONLY the single emoji or the word "none".`,
         character={character}
       />
       <BottomNav />
+      <VoiceDiagnosticsPanel />
     </div>
   );
 }
