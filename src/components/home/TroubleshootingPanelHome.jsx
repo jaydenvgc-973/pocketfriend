@@ -7,6 +7,7 @@ import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
   { id: 'mark_read', label: 'Mark messages as read', description: 'Reset all unread notification counts to 0' },
+  { id: 'deep_diagnostic_ethan', label: 'Deep diagnostic for Ethan notification', description: 'Find and fix stuck/phantom messages causing red dot' },
   { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
   { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
   { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },
@@ -36,21 +37,49 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
     setResults(null);
 
     try {
-      const res = await base44.functions.invoke('troubleshootHome', {
-        selectedIssues,
-      });
-
-      if (res?.data?.data) {
-        setResults(res.data.data);
+      // Special handling for deep diagnostic
+      if (selectedIssues.includes('deep_diagnostic_ethan')) {
+        const res = await base44.functions.invoke('deepDiagnosticEthan', {});
         
-        // If mark_read was selected, invalidate character queries to force UI refresh
-        if (selectedIssues.includes('mark_read')) {
-          await queryClient.invalidateQueries({ queryKey: ['characters'] });
-          await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        if (res?.data) {
+          setResults({
+            summary: `Deep diagnostic complete: ${res.data.deleted_message_count} messages deleted, ${res.data.final_unread_count} unread remaining`,
+            fixes_applied: [
+              ...res.data.fixes,
+              `Pending messages: ${res.data.pending_messages_count}`,
+            ],
+            checks: [
+              {
+                name: 'Diagnostic Report',
+                status: res.data.success ? 'passed' : 'warning',
+                message: res.data.diagnostics.substring(0, 500) + '...',
+              },
+            ],
+          });
+        } else {
+          setError('Deep diagnostic failed');
         }
       } else {
-        setError('Failed to run troubleshooting');
+        const res = await base44.functions.invoke('troubleshootHome', {
+          selectedIssues,
+        });
+
+        if (res?.data?.data) {
+          setResults(res.data.data);
+          
+          // If mark_read was selected, invalidate character queries to force UI refresh
+          if (selectedIssues.includes('mark_read')) {
+            await queryClient.invalidateQueries({ queryKey: ['characters'] });
+            await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          }
+        } else {
+          setError('Failed to run troubleshooting');
+        }
       }
+      
+      // Always invalidate after any diagnostic
+      await queryClient.invalidateQueries({ queryKey: ['characters'] });
+      await queryClient.invalidateQueries({ queryKey: ['conversations'] });
     } catch (err) {
       setError(err.message || 'Error running troubleshooting');
     } finally {
