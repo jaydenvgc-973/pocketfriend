@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
@@ -19,6 +20,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
   const [selectedIssues, setSelectedIssues] = useState([]);
+  const queryClient = useQueryClient();
 
   const toggleIssue = (issueId) => {
     setSelectedIssues(prev => 
@@ -40,6 +42,12 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
 
       if (res?.data?.data) {
         setResults(res.data.data);
+        
+        // If mark_read was selected, invalidate character queries to force UI refresh
+        if (selectedIssues.includes('mark_read')) {
+          await queryClient.invalidateQueries({ queryKey: ['characters'] });
+          await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        }
       } else {
         setError('Failed to run troubleshooting');
       }
