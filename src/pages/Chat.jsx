@@ -202,11 +202,14 @@ export default function Chat() {
   // useEffect(() => { ... }, []);
 
   const hasLoadedRef = useRef(false);
+  const loadedForCharacterRef = useRef(null);
 
   useEffect(() => {
     if (!characterId || !currentUser.email) return;
-    if (hasLoadedRef.current) return; // Never reload once loaded
+    // Only load once per character — never reload mid-conversation
+    if (hasLoadedRef.current && loadedForCharacterRef.current === characterId) return;
     hasLoadedRef.current = true;
+    loadedForCharacterRef.current = characterId;
 
     const loadConvo = async () => {
        try {
@@ -303,8 +306,7 @@ export default function Chat() {
        }
      };
 
-    const timer = setTimeout(() => loadConvo(), 300);
-    return () => clearTimeout(timer);
+    loadConvo();
   }, [characterId, chatType, currentUser.email]); // CRITICAL: Removed 'character' to prevent re-loads on emotion/relationship updates
 
   useEffect(() => {
