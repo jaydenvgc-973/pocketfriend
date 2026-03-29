@@ -39,25 +39,26 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
     try {
       // Special handling for deep diagnostic
       if (selectedIssues.includes('deep_diagnostic_ethan')) {
-        const res = await base44.functions.invoke('deepDiagnosticEthan', {});
+        const res = await base44.functions.invoke('simpleEthanFix', {});
         
         if (res?.data) {
           setResults({
-            summary: `Deep diagnostic complete: ${res.data.deleted_message_count} messages deleted, ${res.data.final_unread_count} unread remaining`,
+            summary: `Ethan reset: Marked ${res.data.marked} messages as read. Red dot should disappear.`,
             fixes_applied: [
-              ...res.data.fixes,
-              `Pending messages: ${res.data.pending_messages_count}`,
+              `Marked ${res.data.marked} unread messages as read`,
+              `Total found: ${res.data.total_found}`,
+              'Invalidating all UI caches now...',
             ],
             checks: [
               {
-                name: 'Diagnostic Report',
+                name: 'Ethan Unread Reset',
                 status: res.data.success ? 'passed' : 'warning',
-                message: res.data.diagnostics.substring(0, 500) + '...',
+                message: `Success: ${res.data.success}`,
               },
             ],
           });
         } else {
-          setError('Deep diagnostic failed');
+          setError('Ethan reset failed');
         }
       } else {
         const res = await base44.functions.invoke('troubleshootHome', {
@@ -77,9 +78,19 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
         }
       }
       
-      // Always invalidate after any diagnostic
+      // Always invalidate after any diagnostic - aggressive cache clear
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      
+      // If Ethan diagnostic, also clear all conversation-specific caches
+      if (selectedIssues.includes('deep_diagnostic_ethan')) {
+        const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
+        await queryClient.invalidateQueries({ queryKey: ['conversations', ETHAN_ID] });
+        
+        // Force refetch on all character cards
+        await new Promise(r => setTimeout(r, 100));
+        queryClient.refetchQueries({ queryKey: ['characters'] });
+      }
     } catch (err) {
       setError(err.message || 'Error running troubleshooting');
     } finally {
