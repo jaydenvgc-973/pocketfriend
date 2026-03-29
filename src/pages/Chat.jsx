@@ -290,7 +290,8 @@ export default function Chat() {
           convoId = convos[0].id;
           // Protected characters (e.g. Ethan) load ALL messages; others load recent 50
           const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
-          const msgLimit = PROTECTED_CHARACTER_IDS.includes(characterId) ? 1000 : 50;
+          const isProtected = PROTECTED_CHARACTER_IDS.includes(characterId);
+          const msgLimit = isProtected ? 1000 : 50;
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId },
             "-created_date",
