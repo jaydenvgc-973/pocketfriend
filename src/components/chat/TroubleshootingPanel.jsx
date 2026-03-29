@@ -1,13 +1,31 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Wrench, AlertCircle, CheckCircle2, Clock, Loader2 } from 'lucide-react';
+import { X, Wrench, AlertCircle, CheckCircle2, Clock, Loader2, ChevronRight } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+
+const ISSUE_LIST = [
+  { id: 'thread_load', label: 'Thread not loading correctly', description: 'Check if the conversation is properly linked to this character' },
+  { id: 'missing_messages', label: 'Messages missing from thread', description: 'Restore messages that exist but aren\'t showing' },
+  { id: 'unread_stuck', label: 'Unread notification stuck', description: 'Fix out-of-sync unread counts' },
+  { id: 'pending_messages', label: 'Messages not delivering', description: 'Deliver pending messages stuck in queue' },
+  { id: 'media_missing', label: 'Images not showing', description: 'Recover image references and visibility' },
+  { id: 'archived_messages', label: 'Hidden or archived messages', description: 'Recover messages hidden from view' },
+];
 
 export default function TroubleshootingPanel({ isOpen, onClose, conversationId, characterId }) {
   const [isRunning, setIsRunning] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [selectedIssues, setSelectedIssues] = useState([]);
+
+  const toggleIssue = (issueId) => {
+    setSelectedIssues(prev => 
+      prev.includes(issueId) 
+        ? prev.filter(id => id !== issueId)
+        : [...prev, issueId]
+    );
+  };
 
   const runTroubleshooting = async () => {
     setIsRunning(true);
@@ -68,27 +86,52 @@ export default function TroubleshootingPanel({ isOpen, onClose, conversationId, 
           {!results && !isRunning && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                This tool will check for common issues in this conversation thread and attempt to fix them automatically.
+                Select the issues you'd like to check and fix:
               </p>
               <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-foreground">What will be checked:</h3>
-                <ul className="space-y-1 text-xs text-muted-foreground">
-                  <li>✓ Thread load and connection</li>
-                  <li>✓ Message presence in database</li>
-                  <li>✓ Message visibility and rendering</li>
-                  <li>✓ Unread notification state</li>
-                  <li>✓ Stuck pending messages</li>
-                  <li>✓ Media reference integrity</li>
-                  <li>✓ Archived messages recovery</li>
-                </ul>
+                {ISSUE_LIST.map(issue => (
+                  <button
+                    key={issue.id}
+                    onClick={() => toggleIssue(issue.id)}
+                    className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
+                      selectedIssues.includes(issue.id)
+                        ? 'border-primary bg-primary/10'
+                        : 'border-border bg-secondary/50 hover:bg-secondary'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-foreground">{issue.label}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{issue.description}</p>
+                      </div>
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ml-2 ${
+                        selectedIssues.includes(issue.id)
+                          ? 'bg-primary border-primary'
+                          : 'border-border'
+                      }`}>
+                        {selectedIssues.includes(issue.id) && (
+                          <CheckCircle2 className="w-4 h-4 text-primary-foreground" />
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                ))}
               </div>
-              <button
-                onClick={runTroubleshooting}
-                disabled={isRunning}
-                className="w-full px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >
-                Start Troubleshooting
-              </button>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={runTroubleshooting}
+                  disabled={selectedIssues.length === 0 || isRunning}
+                  className="flex-1 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Check Selected Issues
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-4 py-3 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           )}
 
