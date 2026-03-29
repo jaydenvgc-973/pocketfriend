@@ -201,11 +201,13 @@ export default function Chat() {
   // Disabled: initializeVoiceSettings was causing rate limiting — voice init deferred to on-demand
   // useEffect(() => { ... }, []);
 
+  const hasLoadedRef = useRef(false);
+
   useEffect(() => {
     if (!characterId || !currentUser.email) return;
-    
-    // CRITICAL FIX: Only reset state on ACTUAL character ID change, NOT on character data updates
-    // This prevents the stale re-fetch from wiping newly delivered messages
+    if (hasLoadedRef.current) return; // Never reload once loaded
+    hasLoadedRef.current = true;
+
     const loadConvo = async () => {
        try {
          // Fetch character data fresh (needed for pending messages)
