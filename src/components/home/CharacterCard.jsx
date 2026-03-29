@@ -62,18 +62,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const [showAvatarModal, setShowAvatarModal] = useState(false);
   const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
-  const [hasPendingMessage, setHasPendingMessage] = useState(false);
   const [unreadChat, setUnreadChat] = useState(0);
   const [unreadPhone, setUnreadPhone] = useState(0);
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
-
-  const { data: pendingMessages = [] } = useQuery({
-    queryKey: ['pendingMessages', character.id],
-    queryFn: () => base44.entities.PendingMessage.filter({ character_id: character.id, delivered: false }),
-    staleTime: 10000,
-  });
 
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', character.id],
@@ -81,26 +74,35 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
     staleTime: 0,
   });
 
-  useEffect(() => {
-    setHasPendingMessage(pendingMessages.length > 0);
-  }, [pendingMessages]);
-
+  // STRICT unread count: only delivered, visible, non-read character messages
+  // Never counts: pending (undelivered), hidden, or non-character messages
   const countUnread = async () => {
-    if (conversations.length === 0) return;
+    if (conversations.length === 0) {
+      setUnreadChat(0);
+      setUnreadPhone(0);
+      return;
+    }
     try {
+      const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
+      const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
+
+      // Fetch only DELIVERED character messages that are unread
+      // Pending (undelivered) messages never appear here — they live in PendingMessage entity until delivered
       const allUnread = await base44.entities.Message.filter({
         sender_type: "character",
         character_id: character.id,
         is_read: false,
       });
 
-      const directConvoIds = conversations.filter(c => c.type === "direct").map(c => c.id);
-      const phoneConvoIds = conversations.filter(c => c.type === "phone").map(c => c.id);
+      // Only count messages that are in a known conversation thread (delivered and visible)
+      const chatUnread = allUnread.filter(m => directConvoIds.includes(m.conversation_id)).length;
+      const phoneUnread = allUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length;
 
-      setUnreadChat(allUnread.filter(m => directConvoIds.includes(m.conversation_id)).length);
-      setUnreadPhone(allUnread.filter(m => phoneConvoIds.includes(m.conversation_id)).length);
+      console.log(`[BADGE] ${character.name} | chat_unread=${chatUnread} | phone_unread=${phoneUnread} | delivered_unread_total=${allUnread.length}`);
+      setUnreadChat(chatUnread);
+      setUnreadPhone(phoneUnread);
     } catch (err) {
-      console.warn('Failed to count unread messages', err);
+      console.warn('[BADGE] Failed to count unread messages', err);
     }
   };
 
@@ -112,25 +114,29 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   useEffect(() => {
     const handleFocus = () => {
       queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
-      countUnread();
+      setTimeout(() => countUnread(), 200);
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, [conversations, character.id, queryClient]);
 
-  // Subscribe to message changes for real-time badge updates (create, update, delete)
+  // Real-time: recount only when a character message is created or updated (delivered into a thread)
+  // This never fires for PendingMessage — those are a separate entity
   useEffect(() => {
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Re-count on any message event for this character or any conversation update
-      if (event.data?.character_id === character.id || event.data?.sender_type === "user") {
-        // Invalidate conversations to ensure fresh data
-        queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
-        // Small delay to ensure DB has updated
-        setTimeout(() => countUnread(), 100);
+      const isForThisChar = event.data?.character_id === character.id;
+      const isCharMsg = event.data?.sender_type === "character";
+      // Only recount on character message create/update — not on user messages or unrelated events
+      if (isForThisChar && isCharMsg && (event.type === "create" || event.type === "update")) {
+        setTimeout(() => countUnread(), 300);
+      }
+      // Also recount when user messages are marked (triggers is_read changes downstream)
+      if (event.type === "update" && event.data?.character_id === character.id) {
+        setTimeout(() => countUnread(), 300);
       }
     });
     return () => unsubscribe();
-  }, [character.id, queryClient]);
+  }, [character.id, conversations]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
@@ -279,14 +285,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 <MessageCircle className="w-4 h-4" /> Chat
               </button>
               <AnimatePresence>
-                {(hasPendingMessage || unreadChat > 0) && (
+                {unreadChat > 0 && (
                   <motion.span
                     key="chat-badge"
                     initial={{ scale: 0.8, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
                     exit={{ scale: 0.8, opacity: 0 }}
                     className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 bg-red-500 text-white text-[10px] font-bold rounded-full border-2 border-background flex items-center justify-center">
-                    {unreadChat > 0 ? (unreadChat > 9 ? "9+" : unreadChat) : "!"}
+                    {unreadChat > 9 ? "9+" : unreadChat}
                   </motion.span>
                 )}
               </AnimatePresence>

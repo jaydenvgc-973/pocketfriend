@@ -422,6 +422,24 @@ export default function Chat() {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
 
+  // FORCE-TO-ZERO: When page opens and we have a conversation + messages loaded,
+  // immediately mark ALL visible unread character messages as read.
+  // This is unconditional — no exceptions, no delays beyond the async DB call.
+  useEffect(() => {
+    if (!conversationId || messages.length === 0) return;
+    const unread = messages.filter(m => m.sender_type === "character" && !m.is_read);
+    if (unread.length === 0) return;
+    console.log(`[BADGE] Force-to-zero on page open: marking ${unread.length} messages as read | conversationId=${conversationId} | chatType=${chatType}`);
+    unread.forEach(m => {
+      base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
+    });
+    // Update local state immediately — don't wait for subscription
+    setMessages(prev => prev.map(m =>
+      m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m
+    ));
+    queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+  }, [conversationId, messages.length > 0]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
