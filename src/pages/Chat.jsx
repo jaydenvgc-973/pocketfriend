@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Wrench } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
@@ -19,6 +19,7 @@ import { BarChart2, BookOpen, Globe } from "lucide-react";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
+import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -46,6 +47,7 @@ export default function Chat() {
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
   const [showWorldContacts, setShowWorldContacts] = useState(false);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
 
@@ -1311,6 +1313,16 @@ Reply with ONLY the single emoji or the word "none".`,
         </div>
         {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />}
 
+        {character && conversationId && (
+          <button
+            onClick={() => setShowTroubleshooting(true)}
+            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            title="Troubleshoot this thread"
+          >
+            <Wrench className="w-4 h-4" />
+          </button>
+        )}
+
         {character && (character.fictional_relationships || []).length > 0 && (
           <button
             onClick={() => setShowWorldContacts(true)}
@@ -1396,6 +1408,12 @@ Reply with ONLY the single emoji or the word "none".`,
         isOpen={showWorldContacts}
         onClose={() => setShowWorldContacts(false)}
         character={character}
+      />
+      <TroubleshootingPanel
+        isOpen={showTroubleshooting}
+        onClose={() => setShowTroubleshooting(false)}
+        conversationId={conversationId}
+        characterId={characterId}
       />
       <BottomNav />
 
