@@ -5,6 +5,7 @@ import { X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
+  { id: 'mark_read', label: 'Mark messages as read', description: 'Reset all unread notification counts to 0' },
   { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
   { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
   { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },

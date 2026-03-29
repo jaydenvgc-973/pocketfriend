@@ -74,6 +74,56 @@ Deno.serve(async (req) => {
       }
     }
 
+    // MARK ALL MESSAGES AS READ
+    if (selectedIssues.includes('mark_read')) {
+      results.checked.push('Unread message counts');
+      
+      let chatUnreadBefore = 0;
+      let textUnreadBefore = 0;
+      let ethanUnreadBefore = 0;
+      let totalMarked = 0;
+
+      // Count unread before reset
+      for (const char of characters) {
+        const convos = await base44.entities.Conversation.filter(
+          { character_ids: [char.id], created_by: user.email },
+          "-updated_date",
+          100
+        );
+        
+        for (const convo of convos) {
+          const unreadMsgs = await base44.entities.Message.filter(
+            { conversation_id: convo.id, is_read: false, sender_type: 'character' }
+          );
+          
+          if (convo.type === 'direct' || !convo.type) {
+            chatUnreadBefore += unreadMsgs.length;
+          } else if (convo.type === 'phone') {
+            textUnreadBefore += unreadMsgs.length;
+          }
+          
+          // Track Ethan specifically
+          const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
+          if (PROTECTED_CHARACTER_IDS.includes(char.id)) {
+            ethanUnreadBefore += unreadMsgs.length;
+          }
+          
+          // Mark all unread messages as read
+          for (const msg of unreadMsgs) {
+            await base44.entities.Message.update(msg.id, { is_read: true });
+            totalMarked++;
+          }
+        }
+      }
+      
+      results.fixed.push(`Chat unread: ${chatUnreadBefore} → 0`);
+      results.fixed.push(`Text unread: ${textUnreadBefore} → 0`);
+      if (ethanUnreadBefore > 0) {
+        results.fixed.push(`Ethan unread: ${ethanUnreadBefore} → 0 (red dot cleared)`);
+      }
+      results.fixed.push(`Total messages marked as read: ${totalMarked}`);
+    }
+
     // PROTECTED CHARACTER CHECK
     if (selectedIssues.includes('protected_character')) {
       results.checked.push('Protected character behavior');
