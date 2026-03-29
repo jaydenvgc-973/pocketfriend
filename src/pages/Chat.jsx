@@ -243,9 +243,21 @@ export default function Chat() {
            console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
 
            if (loadedMsgs && loadedMsgs.length > 0) {
-             // Reverse to chronological order
-             setMessages(loadedMsgs.reverse());
-             setConversationId(convoId);
+              // Reverse to chronological order, then MERGE with any messages already in state
+              const reversed = loadedMsgs.reverse();
+              setMessages(prev => {
+                if (prev.length === 0) return reversed;
+                // Merge: keep all existing messages, add any from DB not already present
+                const existingIds = new Set(prev.map(m => m.id));
+                const newOnes = reversed.filter(m => !existingIds.has(m.id));
+                // Also update existing ones that may have changed (e.g. reactions, audio_url)
+                const updated = prev.map(m => {
+                  const fresh = reversed.find(r => r.id === m.id);
+                  return fresh ? { ...fresh, ...m } : m; // keep local state over stale DB
+                });
+                return [...newOnes, ...updated].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+              });
+              setConversationId(convoId);
 
              // Mark unread messages as read (non-blocking)
              const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
