@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
 import BottomNav from "@/components/BottomNav";
 import ActiveArcCard from "@/components/moments/ActiveArcCard";
@@ -14,6 +14,10 @@ const CATEGORIES = Object.keys(CATEGORY_LABELS);
 
 export default function Moments() {
   const [activeCategory, setActiveCategory] = useState("all");
+  const [scanning, setScanning] = useState(false);
+  const [scanResult, setScanResult] = useState(null);
+  const hasScanned = useRef(false);
+  const queryClient = useQueryClient();
 
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
@@ -28,7 +32,7 @@ export default function Moments() {
     enabled: !!currentUser?.email,
   });
 
-  const { data: unlocked = [] } = useQuery({
+  const { data: unlocked = [], refetch: refetchAchievements } = useQuery({
     queryKey: ["userAchievements", currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.UserAchievement.filter({ created_by: currentUser.email }, "-unlocked_at")
@@ -37,9 +41,9 @@ export default function Moments() {
   });
 
   const { data: messages = [] } = useQuery({
-    queryKey: ["recentMessages", currentUser?.email],
+    queryKey: ["allMessages", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Message.filter({ created_by: currentUser.email }, "-created_date", 200)
+      ? base44.entities.Message.filter({ created_by: currentUser.email }, "-created_date", 500)
       : [],
     enabled: !!currentUser?.email,
   });
@@ -51,6 +55,44 @@ export default function Moments() {
       : [],
     enabled: !!currentUser?.email,
   });
+
+  // Run retroactive achievement scan once per session when user loads Moments
+  useEffect(() => {
+    if (!currentUser?.email || hasScanned.current) return;
+    hasScanned.current = true;
+
+    const runScan = async () => {
+      setScanning(true);
+      try {
+        const res = await base44.functions.invoke('retroactiveAchievementScan', {});
+        const granted = res?.data?.granted || 0;
+        if (granted > 0) {
+          setScanResult(granted);
+          // Refresh achievements list
+          await refetchAchievements();
+          queryClient.invalidateQueries({ queryKey: ["userAchievements"] });
+        }
+      } catch (err) {
+        // Silent fail — scan is a bonus, not critical
+        console.warn('[Moments] retroactive scan failed:', err.message);
+      } finally {
+        setScanning(false);
+      }
+    };
+
+    runScan();
+  }, [currentUser?.email]);
+
+  // Subscribe to real-time achievement unlocks
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const unsub = base44.entities.UserAchievement.subscribe((event) => {
+      if (event.type === 'create') {
+        queryClient.invalidateQueries({ queryKey: ["userAchievements"] });
+      }
+    });
+    return unsub;
+  }, [currentUser?.email]);
 
   // Map achievement_id -> unlocked record (most recent)
   const unlockedMap = unlocked.reduce((acc, r) => {
@@ -69,10 +111,24 @@ export default function Moments() {
     <div className="min-h-screen bg-background pb-20">
       {/* Header */}
       <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
-        <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          {unlockedCount} / {allAchievements.length} achievements unlocked
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {unlockedCount} / {allAchievements.length} achievements unlocked
+              {scanning && <span className="ml-2 text-primary/60">• scanning...</span>}
+            </p>
+          </div>
+          {scanResult && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-primary/20 text-primary text-xs font-semibold px-3 py-1.5 rounded-full"
+            >
+              +{scanResult} unlocked!
+            </motion.div>
+          )}
+        </div>
         {/* Progress bar */}
         <div className="mt-3 h-1 w-full rounded-full bg-secondary overflow-hidden">
           <motion.div

@@ -1,45 +1,50 @@
 const WEEKLY_GOALS = [
-  { emoji: "❤️", label: "Trigger 5 ❤️ reactions", key: "heart_reactions", target: 5 },
-  { emoji: "💬", label: "Maintain 3 active conversations", key: "active_convos", target: 3 },
-  { emoji: "🌀", label: "Experience a full life arc", key: "full_arc", target: 1 },
-  { emoji: "📸", label: "Receive 3 photos from characters", key: "photos_received", target: 3 },
+  { emoji: "❤️", label: "Receive 2 ❤️ reactions", key: "heart_reactions", target: 2 },
+  { emoji: "💬", label: "Have 2 active conversations", key: "active_convos", target: 2 },
+  { emoji: "📸", label: "Receive 1 photo from a character", key: "photos_received", target: 1 },
+  { emoji: "🔁", label: "Chat on 3 different days", key: "days_active", target: 3 },
 ];
 
 export default function GoalsSection({ characters, messages }) {
-  // Compute lightweight progress for each goal from available data
+  // Heart reactions: character sent ❤️ to user's messages
   const heartReactions = messages.filter(m =>
-    m.sender_type === "character" && m.reactions?.some(r => r.emoji === "❤️")
+    m.sender_type === "user" && m.reactions?.some(r => r.reactor_type === "character" && r.emoji === "❤️")
   ).length;
 
-  const activeConvos = new Set(
-    messages.filter(m => {
-      const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      return m.timestamp && new Date(m.timestamp) > dayAgo;
-    }).map(m => m.conversation_id)
-  ).size;
+  // Active convos: unique conversation_ids with activity (any message sender)
+  const activeConvoIds = new Set(messages.map(m => m.conversation_id).filter(Boolean));
+  const activeConvos = activeConvoIds.size;
 
+  // Photos received from characters
   const photosReceived = messages.filter(m => m.sender_type === "character" && m.image_url).length;
 
+  // Days the user sent messages
+  const daysActive = new Set(
+    messages
+      .filter(m => m.sender_type === "user")
+      .map(m => new Date(m.created_date || m.timestamp).toDateString())
+  ).size;
+
   const progress = {
-    heart_reactions: Math.min(heartReactions, 5),
-    active_convos: Math.min(activeConvos, 3),
-    full_arc: 0, // placeholder — would need arc tracking
-    photos_received: Math.min(photosReceived, 3),
+    heart_reactions: Math.min(heartReactions, 2),
+    active_convos: Math.min(activeConvos, 2),
+    photos_received: Math.min(photosReceived, 1),
+    days_active: Math.min(daysActive, 3),
   };
 
-  const targets = { heart_reactions: 5, active_convos: 3, full_arc: 1, photos_received: 3 };
+  const targets = { heart_reactions: 2, active_convos: 2, photos_received: 1, days_active: 3 };
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between px-1">
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🎯 Weekly Goals</h2>
-        <span className="text-xs text-muted-foreground">Resets weekly</span>
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">🎯 Progress Goals</h2>
       </div>
       <div className="space-y-2">
         {WEEKLY_GOALS.map((goal) => {
           const current = progress[goal.key] || 0;
-          const pct = Math.round((current / goal.target) * 100);
-          const done = current >= goal.target;
+          const target = targets[goal.key];
+          const pct = Math.round((current / target) * 100);
+          const done = current >= target;
 
           return (
             <div
@@ -52,7 +57,7 @@ export default function GoalsSection({ characters, messages }) {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
                   <span className={`text-xs font-medium ${done ? "text-primary" : "text-foreground"}`}>{goal.label}</span>
-                  <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{current}/{goal.target}</span>
+                  <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{current}/{target}</span>
                 </div>
                 <div className="h-1 w-full rounded-full bg-secondary overflow-hidden">
                   <div

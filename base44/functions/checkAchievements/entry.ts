@@ -1,150 +1,307 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-// Achievement detection logic — returns array of achievement_ids to unlock
-function detectAchievements(userMessage, characterState, existingAchievementIds) {
-  const msg = (userMessage || '').toLowerCase();
+// ─────────────────────────────────────────────
+// SHARED DETECTION LOGIC
+// ─────────────────────────────────────────────
+
+// Pattern-based checks on message text
+function detectTextPatternAchievements(msg, existingIds) {
+  const text = (msg || '').toLowerCase();
   const toUnlock = [];
+  const has = (id) => existingIds.includes(id);
 
-  // Helper: already unlocked?
-  const alreadyUnlocked = (id) => existingAchievementIds.includes(id);
-
-  // Helper: is character in an unhealthy/crisis state?
-  const healthStatus = (characterState.health_status || '').toLowerCase();
-  const isUnhealthy = healthStatus && !['healthy', 'good', 'fine', 'great', ''].includes(healthStatus);
-
-  // Helper: is character currently not enrolled in education?
-  const currentEdu = (characterState.current_education_activity || 'none').toLowerCase();
-  const notInEducation = currentEdu === 'none' || currentEdu === '';
-
-  // --- Care / Support achievements ---
-
-  // first_responder: arranged help / called someone / got an uber / took action
-  // Triggered more broadly (with or without health crisis) OR specifically when health crisis + medical action
-  if (!alreadyUnlocked('first_responder')) {
-    const firstResponderPatterns = [
-      /call(ed|ing)?\s+(9-?1-?1|emergency|ambulance|paramedic|help)/i,
+  // first_responder
+  if (!has('first_responder')) {
+    const patterns = [
+      /call(ed|ing)?\s+(9-?1-?1|emergency|ambulance|paramedic)/i,
       /order(ed|ing)?\s+(an?\s+)?(uber|lyft|taxi|cab|ride)/i,
-      /call(ed|ing)?\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|sister|brother|family|boyfriend|girlfriend|partner|friend)/i,
-      /contact(ed|ing)?\s+(someone|her|his|their)/i,
-      /reach(ed|ing)?\s+out\s+to/i,
-      /got\s+(her|him|them)\s+(help|a ride|an uber|checked)/i,
-      /mak(e|ing|ing sure)\s+(sure|it)\s+(she|he|they)\s*(is|was|gets|got)/i,
-      /took\s+(her|him|them)\s+to\s+(the\s+)?(hospital|doctor|urgent care|er|emergency|clinic)/i,
+      /call(ed|ing)?\s+(her|his|their)?\s*(mom|dad|mother|father|parent|sister|brother|family|partner)/i,
+      /took\s+(her|him|them)\s+to\s+(the\s+)?(hospital|doctor|urgent care|er|clinic)/i,
       /drove\s+(her|him|them)/i,
-      /pick(ed|ing)?\s+(her|him|them)\s+up/i,
-      /arranged\s+/i,
-      /set\s+up\s+/i,
-      /made\s+(the\s+)?call/i,
-      // Health/clinic specific — catches "sending hospitals list", "found a clinic", "list of hospitals"
-      /list\s+of\s+(hospitals|clinics|doctors|urgent care)/i,
-      /found\s+(a\s+)?(hospital|clinic|doctor|urgent care|er)/i,
-      /sent\s+(you\s+)?(a\s+)?(list|info|details|address|location)\s+(of|for|about)?\s*(hospital|clinic|doctor)/i,
-      /here\s+(are|is)\s+(some\s+)?(hospitals|clinics|doctors|options|places)/i,
-      /near(by)?\s+(hospital|clinic|doctor|urgent care)/i,
-      /go\s+(to\s+)?(the\s+)?(hospital|clinic|doctor|urgent care|er)/i,
+      /list\s+of\s+(hospitals|clinics|doctors)/i,
+      /found\s+(a\s+)?(hospital|clinic|doctor)/i,
       /get\s+(yourself\s+)?(checked|tested|seen|treated|help)/i,
-      /talk(ed|ing)?\s+(her|him|them|you)?\s*(into|to)\s*(get|getting|go|going)\s*(tested|checked|seen|help|treatment)/i,
-      /convinced?\s+(her|him|them|you)?\s*(to\s+)?(get|go)\s*(tested|checked|seen|help|treatment)/i,
+      /arranged\s+(help|a ride|transport)/i,
     ];
-    // Fire for direct emergency action always, OR for medical/clinic actions during health crisis
-    const isEmergencyAction = firstResponderPatterns.slice(0, 9).some(p => p.test(msg));
-    const isMedicalSupport = firstResponderPatterns.slice(9).some(p => p.test(msg));
-    if (isEmergencyAction || isMedicalSupport) {
-      toUnlock.push('first_responder');
-    }
+    if (patterns.some(p => p.test(text))) toUnlock.push('first_responder');
   }
 
-  // bedside_manner: checked in / showed care — more valuable during health crisis
-  if (!alreadyUnlocked('bedside_manner')) {
-    const bedsidePatterns = [
+  // bedside_manner
+  if (!has('bedside_manner')) {
+    const patterns = [
       /how\s+are\s+you\s+(feeling|doing)/i,
-      /are\s+you\s+(ok|okay|alright|feeling better|doing better)/i,
-      /checking\s+(in|on\s+you)/i,
-      /check(ed|ing)?\s+on\s+(her|him|them|you)/i,
-      /still\s+(with\s+you|here|thinking)/i,
+      /are\s+you\s+(ok|okay|alright|feeling better)/i,
+      /checking\s+(in|on)/i,
       /hope\s+you('re|\s+are)\s+(ok|okay|feeling|better|recovering)/i,
       /get\s+well/i,
       /feel\s+better/i,
       /thinking\s+(of|about)\s+you/i,
-      /praying\s+for/i,
       /sending\s+(love|thoughts|prayers|good vibes)/i,
-      /let\s+me\s+know\s+(if|how)/i,
       /i('m|\s+am)\s+here\s+(for\s+you|if)/i,
-      /stay(ed|ing)?\s+(with|by)\s+(her|him|them|you)/i,
-      // Clinic / testing support
-      /talk(ed|ing)?\s+(her|him|them|you)?\s*(into|to)\s*(get|getting|go|going)\s*(tested|checked|screened)/i,
-      /convinced?\s+(her|him|them|you)?\s*(to\s+)?(get|go)\s*(tested|checked|screened)/i,
-      /go(t|ing)?\s+(to\s+)?(the\s+)?(clinic|doctor|appointment|checkup|check-up)/i,
-      /make\s+(an?\s+)?appointment/i,
-      /scheduled?\s+(an?\s+)?(appointment|checkup|test|screening)/i,
     ];
-    // Bedside manner fires always when these care patterns match — health crisis makes it more meaningful but isn't required
-    if (bedsidePatterns.some(p => p.test(msg))) {
-      toUnlock.push('bedside_manner');
-    }
+    if (patterns.some(p => p.test(text))) toUnlock.push('bedside_manner');
   }
 
-  // the_call_nobody_wanted: specifically contacted family/partner on character's behalf
-  if (!alreadyUnlocked('the_call_nobody_wanted')) {
-    const hardCallPatterns = [
-      /call(ed|ing)?\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|sister|brother|family|boyfriend|girlfriend|partner)/i,
-      /text(ed|ing)?\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|sister|brother|family|boyfriend|girlfriend|partner)/i,
-      /told\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|sister|brother|family|boyfriend|girlfriend|partner)/i,
-      /reach(ed|ing)?\s+out\s+to\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|family)/i,
-      /let\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|family|partner|boyfriend|girlfriend)\s+know/i,
-      /notif(ied|ying)\s+(her|his|their|your)?\s*(mom|dad|mother|father|parent|family)/i,
-      /informed\s+(her|his|their|your)?\s*(family|mom|dad|parent)/i,
+  // the_call_nobody_wanted
+  if (!has('the_call_nobody_wanted')) {
+    const patterns = [
+      /call(ed|ing)?\s+(her|his|their)?\s*(mom|dad|mother|father|parent|sister|brother|family|partner)/i,
+      /text(ed|ing)?\s+(her|his|their)?\s*(mom|dad|mother|father|parent|family)/i,
+      /let\s+(her|his|their)?\s*(mom|dad|parent|family|partner)\s+know/i,
     ];
-    if (hardCallPatterns.some(p => p.test(msg))) {
-      toUnlock.push('the_call_nobody_wanted');
-    }
+    if (patterns.some(p => p.test(text))) toUnlock.push('the_call_nobody_wanted');
   }
 
-  // --- Influence / Personal Growth achievements ---
-
-  // the_push: talked character into taking action on their future (education, career, self-improvement)
-  if (!alreadyUnlocked('the_push')) {
-    const thePushPatterns = [
-      /talk(ed|ing)?\s+(her|him|them|you)?\s*(into|to)\s*(tak(e|ing)|enroll(ing)?|sign(ing)?\s+up|start(ing)?|pursu(e|ing)?)\s*(a\s+)?(course|class|certification|degree|program|training)/i,
-      /convinced?\s+(her|him|them|you)?\s*(to\s+)?(tak(e|ing)|enroll(ing)?|sign(ing)?\s+up|start(ing)?)\s*(a\s+)?(course|class|certification|degree|program|training)/i,
+  // the_push
+  if (!has('the_push')) {
+    const patterns = [
       /should\s+(take|enroll|sign up|try|do|start)\s+(a\s+)?(course|class|certification|degree|program|training)/i,
-      /enroll(ed|ing)?\s+(in|for)\s+(a\s+)?(course|class|certification|program|training)/i,
-      /sign(ed|ing)?\s+up\s+(for|in)\s+(a\s+)?(course|class|certification|program|training)/i,
-      /register(ed|ing)?\s+(for|in)\s+(a\s+)?(course|class|certification|program|training)/i,
-      /start(ed|ing)?\s+(a\s+)?(course|class|certification|program|training|school|college)/i,
-      /go(ing)?\s+(back\s+to\s+)?(school|college|university|class)/i,
-      /get\s+(your|a)\s+(degree|certification|diploma|license|certificate)/i,
-      /you\s+should\s+(go\s+back|pursue|consider|look\s+into)\s+(school|education|college|training)/i,
+      /enroll(ed|ing)?\s+(in|for)\s+(a\s+)?(course|class|certification|program)/i,
+      /sign(ed|ing)?\s+up\s+(for|in)\s+(a\s+)?(course|class|program)/i,
+      /go(ing)?\s+(back\s+to\s+)?(school|college|university)/i,
+      /get\s+(your|a)\s+(degree|certification|diploma|license)/i,
     ];
-    if (thePushPatterns.some(p => p.test(msg))) {
-      toUnlock.push('the_push');
-    }
+    if (patterns.some(p => p.test(text))) toUnlock.push('the_push');
+  }
+
+  // that_meant_something — supportive/warm message
+  if (!has('that_meant_something')) {
+    const patterns = [
+      /i('m|\s+am)\s+(proud|so proud)\s+of\s+you/i,
+      /you('re|\s+are)\s+(amazing|incredible|wonderful|doing\s+(so\s+)?great)/i,
+      /that('s|\s+is)\s+(beautiful|incredible|amazing|wonderful)/i,
+      /i\s+(really\s+)?love\s+(that|this|you|how)/i,
+      /you\s+(did\s+)?great/i,
+      /so\s+(happy|glad|proud)\s+(for|of)\s+you/i,
+      /you('re|\s+are)?\s+not\s+alone/i,
+      /i('m|\s+am)\s+here\s+(for\s+you)/i,
+      /that\s+means\s+(a lot|everything|so much)/i,
+    ];
+    if (patterns.some(p => p.test(text))) toUnlock.push('that_meant_something');
+  }
+
+  // tension — caused conflict
+  if (!has('tension')) {
+    const patterns = [
+      /you('re|\s+are)\s+(wrong|being\s+(ridiculous|stupid|dramatic|overreacting))/i,
+      /that('s|\s+is)\s+(stupid|ridiculous|wrong|your\s+fault)/i,
+      /i\s+don't\s+(care|want\s+to\s+talk)/i,
+      /leave\s+(me|it)\s+alone/i,
+      /stop\s+(being|acting)/i,
+      /you\s+always\s+do\s+this/i,
+      /i('m|\s+am)\s+(angry|pissed|furious|done)\s+(at|with|about)/i,
+    ];
+    if (patterns.some(p => p.test(text))) toUnlock.push('tension');
+  }
+
+  // voice_of_reason
+  if (!has('voice_of_reason')) {
+    const patterns = [
+      /don't\s+(do|make)\s+(that|this|a)\s+(mistake|decision)/i,
+      /think\s+(about\s+this|before\s+you|it\s+through)/i,
+      /are\s+you\s+sure\s+(about\s+)?(that|this)/i,
+      /slow\s+down/i,
+      /don't\s+(rush|be\s+impulsive)/i,
+      /wait\s+before\s+you/i,
+      /talk\s+(to|with)\s+(someone|a\s+(therapist|counselor|professional))\s+first/i,
+    ];
+    if (patterns.some(p => p.test(text))) toUnlock.push('voice_of_reason');
+  }
+
+  // bad_influence
+  if (!has('bad_influence')) {
+    const patterns = [
+      /just\s+(do\s+it|go\s+for\s+it|say\s+it)/i,
+      /you\s+should\s+(just|totally)\s+(do|say|go|tell)/i,
+      /who\s+cares\s+(what|if)/i,
+      /forget\s+(about\s+)?(them|it|what\s+they\s+think)/i,
+      /live\s+(a\s+little|dangerously)/i,
+      /you\s+only\s+live\s+once/i,
+    ];
+    if (patterns.some(p => p.test(text))) toUnlock.push('bad_influence');
   }
 
   return toUnlock;
 }
 
+// ─────────────────────────────────────────────
+// DATA-DRIVEN ACHIEVEMENT CHECKS
+// These require querying the database
+// ─────────────────────────────────────────────
+async function detectDataAchievements(base44, userEmail, characterId, characterName, userMessage, existingIds) {
+  const toUnlock = [];
+  const has = (id) => existingIds.includes(id);
+  const now = Date.now();
+
+  // Run all data queries in parallel
+  const [
+    allMessages,
+    allCharacters,
+    allConversations,
+  ] = await Promise.all([
+    base44.asServiceRole.entities.Message.filter({ created_by: userEmail }, '-created_date', 500),
+    base44.asServiceRole.entities.Character.filter({ created_by: userEmail, status: 'active' }),
+    base44.asServiceRole.entities.Conversation.filter({ created_by: userEmail }),
+  ]);
+
+  const userMessages = allMessages.filter(m => m.sender_type === 'user');
+  const charMessages = allMessages.filter(m => m.sender_type === 'character');
+
+  // ── first_impression: sent at least 1 message ever
+  if (!has('first_impression') && userMessages.length >= 1) {
+    toUnlock.push('first_impression');
+  }
+
+  // ── seen_it_all: received a photo from a character
+  if (!has('seen_it_all') && charMessages.some(m => m.image_url)) {
+    toUnlock.push('seen_it_all');
+  }
+
+  // ── multi-character engagement (no formal badge for this yet but maps to inner_circle proximity)
+  // inner_circle: interacted with the same character across 10+ messages
+  if (!has('inner_circle')) {
+    const msgsWithThisChar = allMessages.filter(m => 
+      m.sender_type === 'user' && 
+      allMessages.some(cm => cm.conversation_id === m.conversation_id && cm.sender_type === 'character' && cm.character_id === characterId)
+    );
+    if (msgsWithThisChar.length >= 10) {
+      toUnlock.push('inner_circle');
+    }
+  }
+
+  // ── still_here: sent messages on 3+ distinct calendar days
+  if (!has('still_here')) {
+    const days = new Set(
+      userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString())
+    );
+    if (days.size >= 3) toUnlock.push('still_here');
+  }
+
+  // ── they_came_back: gap of 3+ days then returned
+  if (!has('they_came_back') && userMessages.length >= 2) {
+    const sorted = [...userMessages].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = new Date(sorted[i].created_date) - new Date(sorted[i - 1].created_date);
+      if (gap > 3 * 24 * 60 * 60 * 1000) {
+        toUnlock.push('they_came_back');
+        break;
+      }
+    }
+  }
+
+  // ── emoji badges: character sent ❤️ reaction to user
+  const emojiMessages = allMessages.filter(m => 
+    m.sender_type === 'user' && 
+    m.reactions?.some(r => r.reactor_type === 'character' && r.emoji === '❤️')
+  );
+  if (!has('that_meant_something') && emojiMessages.length >= 1) {
+    toUnlock.push('that_meant_something');
+  }
+
+  // ── you_were_there: was present when a character had a major life event (narrative message)
+  if (!has('you_were_there')) {
+    const narrativeMessages = charMessages.filter(m => m.is_narrative);
+    if (narrativeMessages.length > 0) toUnlock.push('you_were_there');
+  }
+
+  // ── big_moment: character shared a milestone (narrative + user responded)
+  if (!has('big_moment')) {
+    const narratives = charMessages.filter(m => m.is_narrative);
+    if (narratives.length > 0) {
+      // Check if user sent at least one message after any narrative
+      const narrativeTime = Math.min(...narratives.map(m => new Date(m.created_date).getTime()));
+      const respondedAfter = userMessages.some(m => new Date(m.created_date).getTime() > narrativeTime);
+      if (respondedAfter) toUnlock.push('big_moment');
+    }
+  }
+
+  // ── clutch_timing: replied within 2 minutes of a character message
+  if (!has('clutch_timing') && userMessages.length >= 1) {
+    for (const cm of charMessages.slice(0, 100)) {
+      const cmTime = new Date(cm.created_date).getTime();
+      const quickReply = userMessages.find(um => {
+        const umTime = new Date(um.created_date).getTime();
+        return umTime > cmTime && umTime - cmTime < 2 * 60 * 1000;
+      });
+      if (quickReply) {
+        toUnlock.push('clutch_timing');
+        break;
+      }
+    }
+  }
+
+  // ── left_on_read: character message unread for 24h+
+  if (!has('left_on_read')) {
+    const oldUnread = charMessages.find(m => {
+      if (m.is_read) return false;
+      const age = now - new Date(m.created_date).getTime();
+      return age > 24 * 60 * 60 * 1000;
+    });
+    if (oldUnread) toUnlock.push('left_on_read');
+  }
+
+  // ── ride_along: active convo across 7+ days with same character
+  if (!has('ride_along')) {
+    const msgsThisChar = allMessages.filter(m => m.character_id === characterId || 
+      allMessages.some(cm => cm.conversation_id === m.conversation_id && cm.character_id === characterId)
+    );
+    if (msgsThisChar.length >= 2) {
+      const sorted = [...msgsThisChar].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
+      const span = new Date(sorted[sorted.length - 1].created_date) - new Date(sorted[0].created_date);
+      if (span >= 7 * 24 * 60 * 60 * 1000) toUnlock.push('ride_along');
+    }
+  }
+
+  // ── they_opened_up: character sent 5+ messages with emotional state = reflective/sad/vulnerable
+  if (!has('they_opened_up')) {
+    const openMessages = charMessages.filter(m => 
+      m.character_id === characterId &&
+      ['reflective', 'sad', 'vulnerable', 'longing', 'grief', 'loneliness', 'nostalgia'].includes(m.emotional_state)
+    );
+    if (openMessages.length >= 2) toUnlock.push('they_opened_up');
+  }
+
+  // ── consistent: messaged on 5+ different days
+  if (!has('consistent')) {
+    const days = new Set(
+      userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString())
+    );
+    if (days.size >= 5) toUnlock.push('consistent');
+  }
+
+  return [...new Set(toUnlock)]; // dedupe
+}
+
+// ─────────────────────────────────────────────
+// MAIN HANDLER
+// ─────────────────────────────────────────────
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, characterName, userMessage } = await req.json();
-    if (!characterId || !userMessage) {
-      return Response.json({ unlocked: [] });
-    }
+    const body = await req.json();
+    const { characterId, characterName, userMessage, characterState } = body;
 
-    // Get existing achievements so we don't double-unlock
-    const existing = await base44.entities.UserAchievement.filter({
-      created_by: user.email,
-    });
+    if (!characterId) return Response.json({ unlocked: [] });
+
+    // Get existing achievements
+    const existing = await base44.entities.UserAchievement.filter({ created_by: user.email });
     const existingIds = existing.map(a => a.achievement_id);
 
-    const toUnlock = detectAchievements(userMessage, {}, existingIds);
+    // Run both detection passes in parallel
+    const [textAchievements, dataAchievements] = await Promise.all([
+      Promise.resolve(detectTextPatternAchievements(userMessage || '', existingIds)),
+      detectDataAchievements(base44, user.email, characterId, characterName, userMessage, existingIds),
+    ]);
+
+    // Merge and dedupe — only ones not already unlocked
+    const combined = [...new Set([...textAchievements, ...dataAchievements])]
+      .filter(id => !existingIds.includes(id));
 
     const newlyUnlocked = [];
-    for (const achievement_id of toUnlock) {
+    for (const achievement_id of combined) {
       const record = await base44.entities.UserAchievement.create({
         achievement_id,
         character_id: characterId,
@@ -154,10 +311,14 @@ Deno.serve(async (req) => {
         is_seen: false,
       });
       newlyUnlocked.push(record);
+      existingIds.push(achievement_id); // prevent duplicate within same call
     }
+
+    console.log(`[checkAchievements] user=${user.email} charId=${characterId} textHits=${textAchievements.length} dataHits=${dataAchievements.length} unlocked=${newlyUnlocked.length}`);
 
     return Response.json({ unlocked: newlyUnlocked });
   } catch (error) {
+    console.error('[checkAchievements] ERROR:', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
