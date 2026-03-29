@@ -98,7 +98,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         const threadUnread = await base44.entities.Message.filter({
           conversation_id: convo.id,
           sender_type: "character",
-          character_id: character.id,
           is_read: false,
         });
         chatTotal += threadUnread.length;
@@ -112,7 +111,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
         const threadUnread = await base44.entities.Message.filter({
           conversation_id: convo.id,
           sender_type: "character",
-          character_id: character.id,
           is_read: false,
         });
         phoneTotal += threadUnread.length;
