@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
-import { Plus, Users, Settings } from "lucide-react";
+import { Plus, Users, Settings, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
@@ -10,12 +10,14 @@ import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import CharacterInteractionSimulator from "@/components/home/CharacterInteractionSimulator";
 import BottomNav from "@/components/BottomNav";
 import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
+import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [pendingDelete, setPendingDelete] = useState(null); // character being removed
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
 
   const { data: settings = [] } = useQuery({
     queryKey: ["userSettings"],
@@ -128,22 +130,29 @@ export default function Home() {
         )}
       </AnimatePresence>
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4">
-        <div className="max-w-lg mx-auto flex items-center justify-between">
-          <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
-          <div className="flex items-center gap-2">
-            <Link to="/groups">
-              <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                <Users className="w-5 h-5" />
-              </Button>
-            </Link>
-            <Link to="/settings">
-              <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                <Settings className="w-5 h-5" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
+         <div className="max-w-lg mx-auto flex items-center justify-between">
+           <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
+           <div className="flex items-center gap-2">
+             <button
+               onClick={() => setShowTroubleshooting(true)}
+               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+               title="Troubleshoot Home page"
+             >
+               <Wrench className="w-4 h-4" />
+             </button>
+             <Link to="/groups">
+               <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                 <Users className="w-5 h-5" />
+               </Button>
+             </Link>
+             <Link to="/settings">
+               <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                 <Settings className="w-5 h-5" />
+               </Button>
+             </Link>
+           </div>
+         </div>
+       </div>
 
       <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
         {defaultChar && (
@@ -201,6 +210,10 @@ export default function Home() {
         </div>
       </div>
       <DailyAchievementReminder />
+      <TroubleshootingPanelHome
+        isOpen={showTroubleshooting}
+        onClose={() => setShowTroubleshooting(false)}
+      />
       <BottomNav />
     </div>
   );

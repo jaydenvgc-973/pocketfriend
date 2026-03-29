@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
+import { Wrench } from "lucide-react";
 import BottomNav from "@/components/BottomNav";
 import ActiveArcCard from "@/components/moments/ActiveArcCard";
 import AchievementBadge from "@/components/moments/AchievementBadge";
 import LockedAchievements from "@/components/moments/LockedAchievements";
 import GoalsSection from "@/components/moments/GoalsSection";
 import ChallengesSection from "@/components/moments/ChallengesSection";
+import TroubleshootingPanelMoments from "@/components/moments/TroubleshootingPanelMoments";
 import { ACHIEVEMENTS, CATEGORY_LABELS } from "@/lib/achievements";
 
 const CATEGORIES = Object.keys(CATEGORY_LABELS);
@@ -16,6 +18,7 @@ export default function Moments() {
   const [activeCategory, setActiveCategory] = useState("all");
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState(null);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const hasScanned = useRef(false);
   const queryClient = useQueryClient();
 
@@ -110,25 +113,34 @@ export default function Moments() {
   return (
     <div className="min-h-screen bg-background pb-20">
       {/* Header */}
-      <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {unlockedCount} / {allAchievements.length} achievements unlocked
-              {scanning && <span className="ml-2 text-primary/60">• scanning...</span>}
-            </p>
-          </div>
-          {scanResult && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="bg-primary/20 text-primary text-xs font-semibold px-3 py-1.5 rounded-full"
-            >
-              +{scanResult} unlocked!
-            </motion.div>
-          )}
-        </div>
+       <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
+         <div className="flex items-center justify-between">
+           <div>
+             <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
+             <p className="text-xs text-muted-foreground mt-0.5">
+               {unlockedCount} / {allAchievements.length} achievements unlocked
+               {scanning && <span className="ml-2 text-primary/60">• scanning...</span>}
+             </p>
+           </div>
+           <div className="flex items-center gap-2">
+             <button
+               onClick={() => setShowTroubleshooting(true)}
+               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+               title="Troubleshoot Moments page"
+             >
+               <Wrench className="w-4 h-4" />
+             </button>
+             {scanResult && (
+               <motion.div
+                 initial={{ opacity: 0, scale: 0.8 }}
+                 animate={{ opacity: 1, scale: 1 }}
+                 className="bg-primary/20 text-primary text-xs font-semibold px-3 py-1.5 rounded-full"
+               >
+                 +{scanResult} unlocked!
+               </motion.div>
+             )}
+           </div>
+         </div>
         {/* Progress bar */}
         <div className="mt-3 h-1 w-full rounded-full bg-secondary overflow-hidden">
           <motion.div
@@ -216,6 +228,10 @@ export default function Moments() {
 
       </div>
 
+      <TroubleshootingPanelMoments
+        isOpen={showTroubleshooting}
+        onClose={() => setShowTroubleshooting(false)}
+      />
       <BottomNav />
     </div>
   );
