@@ -14,6 +14,7 @@ const ISSUE_LIST = [
   { id: 'availability_display', label: 'Availability incorrect', description: 'Verify work schedule display' },
   { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
   { id: 'protected_character', label: 'Protected character status', description: 'Verify protection is active' },
+  { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
@@ -59,6 +60,23 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
           });
         } else {
           setError('Reset failed');
+        }
+      } else if (selectedIssues.includes('simulated_interaction')) {
+        const res = await base44.functions.invoke('troubleshootSimulatedInteraction', {});
+        
+        if (res?.data?.data) {
+          setResults({
+            summary: res.data.data.summary,
+            fixed: res.data.data.fixes_applied,
+            issues_found: res.data.data.issues_found,
+            checks: res.data.data.checks_performed.map(check => ({
+              name: check,
+              status: 'info',
+              message: 'Diagnostic performed'
+            }))
+          });
+        } else {
+          setError('Simulated interaction diagnostic failed');
         }
       } else {
         const res = await base44.functions.invoke('troubleshootHome', {
