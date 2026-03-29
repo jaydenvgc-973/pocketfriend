@@ -548,7 +548,7 @@ export default function Chat() {
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
+    let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -745,22 +745,32 @@ Respond to ${activeCharacter.name} as you genuinely would in real life — drawi
       const allowImageThisTurn = explicitImageRequest || (!atMediaLimit && !inCooldown && passedRandomCheck);
 
       const imageCountInstruction = requestedQuantity > 1
-        ? `The user asked for ${requestedQuantity} images. Include exactly ${requestedQuantity} image_prompt entries (use "image_prompts" array instead of single "image_prompt").`
+        ? `The user asked for ${requestedQuantity} images. Provide exactly ${requestedQuantity} entries in "image_generation_prompts" array.`
         : "";
 
       const imageRule = allowImageThisTurn
-        ? `IMAGE SENDING (OPTIONAL): You MAY include an image_prompt this turn if it genuinely fits the conversation — a moment worth capturing, something you just did, or something the user asked to see. ${isPhotogenic ? "You enjoy sharing photos of yourself and your life." : "Only send a photo if it truly adds to the conversation."} ${imageCountInstruction}
-CRITICAL IMAGE SUBJECT RULES — follow these exactly:
-- "Send me a pic of me / myself" → subject is the USER. Describe the user in the prompt. Start image_prompt with "[USER]".
-- "Send me a pic of you / yourself / your name" → subject is YOU (the character). Describe yourself. Start image_prompt with "[CHARACTER]".
-- "Send me a pic of us / both / together / you and me" → subject is BOTH. Describe both of you together. Start image_prompt with "[JOINT]".
-- If no explicit subject: default to yourself (the character). Start image_prompt with "[CHARACTER]".
-- Always start image_prompt with the correct tag: [USER], [CHARACTER], or [JOINT]. This is required.`
-        : `IMAGE SENDING: Do NOT include image_prompt this turn. Send text only. Images should be occasional — you have already sent enough recently or this message doesn't call for one.`;
+        ? `MESSAGE TYPE RULES — read carefully:
+You MUST choose exactly ONE of these message_type values:
+- "text_only" → send only a text message. No image. DEFAULT when no image is needed.
+- "image_only" → send ONLY an image, no visible text. Use when the user explicitly asked for a photo and no text reply is needed.
+- "text_then_image" → send text first, then a separate image. Use when both are appropriate.
+- "image_then_text" → send image first, then a separate text reply.
+
+IMPORTANT: text_only is the DEFAULT. Only deviate if an image genuinely adds value.
+${isPhotogenic ? "You enjoy sharing photos of yourself and your life, so text_then_image or image_only are more natural for you." : "Only send an image if it truly fits — prefer text_only."}
+${imageCountInstruction}
+
+IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
+- "Send me a pic of me / myself" → subject is the USER. Start prompt with "[USER]".
+- "Send me a pic of you / yourself" → subject is YOU. Start prompt with "[CHARACTER]".
+- "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
+- Default (no explicit subject): "[CHARACTER]".
+- image_generation_prompt is INTERNAL ONLY — it is never shown to the user.`
+        : `MESSAGE TYPE RULES: You MUST use message_type "text_only" this turn. Do NOT include any image fields. Images are rate-limited and you have sent enough recently.`;
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation. Your response should reflect your personality — some characters care deeply about entertainment, others less so — but you never pretend not to know widely recognized figures or trends.\n\nRespond ONLY with valid JSON in this format:\n{\n  "text": "Your message here",\n  "image_prompt": "Only include if sending exactly 1 image AND allowed this turn — a vivid description of the image",\n  "image_prompts": ["Only include if user requested multiple images — one entry per image"],\n  "scheduled_events": [\n    {\n      "description": "What will happen (e.g. 'Tiffany picks up the user at their apartment')",\n      "trigger_time": "<ISO 8601 UTC datetime — resolve relative times like '1pm' or 'tonight at 8' against the current date/time provided above>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to in this message. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
@@ -777,65 +787,60 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
       }
 
 
-      // Robust parser: always returns a clean { text, image_prompt, image_prompts, scheduled_events }
+      // Robust parser: returns structured { message_type, text_content, image_generation_prompt, image_generation_prompts, scheduled_events }
       const parseCharacterResponse = (raw) => {
-        if (!raw) return { text: "" };
+        if (!raw) return { message_type: "text_only", text_content: "" };
 
-        // 1. Try direct JSON parse (handles clean responses)
-        try {
-          const obj = JSON.parse(raw);
-          if (obj && typeof obj === "object") return obj;
-        } catch {}
+        let obj = null;
 
-        // 2. Try to extract JSON block from markdown code fences or partial wrapping
-        const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-        if (fenceMatch) {
-          try {
-            const obj = JSON.parse(fenceMatch[1].trim());
-            if (obj && typeof obj === "object") return obj;
-          } catch {}
+        // 1. Try direct JSON parse
+        try { obj = JSON.parse(raw); } catch {}
+
+        // 2. Try markdown code fence
+        if (!obj) {
+          const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+          if (fenceMatch) try { obj = JSON.parse(fenceMatch[1].trim()); } catch {}
         }
 
         // 3. Try to find a JSON object anywhere in the string
-        const braceMatch = raw.match(/\{[\s\S]*\}/);
-        if (braceMatch) {
-          try {
-            const obj = JSON.parse(braceMatch[0]);
-            if (obj && typeof obj === "object") return obj;
-          } catch {}
+        if (!obj) {
+          const braceMatch = raw.match(/\{[\s\S]*\}/);
+          if (braceMatch) try { obj = JSON.parse(braceMatch[0]); } catch {}
         }
 
-        // 4. Regex-extract just the "text" field value from malformed JSON
-        const textFieldMatch = raw.match(/"text"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (textFieldMatch) {
-          try {
-            return { text: JSON.parse(`"${textFieldMatch[1]}"`) };
-          } catch {
-            return { text: textFieldMatch[1] };
-          }
+        if (obj && typeof obj === "object") {
+          // Normalize: support both old schema (text/image_prompt) and new schema (text_content/image_generation_prompt)
+          const messageType = obj.message_type || (obj.image_prompt || obj.image_prompts?.length > 0 ? "text_then_image" : "text_only");
+          const textContent = obj.text_content || obj.text || "";
+          const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
+          const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
+          return {
+            message_type: messageType,
+            text_content: textContent,
+            image_generation_prompt: imgPrompt,
+            image_generation_prompts: imgPrompts,
+            scheduled_events: obj.scheduled_events || [],
+          };
         }
 
-        // 5. Last resort: strip obvious JSON scaffolding and return what's left
-        const stripped = raw
-          .replace(/```(?:json)?/gi, "")
-          .replace(/```/g, "")
-          .replace(/"?(text|image_prompt|image_prompts|scheduled_events|trigger_time|description)"\s*:\s*/gi, "")
-          .replace(/^\s*[\[{\]},]+\s*/gm, "")
-          .replace(/[{}\[\]]/g, "")
-          .replace(/\\n/g, " ")
-          .replace(/\\"/g, '"')
-          .trim();
+        // 4. Fallback: try to extract text_content or text field
+        const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (textMatch) {
+          try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
+          catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [] }; }
+        }
 
-        // If what remains looks like readable text (not just symbols/whitespace), use it
+        // 5. Last resort: plain text
+        const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
         if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
-          return { text: stripped };
+          return { message_type: "text_only", text_content: stripped, image_generation_prompts: [] };
         }
 
-        return { text: "" };
+        return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       };
 
       let retries = 2;
-      let responseObj = { text: "", image_prompt: null };
+      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -851,18 +856,24 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
           await new Promise(r => setTimeout(r, 3000));
         }
       }
-      responseText = responseObj.text?.trim() || "Sorry, something went wrong with that response.";
 
-      // Safety net: if responseText still looks like raw JSON, replace it
-      if (responseText.startsWith("{") || responseText.startsWith("```")) {
-        responseText = "Sorry, something went wrong with that response.";
+      msgType = responseObj.message_type || "text_only";
+      const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
+      const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
+
+      // text_content is for visible dialogue ONLY — never an image prompt
+      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
+      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
+      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
+        responseText = "";
       }
-      // Support both single image_prompt and multiple image_prompts array
-      // Also enforce the gate: if not allowed, discard any image_prompt the LLM snuck in
-      imagePrompt = allowImageThisTurn ? (responseObj.image_prompt || null) : null;
-      imagePrompts = allowImageThisTurn
-        ? (responseObj.image_prompts?.length > 0 ? responseObj.image_prompts : (imagePrompt ? [imagePrompt] : []))
+
+      // image_generation_prompts is INTERNAL ONLY — never shown to user
+      imagePrompts = hasImage
+        ? (responseObj.image_generation_prompts?.length > 0 ? responseObj.image_generation_prompts : [])
         : [];
+
+      console.log(`[MSG-TYPE] message_type="${msgType}" | hasText=${hasText} | hasImage=${hasImage} | imagePrompts=${imagePrompts.length} | textLength=${responseText.length}`);
 
       // Persist scheduled events extracted from this chat turn
       if (responseObj.scheduled_events?.length > 0 && convoId) {
@@ -901,112 +912,127 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
 
     setIsTyping(false);
 
-    // Create main message with text
-    const charMsg = await base44.entities.Message.create({
-      conversation_id: convoId,
-      sender_type: "character",
-      character_id: characterId,
-      character_name: character.name,
-      content: responseText,
-      emotional_state: emotionalState,
-      timestamp: new Date().toISOString(),
-    });
-    if (!charMsg || !charMsg.id) {
-      setSendError("Character response failed to save. Try again.");
-      return;
-    }
-    // Add directly to state — subscription deduplication will prevent doubles
-    setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
+    // --- STRICT MESSAGE SEPARATION ---
+    // Resolve subject type for image generation (used across all image messages)
+    const msgLower = text.toLowerCase();
+    const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
+    const isUserRequest = !isJointRequest && (
+      /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
+      /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
+      /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
+    );
+    const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
+    const userRefImages = currentUser.generated_avatar_urls?.length > 0
+      ? currentUser.generated_avatar_urls
+      : (currentUser.reference_image_urls || []);
+    const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
+    const charRefs = character.avatar_url
+      ? [character.avatar_url, ...(character.reference_image_urls || [])]
+      : (character.reference_image_urls || []);
 
-    // Auto-play character voice (after short delay for UX)
-    console.log(`[Chat] CHARACTER RESPONSE CREATED (ID: ${charMsg.id.substring(0, 8)})`);
-    console.log(`[Chat] Response text: "${responseText.substring(0, 100)}${responseText.length > 100 ? '...' : ''}"`);
-    console.log(`[Chat] Character: ${character.name}`);
-    console.log(`[Chat] Character voice_enabled: ${character.voice_enabled}`);
-    console.log(`[Chat] Character voice_name: ${character.voice_name}`);
-    console.log(`[Chat] User voice_enabled: ${userSettings.voice_enabled}`);
-    console.log(`[Chat] TRIGGERING AUTO-PLAY in 500ms...`);
-    
-    setTimeout(() => {
-      console.log(`[Chat] AUTO-PLAY TIMER FIRED - calling playCharacterVoice`);
-      playCharacterVoice(charMsg.id, responseText, character, userSettings, false);
-    }, 500);
+    // Helper: create a stable image-only message and kick off async generation
+    const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
+      const imgMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: "",           // image-only: no visible text
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+      if (!imgMsg?.id) return null;
+      setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
+      setTimeout(() => {
+        base44.functions.invoke('generateImageAsync', {
+          messageId: imgMsg.id,
+          prompt: imageGenPrompt,
+          characterReferenceImages: charRefs,
+          userReferenceImages: useUserRefs ? userRefImages : [],
+          characterName: character.name,
+          subjectType,
+        }).catch(() => {});
+      }, delayMs);
+      return imgMsg;
+    };
+
+    // Helper: create a text-only message and auto-play voice
+    const createTextMessage = async (textContent) => {
+      if (!textContent?.trim()) return null;
+      const txtMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: textContent,  // visible dialogue only — never an image prompt
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+      if (!txtMsg?.id) return null;
+      setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
+      // TTS: only fire on text messages, only speak visible text_content
+      setTimeout(() => {
+        playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
+      }, 500);
+      return txtMsg;
+    };
+
+    let primaryTextMsg = null;
+
+    if (msgType === "text_only") {
+      // --- TEXT ONLY ---
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else if (msgType === "image_only") {
+      // --- IMAGE ONLY --- send image as standalone message, no text bubble
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 300);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 300 + i * 800);
+        }
+      } else {
+        // Fallback: LLM said image_only but gave no prompt — send text if available
+        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      }
+
+    } else if (msgType === "text_then_image") {
+      // --- TEXT FIRST, THEN IMAGE ---
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 800);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 800 + i * 800);
+        }
+      }
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else if (msgType === "image_then_text") {
+      // --- IMAGE FIRST, THEN TEXT ---
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 300);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 300 + i * 800);
+        }
+      }
+      // Text arrives after a short delay so image appears first visually
+      await new Promise(r => setTimeout(r, 600));
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else {
+      // Unknown type fallback — text only
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+    }
+
+    // Use primary text message for relationship/conversation tracking (or first image msg id for context)
+    const charMsg = primaryTextMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
     
-    // Generate images asynchronously — first image goes on the main message, extras get their own messages
-    if (imagePrompts.length > 0) {
-      const userRefImages = currentUser.generated_avatar_urls?.length > 0
-        ? currentUser.generated_avatar_urls
-        : (currentUser.reference_image_urls || []);
-
-      // Detect subject type from the user's original message (applies to this whole request)
-      const msgLower = text.toLowerCase();
-      const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
-      const isUserRequest = !isJointRequest && (
-        /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
-        /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
-        /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
-      );
-      const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-
-      // Only pass user refs when the subject requires them
-      const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
-
-      // First image attaches to the existing charMsg
-      setTimeout(() => {
-        const charRefs = character.avatar_url
-          ? [character.avatar_url, ...(character.reference_image_urls || [])]
-          : (character.reference_image_urls || []);
-        base44.functions.invoke('generateImageAsync', {
-          messageId: charMsg.id,
-          prompt: imagePrompts[0],
-          characterReferenceImages: charRefs,
-          userReferenceImages: useUserRefs ? userRefImages : [],
-          characterName: character.name,
-          subjectType,
-        }).catch(() => {});
-      }, 500);
-
-      // Additional images get their own separate messages
-      for (let i = 1; i < imagePrompts.length; i++) {
-        const extraMsg = await base44.entities.Message.create({
-          conversation_id: convoId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: "",
-          emotional_state: emotionalState,
-          timestamp: new Date().toISOString(),
-        });
-        if (extraMsg?.id) {
-          setMessages(prev => prev.some(m => m.id === extraMsg.id) ? prev : [...prev, extraMsg]);
-          const delay = 500 + i * 800;
-          const capturedId = extraMsg.id;
-          const capturedPrompt = imagePrompts[i];
-          const charRefs = character.avatar_url
-            ? [character.avatar_url, ...(character.reference_image_urls || [])]
-            : (character.reference_image_urls || []);
-          setTimeout(() => {
-            base44.functions.invoke('generateImageAsync', {
-              messageId: capturedId,
-              prompt: capturedPrompt,
-              characterReferenceImages: charRefs,
-              userReferenceImages: useUserRefs ? userRefImages : [],
-              characterName: character.name,
-              subjectType,
-            }).catch(() => {});
-          }, delay);
-        }
-      }
-    }
-    
-    // Invalidate messages so async image updates appear when ready
-    queryClient.invalidateQueries({ queryKey: ["messages", convoId] });
-
     // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
       setTimeout(async () => {
@@ -1078,7 +1104,7 @@ Reply with ONLY the single emoji or the word "none".`,
     base44.functions.invoke("updateRelationshipLevels", {
       characterId,
       userMessage: text,
-      characterReply: responseText,
+      characterReply: responseText || "(image)",
       recentMessages: recentMsgs,
       playingAsCharacterId: activeCharacter?.id || null,
     }).then(async res => {
@@ -1101,8 +1127,9 @@ Reply with ONLY the single emoji or the word "none".`,
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
+    const previewText = responseText || "(image sent)";
     await base44.entities.Conversation.update(convoId, {
-      last_message_preview: responseText.substring(0, 100),
+      last_message_preview: previewText.substring(0, 100),
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
     });
