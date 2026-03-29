@@ -37,13 +37,13 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
     setResults(null);
 
     try {
-      // Special handling for deep diagnostic
-      if (selectedIssues.includes('deep_diagnostic_ethan')) {
+      // Special handling for deep diagnostic and notification dots
+      if (selectedIssues.includes('deep_diagnostic_ethan') || selectedIssues.includes('notification_dots')) {
         const res = await base44.functions.invoke('simpleEthanFix', {});
         
         if (res?.data) {
           setResults({
-            summary: `Ethan reset: Marked ${res.data.marked} messages as read. Red dot should disappear.`,
+            summary: `Reset complete: Marked ${res.data.marked} messages as read. All notification dots cleared.`,
             fixes_applied: [
               `Marked ${res.data.marked} unread messages as read`,
               `Total found: ${res.data.total_found}`,
@@ -51,14 +51,14 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
             ],
             checks: [
               {
-                name: 'Ethan Unread Reset',
+                name: 'Notification Dots Reset',
                 status: res.data.success ? 'passed' : 'warning',
                 message: `Success: ${res.data.success}`,
               },
             ],
           });
         } else {
-          setError('Ethan reset failed');
+          setError('Reset failed');
         }
       } else {
         const res = await base44.functions.invoke('troubleshootHome', {
@@ -82,8 +82,8 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
       
-      // If Ethan diagnostic, also clear all conversation-specific caches
-      if (selectedIssues.includes('deep_diagnostic_ethan')) {
+      // If Ethan diagnostic or notification dots, also clear all conversation-specific caches
+      if (selectedIssues.includes('deep_diagnostic_ethan') || selectedIssues.includes('notification_dots')) {
         const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
         await queryClient.invalidateQueries({ queryKey: ['conversations', ETHAN_ID] });
         
