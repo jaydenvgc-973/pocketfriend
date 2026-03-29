@@ -233,14 +233,30 @@ export default function Chat() {
          if (convos.length > 0) {
            convoId = convos[0].id;
 
-           // Load the 20 most recent non-archived messages
+           // Load the 50 most recent non-archived messages
            const loadedMsgs = await base44.entities.Message.filter(
              { conversation_id: convoId, archived_date: { $exists: false } },
              "-created_date",
-             20
+             50
            );
 
            console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
+
+           // Clean up ghost messages: character messages with no content AND no image (stuck in limbo)
+           if (loadedMsgs && loadedMsgs.length > 0) {
+             const ghosts = loadedMsgs.filter(m => 
+               m.sender_type === "character" && 
+               !m.content && 
+               !m.image_url && 
+               !m.is_narrative
+             );
+             if (ghosts.length > 0) {
+               console.log(`[Chat] LOAD: Deleting ${ghosts.length} ghost messages (no content, no image)`);
+               ghosts.forEach(g => base44.entities.Message.delete(g.id).catch(() => {}));
+               // Remove from loadedMsgs array before rendering
+               loadedMsgs.splice(0, loadedMsgs.length, ...loadedMsgs.filter(m => !ghosts.some(g => g.id === m.id)));
+             }
+           }
 
            if (loadedMsgs && loadedMsgs.length > 0) {
               // Reverse to chronological order, then MERGE with any messages already in state
