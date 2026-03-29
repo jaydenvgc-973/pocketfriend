@@ -233,30 +233,14 @@ export default function Chat() {
          if (convos.length > 0) {
            convoId = convos[0].id;
 
-           // Load the 50 most recent non-archived messages
+           // Load the 20 most recent non-archived messages FOR THIS THREAD ONLY
            const loadedMsgs = await base44.entities.Message.filter(
              { conversation_id: convoId, archived_date: { $exists: false } },
              "-created_date",
-             50
+             20
            );
 
-           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded`);
-
-           // Clean up ghost messages: character messages with no content AND no image (stuck in limbo)
-           if (loadedMsgs && loadedMsgs.length > 0) {
-             const ghosts = loadedMsgs.filter(m => 
-               m.sender_type === "character" && 
-               !m.content && 
-               !m.image_url && 
-               !m.is_narrative
-             );
-             if (ghosts.length > 0) {
-               console.log(`[Chat] LOAD: Deleting ${ghosts.length} ghost messages (no content, no image)`);
-               ghosts.forEach(g => base44.entities.Message.delete(g.id).catch(() => {}));
-               // Remove from loadedMsgs array before rendering
-               loadedMsgs.splice(0, loadedMsgs.length, ...loadedMsgs.filter(m => !ghosts.some(g => g.id === m.id)));
-             }
-           }
+           console.log(`[Chat] LOAD: ${loadedMsgs?.length || 0} messages loaded for conversation ${convoId}`);
 
            if (loadedMsgs && loadedMsgs.length > 0) {
               // Reverse to chronological order, then MERGE with any messages already in state
@@ -365,12 +349,18 @@ export default function Chat() {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
         }
       } else if (event.type === "update") {
+        // If message was archived (trimmed), remove it from visible list
+        if (event.data?.archived_date) {
+          console.log(`[Chat] SUB: Archived (trimmed) ${event.data.id.substring(0, 8)} — removing from view`);
+          setMessages(prev => prev.filter(m => m.id !== event.data.id));
+          return;
+        }
         // Update existing message (e.g., image_url, audio_url being added)
         console.log(`[Chat] SUB: Updated ${event.data.id.substring(0, 8)}`);
         setMessages(prev => {
           const found = prev.some(m => m.id === event.data.id);
           if (!found) {
-            // Message was updated but not in visible list — add it
+            // Message was updated but not in visible list — add it (e.g. image arrived)
             console.log(`[Chat] SUB: Update for out-of-view message, adding: ${event.data.id.substring(0, 8)}`);
             return [...prev, event.data];
           }
@@ -953,6 +943,11 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
          }).catch(() => {});
        }, 100);
 
+       // Trim oldest message in THIS thread only if over 20 (fire-and-forget)
+       setTimeout(() => {
+         base44.functions.invoke('trimOldMessages', { conversationId: convoId, characterId }).catch(() => {});
+       }, 500);
+
        // Voice generation happens AFTER message delivery (fire-and-forget)
        setTimeout(() => {
          generateAndPlayVoice(textMsgId, responseText, character, userSettings);
@@ -1065,6 +1060,11 @@ CRITICAL IMAGE SUBJECT RULES — follow these exactly:
            conversationId: convoId
          }).catch(() => {});
        }, 100);
+
+       // Trim oldest message in THIS thread only if over 20 (fire-and-forget)
+       setTimeout(() => {
+         base44.functions.invoke('trimOldMessages', { conversationId: convoId, characterId }).catch(() => {});
+       }, 500);
 
        // Voice generation happens AFTER message is safe (fire-and-forget)
        setTimeout(() => {
