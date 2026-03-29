@@ -1237,7 +1237,7 @@ Reply with ONLY the single emoji or the word "none".`,
         character={character}
       />
       <BottomNav />
-      <VoiceDiagnosticsPanel />
+
     </div>
   );
 }
