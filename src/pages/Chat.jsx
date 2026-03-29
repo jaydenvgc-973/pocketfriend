@@ -504,9 +504,11 @@ export default function Chat() {
       return;
     }
     console.log(`[Chat] USER MESSAGE SAVED: ${userMsg.id.substring(0, 8)} | "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
-    console.log(`[Chat] USER MESSAGE — RENDERED immediately in UI`);
-    // Message is persisted to database immediately, subscription will add it if needed
-    setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
+    // Add user message immediately — subscription may also fire, dedup handles it
+    setMessages(prev => {
+      if (prev.some(m => m.id === userMsg.id)) return prev;
+      return [...prev, { ...userMsg, sender_type: "user" }]; // force sender_type to prevent any collision
+    });
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompt, imagePrompts = [], detailReferenceImage = null;
