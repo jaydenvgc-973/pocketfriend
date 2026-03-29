@@ -1,5 +1,7 @@
 import { motion } from "framer-motion";
 import { Link } from "react-router-dom";
+import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import { MapPin } from "lucide-react";
 
 export default function ActiveArcCard({ character }) {
   const friendshipLevel = character.friendship_level ?? 75;
@@ -41,21 +43,22 @@ export default function ActiveArcCard({ character }) {
         whileHover={{ scale: 1.01 }}
         className="flex items-center gap-4 bg-card border border-border rounded-2xl px-4 py-3 hover:border-primary/30 transition-colors"
       >
-        {/* Avatar */}
-        <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 overflow-hidden">
-          {character.avatar_url
-            ? <img src={character.avatar_url} alt={character.name} className="w-full h-full object-cover" />
-            : <span className="text-primary font-semibold text-sm">{character.name?.[0]}</span>
-          }
-        </div>
+        {/* Avatar with emotional state ring */}
+        <CharacterAvatar character={character} size="md" />
 
         {/* Info */}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center justify-between mb-1">
             <span className="text-sm font-semibold text-foreground truncate">{character.name}</span>
             <span className="text-xs text-muted-foreground ml-2 flex-shrink-0">{clampedProgress}%</span>
           </div>
-          <p className="text-xs text-muted-foreground text-justify mb-2 leading-relaxed">{arcLabel}</p>
+          {(character.city || character.state) && (
+            <div className="flex items-center gap-1 mb-0.5">
+              <MapPin className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+              <span className="text-xs text-muted-foreground truncate">{[character.city, character.state].filter(Boolean).join(", ")}</span>
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground mb-2 leading-relaxed truncate">{arcLabel}</p>
 
           {/* Segmented progress bar */}
           <div className="flex gap-1">
