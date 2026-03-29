@@ -263,7 +263,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 );
               })()}
             </div>
-            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{character.personality_summary}</p>
+            <div className="flex items-center gap-2 mt-1">
+              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stateDots[state] || "bg-zinc-500"}`} />
+              <span className="text-xs text-muted-foreground capitalize">{stateLabels[state] || state}</span>
+            </div>
           </div>
         </div>
 
