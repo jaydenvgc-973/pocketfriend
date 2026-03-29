@@ -1,0 +1,120 @@
+{
+  "name": "LifeEvent",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "Character this event belongs to"
+    },
+    "character_name": {
+      "type": "string"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "supportive_event",
+        "bonding_event",
+        "healthy_choice_event",
+        "growth_event",
+        "achievement_qualifying_action",
+        "emotional_exchange",
+        "relationship_shift",
+        "conflict_event",
+        "risky_decision_event",
+        "impulsive_decision_event",
+        "substance_use_event",
+        "sleep_deprivation_event",
+        "grief_event",
+        "medical_event",
+        "accident_event",
+        "fight_event",
+        "legal_or_social_consequence_event",
+        "recovery_event",
+        "setback_event",
+        "life_milestone_event",
+        "npc_incident_event",
+        "location_change_event",
+        "emotional_outburst_event",
+        "betrayal_event",
+        "reconciliation_event",
+        "celebration_event",
+        "routine_positive_event",
+        "routine_negative_event"
+      ],
+      "description": "Classification of the event type"
+    },
+    "valence": {
+      "type": "string",
+      "enum": [
+        "positive",
+        "negative",
+        "neutral",
+        "mixed"
+      ],
+      "description": "Whether the event is broadly positive or negative for the character"
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "minor",
+        "moderate",
+        "significant",
+        "major"
+      ],
+      "description": "How impactful the event is"
+    },
+    "title": {
+      "type": "string",
+      "description": "Short title of the event"
+    },
+    "description": {
+      "type": "string",
+      "description": "Full description of what happened"
+    },
+    "emotional_impact": {
+      "type": "string",
+      "description": "How this event affected the character emotionally"
+    },
+    "triggered_by": {
+      "type": "string",
+      "enum": [
+        "user_message",
+        "character_decision",
+        "npc_action",
+        "scheduled_event",
+        "life_simulation",
+        "manual"
+      ],
+      "description": "What caused this event"
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "Source conversation if applicable"
+    },
+    "systems_updated": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Which systems were updated: memory, mood, relationship, achievement, moments"
+    },
+    "context_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Free-form tags: location, activity, mood-at-time, people involved"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "required": [
+    "character_id",
+    "event_type",
+    "valence",
+    "title",
+    "description"
+  ]
+}

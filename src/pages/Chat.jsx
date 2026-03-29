@@ -646,6 +646,33 @@ export default function Chat() {
         memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference these naturally when relevant, don't force it):\n${memoryList}`;
       }
 
+      // Get recent life events for behavioral context
+      let lifeEventContext = "";
+      try {
+        const recentLifeEvents = await base44.entities.LifeEvent.filter({ character_id: characterId }, "-timestamp", 8);
+        if (recentLifeEvents.length > 0) {
+          const negEvents = recentLifeEvents.filter(e => e.valence === "negative");
+          const posEvents = recentLifeEvents.filter(e => e.valence === "positive");
+          const eventLines = recentLifeEvents.map(e => `- [${e.valence}] ${e.title}`).join("\n");
+          let behaviorNote = "";
+          if (negEvents.filter(e => e.event_type === "substance_use_event").length >= 2) {
+            behaviorNote += " You've been drinking more than usual lately — your judgment and emotional regulation are affected.";
+          }
+          if (negEvents.filter(e => e.event_type === "grief_event").length >= 1) {
+            behaviorNote += " You're carrying grief right now. It shapes how you see everything.";
+          }
+          if (negEvents.filter(e => ["conflict_event","fight_event"].includes(e.event_type)).length >= 2) {
+            behaviorNote += " You've had repeated conflict recently. You may be more on edge than usual.";
+          }
+          if (posEvents.filter(e => ["growth_event","healthy_choice_event","recovery_event"].includes(e.event_type)).length >= 2) {
+            behaviorNote += " You've been in a good place lately — making better choices, feeling more stable.";
+          }
+          lifeEventContext = `\n\nRECENT LIFE EVENTS (shape your current mood, behavior, and what's on your mind):\n${eventLines}${behaviorNote ? "\n\nBEHAVIORAL NOTE:" + behaviorNote : ""}`;
+        }
+      } catch (_) {
+        // Life event fetch failed — continue without it
+      }
+
       // Detect frequented places and update emotional state asynchronously (non-blocking)
       const frequentedPlaces = character.frequented_places || [];
       if (frequentedPlaces.length > 0) {
@@ -770,7 +797,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const uncomfortableStates = ['irritated', 'defensive', 'closed-off'];
@@ -1100,6 +1127,33 @@ Reply with ONLY the single emoji or the word "none".`,
         chosen_family_level: character.chosen_family_level,
       },
     }).catch(() => {});
+
+    // Classify life events from this conversation turn (fire-and-forget)
+    // This fans out to memory, mood, relationship, and achievement systems
+    base44.functions.invoke("classifyConversationEvent", {
+      characterId,
+      characterName: character.name,
+      conversationId: convoId,
+      userMessage: text,
+      characterReply: responseText || "(image sent)",
+      recentMessages: recentMsgs.slice(-8),
+      characterState: {
+        emotional_state: character.emotional_state,
+        health_status: character.health_status,
+        current_activity: character.current_activity,
+        personality_summary: character.personality_summary,
+      },
+    }).catch(() => {});
+
+    // Extract memories from this turn (fire-and-forget)
+    if (responseText) {
+      base44.functions.invoke("extractMemoriesFromTurn", {
+        characterId,
+        conversationId: convoId,
+        userMessage: text,
+        characterReply: responseText,
+      }).catch(() => {});
+    }
 
     base44.functions.invoke("updateRelationshipLevels", {
       characterId,
