@@ -887,10 +887,8 @@ export default function Chat() {
       }
 
       // Perform web lookup asynchronously if user asked for one (non-blocking)
-      if (lookupMatch && lookupMatch[1]) {
-        const query = lookupMatch[1].trim();
-        base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
-      }
+      // Deferred to after LLM call to avoid rate limit
+      const deferredWebLookup = lookupMatch && lookupMatch[1] ? { query: lookupMatch[1].trim() } : null;
 
       const userDisplayName = userSettings.fictional_world_name || null;
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
@@ -1134,9 +1132,9 @@ ${imageRule}`;
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
-          // Exponential backoff: 5s, then 10s
-          const delayMs = (3 - retries) * 5000 + Math.random() * 2000;
-          console.log(`[RETRY] Rate limit hit, waiting ${Math.round(delayMs)}ms before retry ${3 - retries}/2`);
+          // Exponential backoff: 8s, then 16s with jitter
+          const delayMs = Math.pow(2, 3 - retries) * 8000 + Math.random() * 3000;
+          console.log(`[RETRY] Rate limit hit, waiting ${Math.round(delayMs / 1000)}s before retry ${3 - retries}/2`);
           retries--;
           await new Promise(r => setTimeout(r, delayMs));
         }
@@ -1569,6 +1567,13 @@ Reply with ONLY the single emoji or the word "none".`,
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
     });
+
+    // Execute deferred web lookup after LLM response succeeds (fire-and-forget)
+    if (deferredWebLookup) {
+      setTimeout(() => {
+        base44.functions.invoke('performWebLookup', { characterId, searchQuery: deferredWebLookup.query }).catch(() => {});
+      }, 1000);
+    }
   };
 
   return (
