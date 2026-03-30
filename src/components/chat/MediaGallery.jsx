@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
-import { Images, X, Sparkles, Loader2, RefreshCw } from "lucide-react";
+import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -13,8 +13,37 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
   // Prompt generator state
   const [prompt, setPrompt] = useState("");
+  const [referenceImageUrl, setReferenceImageUrl] = useState(null);
+  const [isUploadingRef, setIsUploadingRef] = useState(false);
+  const [isAutoPrompting, setIsAutoPrompting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState(null);
+
+  const handleRefUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingRef(true);
+    try {
+      const res = await base44.integrations.Core.UploadFile({ file });
+      setReferenceImageUrl(res.file_url);
+    } finally {
+      setIsUploadingRef(false);
+    }
+  };
+
+  const handleAutoPrompt = async () => {
+    if (!character) return;
+    setIsAutoPrompting(true);
+    try {
+      const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender, character.city].filter(Boolean).join(', ');
+      const generated = await base44.integrations.Core.InvokeLLM({
+        prompt: `Write a short, vivid image generation prompt (1-2 sentences) for a candid, realistic photo of a character named ${character.name} (${charDesc || 'a person'}). Make it a natural everyday moment — something authentic and interesting. Return ONLY the prompt text, nothing else.`,
+      });
+      setPrompt(generated?.trim() || "");
+    } finally {
+      setIsAutoPrompting(false);
+    }
+  };
 
   const images = messages
     .filter(msg => msg.image_url)
@@ -41,7 +70,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   };
 
   const handleGenerate = async () => {
-    if (!prompt.trim() || !character || !conversationId) return;
+    if ((!prompt.trim() && !referenceImageUrl) || !character || !conversationId) return;
     setIsGenerating(true);
     setGenerateError(null);
     try {
@@ -50,8 +79,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const referenceImages = [];
       if (character.avatar_url) referenceImages.push(character.avatar_url);
       if (character.reference_image_urls?.length > 0) referenceImages.push(...character.reference_image_urls.slice(0, 3));
+      // User-uploaded reference comes last (most influential)
+      if (referenceImageUrl) referenceImages.push(referenceImageUrl);
 
-      const fullPrompt = `Photorealistic photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${prompt.trim()} Natural lighting, authentic photo quality. Real photograph — not illustration.`;
+      const promptText = prompt.trim() || "candid natural moment, everyday life";
+      const fullPrompt = `Photorealistic photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${promptText} Natural lighting, authentic photo quality. Real photograph — not illustration.${referenceImageUrl ? ' Match the scene/style of the uploaded reference image.' : ''}`;
 
       const genRes = await base44.integrations.Core.GenerateImage({
         prompt: fullPrompt,
@@ -83,6 +115,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }).catch(() => {});
 
       setPrompt("");
+      setReferenceImageUrl(null);
       setIsOpen(false);
       if (onImageGenerated) onImageGenerated(newMsg);
     } catch (err) {
@@ -139,18 +172,53 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       <Sparkles className="w-4 h-4 text-primary" />
                       <p className="text-sm font-medium text-foreground">Generate a photo from {character.name}</p>
                     </div>
-                    <p className="text-xs text-muted-foreground">Describe a scene or situation and {character.name} will "send" it to you in the chat.</p>
-                    <textarea
-                      value={prompt}
-                      onChange={e => setPrompt(e.target.value)}
-                      placeholder={`e.g. "at the gym after a workout" or "cooking dinner at home"`}
-                      rows={2}
-                      className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-                    />
+                    <p className="text-xs text-muted-foreground">{character.name} will "send" it in the chat and remember it.</p>
+
+                    {/* Reference image upload */}
+                    <div className="flex items-center gap-2">
+                      <label className="flex-shrink-0 cursor-pointer flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors">
+                        <input type="file" accept="image/*" className="hidden" onChange={handleRefUpload} disabled={isUploadingRef} />
+                        {isUploadingRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        {referenceImageUrl ? "Change ref" : "Upload ref"}
+                      </label>
+                      {referenceImageUrl && (
+                        <div className="relative flex-shrink-0">
+                          <img src={referenceImageUrl} alt="reference" className="w-10 h-10 rounded-lg object-cover" />
+                          <button
+                            onClick={() => setReferenceImageUrl(null)}
+                            className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center"
+                          >
+                            <X className="w-2.5 h-2.5 text-white" />
+                          </button>
+                        </div>
+                      )}
+                      <p className="text-[10px] text-muted-foreground/60 leading-snug">Optional: upload a reference photo to guide the scene or style</p>
+                    </div>
+
+                    {/* Prompt textarea + auto-generate */}
+                    <div className="relative">
+                      <textarea
+                        value={prompt}
+                        onChange={e => setPrompt(e.target.value)}
+                        placeholder={`Describe a scene... or click ✨ to auto-generate`}
+                        rows={2}
+                        className="w-full px-3 py-2.5 pr-10 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <button
+                        onClick={handleAutoPrompt}
+                        disabled={isAutoPrompting}
+                        title="Auto-generate a prompt"
+                        className="absolute top-2 right-2 p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                      >
+                        {isAutoPrompting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+                      </button>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground/60 -mt-1">Type a description, upload a reference, or both — or tap ✨ to auto-generate a prompt</p>
+
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
                       onClick={handleGenerate}
-                      disabled={!prompt.trim() || isGenerating}
+                      disabled={(!prompt.trim() && !referenceImageUrl) || isGenerating}
                       className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                     >
                       {isGenerating ? (
