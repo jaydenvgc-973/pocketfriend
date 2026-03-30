@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { motion, AnimatePresence } from "framer-motion";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
+import { generateRandomName } from "@/lib/namePoolUtils";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -220,12 +221,10 @@ export default function CreateCharacter() {
 
   const generateName = async () => {
     setIsGeneratingName(true);
-    const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `Generate a realistic name for a ${data.age_range || "adult"} ${data.ethnicities.join(" / ") || ""} ${data.gender || "person"}. Return ONLY a JSON object with fields: first_name, middle_name (can be empty string), last_name. No explanation.`,
-      response_json_schema: { type: "object", properties: { first_name: { type: "string" }, middle_name: { type: "string" }, last_name: { type: "string" } } }
-    });
+    // Use built-in name pool with anti-repetition logic
+    const { first_name, last_name } = generateRandomName();
     setData(prev => {
-      const next = { ...prev, first_name: result.first_name || "", middle_name: result.middle_name || "", last_name: result.last_name || "" };
+      const next = { ...prev, first_name, last_name, middle_name: "" };
       saveDraft(next, step, avatarUrl, referenceUrls);
       return next;
     });
