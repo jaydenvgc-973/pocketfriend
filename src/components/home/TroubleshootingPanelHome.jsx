@@ -13,6 +13,7 @@ const ISSUE_LIST = [
   { id: 'availability_display', label: 'Availability incorrect', description: 'Verify work schedule display' },
   { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
   { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect and fix characters sharing threads, memories, or routing' },
+  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page and fix created_by' },
   { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
 ];
 
