@@ -983,7 +983,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\n--- CRITICAL RESPONSE STRUCTURE ---\nYour response may include BOTH ACTION and DIALOGUE.\nThese are different and must be separated:\n\n1. NARRATIVE (action/behavior): What you are DOING\n   - Use this for: movement, physical behavior, gestures, location changes, emotional expressions through action\n   - Format: "${character.name} [action description]"\n   - Example: "${character.name} steps closer, placing a steady hand on your shoulder."\n   - MUST use character name and user name (not "you" or "the user")\n\n2. DIALOGUE (speech): What you are SAYING\n   - Use this for: spoken words, communication\n   - Format: Direct speech in quotes\n   - Example: "You don't have to go through this alone."\n\nIf your response includes BOTH:\n- FIRST: describe the action (NARRATIVE)\n- THEN: provide the dialogue (DIALOGUE)\n- They will be rendered separately but feel like one continuous moment\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "narrative": "Optional action/behavior description. ONLY if you are DOING something. Use character and user names. Example: \\"Ethan steps closer, his hand resting gently on Jayden's arm.\\"",\n  "dialogue": "Optional spoken words. ONLY if you are SAYING something. Raw speech, no labels. Example: \\"I'm here for you.\\"",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\n\nRules:\n- Include "narrative" ONLY if you are performing an action (movement, gesture, behavior, location change)\n- Include "dialogue" ONLY if you are speaking\n- Both can exist in the same response — they will be rendered as separate but connected messages\n- Never combine narrative and dialogue into one field\n- narrative and dialogue are mutually exclusive with "text_content" — use them instead\n- Only include scheduled_events if a specific real-world action with a concrete time is committed to\n- Omit fields you don't use\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n- CRITICAL: Do NOT respond with only ellipses (...), dots (.), or punctuation. If you're pausing or hesitating, ALWAYS include actual words with the action. Example: "I need a second to think" or He pauses. "I'm not sure." Never return only "..." as your dialogue — that is not speaking, that is silence being used as avoidance. Always say something real.`\n\n--- CRITICAL RESPONSE STRUCTURE ---\nYour response may include BOTH ACTION and DIALOGUE.\nThese are different and must be separated:\n\n1. NARRATIVE (action/behavior): What you are DOING\n   - Use this for: movement, physical behavior, gestures, location changes, emotional expressions through action\n   - Format: "${character.name} [action description]"\n   - Example: "${character.name} steps closer, placing a steady hand on your shoulder."\n   - MUST use character name and user name (not "you" or "the user")\n\n2. DIALOGUE (speech): What you are SAYING\n   - Use this for: spoken words, communication\n   - Format: Direct speech in quotes\n   - Example: "You don't have to go through this alone."\n\nIf your response includes BOTH:\n- FIRST: describe the action (NARRATIVE)\n- THEN: provide the dialogue (DIALOGUE)\n- They will be rendered separately but feel like one continuous moment\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "narrative": "Optional action/behavior description. ONLY if you are DOING something. Use character and user names. Example: \\"Ethan steps closer, his hand resting gently on Jayden's arm.\\"",\n  "dialogue": "Optional spoken words. ONLY if you are SAYING something. Raw speech, no labels. Example: \\"I'm here for you.\\"",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\n\nRules:\n- Include narrative ONLY if you are performing an action (movement, gesture, behavior, location change)\n- Include dialogue ONLY if you are speaking\n- Both can exist in the same response — they will be rendered as separate but connected messages\n- Never combine narrative and dialogue into one field\n- Only include scheduled_events if a specific real-world action with a concrete time is committed to\n- Omit fields you don't use\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
@@ -1112,6 +1112,12 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         dialogueText = "";
       }
 
+      // CRITICAL: Reject dialogue that is only punctuation/ellipses — enforce meaningful speech
+      if (dialogueText && !isMeaningfulDialogue(dialogueText)) {
+        console.log(`[DIALOGUE-VALIDATION] Rejected empty/punctuation-only dialogue: "${dialogueText}"`);
+        dialogueText = ""; // Clear invalid dialogue, will use fallback below
+      }
+
       responseText = dialogueText || narrativeText; // Keep responseText for backwards compat logging
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
@@ -1157,6 +1163,17 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     }
 
     setIsTyping(false);
+
+    // Helper: validate that dialogue is meaningful (not just punctuation)
+    const isMeaningfulDialogue = (text) => {
+      if (!text || !text.trim()) return false;
+      const trimmed = text.trim();
+      // Reject if it's only punctuation/ellipses
+      const onlyPunctuation = /^[\s\.\,\;\:\!\?\-—–…'""`~*]+$/;
+      if (onlyPunctuation.test(trimmed)) return false;
+      // Must have at least one alphanumeric character
+      return /[a-zA-Z0-9]/.test(trimmed);
+    };
 
     // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
@@ -1268,18 +1285,23 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     }
 
     // 2. Submit Dialogue (if valid and present)
+    // CRITICAL: Only submit if dialogue is meaningful (not just punctuation)
     if (dialogueText && dialogueText.trim().length > 0) {
-      console.log("Submitting dialogue...");
-      try {
-        const dlgMsg = await createDialogueMessage(dialogueText);
-        if (dlgMsg) {
-          anyMessageSent = true;
-          if (!primaryMsg) primaryMsg = dlgMsg;
-          await new Promise(r => setTimeout(r, 300));
+      if (isMeaningfulDialogue(dialogueText)) {
+        console.log("Submitting meaningful dialogue...");
+        try {
+          const dlgMsg = await createDialogueMessage(dialogueText);
+          if (dlgMsg) {
+            anyMessageSent = true;
+            if (!primaryMsg) primaryMsg = dlgMsg;
+            await new Promise(r => setTimeout(r, 300));
+          }
+        } catch (err) {
+          console.error("Dialogue failed:", err);
         }
-      } catch (err) {
-        console.error("Dialogue failed:", err);
-        // Do not erase narrative if it succeeded, just log and continue
+      } else {
+        console.log(`[SKIP-DIALOGUE] Rejecting non-meaningful dialogue: "${dialogueText}"`);
+        // Will fall through to fallback if no narrative or images succeed
       }
     }
 
@@ -1300,16 +1322,36 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       }
     }
 
-    // If no message was successfully sent, create a fallback acknowledgment message
-    if (!anyMessageSent) {
-      console.log("[FALLBACK] No narrative/dialogue/image saved. Creating acknowledgment message...");
+    // If no meaningful dialogue/narrative generated, create a proper verbal fallback
+    if (!anyMessageSent || (!dialogueText && !narrativeText && imagePrompts.length === 0)) {
+      console.log("[FALLBACK] No meaningful dialogue/narrative. Creating proper verbal fallback...");
+      
+      // Use a context-appropriate fallback response instead of "..."
+      const fallbackResponses = {
+        thinking: "Give me a second to think about that.",
+        hesitating: "I'm not sure what to say right now.",
+        listening: "I'm listening.",
+        processing: "Hold on, I'm processing.",
+        pausing: "Let me think for a moment.",
+        responding: "Yeah, I hear you."
+      };
+      
+      // Pick context-appropriate fallback based on character status
+      let fallbackContent = fallbackResponses.listening;
+      const charStatus = getCharacterStatus(character);
+      if (charStatus === 'asleep') fallbackContent = "(offline - asleep)";
+      else if (charStatus === 'work') fallbackContent = "I'm at work, give me a second.";
+      else if (charStatus === 'school') fallbackContent = "I'm in class, I'll respond when I can.";
+      else if (charStatus === 'gym') fallbackContent = "I'm working out, just a sec.";
+      else if (Math.random() > 0.5) fallbackContent = fallbackResponses.processing;
+      
       try {
         const fallbackMsg = await base44.entities.Message.create({
           conversation_id: convoId,
           sender_type: "character",
           character_id: characterId,
           character_name: character.name,
-          content: "...",  // Minimal acknowledgment
+          content: fallbackContent,  // Real speech, not punctuation
           is_narrative: false,
           emotional_state: emotionalState,
           timestamp: new Date().toISOString(),
@@ -1317,13 +1359,13 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         if (fallbackMsg?.id) {
           anyMessageSent = true;
           setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
-          console.log("[FALLBACK] Acknowledgment message created: " + fallbackMsg.id);
+          console.log("[FALLBACK] Created verbal fallback: " + fallbackMsg.id);
         } else {
           setSendError("Character response failed to save. Try again.");
           return;
         }
       } catch (fallbackErr) {
-        console.error("[FALLBACK] Even fallback failed:", fallbackErr);
+        console.error("[FALLBACK] Fallback creation failed:", fallbackErr);
         setSendError("Character response failed to save. Try again.");
         return;
       }
