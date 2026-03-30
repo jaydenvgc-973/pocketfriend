@@ -1134,8 +1134,11 @@ ${imageRule}`;
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
+          // Exponential backoff: 5s, then 10s
+          const delayMs = (3 - retries) * 5000 + Math.random() * 2000;
+          console.log(`[RETRY] Rate limit hit, waiting ${Math.round(delayMs)}ms before retry ${3 - retries}/2`);
           retries--;
-          await new Promise(r => setTimeout(r, 3000));
+          await new Promise(r => setTimeout(r, delayMs));
         }
       }
 
