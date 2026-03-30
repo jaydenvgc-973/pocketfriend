@@ -1074,7 +1074,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       };
 
       let retries = 2;
-      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
+      let responseObj = { message_type: "text_only", narrative: "", dialogue: "", text_content: "", image_generation_prompts: [] };
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1112,7 +1112,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         dialogueText = "";
       }
 
-      responseText = dialogueText; // Keep responseText for backwards compat logging
+      responseText = dialogueText || narrativeText; // Keep responseText for backwards compat logging
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
       imagePrompts = hasImage
@@ -1242,8 +1242,11 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       return dlgMsg;
     };
 
-    // Track if any message was successfully sent
+    // Track if any message was successfully sent and references
     let anyMessageSent = false;
+    let primaryMsg = null;
+    // Find the most recent user message in the conversation for emoji reaction
+    let userMsg = messages.find(m => m.sender_type === "user" && m.conversation_id === convoId);
 
     console.log("Narrative:", narrativeText);
     console.log("Dialogue:", dialogueText);
@@ -1257,6 +1260,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         const narMsg = await createNarrativeMessage(narrativeText);
         if (narMsg) {
           anyMessageSent = true;
+          if (!primaryMsg) primaryMsg = narMsg;
           await new Promise(r => setTimeout(r, 300));
         }
       } catch (err) {
@@ -1272,6 +1276,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         const dlgMsg = await createDialogueMessage(dialogueText);
         if (dlgMsg) {
           anyMessageSent = true;
+          if (!primaryMsg) primaryMsg = dlgMsg;
           await new Promise(r => setTimeout(r, 300));
         }
       } catch (err) {
@@ -1302,9 +1307,6 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       setSendError("Character response failed to save. Try again.");
       return;
     }
-
-    // Use primary text message for relationship/conversation tracking (or first image msg id for context)
-    const charMsg = primaryMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
