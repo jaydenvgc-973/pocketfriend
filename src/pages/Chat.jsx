@@ -685,6 +685,7 @@ export default function Chat() {
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only", narrativeText, dialogueText;
+    let deferredWebLookup = null;
 
     // Helper: validate that dialogue is meaningful (not just punctuation) — define BEFORE use
     const isMeaningfulDialogue = (text) => {
@@ -888,7 +889,7 @@ export default function Chat() {
 
       // Perform web lookup asynchronously if user asked for one (non-blocking)
       // Deferred to after LLM call to avoid rate limit
-      const deferredWebLookup = lookupMatch && lookupMatch[1] ? { query: lookupMatch[1].trim() } : null;
+      deferredWebLookup = lookupMatch && lookupMatch[1] ? { query: lookupMatch[1].trim() } : null;
 
       const userDisplayName = userSettings.fictional_world_name || null;
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
