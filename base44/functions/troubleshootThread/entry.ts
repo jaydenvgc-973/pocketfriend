@@ -175,6 +175,127 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- DEEP CHARACTER RECOVERY ---
+    if (selectedIssues.includes('deep_character_recovery')) {
+      const charArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+      const character = charArr[0];
+      const charName = character?.name || '';
+      let recovered = { messages: 0, memories: 0, lifeEvents: 0, images: 0 };
+
+      // 1. Find ALL messages with this character_id that aren't in this conversation (orphaned or in wrong thread)
+      const allCharMessages = await base44.asServiceRole.entities.Message.filter({ character_id: characterId }, '-created_date', 1000);
+      const orphanedMsgs = allCharMessages.filter(m => m.conversation_id !== conversationId && m.sender_type === 'character');
+      if (orphanedMsgs.length > 0) {
+        for (const msg of orphanedMsgs) {
+          // Check if the conversation this message belongs to is a valid direct convo for this character
+          const parentConvos = await base44.asServiceRole.entities.Conversation.filter({ id: msg.conversation_id });
+          const parentConvo = parentConvos[0];
+          // If it's a phone or direct convo ONLY for this character, it's valid — leave it
+          // If orphaned (no parent or parent belongs to different character set), reattach to current convo
+          if (!parentConvo || !parentConvo.character_ids?.includes(characterId)) {
+            await base44.asServiceRole.entities.Message.update(msg.id, { conversation_id: conversationId });
+            recovered.messages++;
+          }
+        }
+      }
+
+      // 2. Restore all archived messages for this character's conversation
+      const archivedInConvo = allMessages.filter(m => m.archived_date);
+      for (const msg of archivedInConvo) {
+        await base44.asServiceRole.entities.Message.update(msg.id, { archived_date: null });
+        recovered.messages++;
+      }
+
+      // 3. Find ALL memories with this character_id — ensure none are orphaned
+      const allMemories = await base44.asServiceRole.entities.Memory.filter({ character_id: characterId }, '-timestamp', 1000);
+      // If charName is set, also scan for memories that mention the character by name but have no/wrong character_id
+      if (charName) {
+        // Scan memories with no character_id or wrong character_id but whose title/description contains the character name
+        const allMemoriesUnfiltered = await base44.asServiceRole.entities.Memory.list('-timestamp', 2000);
+        const orphanedMemories = allMemoriesUnfiltered.filter(m =>
+          !m.character_id &&
+          (m.title?.toLowerCase().includes(charName.toLowerCase()) || m.description?.toLowerCase().includes(charName.toLowerCase()))
+        );
+        for (const mem of orphanedMemories) {
+          await base44.asServiceRole.entities.Memory.update(mem.id, { character_id: characterId, character_name: charName });
+          recovered.memories++;
+        }
+      }
+
+      // 4. Find ALL life events with this character_id — relink any with matching name but missing ID
+      if (charName) {
+        const allLifeEvents = await base44.asServiceRole.entities.LifeEvent.list('-timestamp', 2000);
+        const orphanedEvents = allLifeEvents.filter(e =>
+          !e.character_id &&
+          (e.character_name?.toLowerCase() === charName.toLowerCase() || e.description?.toLowerCase().includes(charName.toLowerCase()))
+        );
+        for (const ev of orphanedEvents) {
+          await base44.asServiceRole.entities.LifeEvent.update(ev.id, { character_id: characterId, character_name: charName });
+          recovered.lifeEvents++;
+        }
+      }
+
+      // 5. Scan all messages in current convo for broken/empty image URLs and fix them
+      const msgWithImages = allMessages.filter(m => m.image_url && m.image_url.startsWith('http'));
+      const msgWithBrokenImages = allMessages.filter(m => m.sender_type === 'character' && (m.image_url === '' || m.image_url === 'pending'));
+      for (const msg of msgWithBrokenImages) {
+        await base44.asServiceRole.entities.Message.update(msg.id, { image_url: null });
+        recovered.images++;
+      }
+
+      // 6. Sync avatar/reference images from character record — update character with all found images
+      const allCharMsgsWithImages = allCharMessages.filter(m => m.image_url?.startsWith('http'));
+      const uniqueImageUrls = [...new Set(allCharMsgsWithImages.map(m => m.image_url))];
+      if (uniqueImageUrls.length > 0 && character) {
+        const existingRefs = character.reference_image_urls || [];
+        const newRefs = uniqueImageUrls.filter(url => !existingRefs.includes(url));
+        if (newRefs.length > 0) {
+          await base44.asServiceRole.entities.Character.update(characterId, {
+            reference_image_urls: [...existingRefs, ...newRefs.slice(0, 20)],
+          });
+          recovered.images += newRefs.length;
+        }
+      }
+
+      // 7. Re-trigger memory extraction from the conversation (fire-and-forget style via inline)
+      try {
+        const recentMsgs = await base44.asServiceRole.entities.Message.filter({ conversation_id: conversationId }, '-created_date', 100);
+        const convoText = recentMsgs.slice(0, 30).reverse().map(m => `${m.sender_type === 'user' ? 'User' : charName}: ${m.content}`).filter(t => t.trim()).join('\n');
+        if (convoText) {
+          await base44.asServiceRole.integrations.Core.InvokeLLM({
+            prompt: `Extract 3-5 key memories from this conversation for character "${charName}". Return JSON array: [{"title":"...","description":"...","emotional_impact":"..."}]\n\n${convoText}`,
+            response_json_schema: { type: "object", properties: { memories: { type: "array", items: { type: "object" } } } }
+          }).then(async (res) => {
+            const mems = res?.memories || [];
+            for (const mem of mems) {
+              if (!mem.title || !mem.description) continue;
+              await base44.asServiceRole.entities.Memory.create({
+                character_id: characterId,
+                title: mem.title,
+                description: mem.description,
+                emotional_impact: mem.emotional_impact || 'neutral',
+                timestamp: new Date().toISOString(),
+                source_context: 'deep_recovery',
+              });
+              recovered.memories++;
+            }
+          }).catch(() => {});
+        }
+      } catch (_) {}
+
+      const totalRecovered = recovered.messages + recovered.memories + recovered.lifeEvents + recovered.images;
+      results.checks.push({
+        name: 'Deep Character Recovery',
+        status: totalRecovered > 0 ? 'passed' : 'info',
+        message: `Scanned all app data for ${charName || 'this character'}. Recovered: ${recovered.messages} messages, ${recovered.memories} memories, ${recovered.lifeEvents} life events, ${recovered.images} images.`
+      });
+      if (totalRecovered > 0) {
+        results.fixes_applied.push(`Deep recovery complete: reattached ${recovered.messages} messages, ${recovered.memories} memories, ${recovered.lifeEvents} life events, and ${recovered.images} images to ${charName}.`);
+      } else {
+        results.issues_found.push(`No orphaned data found for ${charName} — all files are already correctly linked.`);
+      }
+    }
+
     const totalIssues = results.issues_found.length;
     const totalFixes = results.fixes_applied.length;
     if (totalIssues === 0 && totalFixes === 0) {

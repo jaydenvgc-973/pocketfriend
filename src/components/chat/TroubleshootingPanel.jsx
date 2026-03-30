@@ -12,6 +12,7 @@ const ISSUE_LIST = [
   { id: 'media_missing', label: 'Images not loading', description: 'Deep scan: find messages with missing/failed image URLs and attempt recovery' },
   { id: 'archived_messages', label: 'Hidden or archived messages', description: 'Recover messages hidden from view' },
   { id: 'character_identity', label: 'Wrong character responding', description: 'Detect if messages from another character are appearing in this thread' },
+  { id: 'deep_character_recovery', label: 'Retrieve any & all images, messages, memories for this character', description: 'Deep dive across ALL app data — finds orphaned messages, memories, images, and life events anywhere in the system and reattaches them to this character. Also restores them to the correct chat thread.' },
 ];
 
 export default function TroubleshootingPanel({ isOpen, onClose, conversationId, characterId }) {

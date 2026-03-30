@@ -261,7 +261,7 @@ RULES:
       const response = await base44.integrations.Core.InvokeLLM({
         prompt: `${systemContext}\n\nUser: ${text}\n\nRespond now:`,
         add_context_from_internet: true,
-        model: 'claude_sonnet_4_6',
+        model: 'gemini_3_pro',
       });
 
       setMessages(prev => prev.filter(m => m.id !== thinkingId));
@@ -312,7 +312,7 @@ Write a clear, specific, honest report (2-4 paragraphs). Be specific about what 
 
       const summary = await base44.integrations.Core.InvokeLLM({
         prompt: summaryPrompt,
-        model: 'claude_sonnet_4_6',
+        model: 'gemini_3_pro',
       });
 
       addMessage({
@@ -350,7 +350,7 @@ Write a clear, specific, honest report (2-4 paragraphs). Be specific about what 
             </div>
           ))}
         </div>
-        <span className="text-[9px] text-muted-foreground/50 ml-auto">Claude Sonnet + Web</span>
+        <span className="text-[9px] text-muted-foreground/50 ml-auto">Gemini Pro + Web</span>
         <button
           onClick={() => setMessages(prev => prev.slice(0, 1))}
           className="text-muted-foreground hover:text-foreground transition-colors p-1"
@@ -426,7 +426,7 @@ Write a clear, specific, honest report (2-4 paragraphs). Be specific about what 
           </button>
         </div>
         <p className="text-[9px] text-muted-foreground/30 mt-1.5 text-center">
-          Powered by Claude Sonnet with real-time web access · Enter to send
+          Powered by Gemini Pro with real-time web access · Enter to send
         </p>
       </div>
     </div>
