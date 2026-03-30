@@ -880,7 +880,7 @@ export default function Chat() {
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
-      const userDisplayName = userSettings.fictional_world_name || null;
+      const userDisplayName = userSettings.fictional_world_name || currentUser.full_name || "Friend";
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
@@ -983,7 +983,38 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const narrativeIdentityRule = `
+NARRATIVE IDENTITY RULE — CRITICAL FOR IMMERSION:
+- Your name: ${character.name}
+- User's in-world name: ${userDisplayName}
+- NEVER use generic labels like "the user", "the character", "you" (in narration), "I" (in narration), or "they" in your narrative actions
+- ALL actions must reference people by their ACTUAL NAMES
+- You narrate as a character describing what's happening, not as yourself
+
+Examples:
+
+WRONG:
+  The character hands the user a drink.
+  I reach out to them.
+  The user smiles at me.
+
+CORRECT:
+  ${character.name} passes ${userDisplayName} a drink, watching his reaction.
+  ${character.name} reaches out, hand brushing lightly against ${userDisplayName}'s.
+  ${userDisplayName} smiles, and ${character.name} notices.
+
+SHARED ACTIONS:
+  ${character.name} and ${userDisplayName} step outside together.
+  ${character.name} walks alongside ${userDisplayName}, matching his pace.
+
+REMOTE (no physical contact):
+  ${character.name} wishes he could be with ${userDisplayName} right now.
+  ${character.name} thinks about ${userDisplayName} and smiles.
+
+Apply this rule to ALL narrative text, dialogue context, and action descriptions.
+`;
+
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${narrativeIdentityRule}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
@@ -1091,6 +1122,14 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
         responseText = "";
       }
+
+      // ENFORCE NAMED NARRATIVE: Clean up any generic labels the LLM might have used
+      responseText = responseText.replace(/\bthe user\b/gi, userDisplayName);
+      responseText = responseText.replace(/\bthe character\b/gi, character.name);
+      // Only replace standalone "you" in narrative context (not in dialogue)
+      responseText = responseText.replace(/^([A-Za-z\s]+?)\syou\s/gm, (match, prefix) => {
+        return match.replace(/\byou\b/, userDisplayName);
+      });
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
       imagePrompts = hasImage
