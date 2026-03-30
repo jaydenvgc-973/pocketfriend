@@ -1122,7 +1122,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
 
       let retries = 2;
       let responseObjs = [{ message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] }];
-      let responseObj;
+      let responseObj = { message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] };
       
       while (retries >= 0) {
         try {
@@ -1132,6 +1132,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
             model: 'gemini_3_flash'
           });
           responseObjs = parseCharacterResponse(response);
+          responseObj = responseObjs[0];
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
@@ -1139,8 +1140,6 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
           await new Promise(r => setTimeout(r, 3000));
         }
       }
-
-      responseObj = responseObjs[0];
       msgType = responseObj.message_type || "text_only";
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
