@@ -500,7 +500,11 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
 
       if (res?.data?.success) {
         localStorage.removeItem(DRAFT_KEY);
-        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+        // Force clear all character-related caches
+        queryClient.invalidateQueries({ queryKey: ["characters"] });
+        queryClient.invalidateQueries({ queryKey: ["user"] });
+        // Wait briefly for query invalidation to propagate, then navigate
+        await new Promise(r => setTimeout(r, 500));
         navigate("/home");
       } else {
         throw new Error(res?.data?.error || "Failed to create character");

@@ -114,10 +114,10 @@ export default function Home() {
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
   const activeCustomChars = customChars.filter(c => c.status === "active" || !c.status);
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
-  // Character limit: max 10 active custom characters. Slot opens when a character moves away or is deleted.
-  const CHARACTER_LIMIT = 10;
-  const canCreate = activeCustomChars.length < CHARACTER_LIMIT;
-  const canMoveBack = movedAwayChars.length > 0 && activeCustomChars.length < CHARACTER_LIMIT;
+  // NO HARD LIMIT: characters can always be created and displayed
+  const canCreate = true;
+  const canMoveBack = movedAwayChars.length > 0;
+  const showPerformanceWarning = activeCustomChars.length >= 7;
 
   return (
     <div className="min-h-screen bg-background">
@@ -167,16 +167,22 @@ export default function Home() {
         ) : null}
         
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/{CHARACTER_LIMIT}</p>
-            {canCreate && (
-              <Link to="/create">
-                <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
-                  <Plus className="w-3.5 h-3.5" /> Create
-                </motion.button>
-              </Link>
-            )}
-          </div>
+           {showPerformanceWarning && (
+             <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+               <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Performance Notice</p>
+               <p className="text-xs text-amber-600/80">You have {activeCustomChars.length} custom characters. The app may slow down with many active characters. Performance depends on your device.</p>
+             </div>
+           )}
+           <div className="flex items-center justify-between mb-3">
+             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters ({activeCustomChars.length})</p>
+             {canCreate && (
+               <Link to="/create">
+                 <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
+                   <Plus className="w-3.5 h-3.5" /> Create
+                 </motion.button>
+               </Link>
+             )}
+           </div>
           {activeCustomChars.length === 0 && movedAwayChars.length === 0 ? (
             <Link to="/create">
               <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors">
@@ -196,16 +202,14 @@ export default function Home() {
                 />
               ))}
               {movedAwayChars.map(c => (
-                <CharacterCard key={c.id} character={c} onMoveAway={() => canMoveBack && moveBackMutation.mutate(c.id)} />
+                <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} />
               ))}
-              {canCreate && (
-                <Link to="/create">
-                  <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
-                    <Plus className="w-4 h-4 text-muted-foreground mr-2" />
-                    <span className="text-sm text-muted-foreground">Add another</span>
-                  </motion.div>
-                </Link>
-              )}
+              <Link to="/create">
+                <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
+                  <Plus className="w-4 h-4 text-muted-foreground mr-2" />
+                  <span className="text-sm text-muted-foreground">Add another</span>
+                </motion.div>
+              </Link>
             </div>
           )}
         </div>

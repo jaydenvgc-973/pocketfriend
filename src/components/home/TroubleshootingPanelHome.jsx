@@ -182,7 +182,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                   {/* Fixed */}
                   {(results.fixed || results.fixes_applied || []).length > 0 && (
                     <div className="space-y-2">
-                      <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Fixed</p>
+                      <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Repairs Applied</p>
                       <div className="space-y-1">
                         {(results.fixed || results.fixes_applied || []).map((item, i) => (
                           <div key={i} className="flex items-start gap-2 text-xs text-foreground">
@@ -205,6 +205,32 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                             <span>{item}</span>
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Detailed Checks */}
+                  {(results.checks || []).length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Diagnostic Details</p>
+                      <div className="space-y-1">
+                        {(results.checks || []).map((check, i) => {
+                          const statusIcon = {
+                            passed: <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />,
+                            fixed: <CheckCircle2 className="w-4 h-4 text-cyan-400 flex-shrink-0" />,
+                            warning: <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0" />,
+                            info: <AlertCircle className="w-4 h-4 text-blue-400 flex-shrink-0" />,
+                          }[check.status] || <AlertCircle className="w-4 h-4 text-muted-foreground flex-shrink-0" />;
+                          return (
+                            <div key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                              {statusIcon}
+                              <div className="flex-1">
+                                <p className="font-medium text-foreground">{check.name}</p>
+                                <p className="text-muted-foreground/80">{check.message}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}
