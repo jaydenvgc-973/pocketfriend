@@ -1,69 +1,327 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Terminal, Send, CheckCircle2, XCircle, Loader2, ChevronDown, ChevronUp, Clock } from "lucide-react";
+import { Terminal, Send, CheckCircle2, XCircle, Loader2, User, Bot, RefreshCw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
-const PHASE = {
-  IDLE: "idle",
-  INTERPRETING: "interpreting",
-  AWAITING_APPROVAL: "awaiting_approval",
-  AWAITING_CLARIFICATION: "awaiting_clarification",
-  EXECUTING: "executing",
-  DONE: "done",
-  ERROR: "error",
-};
+// ── Message types in the chat thread ─────────────────────────────────────────
+// role: "user" | "ai" | "system"
+// phase: null | "interpreting" | "clarifying" | "awaiting_approval" | "executing" | "result" | "error"
 
-function timestamp() {
-  return new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+function ts() {
+  return new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" });
 }
 
+const TYPE_COLORS = {
+  diagnostic: "bg-blue-400/10 border-blue-400/30 text-blue-300",
+  repair:     "bg-orange-400/10 border-orange-400/30 text-orange-300",
+  build:      "bg-emerald-400/10 border-emerald-400/30 text-emerald-300",
+  combined:   "bg-purple-400/10 border-purple-400/30 text-purple-300",
+};
+
+// ── Parse what the AI said and produce actionable backend calls ───────────────
+async function executeApprovedPlan(plan, subTasks, systemsAffected, originalRequest, addMessage) {
+  const steps = [];
+  const req = originalRequest.toLowerCase();
+
+  // Determine what real backend actions to run based on interpretation
+  const actions = [];
+
+  // Always start with a broad inspect
+  actions.push({ action: 'inspect', payload: {} });
+
+  // Character-specific mention?
+  const charMatch = originalRequest.match(/\b(ethan|nathan|lila|[A-Z][a-z]+)'s?\b/gi);
+  const mentionedCharName = charMatch?.[0]?.replace(/'s?$/i, '').trim();
+
+  if (mentionedCharName) {
+    actions.push({ action: 'inspect_character', payload: { character_name: mentionedCharName } });
+  }
+
+  // Memory-related?
+  if (/memory|memories|remember|recall|long.?term/i.test(req)) {
+    if (mentionedCharName) {
+      actions.push({ action: 'list_memories', payload: { character_name: mentionedCharName } });
+      actions.push({ action: 'repair_memory', payload: { character_name: mentionedCharName } });
+    }
+  }
+
+  // Memory extraction from history?
+  if (/restore|extract|rebuild|reconnect|missing memory|no memory|lost memory/i.test(req)) {
+    if (mentionedCharName) {
+      actions.push({ action: 'extract_memories', payload: { character_name: mentionedCharName } });
+    }
+  }
+
+  // Thread / cross-contamination?
+  if (/thread|blank|sharing|cross|contamin|chat.*blank|blank.*chat|misrouting/i.test(req)) {
+    if (mentionedCharName) {
+      actions.push({ action: 'repair_thread', payload: { character_name: mentionedCharName } });
+    }
+  }
+
+  // Notification / unread badge?
+  if (/notif|badge|unread|stuck badge/i.test(req)) {
+    actions.push({ action: 'repair_unread', payload: {} });
+  }
+
+  // Pending messages stuck?
+  if (/pending|stuck message|not deliver/i.test(req)) {
+    actions.push({ action: 'repair_pending', payload: {} });
+  }
+
+  // Family fix?
+  if (/family|spouse|child|parent|member/i.test(req) && mentionedCharName) {
+    actions.push({ action: 'inspect_character', payload: { character_name: mentionedCharName } });
+  }
+
+  const results = [];
+  for (const { action, payload } of actions) {
+    try {
+      addMessage({
+        role: 'system',
+        content: `⚙️ Running: ${action}${payload.character_name ? ` for ${payload.character_name}` : ''}…`,
+        ts: ts(),
+      });
+
+      const res = await base44.functions.invoke('adminExecute', { action, payload });
+      results.push({ action, data: res.data, ok: true });
+      steps.push(`✓ ${action} completed`);
+    } catch (err) {
+      results.push({ action, error: err.message, ok: false });
+      steps.push(`✗ ${action} failed: ${err.message}`);
+    }
+  }
+
+  return { results, steps };
+}
+
+// ── Build human-readable summary from execution results ───────────────────────
+function buildResultSummary(results, originalRequest) {
+  const lines = [];
+
+  for (const r of results) {
+    if (!r.ok) {
+      lines.push(`**${r.action}**: ⚠️ ${r.error}`);
+      continue;
+    }
+    const d = r.data;
+    if (!d) continue;
+
+    switch (r.action) {
+      case 'inspect':
+        lines.push(`📊 **App inspection complete** — ${d.results?.characters?.length || 0} characters, ${d.results?.memory_count || 0} memories, ${d.results?.conversation_count || 0} conversations.`);
+        if (d.results?.stuck_pending_messages > 0) lines.push(`⚠️ ${d.results.stuck_pending_messages} stuck pending messages found.`);
+        if (d.results?.cross_contaminated_messages > 0) lines.push(`⚠️ ${d.results.cross_contaminated_messages} cross-contaminated messages detected.`);
+        break;
+
+      case 'inspect_character':
+        if (d.character) {
+          lines.push(`🔍 **${d.character.name}** — status: ${d.character.status || 'active'}, mood: ${d.character.emotional_state}, memories: ${d.memory_count}, conversations: ${d.conversation_count}.`);
+          const issues = Object.entries(d.issues_detected || {}).filter(([,v]) => v).map(([k]) => k.replace(/_/g, ' '));
+          if (issues.length > 0) lines.push(`Issues detected: ${issues.join(', ')}.`);
+          else lines.push(`No critical issues detected for ${d.character.name}.`);
+        }
+        break;
+
+      case 'list_memories':
+        lines.push(`🧠 **${d.character_name}** has **${d.total} memories** stored.`);
+        if (d.memories?.length > 0) {
+          lines.push(`Most recent memories:`);
+          d.memories.slice(0, 5).forEach(m => lines.push(`  • "${m.title}" — ${m.description?.substring(0, 80)}…`));
+        }
+        break;
+
+      case 'repair_memory':
+        lines.push(`🔧 **Memory repair for ${d.character_name}**: ${d.existing_memories} memories active. ${d.orphaned_relinked > 0 ? `Relinked ${d.orphaned_relinked} orphaned memories.` : 'All memories properly linked.'}`);
+        if (d.notes) lines.push(`   ℹ️ ${d.notes}`);
+        break;
+
+      case 'extract_memories':
+        lines.push(`📥 **Memory extraction for ${d.character_name}**: Scanned ${d.conversations_scanned} conversations, extracted and stored **${d.memories_extracted} new memories**.`);
+        break;
+
+      case 'repair_thread':
+        lines.push(`🔗 **Thread repair for ${d.character_name}**: Checked ${d.conversations_checked} conversations, fixed ${d.conversations_fixed} mapping errors, archived ${d.cross_contaminated_messages_archived} cross-contaminated messages.`);
+        break;
+
+      case 'repair_unread':
+        lines.push(`🔔 **Unread repair**: Marked ${d.messages_marked_read} messages as read.`);
+        break;
+
+      case 'repair_pending':
+        lines.push(`📬 **Pending fix**: Cleared ${d.pending_cleared} stuck pending messages.`);
+        break;
+
+      case 'repair_family':
+        lines.push(`👨‍👩‍👧 **Family repair for ${d.character_name}**: Applied ${d.changes_made} fix(es) to family member list.`);
+        break;
+
+      case 'repair_character_status':
+        lines.push(`⚙️ **Status update for ${d.character_name}**: ${Object.entries(d.updates_applied).map(([k,v]) => `${k} → ${v}`).join(', ')}`);
+        break;
+
+      default:
+        if (d.success) lines.push(`✓ ${r.action} succeeded.`);
+    }
+  }
+
+  return lines;
+}
+
+// ── Chat message component ────────────────────────────────────────────────────
+function ChatMessage({ msg }) {
+  const isUser = msg.role === 'user';
+  const isSystem = msg.role === 'system';
+
+  if (isSystem) {
+    return (
+      <div className="flex items-center gap-2 py-1 px-3">
+        <div className="flex-1 h-px bg-border/50" />
+        <span className="text-[10px] text-muted-foreground/60 flex-shrink-0">{msg.content}</span>
+        <div className="flex-1 h-px bg-border/50" />
+      </div>
+    );
+  }
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`flex gap-2.5 px-3 py-1 ${isUser ? 'justify-end' : 'justify-start'}`}
+    >
+      {!isUser && (
+        <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 mt-1">
+          <Bot className="w-3.5 h-3.5 text-primary" />
+        </div>
+      )}
+      <div className={`max-w-[85%] space-y-1 ${isUser ? 'items-end' : 'items-start'} flex flex-col`}>
+        <div className={`rounded-2xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap ${
+          isUser
+            ? 'bg-primary text-primary-foreground rounded-tr-sm'
+            : 'bg-secondary text-foreground rounded-tl-sm'
+        }`}>
+          {msg.content}
+        </div>
+
+        {/* Interpretation panel inline */}
+        {msg.interpretation && (
+          <div className="w-full rounded-xl border border-border bg-card/60 p-3 space-y-2 text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border ${TYPE_COLORS[msg.interpretation.type] || 'text-muted-foreground bg-secondary border-border'}`}>
+                {msg.interpretation.type}
+              </span>
+            </div>
+            {msg.interpretation.sub_tasks?.length > 0 && (
+              <div>
+                <p className="text-[9px] font-bold text-muted-foreground uppercase mb-1">Sub-tasks:</p>
+                {msg.interpretation.sub_tasks.map((t, i) => (
+                  <p key={i} className="text-foreground flex gap-1.5"><span className="text-primary">·</span>{t}</p>
+                ))}
+              </div>
+            )}
+            {msg.interpretation.systems_affected?.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {msg.interpretation.systems_affected.map((s, i) => (
+                  <span key={i} className="text-[9px] px-1.5 py-0.5 rounded bg-secondary border border-border text-muted-foreground">{s}</span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Result lines */}
+        {msg.resultLines?.length > 0 && (
+          <div className="w-full rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 space-y-1 text-xs">
+            {msg.resultLines.map((line, i) => (
+              <p key={i} className="text-foreground leading-relaxed">{line}</p>
+            ))}
+          </div>
+        )}
+
+        {/* Error */}
+        {msg.error && (
+          <div className="w-full rounded-xl border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive">
+            {msg.error}
+          </div>
+        )}
+
+        <span className="text-[9px] text-muted-foreground/50">{msg.ts}</span>
+      </div>
+      {isUser && (
+        <div className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 mt-1">
+          <User className="w-3.5 h-3.5 text-muted-foreground" />
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// ── Main AdminConsole component ───────────────────────────────────────────────
 export default function AdminConsole() {
+  const [messages, setMessages] = useState([
+    {
+      id: 'welcome',
+      role: 'ai',
+      content: `Admin console ready. I can inspect the app, diagnose issues, repair character data, fix threads, restore memories, and build new features.\n\nDescribe any issue or request in plain language. I'll understand it, ask clarifying questions if needed, and wait for your explicit approval before making any changes.`,
+      ts: ts(),
+    }
+  ]);
   const [input, setInput] = useState("");
-  const [phase, setPhase] = useState(PHASE.IDLE);
-  const [interpretation, setInterpretation] = useState(null);
-  const [clarificationReply, setClarificationReply] = useState("");
-  const [result, setResult] = useState(null);
-  const [history, setHistory] = useState([]);
-  const [showHistory, setShowHistory] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingApproval, setPendingApproval] = useState(null); // { msgId, interpretation, originalRequest }
+  const [pendingClarification, setPendingClarification] = useState(null); // { msgId, question, interpretation, originalRequest }
+  const bottomRef = useRef(null);
   const inputRef = useRef(null);
-  const clarificationRef = useRef(null);
 
-  const submit = async () => {
-    const req = input.trim();
-    if (!req) return;
+  const addMessage = (msg) => {
+    const id = `msg_${Date.now()}_${Math.random()}`;
+    setMessages(prev => [...prev, { id, ...msg }]);
+    return id;
+  };
 
-    setPhase(PHASE.INTERPRETING);
-    setInterpretation(null);
-    setResult(null);
+  useEffect(() => {
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+  }, [messages]);
+
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || isProcessing) return;
+    setInput("");
+
+    // If waiting for clarification answer
+    if (pendingClarification) {
+      addMessage({ role: 'user', content: text, ts: ts() });
+      setPendingClarification(null);
+      await reinterpretWithClarification(text, pendingClarification.interpretation, pendingClarification.originalRequest);
+      return;
+    }
+
+    // Normal new request
+    addMessage({ role: 'user', content: text, ts: ts() });
+    setIsProcessing(true);
 
     try {
-      const interpretPrompt = `You are an AI assistant embedded in an admin control console for a character-based social simulation app.
+      const thinkingId = addMessage({ role: 'system', content: '⚙️ Interpreting request…', ts: ts() });
 
-The admin has submitted the following request:
-"${req}"
+      const interpretation = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are an AI assistant in an admin control console for a character-based social simulation app.
 
-Your job is to:
-1. Interpret what they are asking for (diagnostic, repair, build/feature, or combined)
-2. Break it into clear sub-tasks
-3. Identify which app systems may be involved (e.g. chat threads, character data, memory, achievements, games, UI, navigation, backend functions)
-4. Identify if anything is ambiguous or needs clarification before proceeding
-5. Summarize the full plan
+Admin request: "${text}"
 
-App systems include: characters, conversations/messages, memory, achievements, games, user settings, scheduled events, pending messages, life events, groups, images/voice, settings page, home page, character profiles, creation flow.
+Interpret this request thoroughly. Identify ALL tasks present (do not drop any). Identify systems involved. Determine if clarification is needed.
 
-Respond ONLY in JSON with this exact structure:
+App systems: characters, conversations/messages, memory/long-term-memory, achievements, games, user settings, scheduled events, pending messages, life events, notifications/unread badges, images/voice, settings page, home page, character profiles, family members, relationships, thread mapping, archive system, storage.
+
+Return JSON:
 {
   "type": "diagnostic" | "repair" | "build" | "combined",
-  "understood_as": "Plain English summary of what the admin asked",
-  "sub_tasks": ["task 1", "task 2", ...],
-  "systems_affected": ["system1", "system2"],
+  "understood_as": "Plain English full summary",
+  "sub_tasks": ["every distinct task"],
+  "systems_affected": ["systems"],
   "needs_clarification": true | false,
-  "clarification_question": "Question to ask if needs_clarification is true, else null",
-  "plan": "Full plain-English plan of what will be done once approved"
-}`;
-
-      const res = await base44.integrations.Core.InvokeLLM({
-        prompt: interpretPrompt,
+  "clarification_question": "question or null",
+  "plan": "Step-by-step plan including ALL sub-tasks. Be specific about what will be inspected and changed."
+}`,
         response_json_schema: {
           type: "object",
           properties: {
@@ -75,50 +333,63 @@ Respond ONLY in JSON with this exact structure:
             clarification_question: { type: "string" },
             plan: { type: "string" },
           }
-        }
+        },
+        model: "claude_sonnet_4_6"
       });
 
-      setInterpretation(res);
+      // Remove the "thinking" system message by replacing it with real AI response
+      setMessages(prev => prev.filter(m => m.id !== thinkingId));
 
-      if (res.needs_clarification) {
-        setPhase(PHASE.AWAITING_CLARIFICATION);
+      if (interpretation.needs_clarification && interpretation.clarification_question) {
+        const msgId = addMessage({
+          role: 'ai',
+          content: `I understand this as: ${interpretation.understood_as}\n\nBefore I proceed, I need clarification:\n\n**${interpretation.clarification_question}**`,
+          interpretation,
+          ts: ts(),
+        });
+        setPendingClarification({ msgId, question: interpretation.clarification_question, interpretation, originalRequest: text });
+        addMessage({
+          role: 'system',
+          content: '🤔 Waiting for your clarification…',
+          ts: ts(),
+        });
       } else {
-        setPhase(PHASE.AWAITING_APPROVAL);
+        const aiText = `I understand this as:\n\n**${interpretation.understood_as}**\n\n**Plan:**\n${interpretation.plan}\n\nDo you approve? Type "approve" or "yes" to proceed, or ask me to revise anything.`;
+        const msgId = addMessage({ role: 'ai', content: aiText, interpretation, ts: ts() });
+        setPendingApproval({ msgId, interpretation, originalRequest: text });
+        addMessage({
+          role: 'system',
+          content: '✋ Waiting for your approval before making any changes…',
+          ts: ts(),
+        });
       }
     } catch (err) {
-      setPhase(PHASE.ERROR);
-      setResult({ error: err.message });
+      addMessage({ role: 'ai', content: `Error interpreting request: ${err.message}`, error: err.message, ts: ts() });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const submitClarification = async () => {
-    const reply = clarificationReply.trim();
-    if (!reply || !interpretation) return;
-
-    setPhase(PHASE.INTERPRETING);
-
+  const reinterpretWithClarification = async (clarificationAnswer, originalInterpretation, originalRequest) => {
+    setIsProcessing(true);
     try {
-      const reinterpretPrompt = `You are an AI assistant embedded in an admin control console for a character-based social simulation app.
+      const sysId = addMessage({ role: 'system', content: '⚙️ Re-interpreting with your answer…', ts: ts() });
 
-Original admin request: "${input}"
-Clarification question asked: "${interpretation.clarification_question}"
-Admin's clarification answer: "${reply}"
+      const updated = await base44.integrations.Core.InvokeLLM({
+        prompt: `Admin original request: "${originalRequest}"
+Clarification question asked: "${originalInterpretation.clarification_question}"
+Admin's answer: "${clarificationAnswer}"
 
-Now that you have clarification, finalize your full understanding and plan.
-
-Respond ONLY in JSON with this structure:
+Finalize the plan incorporating the clarification. Return JSON:
 {
   "type": "diagnostic" | "repair" | "build" | "combined",
-  "understood_as": "Updated plain English summary including the clarification",
-  "sub_tasks": ["task 1", "task 2", ...],
-  "systems_affected": ["system1", "system2"],
+  "understood_as": "Updated summary",
+  "sub_tasks": ["all tasks"],
+  "systems_affected": ["systems"],
   "needs_clarification": false,
   "clarification_question": null,
-  "plan": "Complete plan with clarification incorporated"
-}`;
-
-      const res = await base44.integrations.Core.InvokeLLM({
-        prompt: reinterpretPrompt,
+  "plan": "Final complete plan"
+}`,
         response_json_schema: {
           type: "object",
           properties: {
@@ -133,401 +404,199 @@ Respond ONLY in JSON with this structure:
         }
       });
 
-      setInterpretation(res);
-      setPhase(PHASE.AWAITING_APPROVAL);
+      setMessages(prev => prev.filter(m => m.id !== sysId));
+
+      const aiText = `Updated plan:\n\n**${updated.understood_as}**\n\n${updated.plan}\n\nDo you approve? Type "approve" or "yes" to proceed.`;
+      addMessage({ role: 'ai', content: aiText, interpretation: updated, ts: ts() });
+      setPendingApproval({ interpretation: updated, originalRequest });
+      addMessage({ role: 'system', content: '✋ Waiting for approval…', ts: ts() });
     } catch (err) {
-      setPhase(PHASE.ERROR);
-      setResult({ error: err.message });
+      addMessage({ role: 'ai', content: `Re-interpretation error: ${err.message}`, error: err.message, ts: ts() });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const approve = async () => {
-    setPhase(PHASE.EXECUTING);
+  const handleApproval = async (userText) => {
+    const approval = pendingApproval;
+    setPendingApproval(null);
+
+    addMessage({ role: 'user', content: userText, ts: ts() });
+    setIsProcessing(true);
+
+    addMessage({ role: 'system', content: '🚀 Approval received — executing plan…', ts: ts() });
 
     try {
-      const execPrompt = `You are an AI execution engine embedded in an admin control console for a character-based social simulation app.
+      const execResults = await executeApprovedPlan(
+        approval.interpretation.plan,
+        approval.interpretation.sub_tasks,
+        approval.interpretation.systems_affected,
+        approval.originalRequest,
+        (msg) => addMessage(msg)
+      );
 
-The admin has approved the following plan. Execute it fully, completely, and accurately.
+      // Build AI summary from real execution results
+      const summaryPrompt = `You are reporting back to an admin after completing work on their app.
 
-ADMIN REQUEST: "${input}"
-PLAN: "${interpretation?.plan}"
-SUB-TASKS: ${JSON.stringify(interpretation?.sub_tasks)}
-SYSTEMS: ${JSON.stringify(interpretation?.systems_affected)}
-TYPE: ${interpretation?.type}
+Admin's original request: "${approval.originalRequest}"
 
-Perform the following steps:
-1. For DIAGNOSTIC: investigate the issue. Identify root causes, not just symptoms.
-2. For REPAIR: describe exactly what logic/data corrections are needed and confirm they are addressed.
-3. For BUILD: describe the full component/feature/page spec with UI layout, data structure, logic behavior, and connections needed.
-4. For COMBINED: do all of the above for each part.
+Execution results (JSON):
+${JSON.stringify(execResults.results.map(r => ({ action: r.action, success: r.ok, data: r.data, error: r.error })), null, 2)}
 
-Respond in JSON:
-{
-  "execution_summary": "What was done in plain English",
-  "tasks_completed": ["task 1 result", "task 2 result", ...],
-  "diagnostics_found": ["finding 1", ...] or [],
-  "repairs_made": ["repair 1", ...] or [],
-  "build_specs": ["spec for each built item", ...] or [],
-  "items_needing_manual_action": ["anything that requires the user or developer to take action", ...] or [],
-  "success": true | false,
-  "notes": "Any important notes or caveats"
-}`;
+Write a clear, specific, honest report in plain English (2-5 paragraphs). Do NOT say "done" or "complete" generically.
+Be specific about:
+- what was inspected
+- what issues were found (if any)  
+- what was repaired
+- what the current state is
+- anything that still needs attention
 
-      const res = await base44.integrations.Core.InvokeLLM({
-        prompt: execPrompt,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            execution_summary: { type: "string" },
-            tasks_completed: { type: "array", items: { type: "string" } },
-            diagnostics_found: { type: "array", items: { type: "string" } },
-            repairs_made: { type: "array", items: { type: "string" } },
-            build_specs: { type: "array", items: { type: "string" } },
-            items_needing_manual_action: { type: "array", items: { type: "string" } },
-            success: { type: "boolean" },
-            notes: { type: "string" },
-          }
-        }
+Keep it factual and specific.`;
+
+      const summaryRes = await base44.integrations.Core.InvokeLLM({ prompt: summaryPrompt });
+
+      const resultLines = buildResultSummary(execResults.results, approval.originalRequest);
+
+      addMessage({
+        role: 'ai',
+        content: summaryRes || 'Execution completed.',
+        resultLines,
+        ts: ts(),
       });
 
-      setResult(res);
-      setPhase(PHASE.DONE);
+      // Save history
+      const historyKey = 'admin_console_history';
+      try {
+        const existing = JSON.parse(localStorage.getItem(historyKey) || '[]');
+        existing.unshift({
+          request: approval.originalRequest,
+          timestamp: new Date().toISOString(),
+          type: approval.interpretation.type,
+          understood_as: approval.interpretation.understood_as,
+          steps: execResults.steps,
+        });
+        localStorage.setItem(historyKey, JSON.stringify(existing.slice(0, 20)));
+      } catch {}
 
-      // Save to history
-      setHistory(prev => [{
-        request: input,
-        timestamp: timestamp(),
-        type: interpretation?.type,
-        understood_as: interpretation?.understood_as,
-        approved: true,
-        result: res,
-      }, ...prev.slice(0, 19)]);
-
-      setInput("");
-      setClarificationReply("");
-      setInterpretation(null);
     } catch (err) {
-      setPhase(PHASE.ERROR);
-      setResult({ error: err.message });
+      addMessage({ role: 'ai', content: `Execution error: ${err.message}`, error: err.message, ts: ts() });
+    } finally {
+      setIsProcessing(false);
     }
   };
 
-  const cancel = () => {
-    setPhase(PHASE.IDLE);
-    setInterpretation(null);
-    setResult(null);
-    setClarificationReply("");
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit();
+    }
   };
 
-  const typeColors = {
-    diagnostic: "text-blue-400 bg-blue-400/10 border-blue-400/30",
-    repair: "text-orange-400 bg-orange-400/10 border-orange-400/30",
-    build: "text-emerald-400 bg-emerald-400/10 border-emerald-400/30",
-    combined: "text-purple-400 bg-purple-400/10 border-purple-400/30",
+  const handleSubmit = () => {
+    const text = input.trim();
+    if (!text) return;
+
+    // Check if this is an approval response
+    if (pendingApproval && /^(approve|yes|confirm|proceed|go ahead|do it|execute|run it)/i.test(text)) {
+      setInput("");
+      handleApproval(text);
+      return;
+    }
+
+    // Check if this is a cancel/revise
+    if (pendingApproval && /^(cancel|no|stop|revise|change|wait|hold)/i.test(text)) {
+      setInput("");
+      addMessage({ role: 'user', content: text, ts: ts() });
+      setPendingApproval(null);
+      addMessage({ role: 'ai', content: `Cancelled. You can describe your request again or revise it.`, ts: ts() });
+      return;
+    }
+
+    handleSend();
   };
 
   return (
-    <div className="space-y-5">
-      {/* Console Header */}
-      <div className="flex items-center gap-2">
-        <Terminal className="w-4 h-4 text-primary" />
-        <span className="text-xs font-bold text-primary uppercase tracking-wider">Admin Diagnostic & Build Console</span>
-        <span className="text-[10px] text-muted-foreground ml-1">(murqart@gmail.com only)</span>
+    <div className="rounded-2xl border border-border bg-card overflow-hidden flex flex-col" style={{ height: 520 }}>
+      {/* Header */}
+      <div className="flex items-center gap-2.5 px-4 py-2.5 border-b border-border bg-card/80 flex-shrink-0">
+        <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+        <Terminal className="w-3.5 h-3.5 text-primary" />
+        <span className="text-xs font-bold text-primary uppercase tracking-wider">Admin Console</span>
+        <span className="text-[9px] text-muted-foreground/60 ml-auto">murqart@gmail.com</span>
+        <button
+          onClick={() => setMessages(prev => prev.slice(0, 1))}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          title="Clear conversation"
+        >
+          <RefreshCw className="w-3 h-3" />
+        </button>
       </div>
 
-      {/* Input Area */}
-      <div className="space-y-2">
-        <textarea
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          placeholder={`Describe an issue, request a repair, or ask to build a new feature...\n\nExamples:\n• "Ethan's chat thread is blank — fix it"\n• "Nathan and Lila are sharing messages — separate them"\n• "Build a memory archive page accessible from the profile"\n• "Fix the notification badge and add a game stats section"`}
-          rows={5}
-          disabled={phase !== PHASE.IDLE && phase !== PHASE.DONE && phase !== PHASE.ERROR}
-          className="w-full px-4 py-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-2 focus:ring-primary font-mono disabled:opacity-50"
-        />
-        {(phase === PHASE.IDLE || phase === PHASE.DONE || phase === PHASE.ERROR) && (
-          <button
-            onClick={submit}
-            disabled={!input.trim()}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-40"
-          >
-            <Send className="w-4 h-4" />
-            Analyze Request
-          </button>
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto py-3 space-y-2">
+        <AnimatePresence>
+          {messages.map(msg => (
+            <ChatMessage key={msg.id} msg={msg} />
+          ))}
+        </AnimatePresence>
+        {isProcessing && (
+          <div className="flex items-center gap-2 px-4 py-1">
+            <Loader2 className="w-3.5 h-3.5 text-primary animate-spin" />
+            <span className="text-xs text-muted-foreground">Processing…</span>
+          </div>
         )}
+        <div ref={bottomRef} />
       </div>
 
-      {/* Interpretation Panel */}
-      <AnimatePresence>
-        {phase === PHASE.INTERPRETING && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-3 px-4 py-3 rounded-xl bg-secondary border border-border"
-          >
-            <Loader2 className="w-4 h-4 text-primary animate-spin flex-shrink-0" />
-            <span className="text-sm text-muted-foreground">Interpreting request…</span>
-          </motion.div>
-        )}
-
-        {(phase === PHASE.AWAITING_APPROVAL || phase === PHASE.AWAITING_CLARIFICATION) && interpretation && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-4 rounded-2xl border border-border bg-card p-4"
-          >
-            {/* Type badge */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border ${typeColors[interpretation.type] || "text-muted-foreground bg-secondary border-border"}`}>
-                {interpretation.type}
-              </span>
-              <span className="text-xs text-muted-foreground">AI Interpretation</span>
-            </div>
-
-            {/* Understanding */}
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">I understood this as:</p>
-              <p className="text-sm text-foreground">{interpretation.understood_as}</p>
-            </div>
-
-            {/* Sub-tasks */}
-            {interpretation.sub_tasks?.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Sub-tasks:</p>
-                <ul className="space-y-1">
-                  {interpretation.sub_tasks.map((t, i) => (
-                    <li key={i} className="flex items-start gap-2 text-xs text-foreground">
-                      <span className="text-primary font-bold mt-0.5">{i+1}.</span>
-                      {t}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* Systems */}
-            {interpretation.systems_affected?.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Systems affected:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {interpretation.systems_affected.map((s, i) => (
-                    <span key={i} className="text-[10px] px-2 py-0.5 rounded bg-secondary border border-border text-muted-foreground">{s}</span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Plan */}
-            <div className="space-y-1">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Plan:</p>
-              <p className="text-xs text-foreground leading-relaxed">{interpretation.plan}</p>
-            </div>
-
-            {/* Clarification needed */}
-            {phase === PHASE.AWAITING_CLARIFICATION && interpretation.clarification_question && (
-              <div className="rounded-xl bg-amber-500/10 border border-amber-500/30 p-3 space-y-2">
-                <p className="text-xs font-semibold text-amber-400">🤔 Clarification needed before I can proceed:</p>
-                <p className="text-sm text-foreground">{interpretation.clarification_question}</p>
-                <textarea
-                  ref={clarificationRef}
-                  value={clarificationReply}
-                  onChange={e => setClarificationReply(e.target.value)}
-                  placeholder="Your answer..."
-                  rows={2}
-                  className="w-full px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={submitClarification}
-                    disabled={!clarificationReply.trim()}
-                    className="flex-1 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-40"
-                  >
-                    Submit Answer
-                  </button>
-                  <button
-                    onClick={cancel}
-                    className="px-3 py-2 rounded-lg bg-secondary text-muted-foreground text-xs hover:text-foreground transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Approval buttons */}
-            {phase === PHASE.AWAITING_APPROVAL && (
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={approve}
-                  className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold hover:bg-emerald-500 transition-colors"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Approve & Execute
-                </button>
-                <button
-                  onClick={cancel}
-                  className="px-4 py-2.5 rounded-xl bg-secondary border border-border text-muted-foreground text-sm hover:text-foreground transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-          </motion.div>
-        )}
-
-        {phase === PHASE.EXECUTING && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex items-center gap-3 px-4 py-4 rounded-xl bg-emerald-500/10 border border-emerald-500/30"
-          >
-            <Loader2 className="w-5 h-5 text-emerald-400 animate-spin flex-shrink-0" />
-            <div>
-              <p className="text-sm font-semibold text-emerald-400">Executing approved plan…</p>
-              <p className="text-xs text-muted-foreground mt-0.5">This may take a moment. Do not close this page.</p>
-            </div>
-          </motion.div>
-        )}
-
-        {phase === PHASE.DONE && result && !result.error && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="space-y-4 rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4"
-          >
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
-              <p className="text-sm font-bold text-emerald-400">Execution Complete</p>
-            </div>
-
-            <p className="text-sm text-foreground">{result.execution_summary}</p>
-
-            {result.tasks_completed?.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Tasks completed:</p>
-                {result.tasks_completed.map((t, i) => (
-                  <p key={i} className="text-xs text-foreground flex gap-1.5"><span className="text-emerald-400">✓</span>{t}</p>
-                ))}
-              </div>
-            )}
-
-            {result.diagnostics_found?.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Diagnostics found:</p>
-                {result.diagnostics_found.map((d, i) => (
-                  <p key={i} className="text-xs text-amber-400 flex gap-1.5"><span>🔍</span>{d}</p>
-                ))}
-              </div>
-            )}
-
-            {result.repairs_made?.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Repairs made:</p>
-                {result.repairs_made.map((r, i) => (
-                  <p key={i} className="text-xs text-blue-400 flex gap-1.5"><span>🔧</span>{r}</p>
-                ))}
-              </div>
-            )}
-
-            {result.build_specs?.length > 0 && (
-              <div className="space-y-1">
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Build specifications:</p>
-                {result.build_specs.map((b, i) => (
-                  <p key={i} className="text-xs text-purple-400 flex gap-1.5"><span>🏗️</span>{b}</p>
-                ))}
-              </div>
-            )}
-
-            {result.items_needing_manual_action?.length > 0 && (
-              <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 space-y-1">
-                <p className="text-[10px] font-semibold text-amber-400 uppercase tracking-wider">Manual action required:</p>
-                {result.items_needing_manual_action.map((a, i) => (
-                  <p key={i} className="text-xs text-foreground flex gap-1.5"><span className="text-amber-400">⚠</span>{a}</p>
-                ))}
-              </div>
-            )}
-
-            {result.notes && (
-              <p className="text-xs text-muted-foreground italic">{result.notes}</p>
-            )}
-
+      {/* Input */}
+      <div className="flex-shrink-0 border-t border-border px-3 py-2.5">
+        {pendingApproval && (
+          <div className="flex gap-2 mb-2">
             <button
-              onClick={() => { setPhase(PHASE.IDLE); setResult(null); }}
-              className="w-full py-2 rounded-xl bg-secondary text-sm text-muted-foreground hover:text-foreground transition-colors"
+              onClick={() => { setInput("approve"); setTimeout(handleSubmit, 50); }}
+              disabled={isProcessing}
+              className="flex-1 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-500 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-50"
             >
-              New Request
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Approve & Execute
             </button>
-          </motion.div>
+            <button
+              onClick={() => {
+                setPendingApproval(null);
+                addMessage({ role: 'ai', content: 'Cancelled. What would you like to change?', ts: ts() });
+              }}
+              className="px-3 py-1.5 rounded-lg bg-secondary text-muted-foreground text-xs hover:text-foreground transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         )}
-
-        {phase === PHASE.ERROR && result?.error && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex items-start gap-3 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30"
-          >
-            <XCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="text-sm font-semibold text-destructive">Error</p>
-              <p className="text-xs text-muted-foreground">{result.error}</p>
-              <button
-                onClick={() => { setPhase(PHASE.IDLE); setResult(null); }}
-                className="text-xs text-primary hover:underline"
-              >
-                Try again
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* History */}
-      {history.length > 0 && (
-        <div className="border-t border-border pt-4">
+        <div className="flex items-end gap-2">
+          <textarea
+            ref={inputRef}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              pendingApproval
+                ? "Type 'approve' to proceed, or describe any changes…"
+                : pendingClarification
+                ? "Type your answer to the clarification question…"
+                : "Describe an issue, request a repair, or ask to build something…"
+            }
+            rows={2}
+            disabled={isProcessing}
+            className="flex-1 bg-secondary border border-border rounded-xl px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50 font-mono text-xs"
+          />
           <button
-            onClick={() => setShowHistory(h => !h)}
-            className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            onClick={handleSubmit}
+            disabled={!input.trim() || isProcessing}
+            className="h-10 w-10 rounded-xl bg-primary flex items-center justify-center flex-shrink-0 hover:bg-primary/90 transition-colors disabled:opacity-40"
           >
-            <Clock className="w-3.5 h-3.5" />
-            Request History ({history.length})
-            {showHistory ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            <Send className="w-4 h-4 text-primary-foreground" />
           </button>
-
-          <AnimatePresence>
-            {showHistory && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-3 space-y-2 max-h-64 overflow-y-auto">
-                  {history.map((h, i) => (
-                    <div key={i} className="rounded-lg bg-secondary border border-border p-3 space-y-1">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className={`text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border ${typeColors[h.type] || "text-muted-foreground bg-secondary border-border"}`}>
-                          {h.type}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">{h.timestamp}</span>
-                      </div>
-                      <p className="text-xs text-foreground line-clamp-1">{h.request}</p>
-                      <p className="text-[10px] text-muted-foreground line-clamp-2">{h.understood_as}</p>
-                      <p className="text-[10px]">
-                        {h.result?.success ? (
-                          <span className="text-emerald-400">✓ Completed</span>
-                        ) : (
-                          <span className="text-destructive">✗ Failed</span>
-                        )}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -15,6 +15,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import UserPhotoUploader from "@/components/user/UserPhotoUploader";
 import CommonQuestions from "@/components/settings/CommonQuestions";
+import StorageBackup from "@/components/settings/StorageBackup";
 import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 import VoiceSettings from "@/components/character/VoiceSettings";
 
@@ -374,6 +375,7 @@ export default function Settings() {
             </div>
           </div>
         )}
+        <StorageBackup />
         <CommonQuestions />
 
         {isAdmin && (
