@@ -28,10 +28,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
 
-  const handleRegenSelect = async (reason) => {
+  const handleRegenSelect = async (reason, customPrompt) => {
     setIsRegenerating(true);
     try {
-      await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason });
+      await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt });
     } finally {
       setIsRegenerating(false);
       setShowRegenModal(false);

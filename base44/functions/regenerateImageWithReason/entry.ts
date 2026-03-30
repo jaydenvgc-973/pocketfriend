@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { messageId, reason } = await req.json();
+    const { messageId, reason, customPrompt } = await req.json();
     if (!messageId || !reason) return Response.json({ error: 'messageId and reason required' }, { status: 400 });
 
     // Fetch the message
@@ -44,7 +44,11 @@ Deno.serve(async (req) => {
     // Build prompt based on reason
     let prompt = '';
 
-    if (reason === 'flawed') {
+    if (reason === 'custom_prompt' && customPrompt) {
+      // User wrote their own prompt — apply it with character context and quality requirements
+      prompt = `Photorealistic photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${customPrompt}
+Natural lighting, authentic photo quality. Real photograph — not illustration or painting. Perfect anatomy, no artifacts.`;
+    } else if (reason === 'flawed') {
       // Emphasize technical quality and correct anatomy
       prompt = `Photorealistic portrait photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${baseContext}
 CRITICAL QUALITY REQUIREMENTS: Perfect human anatomy, correct proportions, natural hands with exactly 5 fingers, realistic skin texture, no artifacts, no distortions, no extra limbs or merged faces. Ultra high-resolution, professional photography quality. Natural lighting. Real photograph — not illustration or painting. Correct facial symmetry. Perfect eyes with natural gaze.`;

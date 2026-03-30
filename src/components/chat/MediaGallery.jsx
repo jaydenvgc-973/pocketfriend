@@ -14,6 +14,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Prompt generator state
   const [prompt, setPrompt] = useState("");
   const [referenceImageUrl, setReferenceImageUrl] = useState(null);
+  const [referenceImageSource, setReferenceImageSource] = useState(null); // 'upload' | 'gallery'
+  const [showGridPicker, setShowGridPicker] = useState(false);
   const [isUploadingRef, setIsUploadingRef] = useState(false);
   const [isAutoPrompting, setIsAutoPrompting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -26,9 +28,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     try {
       const res = await base44.integrations.Core.UploadFile({ file });
       setReferenceImageUrl(res.file_url);
+      setReferenceImageSource('upload');
     } finally {
       setIsUploadingRef(false);
     }
+  };
+
+  const handlePickFromGallery = (img) => {
+    setReferenceImageUrl(img.url);
+    setReferenceImageSource('gallery');
+    setShowGridPicker(false);
+  };
+
+  const clearReference = () => {
+    setReferenceImageUrl(null);
+    setReferenceImageSource(null);
   };
 
   const handleAutoPrompt = async () => {
@@ -55,13 +69,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       timestamp: msg.timestamp,
     }));
 
-  const handleRegenSelect = async (reason) => {
+  const handleRegenSelect = async (reason, customPrompt) => {
     if (!regenTarget) return;
     setIsRegenerating(true);
     try {
       await base44.functions.invoke('regenerateImageWithReason', {
         messageId: regenTarget.id,
         reason,
+        customPrompt,
       });
     } finally {
       setIsRegenerating(false);
@@ -80,6 +95,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       if (character.avatar_url) referenceImages.push(character.avatar_url);
       if (character.reference_image_urls?.length > 0) referenceImages.push(...character.reference_image_urls.slice(0, 3));
       // User-uploaded reference comes last (most influential)
+      // User-selected reference (uploaded or from gallery) comes last — most influential
       if (referenceImageUrl) referenceImages.push(referenceImageUrl);
 
       const promptText = prompt.trim() || "candid natural moment, everyday life";
@@ -116,6 +132,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       setPrompt("");
       setReferenceImageUrl(null);
+      setReferenceImageSource(null);
+      setShowGridPicker(false);
       setIsOpen(false);
       if (onImageGenerated) onImageGenerated(newMsg);
     } catch (err) {
@@ -174,25 +192,52 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     </div>
                     <p className="text-xs text-muted-foreground">{character.name} will "send" it in the chat and remember it.</p>
 
-                    {/* Reference image upload */}
-                    <div className="flex items-center gap-2">
-                      <label className="flex-shrink-0 cursor-pointer flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors">
-                        <input type="file" accept="image/*" className="hidden" onChange={handleRefUpload} disabled={isUploadingRef} />
-                        {isUploadingRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                        {referenceImageUrl ? "Change ref" : "Upload ref"}
-                      </label>
-                      {referenceImageUrl && (
-                        <div className="relative flex-shrink-0">
-                          <img src={referenceImageUrl} alt="reference" className="w-10 h-10 rounded-lg object-cover" />
+                    {/* Reference image — upload or pick from gallery */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <label className="flex-shrink-0 cursor-pointer flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors">
+                          <input type="file" accept="image/*" className="hidden" onChange={handleRefUpload} disabled={isUploadingRef} />
+                          {isUploadingRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                          Upload ref
+                        </label>
+                        {images.length > 0 && (
                           <button
-                            onClick={() => setReferenceImageUrl(null)}
-                            className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center"
+                            onClick={() => setShowGridPicker(v => !v)}
+                            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
                           >
-                            <X className="w-2.5 h-2.5 text-white" />
+                            <Images className="w-3.5 h-3.5" />
+                            Pick from gallery
                           </button>
+                        )}
+                        {referenceImageUrl && (
+                          <div className="relative flex-shrink-0">
+                            <img src={referenceImageUrl} alt="reference" className="w-10 h-10 rounded-lg object-cover ring-2 ring-primary/40" />
+                            <button
+                              onClick={clearReference}
+                              className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center"
+                            >
+                              <X className="w-2.5 h-2.5 text-white" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      {!referenceImageUrl && <p className="text-[10px] text-muted-foreground/60">Optional: upload or pick an existing photo to guide the scene/style</p>}
+                      {referenceImageUrl && <p className="text-[10px] text-primary/70">Reference set from {referenceImageSource === 'gallery' ? 'gallery' : 'upload'} — will influence the result</p>}
+
+                      {/* Inline gallery picker */}
+                      {showGridPicker && images.length > 0 && (
+                        <div className="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto">
+                          {images.map((img, i) => (
+                            <button
+                              key={i}
+                              onClick={() => handlePickFromGallery(img)}
+                              className={`relative aspect-square rounded-lg overflow-hidden ring-2 transition-all ${referenceImageUrl === img.url ? 'ring-primary' : 'ring-transparent hover:ring-primary/40'}`}
+                            >
+                              <img src={img.url} alt="" className="w-full h-full object-cover" />
+                            </button>
+                          ))}
                         </div>
                       )}
-                      <p className="text-[10px] text-muted-foreground/60 leading-snug">Optional: upload a reference photo to guide the scene or style</p>
                     </div>
 
                     {/* Prompt textarea + auto-generate */}
@@ -241,33 +286,33 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                           key={idx}
                           initial={{ opacity: 0, scale: 0.9 }}
                           animate={{ opacity: 1, scale: 1 }}
-                          className="group relative overflow-hidden rounded-xl aspect-square"
+                          className="group relative overflow-hidden rounded-xl aspect-square cursor-pointer"
                         >
-                          <button onClick={() => setSelectedImage(img)} className="w-full h-full">
-                            <img
-                              src={img.url}
-                              alt={`${img.senderName}'s photo`}
-                              className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                            />
-                          </button>
-                          {/* Overlay buttons */}
-                          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                          {/* Click the image itself to open full viewer */}
+                          <img
+                            src={img.url}
+                            alt={`${img.senderName}'s photo`}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                            onClick={() => setSelectedImage(img)}
+                          />
+                          {/* Action buttons at the bottom — only appear on hover, separate from image click */}
+                          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-2 flex justify-end gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                             {img.senderType === "character" && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); setRegenTarget(img); }}
-                                className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
+                                className="p-1.5 rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors"
                                 title="Regenerate"
                               >
-                                <RefreshCw className="w-4 h-4" />
+                                <RefreshCw className="w-3.5 h-3.5" />
                               </button>
                             )}
                             {onDeleteImage && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); onDeleteImage(img.id); }}
-                                className="p-2 rounded-full bg-destructive/80 text-white hover:bg-destructive transition-colors"
+                                className="p-1.5 rounded-full bg-destructive/80 text-white hover:bg-destructive transition-colors"
                                 title="Delete"
                               >
-                                <X className="w-4 h-4" />
+                                <X className="w-3.5 h-3.5" />
                               </button>
                             )}
                           </div>
