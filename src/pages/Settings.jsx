@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
+import AdminConsole from "@/components/admin/AdminConsole";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import UserPhotoUploader from "@/components/user/UserPhotoUploader";
@@ -374,6 +375,12 @@ export default function Settings() {
           </div>
         )}
         <CommonQuestions />
+
+        {isAdmin && (
+          <div className="pt-4 border-t border-border space-y-1">
+            <AdminConsole />
+          </div>
+        )}
 
         <div className="pt-4 pb-2 space-y-3">
           <button
