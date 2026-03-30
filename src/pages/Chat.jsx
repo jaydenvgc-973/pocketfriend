@@ -774,12 +774,30 @@ export default function Chat() {
         }
       }
 
-      // Get recent memories for long-term recall
+      // Get contextually relevant memories for long-term recall
+      // Uses smart retrieval: scores ALL stored memories against the current message
+      // so archived/older memories surface when relevant — never silently dropped
       let memoryContext = "";
-      const recentMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 10);
-      if (recentMemories.length > 0) {
-        const memoryList = recentMemories.map(m => `- ${m.title}: ${m.description}`).join("\n");
-        memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference these naturally when relevant, don't force it):\n${memoryList}`;
+      try {
+        const memRes = await base44.functions.invoke('retrieveActiveMemory', {
+          characterId,
+          currentMessage: text,
+          recentMessages: recentMsgs.slice(-6),
+          topK: 14,
+        });
+        const activeMemories = memRes?.data?.memories || [];
+        if (activeMemories.length > 0) {
+          const memoryList = activeMemories.map(m => `- ${m.title}: ${m.description}`).join("\n");
+          const totalStored = memRes?.data?.total || activeMemories.length;
+          memoryContext = `\n\nLONG-TERM MEMORY BANK (${activeMemories.length} most relevant from ${totalStored} total stored memories — reference naturally when relevant, don't force it):\n${memoryList}`;
+        }
+      } catch (_memErr) {
+        // Fallback: direct query if smart retrieval fails
+        const fallbackMems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12);
+        if (fallbackMems.length > 0) {
+          const memoryList = fallbackMems.map(m => `- ${m.title}: ${m.description}`).join("\n");
+          memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference naturally when relevant):\n${memoryList}`;
+        }
       }
 
       // Get recent life events for behavioral context
