@@ -3,7 +3,7 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import { motion } from "framer-motion";
 import { X, Gamepad2, Images, Globe, BookOpen, Settings, Wrench } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import GlobalMediaGallery from "@/components/chat/GlobalMediaGallery";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
@@ -17,10 +17,11 @@ export default function PlayAsCharacterBanner() {
   const [showWorldContacts, setShowWorldContacts] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [activeConversationId, setActiveConversationId] = useState(null);
+  const navigate = useNavigate();
 
-  // Fetch the most recent conversation for the active character so NarrativeBuilder can submit
+  // Fetch the most recent conversation for the active character so NarrativeBuilder has a real conversationId
   useEffect(() => {
-    if (!activeCharacter) return;
+    if (!activeCharacter?.id) return;
     base44.entities.Conversation.filter(
       { character_ids: [activeCharacter.id] },
       "-updated_date",
@@ -81,14 +82,13 @@ export default function PlayAsCharacterBanner() {
         </button>
 
         {/* Settings */}
-        <Link to="/settings" className="flex-shrink-0">
-          <button
-            className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors"
-            title="Settings"
-          >
-            <Settings className="w-3.5 h-3.5" />
-          </button>
-        </Link>
+        <button
+          onClick={() => navigate("/settings")}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          title="Settings"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
 
         {/* Stop playing */}
         <button
@@ -115,7 +115,7 @@ export default function PlayAsCharacterBanner() {
         characterId={activeCharacter.id}
         conversationId={activeConversationId}
         chatHistory={[]}
-        onNarrativeSubmitted={() => setShowNarrative(false)}
+        onNarrativeSubmitted={() => {}}
       />
 
       <TroubleshootingPanelHome
