@@ -1120,6 +1120,23 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
     setIsTyping(false);
 
+    // --- PARSE CHARACTER RESPONSE INTO ACTION + DIALOGUE ---
+    // Use new system to separate actions from dialogue
+    let actionText = null;
+    let dialogueText = responseText;
+
+    try {
+      const parseRes = await base44.functions.invoke('parseCharacterResponse', {
+        characterResponse: response,
+        characterName: character.name,
+      });
+      if (parseRes?.data?.action) actionText = parseRes.data.action;
+      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue;
+    } catch (_parseErr) {
+      // Fallback: treat entire response as dialogue
+      dialogueText = responseText;
+    }
+
     // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
     const msgLower = text.toLowerCase();
@@ -1187,8 +1204,37 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
     let primaryTextMsg = null;
 
-    if (msgType === "text_only") {
-      // --- TEXT ONLY ---
+    // --- SUBMIT ACTION + DIALOGUE SEPARATELY ---
+    // Use the new system to submit action first, then dialogue
+    if (actionText || dialogueText) {
+      try {
+        const submitRes = await base44.functions.invoke('submitCharacterActionAndDialogue', {
+          characterId,
+          characterName: character.name,
+          conversationId: convoId,
+          action: actionText,
+          dialogue: dialogueText,
+          emotionalState,
+          isAutonomous: false,
+        });
+
+        if (submitRes?.data?.success && submitRes.data.messages?.length > 0) {
+          // Add all submitted messages to local state
+          submitRes.data.messages.forEach(msg => {
+            setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
+          });
+          // Use the dialogue message as primary, or action if no dialogue
+          primaryTextMsg = submitRes.data.messages.find(m => !m.is_narrative) || submitRes.data.messages[0];
+        }
+      } catch (submitErr) {
+        console.error('Failed to submit action/dialogue:', submitErr);
+        setSendError("Failed to save character response. Try again.");
+        return;
+      }
+    }
+
+    if (!primaryTextMsg && msgType === "text_only") {
+      // Fallback: create text message directly (preserves compatibility)
       primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
@@ -1327,12 +1373,14 @@ Reply with ONLY the single emoji or the word "none".`,
     }).catch(() => {});
 
     // Extract memories from this turn (fire-and-forget)
-    if (responseText) {
+    // Include both action and dialogue so character remembers what they did
+    if (actionText || dialogueText) {
       base44.functions.invoke("extractMemoriesFromTurn", {
         characterId,
         conversationId: convoId,
         userMessage: text,
-        characterReply: responseText,
+        characterAction: actionText,
+        characterReply: dialogueText,
       }).catch(() => {});
     }
 
@@ -1368,6 +1416,36 @@ Reply with ONLY the single emoji or the word "none".`,
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
     });
+
+    // AUTONOMY: Occasionally generate autonomous actions (fire-and-forget)
+    // Characters should act independently sometimes, not just respond to user messages
+    if (Math.random() > 0.7) {
+      setTimeout(() => {
+        base44.functions.invoke('generateAutonomousAction', {
+          characterId,
+          characterName: character.name,
+          characterSummary: character.personality_summary,
+          recentMessages: messages.slice(-5),
+          currentLocation: character.current_activity,
+        }).then(res => {
+          if (res?.data?.success && res.data.action) {
+            // Submit autonomous action as narrative entry
+            base44.entities.Message.create({
+              conversation_id: convoId,
+              sender_type: 'character',
+              character_id: characterId,
+              character_name: character.name,
+              content: res.data.action,
+              emotional_state: emotionalState,
+              is_narrative: true,
+              timestamp: new Date().toISOString(),
+            }).then(msg => {
+              setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+      }, 3000 + Math.random() * 5000);
+    }
   };
 
   return (

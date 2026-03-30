@@ -9,12 +9,18 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { characterId, conversationId, userMessage, characterReply } = await req.json();
+    const { characterId, conversationId, userMessage, characterReply, characterAction } = await req.json();
 
-    if (!characterId || !conversationId || !userMessage || !characterReply) {
+    if (!characterId || !conversationId || !userMessage || (!characterReply && !characterAction)) {
       return Response.json({ 
-        error: 'characterId, conversationId, userMessage, and characterReply are required' 
+        error: 'characterId, conversationId, userMessage, and characterReply/characterAction are required' 
       }, { status: 400 });
+    }
+
+    // Combine action and reply for memory extraction (actions are important to remember)
+    const fullCharacterResponse = [characterAction, characterReply].filter(Boolean).join(' ');
+    if (!fullCharacterResponse) {
+      return Response.json({ error: 'No valid character response content' }, { status: 400 });
     }
 
     // Get character details
@@ -49,6 +55,7 @@ Does this exchange contain any significant memory that ${character.name} should 
 - Details about the user's life, preferences, or relationships
 - New names revealed (baby names, people's names)
 - Life events (birth, death, new job, relationship changes)
+- Actions the character took (important to remember what they did)
 
 Return a JSON object with:
 - should_remember: boolean (true if there's something worth remembering)
@@ -76,7 +83,7 @@ EXISTING KNOWN PEOPLE (do NOT re-add these): ${existingPeopleContext || 'none ye
 
 CONVERSATION TURN:
 User: ${userMessage}
-${character.name}: ${characterReply}
+${character.name}: ${fullCharacterResponse}
 
 Detect any people mentioned — named or unnamed (e.g. "my coworker", "some guy at the bar", "a baby named Leo", "my sister").
 For each person found, classify them:
