@@ -730,11 +730,7 @@ export default function Chat() {
         } else if (weatherKeywords.test(text)) {
           // Fallback: live lookup only if no stored weather and user brings up weather
           try {
-            const weatherRes = await base44.integrations.Core.InvokeLLM({
-              prompt: `What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature, conditions, and any notable weather patterns.`,
-              add_context_from_internet: true,
-              model: 'gemini_3_flash'
-            });
+            const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature, conditions, and any notable weather patterns.`);
             weatherContext = `\n\nCURRENT WEATHER: Right now in ${[character.city, character.state].filter(Boolean).join(", ")}: ${weatherRes}. Naturally reference this if it fits — mention how it affects your mood, what you're doing, or what you're wearing.`;
           } catch (weatherErr) {
             // Weather lookup failed, continue without it
@@ -747,11 +743,7 @@ export default function Chat() {
       const newsKeywords = /\b(news|heard about|did you see|what's going on|what happened|current events|trending|politics|election|sports|game|match|celebrity|scandal|viral|social media|twitter|tiktok|instagram)\b/i;
       if (newsKeywords.test(text)) {
         try {
-          const eventsRes = await base44.integrations.Core.InvokeLLM({
-            prompt: `What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`,
-            add_context_from_internet: true,
-            model: 'gemini_3_flash'
-          });
+          const eventsRes = await callLLMWithRetry(`What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`);
           recentEventsContext = `\n\nRECENT EVENTS: Here are current events happening now: ${eventsRes}. You can naturally reference these if they fit the conversation, but don't force it. Only mention them if they genuinely relate to what you're discussing.`;
         } catch (eventsErr) {
           // Events lookup failed, continue without it
@@ -763,11 +755,7 @@ export default function Chat() {
       const culturalKeywords = /\b(show|shows|watch|watching|netflix|hulu|disney|prime|streaming|movie|film|music|song|artist|singer|actor|actress|celebrity|famous|viral|tiktok|youtube|podcast|album|concert|tour|coachella|grammy|oscar|emmy|celebrity|star|band|rapper|actor|influencer|meme|trend|trending|cardi|taylor|drake|beyonce|kanye|rihanna|dua|weekend|post|malone|billie|ariana|this is us|stranger|breaking bad|game of thrones)\b/i;
       if (culturalKeywords.test(text) || culturalKeywords.test(recentMsgs.slice(-3).map(m => m.content).join(" "))) {
         try {
-          const culturalRes = await base44.integrations.Core.InvokeLLM({
-            prompt: `What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`,
-            add_context_from_internet: true,
-            model: 'gemini_3_flash'
-          });
+          const culturalRes = await callLLMWithRetry(`What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`);
           culturalContext = `\n\nCULTURAL AWARENESS: Current entertainment & culture trends: ${culturalRes}. You're aware of these topics and can discuss them naturally if they come up. Recognize references to celebrities, shows, and music without confusion.`;
         } catch (culturalErr) {
           // Cultural awareness lookup failed, continue without it
@@ -1046,22 +1034,35 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       };
 
-      let retries = 2;
-      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
-      while (retries >= 0) {
-        try {
-          response = await base44.integrations.Core.InvokeLLM({
-            prompt: fullPrompt,
-            add_context_from_internet: true,
-            model: 'gemini_3_flash'
-          });
-          responseObj = parseCharacterResponse(response);
-          break;
-        } catch (llmErr) {
-          if (retries === 0) throw llmErr;
-          retries--;
-          await new Promise(r => setTimeout(r, 3000));
+      // Exponential backoff retry for rate limits
+      const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
+        let retryCount = 0;
+        while (retryCount <= maxRetries) {
+          try {
+            return await base44.integrations.Core.InvokeLLM({
+              prompt,
+              add_context_from_internet: true,
+              model
+            });
+          } catch (err) {
+            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
+            if (!isRateLimit || retryCount === maxRetries) throw err;
+            
+            // Exponential backoff: 2s, 4s, 8s
+            const delayMs = Math.pow(2, retryCount + 1) * 1000;
+            console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`);
+            await new Promise(r => setTimeout(r, delayMs));
+            retryCount++;
+          }
         }
+      };
+
+      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
+      try {
+        response = await callLLMWithRetry(fullPrompt);
+        responseObj = parseCharacterResponse(response);
+      } catch (llmErr) {
+        throw llmErr;
       }
 
       msgType = responseObj.message_type || "text_only";
