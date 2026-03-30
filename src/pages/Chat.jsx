@@ -1016,6 +1016,8 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
 
       const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${narrativeIdentityRule}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\n*** CRITICAL MESSAGE SEPARATION RULE ***\nIf your response contains BOTH narrative/action AND dialogue, you MUST split them into separate array items.\n\nNARRATIVE (action/descriptive):\n- Physical movement or actions: "${character.name} walks across the room"\n- Emotional expressions: "${character.name} smiles softly"\n- Scene-setting: "The room falls silent"\n- Observations: "${character.name} notices the time"\n\nDIALOGUE (speech):\n- Direct quotes: "I think you're right"\n- Implied speech: Character speaks directly to the user\n- Communication: Anything meant to be heard\n\nExample of CORRECT separation:\nIf you want to express: "${character.name} looks up sharply. 'I didn't expect that from you.'\"\nRespond with:\n[\n  { "type": "narrative", "content": "${character.name} looks up sharply." },\n  { "type": "dialogue", "content": "I didn't expect that from you." }\n]\n\nRespond ONLY with valid JSON as an array. Preserve chronological order. Each item is:\n{\n  "type": "narrative" | "dialogue",\n  "content": "The text for this part",\n  "image_generation_prompt": "INTERNAL ONLY — if this narrative part includes an image. Never shown to user.",\n  "scheduled_events": [ { "description": "...", "trigger_time": "..." } ]\n}\n\nExample responses:\n\n1. Dialogue only:\n[\n  { "type": "dialogue", "content": "Hey, how's your day going?" }\n]\n\n2. Narrative only:\n[\n  { "type": "narrative", "content": "${character.name} stretches and yawns, looking out the window." }\n]\n\n3. Narrative THEN dialogue:\n[\n  { "type": "narrative", "content": "${character.name} looks up from his phone." },\n  { "type": "dialogue", "content": "You caught me at a good time." }\n]\n\n4. Dialogue THEN narrative:\n[\n  { "type": "dialogue", "content": "I'll be there in five minutes." },\n  { "type": "narrative", "content": "${character.name} grabs his keys and heads for the door." }\n]\n\n5. With images (narrative + image, no dialogue):\n[\n  { "type": "narrative", "content": "${character.name} sends you a selfie.", "image_generation_prompt": "Selfie of [character details]. Casual outfit, friendly expression, natural lighting." }\n]\n\nOmit fields you don't use. Only include scheduled_events for concrete time-based commitments.\n\n${imageRule}`;
 
+      // Declare messageParts before try block so it's accessible in catch and after
+      let messageParts = [{ type: "dialogue", content: "" }];
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
 
@@ -1085,7 +1087,6 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
       };
 
       let retries = 2;
-      let messageParts = [{ type: "dialogue", content: "" }];
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1289,6 +1290,9 @@ Reply with ONLY the single emoji or the word "none".`,
       },
     }).catch(() => {});
 
+    // Reconstruct response text from message parts for system functions
+    const fullResponseText = messageParts.map(p => p.content).join(" ").trim();
+
     // Classify life events from this conversation turn (fire-and-forget)
     // This fans out to memory, mood, relationship, and achievement systems
     base44.functions.invoke("classifyConversationEvent", {
@@ -1296,7 +1300,7 @@ Reply with ONLY the single emoji or the word "none".`,
       characterName: character.name,
       conversationId: convoId,
       userMessage: text,
-      characterReply: responseText || "(image sent)",
+      characterReply: fullResponseText || "(image sent)",
       recentMessages: recentMsgs.slice(-8),
       characterState: {
         emotional_state: character.emotional_state,
@@ -1305,9 +1309,6 @@ Reply with ONLY the single emoji or the word "none".`,
         personality_summary: character.personality_summary,
       },
     }).catch(() => {});
-
-    // Reconstruct response text from message parts for system functions
-    const fullResponseText = messageParts.map(p => p.content).join(" ").trim();
 
     // Extract memories from this turn (fire-and-forget)
     if (fullResponseText) {
