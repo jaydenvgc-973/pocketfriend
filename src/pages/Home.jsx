@@ -104,18 +104,6 @@ export default function Home() {
     });
   }, [characters, currentUser?.email]);
 
-  // Initialize autonomous action scheduler on Home load
-  useEffect(() => {
-    if (!currentUser?.email || characters.length === 0) return;
-
-    // Trigger autonomous actions for all characters periodically (every 15-20 min during active session)
-    const autonomousInterval = setInterval(() => {
-      base44.functions.invoke('scheduleAutonomousActions', {}).catch(() => {});
-    }, 15 * 60 * 1000 + Math.random() * 5 * 60 * 1000);
-
-    return () => clearInterval(autonomousInterval);
-  }, [currentUser?.email, characters.length]);
-
   useEffect(() => {
     if (!isLoading && settings.length === 0) {
       navigate("/");
