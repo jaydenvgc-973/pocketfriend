@@ -1242,36 +1242,63 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       return dlgMsg;
     };
 
-    let primaryMsg = null;
+    // Track if any message was successfully sent
+    let anyMessageSent = false;
 
-    // --- NEW LOGIC: Handle narrative + dialogue as separate messages ---
-    if (narrativeText || dialogueText || imagePrompts.length > 0) {
-      // Order: narrative → dialogue → image
-      if (narrativeText) {
-        primaryMsg = await createNarrativeMessage(narrativeText);
-        await new Promise(r => setTimeout(r, 300)); // slight delay between narrative and dialogue
-      }
+    console.log("Narrative:", narrativeText);
+    console.log("Dialogue:", dialogueText);
 
-      if (dialogueText) {
-        primaryMsg = await createDialogueMessage(dialogueText);
-        await new Promise(r => setTimeout(r, 300));
-      }
-
-      // Images come after text
-      if (imagePrompts.length > 0 && (msgType === "text_then_image" || msgType === "image_then_text" || msgType === "image_only")) {
-        await createImageMessage(imagePrompts[0], 300);
-        for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 300 + i * 800);
+    // --- SAFE SEQUENTIAL SUBMISSION: narrative and dialogue are independent ---
+    
+    // 1. Submit Narrative (if valid and present)
+    if (narrativeText && narrativeText.trim().length > 0) {
+      console.log("Submitting narrative...");
+      try {
+        const narMsg = await createNarrativeMessage(narrativeText);
+        if (narMsg) {
+          anyMessageSent = true;
+          await new Promise(r => setTimeout(r, 300));
         }
+      } catch (err) {
+        console.error("Narrative failed:", err);
+        // Continue to dialogue even if narrative fails
       }
+    }
 
-      // Fallback if nothing was created
-      if (!primaryMsg && imagePrompts.length === 0) {
-        setSendError("Character response failed to save. Try again.");
-        return;
+    // 2. Submit Dialogue (if valid and present)
+    if (dialogueText && dialogueText.trim().length > 0) {
+      console.log("Submitting dialogue...");
+      try {
+        const dlgMsg = await createDialogueMessage(dialogueText);
+        if (dlgMsg) {
+          anyMessageSent = true;
+          await new Promise(r => setTimeout(r, 300));
+        }
+      } catch (err) {
+        console.error("Dialogue failed:", err);
+        // Do not erase narrative if it succeeded, just log and continue
       }
-    } else {
-      // Complete fallback — shouldn't happen
+    }
+
+    // 3. Images come after text
+    if (imagePrompts.length > 0 && (msgType === "text_then_image" || msgType === "image_then_text" || msgType === "image_only")) {
+      const initialImageDelay = anyMessageSent ? 300 : 0;
+      try {
+        const firstImageMsg = await createImageMessage(imagePrompts[0], initialImageDelay);
+        if (firstImageMsg) anyMessageSent = true;
+
+        for (let i = 1; i < imagePrompts.length; i++) {
+          const subsequentImageMsg = await createImageMessage(imagePrompts[i], 300 + i * 800);
+          if (subsequentImageMsg) anyMessageSent = true;
+        }
+      } catch (err) {
+        console.error("Image generation failed:", err);
+        // Continue — don't block if images fail
+      }
+    }
+
+    // If no message was successfully sent, show error
+    if (!anyMessageSent) {
       setSendError("Character response failed to save. Try again.");
       return;
     }
