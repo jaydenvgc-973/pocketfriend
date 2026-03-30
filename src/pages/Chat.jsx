@@ -1140,11 +1140,13 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       // dialogueText already set to responseText above
     }
     
-    // Final validation: reject any metadata/parser labels
-    if (actionText && (actionText.includes("message_type") || actionText.includes("\"narrative\"") || actionText === "[ACTION]")) {
+    // Minimal validation: only reject if it's clearly metadata, not normal dialogue
+    // (avoid over-rejecting valid speech that might contain brackets or braces)
+    if (actionText && actionText.startsWith("{") && actionText.includes("message_type")) {
       actionText = null;
     }
-    if (dialogueText && (dialogueText.includes("message_type") || dialogueText.includes("\"dialogue\"") || dialogueText.startsWith("[") || dialogueText.startsWith("{"))) {
+    // For dialogue, only reject if it's pure JSON/metadata structure
+    if (dialogueText && ((dialogueText.startsWith("{") && dialogueText.includes("message_type")) || dialogueText === "" || dialogueText === null)) {
       dialogueText = null;
     }
 
@@ -1245,13 +1247,13 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     }
 
     if (!primaryTextMsg && msgType === "text_only") {
-      // Fallback: create text message directly (only if we have clean dialogue)
-      if (dialogueText) {
+      // Fallback: create text message directly only if we have real dialogue
+      if (dialogueText?.trim()) {
         primaryTextMsg = await createTextMessage(dialogueText);
-      } else {
-        primaryTextMsg = await createTextMessage("Sorry, something went wrong.");
       }
-      if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
+      // If still no message after narrative+dialogue submission, that's the real issue
+      // Don't use generic error text—only fail if truly nothing submitted
+      if (!primaryTextMsg) { setSendError("Failed to save character response. Try again."); return; }
 
     } else if (msgType === "image_only") {
       // --- IMAGE ONLY --- send image as standalone message, no text bubble
