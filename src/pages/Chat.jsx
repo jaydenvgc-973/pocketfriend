@@ -1014,7 +1014,7 @@ REMOTE (no physical contact):
 Apply this rule to ALL narrative text, dialogue context, and action descriptions.
 `;
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${narrativeIdentityRule}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${narrativeIdentityRule}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nCLASSIFY YOUR MESSAGE TYPE: Determine whether your message is primarily narrative action or direct dialogue:\n- "is_narrative": true — if your message describes physical actions, movements, or observations (e.g., "Ethan smiles at Jayden" or "She looks away nervously")\n- "is_narrative": false — if your message is primarily direct speech or thoughts (e.g., "I'm here" or "That's not fair")\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "is_narrative": boolean,\n  "text_content": "The visible character dialogue or action. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
@@ -1069,8 +1069,10 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
           const textContent = obj.text_content || obj.text || "";
           const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
           const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
+          const isNarrative = typeof obj.is_narrative === 'boolean' ? obj.is_narrative : false;
           return {
             message_type: messageType,
+            is_narrative: isNarrative,
             text_content: textContent,
             image_generation_prompt: imgPrompt,
             image_generation_prompts: imgPrompts,
@@ -1081,21 +1083,21 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         // 4. Fallback: try to extract text_content or text field
         const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
         if (textMatch) {
-          try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
-          catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [] }; }
+          try { return { message_type: "text_only", is_narrative: false, text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
+          catch { return { message_type: "text_only", is_narrative: false, text_content: textMatch[1], image_generation_prompts: [] }; }
         }
 
         // 5. Last resort: plain text
         const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
         if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
-          return { message_type: "text_only", text_content: stripped, image_generation_prompts: [] };
+          return { message_type: "text_only", is_narrative: false, text_content: stripped, image_generation_prompts: [] };
         }
 
-        return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
+        return { message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] };
       };
 
       let retries = 2;
-      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
+      let responseObj = { message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] };
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1220,23 +1222,26 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
     };
 
     // Helper: create a text-only message and auto-play voice
-    const createTextMessage = async (textContent) => {
+    const createTextMessage = async (textContent, isNarrative = false) => {
       if (!textContent?.trim()) return null;
       const txtMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
         character_id: characterId,
         character_name: character.name,
-        content: textContent,  // visible dialogue only — never an image prompt
+        content: textContent,
         emotional_state: emotionalState,
+        is_narrative: isNarrative,
         timestamp: new Date().toISOString(),
       });
       if (!txtMsg?.id) return null;
       setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
-      // TTS: only fire on text messages, only speak visible text_content
-      setTimeout(() => {
-        playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
-      }, 500);
+      // TTS: only fire on text messages, only speak visible text_content (skip narratives)
+      if (!isNarrative) {
+        setTimeout(() => {
+          playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
+        }, 500);
+      }
       return txtMsg;
     };
 
@@ -1244,7 +1249,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
 
     if (msgType === "text_only") {
       // --- TEXT ONLY ---
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", responseObj.is_narrative);
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_only") {
@@ -1256,12 +1261,12 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         }
       } else {
         // Fallback: LLM said image_only but gave no prompt — send text if available
-        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", responseObj.is_narrative);
       }
 
     } else if (msgType === "text_then_image") {
       // --- TEXT FIRST, THEN IMAGE ---
-      primaryTextMsg = await createTextMessage(responseText || "");
+      primaryTextMsg = await createTextMessage(responseText || "", responseObj.is_narrative);
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 800);
         for (let i = 1; i < imagePrompts.length; i++) {
@@ -1280,12 +1285,12 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
       }
       // Text arrives after a short delay so image appears first visually
       await new Promise(r => setTimeout(r, 600));
-      primaryTextMsg = await createTextMessage(responseText || "");
+      primaryTextMsg = await createTextMessage(responseText || "", responseObj.is_narrative);
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else {
       // Unknown type fallback — text only
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", responseObj.is_narrative);
     }
 
     // Use primary text message for relationship/conversation tracking (or first image msg id for context)
