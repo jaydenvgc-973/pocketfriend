@@ -15,8 +15,14 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character name required' }, { status: 400 });
     }
 
+    // CRITICAL: Always enforce created_by to be the authenticated user — never allow overrides
+    const safeCharacterData = {
+      ...characterData,
+      created_by: user.email
+    };
+
     // Create the new character
-    const newCharacter = await base44.asServiceRole.entities.Character.create(characterData);
+    const newCharacter = await base44.asServiceRole.entities.Character.create(safeCharacterData);
 
     if (!newCharacter || !newCharacter.id) {
       return Response.json({ error: 'Failed to create character' }, { status: 500 });
