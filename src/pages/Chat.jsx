@@ -20,6 +20,7 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
+import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -50,6 +51,7 @@ export default function Chat() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
+  const [deleteTarget, setDeleteTarget] = useState(null); // message pending delete choice
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -484,12 +486,55 @@ export default function Chat() {
 
   const [sendError, setSendError] = useState(null);
 
-  const handleDeleteMessage = async (messageId) => {
-    setMessages(prev => prev.filter(msg => msg.id !== messageId));
-    try {
-      await base44.entities.Message.delete(messageId);
-    } catch {
-      // Message already deleted or not found — UI already updated
+  // Step 1: User taps delete — show memory-choice modal instead of deleting immediately
+  const handleDeleteMessage = (messageId) => {
+    const msg = messages.find(m => m.id === messageId);
+    if (!msg) return;
+    setDeleteTarget(msg);
+  };
+
+  // Step 2a: "Remember this" — remove from visible thread, keep in memory/archive
+  const handleDeleteRemember = async () => {
+    const msg = deleteTarget;
+    setDeleteTarget(null);
+    if (!msg) return;
+
+    console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=remember | removed_from_view=yes | retained_in_memory=yes`);
+
+    // Archive (hide from thread) without deleting — sets archived_date so it's not visible
+    setMessages(prev => prev.filter(m => m.id !== msg.id));
+    await base44.entities.Message.update(msg.id, {
+      archived_date: new Date().toISOString(),
+    }).catch(() => {});
+  };
+
+  // Step 2b: "Forget this" — remove from visible thread AND mark as forgotten in memory
+  const handleDeleteForget = async () => {
+    const msg = deleteTarget;
+    setDeleteTarget(null);
+    if (!msg) return;
+
+    console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=forget | removed_from_view=yes | retained_in_memory=no | memory_excluded=yes`);
+
+    // Remove from local state
+    setMessages(prev => prev.filter(m => m.id !== msg.id));
+
+    // Delete the message entity entirely (removes it as a memory source)
+    await base44.entities.Message.delete(msg.id).catch(() => {});
+
+    // If the message has meaningful content, store a "forgotten" marker memory so the
+    // character knows NOT to reference this. Fire-and-forget.
+    if (msg.content?.trim() && msg.sender_type === "character" && characterId) {
+      base44.entities.Memory.create({
+        character_id: characterId,
+        title: `[FORGOTTEN] Message deleted by user`,
+        description: `The user deleted and chose to FORGET this message. Do NOT reference or recall it: "${msg.content.substring(0, 200)}"`,
+        emotional_impact: "forgotten",
+        timestamp: new Date().toISOString(),
+        source_context: `forgotten_message_${msg.id}`,
+      }).catch(() => {});
+
+      console.log(`[DELETE] Forgotten memory marker created for characterId=${characterId}`);
     }
   };
 
@@ -1421,6 +1466,13 @@ Reply with ONLY the single emoji or the word "none".`,
         onClose={() => setShowTroubleshooting(false)}
         conversationId={conversationId}
         characterId={characterId}
+      />
+      <DeleteMemoryChoiceModal
+        message={deleteTarget}
+        isOpen={!!deleteTarget}
+        onRemember={handleDeleteRemember}
+        onForget={handleDeleteForget}
+        onCancel={() => setDeleteTarget(null)}
       />
       <BottomNav />
 
