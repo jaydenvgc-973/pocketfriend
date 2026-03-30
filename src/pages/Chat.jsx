@@ -21,6 +21,7 @@ import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
 import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
+import GameLauncher from "@/components/games/GameLauncher";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -1364,6 +1365,14 @@ Reply with ONLY the single emoji or the word "none".`,
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
         {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />}
+
+        {character && !isPhone && (
+          <GameLauncher
+            character={character}
+            conversationId={conversationId}
+            onGameEnd={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+          />
+        )}
 
         {character && conversationId && (
           <button
