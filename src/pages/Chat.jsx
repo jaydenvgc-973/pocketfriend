@@ -1382,7 +1382,7 @@ Reply with ONLY the single emoji or the word "none".`,
           <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
-        {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} />}
+        {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} />}
 
         {character && !isPhone && (
           <GameLauncher

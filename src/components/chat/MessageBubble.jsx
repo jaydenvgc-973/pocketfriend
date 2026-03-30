@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -24,6 +25,18 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [imageRetrying, setImageRetrying] = useState(false);
   const [imageRetryFailed, setImageRetryFailed] = useState(false);
   const [imageRetryStatus, setImageRetryStatus] = useState('idle'); // idle | recovering | regenerating | failed
+  const [showRegenModal, setShowRegenModal] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  const handleRegenSelect = async (reason) => {
+    setIsRegenerating(true);
+    try {
+      await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason });
+    } finally {
+      setIsRegenerating(false);
+      setShowRegenModal(false);
+    }
+  };
 
   // A message is an "image placeholder" if it has no content, no image_url, and was sent by a character
   const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && !message.content?.trim();
@@ -154,29 +167,46 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               </div>
             )}
             {message.image_url && (
-              <div className="relative group/image">
+              <div
+                className="relative group/image"
+                onMouseEnter={() => setShowImageDelete(true)}
+                onMouseLeave={() => setShowImageDelete(false)}
+              >
                 <img
                   src={message.image_url}
                   alt="shared photo"
                   className="w-full max-w-xs rounded-t-2xl object-cover"
-                  onMouseEnter={() => setShowImageDelete(true)}
-                  onMouseLeave={() => setShowImageDelete(false)}
                 />
-                {showImageDelete && onDeleteImage && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteImage(message.id);
-                      setShowImageDelete(false);
-                    }}
-                    className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-t-2xl transition-colors hover:bg-black/70"
-                    title="Delete image"
-                  >
-                    <X className="w-6 h-6 text-white" />
-                  </button>
+                {showImageDelete && (
+                  <div className="absolute inset-0 bg-black/40 rounded-t-2xl flex items-center justify-center gap-2">
+                    {!isUser && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
+                        className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
+                        title="Regenerate"
+                      >
+                        {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                      </button>
+                    )}
+                    {onDeleteImage && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteImage(message.id); setShowImageDelete(false); }}
+                        className="p-2 rounded-full bg-destructive/80 text-white hover:bg-destructive transition-colors"
+                        title="Delete image"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
+            <RegenerateImageModal
+              isOpen={showRegenModal}
+              onClose={() => setShowRegenModal(false)}
+              onSelect={handleRegenSelect}
+              isRegenerating={isRegenerating}
+            />
             {message.content && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
             )}
