@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { X, Gamepad2, Images, Globe, BookOpen, Settings, Wrench } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import { Link } from "react-router-dom";
@@ -8,6 +8,7 @@ import GlobalMediaGallery from "@/components/chat/GlobalMediaGallery";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
+import { base44 } from "@/api/base44Client";
 
 export default function PlayAsCharacterBanner() {
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
@@ -15,6 +16,19 @@ export default function PlayAsCharacterBanner() {
   const [showNarrative, setShowNarrative] = useState(false);
   const [showWorldContacts, setShowWorldContacts] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [activeConversationId, setActiveConversationId] = useState(null);
+
+  // Fetch the most recent conversation for the active character so NarrativeBuilder can submit
+  useEffect(() => {
+    if (!activeCharacter) return;
+    base44.entities.Conversation.filter(
+      { character_ids: [activeCharacter.id] },
+      "-updated_date",
+      1
+    ).then(convos => {
+      setActiveConversationId(convos?.[0]?.id || null);
+    }).catch(() => {});
+  }, [activeCharacter?.id]);
 
   if (!activeCharacter) return null;
 
@@ -99,9 +113,9 @@ export default function PlayAsCharacterBanner() {
         isOpen={showNarrative}
         onClose={() => setShowNarrative(false)}
         characterId={activeCharacter.id}
-        conversationId={null}
+        conversationId={activeConversationId}
         chatHistory={[]}
-        onNarrativeSubmitted={() => {}}
+        onNarrativeSubmitted={() => setShowNarrative(false)}
       />
 
       <TroubleshootingPanelHome
