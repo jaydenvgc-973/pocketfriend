@@ -86,7 +86,7 @@ export default function PlayAsCharacterBanner() {
         </button>
       </motion.div>
 
-      <GlobalMediaGallery isOpen={showMediaGallery} onClose={() => setShowMediaGallery(false)} />
+      <GlobalMediaGallery isOpen={showMediaGallery} onClose={() => setShowMediaGallery(false)} activeCharacterId={activeCharacter?.id} />
 
       {/* WorldContactsPopup — uses activeCharacter so NPCs respond as if talking to them */}
       <WorldContactsPopup

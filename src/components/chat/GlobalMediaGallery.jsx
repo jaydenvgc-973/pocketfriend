@@ -5,20 +5,31 @@ import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 
-export default function GlobalMediaGallery({ isOpen, onClose }) {
+export default function GlobalMediaGallery({ isOpen, onClose, activeCharacterId }) {
   const [selectedImage, setSelectedImage] = useState(null);
 
   const { data: messages = [], isLoading } = useQuery({
-    queryKey: ["globalCharacterImages"],
+    queryKey: ["globalCharacterImages", activeCharacterId],
     queryFn: async () => {
-      const msgs = await base44.entities.Message.filter(
+      if (!activeCharacterId) return [];
+      // Get conversations that the active character is a participant in
+      const convos = await base44.entities.Conversation.filter(
+        { character_ids: [activeCharacterId] },
+        "-updated_date",
+        50
+      );
+      const convoIds = convos.map(c => c.id);
+      if (convoIds.length === 0) return [];
+
+      // Get all character messages with images across those conversations
+      const allMsgs = await base44.entities.Message.filter(
         { sender_type: "character" },
         "-created_date",
-        200
+        500
       );
-      return msgs.filter(m => m.image_url);
+      return allMsgs.filter(m => m.image_url && convoIds.includes(m.conversation_id));
     },
-    enabled: isOpen,
+    enabled: isOpen && !!activeCharacterId,
   });
 
   return createPortal(
