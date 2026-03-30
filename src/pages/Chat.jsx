@@ -1117,6 +1117,8 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
 
       let retries = 2;
       let responseObjs = [{ message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] }];
+      let responseObj;
+      
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1133,7 +1135,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         }
       }
 
-      const responseObj = responseObjs[0];
+      responseObj = responseObjs[0];
       msgType = responseObj.message_type || "text_only";
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
