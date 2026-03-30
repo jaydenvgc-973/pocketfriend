@@ -1440,7 +1440,7 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-1">
-        {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterName={character?.name} />}
+        {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterId={characterId} characterName={character?.name} />}
         <AnimatePresence>
           {messages.map(msg => (
             <MessageBubble 

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Database, CheckCircle2, RefreshCw, Trash2, ChevronDown, ChevronUp,
-  ExternalLink, HardDrive, Brain, Download, Upload, AlertCircle, Loader2
+  ExternalLink, HardDrive, Brain, Download, Upload, AlertCircle, RotateCcw
 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
@@ -16,6 +16,8 @@ function PrimaryStorage() {
   const [expanded, setExpanded] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [retrieving, setRetrieving] = useState(false);
+  const [retrieveResult, setRetrieveResult] = useState(null);
   const [config, setConfig] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_STORAGE_KEY);
@@ -66,6 +68,56 @@ function PrimaryStorage() {
   };
 
   const isConnected = config.connected && config.url;
+
+  const handleRetrieveAll = async () => {
+    setRetrieving(true);
+    setRetrieveResult(null);
+    try {
+      // Get all characters
+      const chars = await base44.entities.Character.list('-created_date', 100);
+      let totalRestored = 0;
+      let charsAffected = 0;
+
+      for (const char of chars) {
+        // Get all conversations for this character
+        const convos = await base44.entities.Conversation.filter({ character_ids: [char.id] }, '-updated_date', 20);
+        let charRestored = 0;
+
+        for (const convo of convos) {
+          // Find archived messages
+          const msgs = await base44.entities.Message.filter({ conversation_id: convo.id }, '-created_date', 500);
+          const archived = msgs.filter(m => m.archived_date);
+          for (const msg of archived) {
+            await base44.entities.Message.update(msg.id, { archived_date: null });
+            charRestored++;
+          }
+          // Re-extract memories from this conversation
+          if (archived.length > 0) {
+            base44.functions.invoke('extractMemoriesFromArchive', {
+              conversationId: convo.id,
+              characterId: char.id,
+            }).catch(() => {});
+          }
+        }
+
+        if (charRestored > 0) {
+          charsAffected++;
+          totalRestored += charRestored;
+        }
+      }
+
+      setRetrieveResult({
+        ok: true,
+        message: totalRestored > 0
+          ? `${totalRestored} archived message${totalRestored !== 1 ? 's' : ''} restored across ${charsAffected} character${charsAffected !== 1 ? 's' : ''}. Memories are now active.`
+          : 'No archived messages found — all memories are already active.',
+      });
+    } catch (err) {
+      setRetrieveResult({ ok: false, message: `Retrieval failed: ${err.message}` });
+    } finally {
+      setRetrieving(false);
+    }
+  };
 
   return (
     <div>
@@ -178,6 +230,26 @@ function PrimaryStorage() {
                   />
                 </div>
               )}
+
+              {/* Retrieve all archived memories */}
+              <div className="space-y-2">
+                <p className="text-[10px] text-muted-foreground uppercase font-semibold">Archived Memory Retrieval</p>
+                {retrieveResult && (
+                  <div className={`rounded-xl border p-3 flex items-start gap-2 text-xs ${retrieveResult.ok ? 'border-emerald-500/30 bg-emerald-500/5 text-emerald-300' : 'border-destructive/30 bg-destructive/5 text-destructive'}`}>
+                    <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                    {retrieveResult.message}
+                  </div>
+                )}
+                <button
+                  onClick={handleRetrieveAll}
+                  disabled={retrieving}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                >
+                  {retrieving ? <SpinIcon /> : <Brain className="w-3.5 h-3.5" />}
+                  {retrieving ? 'Retrieving all archived memories…' : 'Retrieve All Archived Memories'}
+                </button>
+                <p className="text-[10px] text-muted-foreground/60">Restores all archived messages back to their conversations and re-activates them as live character memory across all characters.</p>
+              </div>
 
               <div className="flex gap-2">
                 <button
