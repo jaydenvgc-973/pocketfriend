@@ -21,15 +21,8 @@ Deno.serve(async (req) => {
       });
       return Response.json({ success: true, settings: newSettings });
     } else {
-      // Enable voice if not already enabled
-      const currentSettings = settings[0];
-      if (!currentSettings.voice_enabled) {
-        const updated = await base44.entities.UserSettings.update(currentSettings.id, {
-          voice_enabled: true,
-        });
-        return Response.json({ success: true, settings: updated });
-      }
-      return Response.json({ success: true, settings: currentSettings });
+      // Return existing settings without overriding user's choice
+      return Response.json({ success: true, settings: settings[0] });
     }
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
