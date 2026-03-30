@@ -1245,8 +1245,6 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     // Track if any message was successfully sent and references
     let anyMessageSent = false;
     let primaryMsg = null;
-    // Find the most recent user message in the conversation for emoji reaction
-    let userMsg = messages.find(m => m.sender_type === "user" && m.conversation_id === convoId);
 
     console.log("Narrative:", narrativeText);
     console.log("Dialogue:", dialogueText);
@@ -1348,10 +1346,12 @@ Reply with ONLY the single emoji or the word "none".`,
         const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
         if (picked && validEmojis.includes(picked)) {
           // One character reaction per message — replace any existing character reaction
-          const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
+          const nonCharReactions = (userMsg?.reactions || []).filter(r => r.reactor_type !== "character");
           const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
-          await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
-          setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
+          if (userMsg?.id) {
+            await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
+            setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
+          }
         }
       }, 2000 + Math.random() * 3000);
     }
