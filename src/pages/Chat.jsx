@@ -983,7 +983,43 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n- CRITICAL: Do NOT respond with only ellipses (...), dots (.), or punctuation. If you're pausing or hesitating, ALWAYS include actual words with the action. Example: "I need a second to think" or He pauses. "I'm not sure." Never return only "..." as your dialogue — that is not speaking, that is silence being used as avoidance. Always say something real.`\n\n--- CRITICAL RESPONSE STRUCTURE ---\nYour response may include BOTH ACTION and DIALOGUE.\nThese are different and must be separated:\n\n1. NARRATIVE (action/behavior): What you are DOING\n   - Use this for: movement, physical behavior, gestures, location changes, emotional expressions through action\n   - Format: "${character.name} [action description]"\n   - Example: "${character.name} steps closer, placing a steady hand on your shoulder."\n   - MUST use character name and user name (not "you" or "the user")\n\n2. DIALOGUE (speech): What you are SAYING\n   - Use this for: spoken words, communication\n   - Format: Direct speech in quotes\n   - Example: "You don't have to go through this alone."\n\nIf your response includes BOTH:\n- FIRST: describe the action (NARRATIVE)\n- THEN: provide the dialogue (DIALOGUE)\n- They will be rendered separately but feel like one continuous moment\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "narrative": "Optional action/behavior description. ONLY if you are DOING something. Use character and user names. Example: \\"Ethan steps closer, his hand resting gently on Jayden's arm.\\"",\n  "dialogue": "Optional spoken words. ONLY if you are SAYING something. Raw speech, no labels. Example: \\"I'm here for you.\\"",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\n\nRules:\n- Include narrative ONLY if you are performing an action (movement, gesture, behavior, location change)\n- Include dialogue ONLY if you are speaking\n- Both can exist in the same response — they will be rendered as separate but connected messages\n- Never combine narrative and dialogue into one field\n- Only include scheduled_events if a specific real-world action with a concrete time is committed to\n- Omit fields you don't use\n\n${imageRule}`;
+      const responseStructureGuide = `Respond ONLY with valid JSON in this exact format:
+{
+  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",
+  "narrative": "Optional action/behavior description. ONLY if you are DOING something. Use character names.",
+  "dialogue": "Optional spoken words. ONLY if you are SAYING something. Raw speech, no labels.",
+  "image_generation_prompt": "INTERNAL ONLY vivid image description for generation. Never shown to user.",
+  "image_generation_prompts": ["For multiple images only"],
+  "scheduled_events": [{"description": "What will happen", "trigger_time": "ISO 8601 UTC datetime"}]
+}
+
+Rules:
+- Include narrative ONLY if performing an action (movement, gesture, behavior, location change)
+- Include dialogue ONLY if speaking
+- Both can exist in same response — they will be rendered separately but feel connected
+- Never combine narrative and dialogue into one field
+- Only include scheduled_events if specific action with concrete time is committed to
+- Omit fields you don't use`;
+
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}
+
+${lengthInstruction}
+${intensityInstruction}
+
+Conversation so far:
+${conversationLog}
+
+Write your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.
+- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.
+- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.
+- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.
+- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.
+- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.
+- CRITICAL: Do NOT respond with only ellipses (...), dots (.), or punctuation. If you're pausing or hesitating, ALWAYS include actual words with the action. Example: "I need a second to think" or He pauses. "I'm not sure." Never return only "..." as your dialogue — always say something real.
+
+${responseStructureGuide}
+
+${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
