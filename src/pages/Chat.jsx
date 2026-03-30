@@ -880,7 +880,7 @@ export default function Chat() {
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
-      const userDisplayName = userSettings.fictional_world_name || currentUser.full_name || "Friend";
+      const userDisplayName = userSettings.fictional_world_name || null;
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
@@ -983,41 +983,8 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const narrativeIdentityRule = `
-NARRATIVE IDENTITY RULE — CRITICAL FOR IMMERSION:
-- Your name: ${character.name}
-- User's in-world name: ${userDisplayName}
-- NEVER use generic labels like "the user", "the character", "you" (in narration), "I" (in narration), or "they" in your narrative actions
-- ALL actions must reference people by their ACTUAL NAMES
-- You narrate as a character describing what's happening, not as yourself
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
-Examples:
-
-WRONG:
-  The character hands the user a drink.
-  I reach out to them.
-  The user smiles at me.
-
-CORRECT:
-  ${character.name} passes ${userDisplayName} a drink, watching his reaction.
-  ${character.name} reaches out, hand brushing lightly against ${userDisplayName}'s.
-  ${userDisplayName} smiles, and ${character.name} notices.
-
-SHARED ACTIONS:
-  ${character.name} and ${userDisplayName} step outside together.
-  ${character.name} walks alongside ${userDisplayName}, matching his pace.
-
-REMOTE (no physical contact):
-  ${character.name} wishes he could be with ${userDisplayName} right now.
-  ${character.name} thinks about ${userDisplayName} and smiles.
-
-Apply this rule to ALL narrative text, dialogue context, and action descriptions.
-`;
-
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${narrativeIdentityRule}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\n*** CRITICAL MESSAGE SEPARATION RULE ***\nIf your response contains BOTH narrative/action AND dialogue, you MUST split them into separate array items.\n\nNARRATIVE (action/descriptive):\n- Physical movement or actions: "${character.name} walks across the room"\n- Emotional expressions: "${character.name} smiles softly"\n- Scene-setting: "The room falls silent"\n- Observations: "${character.name} notices the time"\n\nDIALOGUE (speech):\n- Direct quotes: "I think you're right"\n- Implied speech: Character speaks directly to the user\n- Communication: Anything meant to be heard\n\nExample of CORRECT separation:\nIf you want to express: "${character.name} looks up sharply. 'I didn't expect that from you.'\"\nRespond with:\n[\n  { "type": "narrative", "content": "${character.name} looks up sharply." },\n  { "type": "dialogue", "content": "I didn't expect that from you." }\n]\n\nRespond ONLY with valid JSON as an array. Preserve chronological order. Each item is:\n{\n  "type": "narrative" | "dialogue",\n  "content": "The text for this part",\n  "image_generation_prompt": "INTERNAL ONLY — if this narrative part includes an image. Never shown to user.",\n  "scheduled_events": [ { "description": "...", "trigger_time": "..." } ]\n}\n\nExample responses:\n\n1. Dialogue only:\n[\n  { "type": "dialogue", "content": "Hey, how's your day going?" }\n]\n\n2. Narrative only:\n[\n  { "type": "narrative", "content": "${character.name} stretches and yawns, looking out the window." }\n]\n\n3. Narrative THEN dialogue:\n[\n  { "type": "narrative", "content": "${character.name} looks up from his phone." },\n  { "type": "dialogue", "content": "You caught me at a good time." }\n]\n\n4. Dialogue THEN narrative:\n[\n  { "type": "dialogue", "content": "I'll be there in five minutes." },\n  { "type": "narrative", "content": "${character.name} grabs his keys and heads for the door." }\n]\n\n5. With images (narrative + image, no dialogue):\n[\n  { "type": "narrative", "content": "${character.name} sends you a selfie.", "image_generation_prompt": "Selfie of [character details]. Casual outfit, friendly expression, natural lighting." }\n]\n\nOmit fields you don't use. Only include scheduled_events for concrete time-based commitments.\n\n${imageRule}`;
-
-      // Declare messageParts before try block so it's accessible in catch and after
-      let messageParts = [{ type: "dialogue", content: "" }];
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
 
@@ -1044,49 +1011,60 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
       }
 
 
-      // New parser: returns array of message parts [{ type, content, image_generation_prompt, scheduled_events }, ...]
+      // Robust parser: returns structured { message_type, text_content, image_generation_prompt, image_generation_prompts, scheduled_events }
       const parseCharacterResponse = (raw) => {
-        if (!raw) return [{ type: "dialogue", content: "" }];
+        if (!raw) return { message_type: "text_only", text_content: "" };
 
-        let parsed = null;
+        let obj = null;
 
         // 1. Try direct JSON parse
-        try { parsed = JSON.parse(raw); } catch {}
+        try { obj = JSON.parse(raw); } catch {}
 
         // 2. Try markdown code fence
-        if (!parsed) {
+        if (!obj) {
           const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-          if (fenceMatch) try { parsed = JSON.parse(fenceMatch[1].trim()); } catch {}
+          if (fenceMatch) try { obj = JSON.parse(fenceMatch[1].trim()); } catch {}
         }
 
-        // 3. Try to find a JSON array in the string
-        if (!parsed) {
-          const arrayMatch = raw.match(/\[\s*\{[\s\S]*\}\s*\]/);
-          if (arrayMatch) try { parsed = JSON.parse(arrayMatch[0]); } catch {}
+        // 3. Try to find a JSON object anywhere in the string
+        if (!obj) {
+          const braceMatch = raw.match(/\{[\s\S]*\}/);
+          if (braceMatch) try { obj = JSON.parse(braceMatch[0]); } catch {}
         }
 
-        // If we got an array of objects with "type" and "content" fields, process it
-        if (Array.isArray(parsed) && parsed.every(item => typeof item === "object" && item !== null && ("type" in item || "content" in item))) {
-          return parsed
-            .map(item => ({
-              type: (item.type === "narrative" || item.type === "dialogue") ? item.type : "dialogue",
-              content: (item.content || "").trim(),
-              image_generation_prompt: item.image_generation_prompt || null,
-              scheduled_events: item.scheduled_events || [],
-            }))
-            .filter(item => item.content !== ""); // Remove empty parts
+        if (obj && typeof obj === "object") {
+          // Normalize: support both old schema (text/image_prompt) and new schema (text_content/image_generation_prompt)
+          const messageType = obj.message_type || (obj.image_prompt || obj.image_prompts?.length > 0 ? "text_then_image" : "text_only");
+          const textContent = obj.text_content || obj.text || "";
+          const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
+          const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
+          return {
+            message_type: messageType,
+            text_content: textContent,
+            image_generation_prompt: imgPrompt,
+            image_generation_prompts: imgPrompts,
+            scheduled_events: obj.scheduled_events || [],
+          };
         }
 
-        // Fallback: treat whole response as dialogue
+        // 4. Fallback: try to extract text_content or text field
+        const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (textMatch) {
+          try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
+          catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [] }; }
+        }
+
+        // 5. Last resort: plain text
         const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
-        if (stripped.length > 5 && /[a-zA-Z]/.test(stripped)) {
-          return [{ type: "dialogue", content: stripped }];
+        if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
+          return { message_type: "text_only", text_content: stripped, image_generation_prompts: [] };
         }
 
-        return [{ type: "dialogue", content: "" }];
+        return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       };
 
       let retries = 2;
+      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1094,7 +1072,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
             add_context_from_internet: true,
             model: 'gemini_3_flash'
           });
-          messageParts = parseCharacterResponse(response);
+          responseObj = parseCharacterResponse(response);
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
@@ -1103,10 +1081,27 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         }
       }
 
-      // Collect all scheduled events from all message parts
-      const allScheduledEvents = messageParts.flatMap(part => part.scheduled_events || []);
-      if (allScheduledEvents.length > 0 && convoId) {
-        for (const ev of allScheduledEvents) {
+      msgType = responseObj.message_type || "text_only";
+      const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
+      const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
+
+      // text_content is for visible dialogue ONLY — never an image prompt
+      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
+      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
+      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
+        responseText = "";
+      }
+
+      // image_generation_prompts is INTERNAL ONLY — never shown to user
+      imagePrompts = hasImage
+        ? (responseObj.image_generation_prompts?.length > 0 ? responseObj.image_generation_prompts : [])
+        : [];
+
+      console.log(`[MSG-TYPE] message_type="${msgType}" | hasText=${hasText} | hasImage=${hasImage} | imagePrompts=${imagePrompts.length} | textLength=${responseText.length}`);
+
+      // Persist scheduled events extracted from this chat turn
+      if (responseObj.scheduled_events?.length > 0 && convoId) {
+        for (const ev of responseObj.scheduled_events) {
           if (!ev.trigger_time || !ev.description) continue;
           base44.entities.ScheduledEvent.create({
             character_ids: [characterId],
@@ -1122,21 +1117,16 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         }
       }
 
-      console.log(`[MSG-PARTS] Received ${messageParts.length} message part(s):`, messageParts.map(p => ({ type: p.type, len: p.content.length })));
-
-      // Calculate total typing delay for all message parts combined
-      let totalTypingDelayMs = 0;
+      // Calculate typing delay based on user's WPM setting
+      let typingDelayMs = 0;
       const typingSpeedEnabled = userSettings.typing_speed_enabled !== false;
       if (typingSpeedEnabled) {
         const wpm = userSettings.words_per_minute || 41;
-        const totalWords = messageParts.reduce((sum, part) => {
-          const words = (part.content || "").split(/\s+/).filter(w => w.length > 0).length;
-          return sum + words;
-        }, 0);
-        totalTypingDelayMs = (totalWords / wpm) * 60000;
+        const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
+        typingDelayMs = (wordCount / wpm) * 60000;
       }
 
-      await new Promise(r => setTimeout(r, totalTypingDelayMs));
+      await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
     } catch (err) {
       setIsTyping(false);
@@ -1146,7 +1136,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
 
     setIsTyping(false);
 
-    // --- MESSAGE PART CREATION ---
+    // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
     const msgLower = text.toLowerCase();
     const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
@@ -1164,58 +1154,103 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
       ? [character.avatar_url, ...(character.reference_image_urls || [])]
       : (character.reference_image_urls || []);
 
-    // Helper: create a single message entity for a message part
-    const createPartMessage = async (part, delayMs = 0) => {
-      if (!part.content && !part.image_generation_prompt) return null;
-
-      const isNarrative = part.type === "narrative";
-      const msg = await base44.entities.Message.create({
+    // Helper: create a stable image-only message and kick off async generation
+    const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
+      const imgMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
         character_id: characterId,
         character_name: character.name,
-        content: part.content || "",
+        content: "",           // image-only: no visible text
         emotional_state: emotionalState,
-        is_narrative: isNarrative,
         timestamp: new Date().toISOString(),
       });
-
-      if (!msg?.id) return null;
-      setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-
-      // Generate image asynchronously if prompt exists
-      if (part.image_generation_prompt && allowImageThisTurn) {
-        setTimeout(() => {
-          base44.functions.invoke('generateImageAsync', {
-            messageId: msg.id,
-            prompt: part.image_generation_prompt,
-            characterReferenceImages: charRefs,
-            userReferenceImages: useUserRefs ? userRefImages : [],
-            characterName: character.name,
-            subjectType,
-          }).catch(() => {});
-        }, delayMs + 500);
-      }
-
-      // Trigger voice only for dialogue messages (not narrative)
-      if (!isNarrative && part.content) {
-        setTimeout(() => {
-          playCharacterVoice(msg.id, part.content, character, userSettings, false);
-        }, delayMs + 300);
-      }
-
-      return msg;
+      if (!imgMsg?.id) return null;
+      setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
+      setTimeout(() => {
+        base44.functions.invoke('generateImageAsync', {
+          messageId: imgMsg.id,
+          prompt: imageGenPrompt,
+          characterReferenceImages: charRefs,
+          userReferenceImages: useUserRefs ? userRefImages : [],
+          characterName: character.name,
+          subjectType,
+        }).catch(() => {});
+      }, delayMs);
+      return imgMsg;
     };
 
-    // Process all message parts in sequence with staggered delays
-    let lastMsg = null;
-    for (let i = 0; i < messageParts.length; i++) {
-      const part = messageParts[i];
-      const staggerDelay = i * 200; // Small delay between consecutive parts
-      lastMsg = await createPartMessage(part, staggerDelay);
+    // Helper: create a text-only message and auto-play voice
+    const createTextMessage = async (textContent) => {
+      if (!textContent?.trim()) return null;
+      const txtMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: textContent,  // visible dialogue only — never an image prompt
+        emotional_state: emotionalState,
+        timestamp: new Date().toISOString(),
+      });
+      if (!txtMsg?.id) return null;
+      setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
+      // TTS: only fire on text messages, only speak visible text_content
+      setTimeout(() => {
+        playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
+      }, 500);
+      return txtMsg;
+    };
+
+    let primaryTextMsg = null;
+
+    if (msgType === "text_only") {
+      // --- TEXT ONLY ---
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else if (msgType === "image_only") {
+      // --- IMAGE ONLY --- send image as standalone message, no text bubble
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 300);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 300 + i * 800);
+        }
+      } else {
+        // Fallback: LLM said image_only but gave no prompt — send text if available
+        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      }
+
+    } else if (msgType === "text_then_image") {
+      // --- TEXT FIRST, THEN IMAGE ---
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 800);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 800 + i * 800);
+        }
+      }
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else if (msgType === "image_then_text") {
+      // --- IMAGE FIRST, THEN TEXT ---
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 300);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 300 + i * 800);
+        }
+      }
+      // Text arrives after a short delay so image appears first visually
+      await new Promise(r => setTimeout(r, 600));
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else {
+      // Unknown type fallback — text only
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
     }
 
-    const charMsg = lastMsg;
+    // Use primary text message for relationship/conversation tracking (or first image msg id for context)
+    const charMsg = primaryTextMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
@@ -1290,9 +1325,6 @@ Reply with ONLY the single emoji or the word "none".`,
       },
     }).catch(() => {});
 
-    // Reconstruct response text from message parts for system functions
-    const fullResponseText = messageParts.map(p => p.content).join(" ").trim();
-
     // Classify life events from this conversation turn (fire-and-forget)
     // This fans out to memory, mood, relationship, and achievement systems
     base44.functions.invoke("classifyConversationEvent", {
@@ -1300,7 +1332,7 @@ Reply with ONLY the single emoji or the word "none".`,
       characterName: character.name,
       conversationId: convoId,
       userMessage: text,
-      characterReply: fullResponseText || "(image sent)",
+      characterReply: responseText || "(image sent)",
       recentMessages: recentMsgs.slice(-8),
       characterState: {
         emotional_state: character.emotional_state,
@@ -1311,12 +1343,12 @@ Reply with ONLY the single emoji or the word "none".`,
     }).catch(() => {});
 
     // Extract memories from this turn (fire-and-forget)
-    if (fullResponseText) {
+    if (responseText) {
       base44.functions.invoke("extractMemoriesFromTurn", {
         characterId,
         conversationId: convoId,
         userMessage: text,
-        characterReply: fullResponseText,
+        characterReply: responseText,
       }).catch(() => {});
     }
 
@@ -1324,17 +1356,16 @@ Reply with ONLY the single emoji or the word "none".`,
     base44.functions.invoke("extractScheduledMeeting", {
       characterId,
       userMessage: text,
-      characterResponse: fullResponseText,
+      characterResponse: responseText,
       recentMessages: recentMsgs.slice(-5),
       conversationId: convoId,
     }).catch(() => {});
 
     // Detect and update presence state from narrative (fire-and-forget)
-    const narrativeParts = messageParts.filter(p => p.type === "narrative").map(p => p.content).join(" ").trim();
-    if (narrativeParts) {
+    if (responseText) {
       base44.functions.invoke("detectAndUpdatePresence", {
         characterId,
-        narrativeText: narrativeParts,
+        narrativeText: responseText,
         conversationId: convoId,
       }).catch(() => {});
     }
@@ -1342,7 +1373,7 @@ Reply with ONLY the single emoji or the word "none".`,
     base44.functions.invoke("updateRelationshipLevels", {
       characterId,
       userMessage: text,
-      characterReply: fullResponseText || "(image)",
+      characterReply: responseText || "(image)",
       recentMessages: recentMsgs,
       playingAsCharacterId: activeCharacter?.id || null,
     }).then(async res => {
@@ -1365,9 +1396,7 @@ Reply with ONLY the single emoji or the word "none".`,
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
-    // Use last dialogue message for preview, or last message overall
-    const lastDialoguePart = messageParts.filter(p => p.type === "dialogue").pop();
-    const previewText = lastDialoguePart?.content || lastMsg?.content || "(image sent)";
+    const previewText = responseText || "(image sent)";
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: previewText.substring(0, 100),
       last_message_date: new Date().toISOString(),

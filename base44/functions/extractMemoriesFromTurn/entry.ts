@@ -17,17 +17,12 @@ Deno.serve(async (req) => {
       }, { status: 400 });
     }
 
-    // Get character and user details
+    // Get character details
     const character = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]);
-    const currentUser = await base44.auth.me();
     
     if (!character) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
-
-    // Get user settings for their fictional world name
-    const userSettings = await base44.asServiceRole.entities.UserSettings.list();
-    const userWorldName = userSettings?.[0]?.fictional_world_name || currentUser?.full_name || "Friend";
 
     // Build existing people context so we don't duplicate
     const existingFamilyNames = (character.family_members || []).map(f => f.name?.toLowerCase()).filter(Boolean);
@@ -145,18 +140,10 @@ Return JSON:
     // --- Save memory ---
     let createdMemory = null;
     if (memoryResponse.should_remember && memoryResponse.title && memoryResponse.description) {
-      // Enforce named narrative in memory: replace generic labels with actual names
-      let narrativeDescription = memoryResponse.description;
-      narrativeDescription = narrativeDescription.replace(/\bthe user\b/gi, userWorldName);
-      narrativeDescription = narrativeDescription.replace(/\bthe character\b/gi, character.name);
-      narrativeDescription = narrativeDescription.replace(/\b(you|they)\s+(said|told|asked|mentioned)\b/gi, (match, pronoun, verb) => {
-        return pronoun.toLowerCase() === 'you' ? `${userWorldName} ${verb}` : `${character.name} ${verb}`;
-      });
-
       createdMemory = await base44.asServiceRole.entities.Memory.create({
         character_id: characterId,
         title: memoryResponse.title,
-        description: narrativeDescription,
+        description: memoryResponse.description,
         emotional_impact: memoryResponse.emotional_impact || 'neutral',
         lesson_learned: memoryResponse.lesson_learned || '',
         source_context: conversationId,
