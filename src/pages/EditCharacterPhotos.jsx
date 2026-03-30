@@ -49,15 +49,24 @@ export default function EditCharacterPhotos() {
     });
   };
 
-  const handleAvatarGenerated = async (newAvatarUrl, newRefUrls) => {
+  const handleAvatarGenerated = async (newAvatarUrl, newRefUrls, newGenerationPrompt, newDescriptionText) => {
     if (!selectedChar) return;
-    const updated = { ...selectedChar, avatar_url: newAvatarUrl, reference_image_urls: newRefUrls };
+    const updated = {
+      ...selectedChar,
+      avatar_url: newAvatarUrl,
+      reference_image_urls: newRefUrls,
+      avatar_generation_prompt: newGenerationPrompt || selectedChar.avatar_generation_prompt,
+      avatar_description_text: newDescriptionText !== undefined ? newDescriptionText : selectedChar.avatar_description_text,
+    };
     updated.system_prompt = buildSystemPrompt(updated);
     await base44.entities.Character.update(selectedChar.id, {
       avatar_url: newAvatarUrl,
       reference_image_urls: newRefUrls,
       system_prompt: updated.system_prompt,
+      ...(newGenerationPrompt ? { avatar_generation_prompt: newGenerationPrompt } : {}),
+      ...(newDescriptionText !== undefined ? { avatar_description_text: newDescriptionText } : {}),
     });
+    setSelectedChar(updated);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
   };
@@ -105,12 +114,12 @@ export default function EditCharacterPhotos() {
           <div className="space-y-6">
             <div>
               <h3 className="text-sm font-semibold mb-4">Edit {selectedChar.name}'s Photos</h3>
-              
+
               <div className="space-y-6">
                 {/* Option 1: Replace avatar directly */}
                 <div className="border border-border rounded-2xl p-4 space-y-3">
                   <p className="text-xs font-medium text-foreground uppercase tracking-wider">Replace Avatar</p>
-                  <p className="text-xs text-muted-foreground">Upload a photo to use as their avatar instead of the generated one.</p>
+                  <p className="text-xs text-muted-foreground">Upload a photo to use as their avatar directly. This photo becomes 100% of the avatar.</p>
                   {selectedChar.avatar_url && (
                     <div className="flex justify-center">
                       <div className="relative w-24 h-24 rounded-full overflow-hidden ring-2 ring-primary/30">
@@ -145,7 +154,7 @@ export default function EditCharacterPhotos() {
                         }
                       }}
                     />
-                    <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors disabled:opacity-50">
+                    <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors">
                       {uploadingAvatarId === selectedChar.id ? (
                         <RefreshCw className="w-4 h-4 text-muted-foreground animate-spin" />
                       ) : (
@@ -158,29 +167,34 @@ export default function EditCharacterPhotos() {
                   </label>
                 </div>
 
-                {/* Option 2: Generate from reference photos */}
+                {/* Option 2: Generate from reference photos + description */}
                 <div className="border border-border rounded-2xl p-4 space-y-3">
-                  <p className="text-xs font-medium text-foreground uppercase tracking-wider">Generate Avatar from Photos</p>
+                  <p className="text-xs font-medium text-foreground uppercase tracking-wider">Generate Avatar</p>
+                  <p className="text-xs text-muted-foreground">
+                    Upload reference photos and/or write a description. Each counts equally — 1 photo + 1 description = 50/50.
+                  </p>
                   <ReferencePhotoUploader
                     descriptor={selectedChar.personality_summary || selectedChar.name}
                     existingAvatarUrl={selectedChar.avatar_url}
                     existingReferenceUrls={selectedChar.reference_image_urls || []}
+                    existingDescriptionText={selectedChar.avatar_description_text || ""}
+                    existingGenerationPrompt={selectedChar.avatar_generation_prompt || ""}
                     onAvatarGenerated={handleAvatarGenerated}
                   />
                 </div>
 
                 {/* Voice Settings */}
                 <div className="border border-border rounded-2xl p-4">
-                  <VoiceSettings 
-                    data={form} 
-                    onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))} 
+                  <VoiceSettings
+                    data={form}
+                    onUpdate={(field, value) => setForm(p => ({ ...p, [field]: value }))}
                     hasApiKey={hasApiKey}
                     character={selectedChar}
                   />
                 </div>
               </div>
 
-              <Button 
+              <Button
                 onClick={async () => {
                   setIsSaving(true);
                   await base44.entities.Character.update(selectedChar.id, {
@@ -192,8 +206,8 @@ export default function EditCharacterPhotos() {
                   setIsSaving(false);
                   setSaved(true);
                   setTimeout(() => setSaved(false), 2000);
-                }} 
-                disabled={isSaving} 
+                }}
+                disabled={isSaving}
                 className="w-full h-12 rounded-xl gap-2 mt-4"
               >
                 {saved ? <><Check className="w-4 h-4" /> Saved</> : isSaving ? "Saving..." : "Save Voice Settings"}

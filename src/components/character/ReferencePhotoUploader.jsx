@@ -1,32 +1,44 @@
 import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
-import { Upload, X, Sparkles, RefreshCw, Check } from "lucide-react";
+import { Upload, X, Sparkles, RefreshCw, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { motion, AnimatePresence } from "framer-motion";
 
 /**
  * ReferencePhotoUploader
  * Props:
  *  - descriptor: string — text description of the character used for generation prompt
- *  - onAvatarGenerated: (avatarUrl, referenceUrls) => void
+ *  - onAvatarGenerated: (avatarUrl, referenceUrls, generationPrompt, descriptionText) => void
  *  - existingReferenceUrls: string[] — pre-loaded refs (for edit mode)
  *  - existingAvatarUrl: string — current avatar (for edit mode)
+ *  - existingDescriptionText: string — previously saved description text
+ *  - existingGenerationPrompt: string — last generation prompt to display
  */
-export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, existingReferenceUrls = [], existingAvatarUrl = null }) {
+export default function ReferencePhotoUploader({
+  descriptor,
+  onAvatarGenerated,
+  existingReferenceUrls = [],
+  existingAvatarUrl = null,
+  existingDescriptionText = "",
+  existingGenerationPrompt = "",
+}) {
   const [referenceUrls, setReferenceUrls] = useState(existingReferenceUrls);
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedUrl, setGeneratedUrl] = useState(existingAvatarUrl);
+  const [descriptionText, setDescriptionText] = useState(existingDescriptionText);
+  const [generationPrompt, setGenerationPrompt] = useState(existingGenerationPrompt);
   const [initialized, setInitialized] = useState(false);
 
-  // Re-sync when the parent's async data arrives (e.g. character loads after mount)
+  // Re-sync when the parent's async data arrives
   useEffect(() => {
-    if (!initialized && (existingReferenceUrls.length > 0 || existingAvatarUrl)) {
+    if (!initialized && (existingReferenceUrls.length > 0 || existingAvatarUrl || existingDescriptionText || existingGenerationPrompt)) {
       setReferenceUrls(existingReferenceUrls);
       setGeneratedUrl(existingAvatarUrl);
+      setDescriptionText(existingDescriptionText);
+      setGenerationPrompt(existingGenerationPrompt);
       setInitialized(true);
     }
-  }, [existingReferenceUrls, existingAvatarUrl, initialized]);
+  }, [existingReferenceUrls, existingAvatarUrl, existingDescriptionText, existingGenerationPrompt, initialized]);
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -36,27 +48,64 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
     const newUrls = [...referenceUrls, ...uploaded.map(r => r.file_url)];
     setReferenceUrls(newUrls);
     setIsUploading(false);
-    // Notify parent of the new refs (no avatar yet)
-    onAvatarGenerated(generatedUrl, newUrls);
+    onAvatarGenerated(generatedUrl, newUrls, generationPrompt, descriptionText);
   };
 
   const removeRef = (url) => {
     const newUrls = referenceUrls.filter(u => u !== url);
     setReferenceUrls(newUrls);
-    onAvatarGenerated(generatedUrl, newUrls);
+    onAvatarGenerated(generatedUrl, newUrls, generationPrompt, descriptionText);
   };
 
   const generateAvatar = async () => {
     setIsGenerating(true);
-    const prompt = `Realistic portrait photo of ${descriptor}. Candid, natural lighting, authentic. Not a stock photo. Match the person's exact appearance from the reference photos.\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. CRITICAL: Not an illustration, not a painting, not a digital render, not uncanny valley, natural skin texture, real human proportions.`;
+
+    // Calculate weighting:
+    // Each uploaded image counts as 1 "slot". The text description also counts as 1 "slot" (if provided).
+    // Total slots = referenceUrls.length + (descriptionText ? 1 : 0)
+    // Each slot has equal weight: 100% / totalSlots
+    const imageCount = referenceUrls.length;
+    const hasText = descriptionText.trim().length > 0;
+    const totalSlots = imageCount + (hasText ? 1 : 0);
+    const weightPercent = totalSlots > 0 ? Math.round(100 / totalSlots) : 100;
+
+    let promptParts = [];
+
+    // Base photorealistic directive
+    promptParts.push(`Realistic portrait photo of ${descriptor}.`);
+    promptParts.push(`Candid, natural lighting, authentic. Not a stock photo.`);
+
+    if (imageCount > 0 && hasText) {
+      promptParts.push(`Match the person's exact appearance from the reference photos (${weightPercent}% influence).`);
+      promptParts.push(`Additional appearance details (${weightPercent}% influence): ${descriptionText.trim()}`);
+    } else if (imageCount > 0) {
+      promptParts.push(`Match the person's exact appearance from the reference photos (100% reference influence).`);
+    } else if (hasText) {
+      promptParts.push(`Appearance details (100% influence): ${descriptionText.trim()}`);
+    }
+
+    promptParts.push(`STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. Not an illustration, not a painting, not a digital render, natural skin texture, real human proportions.`);
+
+    const finalPrompt = promptParts.join(" ");
+
     const result = await base44.integrations.Core.GenerateImage({
-      prompt,
-      file_urls: referenceUrls,
+      prompt: finalPrompt,
+      existing_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
     });
+
     setGeneratedUrl(result.url);
+    setGenerationPrompt(finalPrompt);
     setIsGenerating(false);
-    onAvatarGenerated(result.url, referenceUrls);
+    onAvatarGenerated(result.url, referenceUrls, finalPrompt, descriptionText);
   };
+
+  const canGenerate = referenceUrls.length > 0 || descriptionText.trim().length > 0;
+
+  // Weight label for display
+  const imageCount = referenceUrls.length;
+  const hasText = descriptionText.trim().length > 0;
+  const totalSlots = imageCount + (hasText ? 1 : 0);
+  const weightPercent = totalSlots > 0 ? Math.round(100 / totalSlots) : 100;
 
   return (
     <div className="space-y-4">
@@ -72,7 +121,7 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
       {/* Reference photos */}
       <div>
         <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">
-          Reference photos {referenceUrls.length > 0 ? `(${referenceUrls.length})` : ""}
+          Reference photos {referenceUrls.length > 0 ? `(${referenceUrls.length} · ${imageCount > 0 && totalSlots > 0 ? weightPercent : 100}% each)` : ""}
         </p>
         <div className="flex flex-wrap gap-2">
           {referenceUrls.map((url, i) => (
@@ -97,11 +146,41 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
             )}
           </label>
         </div>
-        <p className="text-xs text-muted-foreground mt-1.5">Upload real photos — the more the better</p>
+        <p className="text-xs text-muted-foreground mt-1.5">Upload real photos — each has equal influence on the result</p>
       </div>
 
-      {/* Generate button — only show if there are reference photos */}
-      {referenceUrls.length > 0 && (
+      {/* Description text box */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <div className="flex items-center gap-1.5">
+            <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Appearance Description</p>
+          </div>
+          {hasText && totalSlots > 0 && (
+            <span className="text-[10px] text-primary/70 bg-primary/10 px-2 py-0.5 rounded-full">
+              {weightPercent}% influence
+            </span>
+          )}
+          {!hasText && (
+            <span className="text-[10px] text-muted-foreground/50 bg-secondary px-2 py-0.5 rounded-full">
+              100% if no photos
+            </span>
+          )}
+        </div>
+        <textarea
+          value={descriptionText}
+          onChange={(e) => setDescriptionText(e.target.value)}
+          placeholder="Describe how you want this character to look — hair color, eye color, build, style, facial features, etc."
+          rows={3}
+          className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Counts as equal weight to each uploaded photo. Text alone = 100% influence.
+        </p>
+      </div>
+
+      {/* Generate button */}
+      {canGenerate && (
         <Button
           onClick={generateAvatar}
           disabled={isGenerating}
@@ -109,15 +188,25 @@ export default function ReferencePhotoUploader({ descriptor, onAvatarGenerated, 
           className="w-full rounded-xl gap-2"
         >
           {isGenerating ? (
-            <><RefreshCw className="w-4 h-4 animate-spin" /> Blending photos...</>
+            <><RefreshCw className="w-4 h-4 animate-spin" /> Generating avatar...</>
           ) : (
-            <><Sparkles className="w-4 h-4" /> {generatedUrl ? "Regenerate avatar" : "Generate avatar from photos"}</>
+            <><Sparkles className="w-4 h-4" /> {generatedUrl ? "Regenerate avatar" : "Generate avatar"}</>
           )}
         </Button>
       )}
 
-      {!referenceUrls.length && !generatedUrl && (
-        <p className="text-xs text-muted-foreground text-center py-2">Upload photos above, then generate an avatar — or skip to use initials</p>
+      {!canGenerate && (
+        <p className="text-xs text-muted-foreground text-center py-2">
+          Upload photos or add a description above to generate an avatar
+        </p>
+      )}
+
+      {/* Generated prompt display */}
+      {generationPrompt && (
+        <div className="mt-2 p-3 rounded-xl bg-secondary/60 border border-border/60">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Last Generated Prompt</p>
+          <p className="text-xs text-muted-foreground leading-relaxed">{generationPrompt}</p>
+        </div>
       )}
     </div>
   );

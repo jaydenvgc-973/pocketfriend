@@ -8,7 +8,7 @@
     },
     "nickname_for_user": {
       "type": "string",
-      "description": "The name this character uses when referring to or addressing the user. Overrides the user's fictional_world_name if set."
+      "description": "The name this character uses when referring to or addressing the user."
     },
     "is_default": {
       "type": "boolean",
@@ -40,7 +40,7 @@
     },
     "religion": {
       "type": "string",
-      "description": "The character's religion or belief system. Options: Christianity, Islam, Judaism, Hinduism, Buddhism, Sikhism, Taoism, Confucianism, Shinto, Jainism, Bah\u00e1'\u00ed Faith, Zoroastrianism, Spiritual / Non-Denominational, Other, None",
+      "description": "The character's religion or belief system.",
       "default": "None"
     },
     "belief_level": {
@@ -50,7 +50,6 @@
         "moderate",
         "devout"
       ],
-      "description": "How strongly the character adheres to their religion. in_name_only=0% influence, moderate=20%, devout=50%.",
       "default": "moderate"
     },
     "religion_custom": {
@@ -84,7 +83,7 @@
     },
     "current_activity": {
       "type": "string",
-      "description": "What the character is currently doing. Blocking activities (shower, swimming, bathroom, sick, prayer) prevent text responses."
+      "description": "What the character is currently doing."
     },
     "weather_summary": {
       "type": "string",
@@ -92,8 +91,7 @@
     },
     "weather_last_updated": {
       "type": "string",
-      "format": "date-time",
-      "description": "When the weather_summary was last refreshed."
+      "format": "date-time"
     },
     "voice_enabled": {
       "type": "boolean",
@@ -126,6 +124,14 @@
       "items": {
         "type": "string"
       }
+    },
+    "avatar_description_text": {
+      "type": "string",
+      "description": "User-written description used to influence avatar generation, weighted equally per reference image."
+    },
+    "avatar_generation_prompt": {
+      "type": "string",
+      "description": "The final prompt used during the last avatar generation, displayed back to the user."
     },
     "fictional_entity_images": {
       "type": "object",
