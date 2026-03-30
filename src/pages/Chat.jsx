@@ -684,7 +684,7 @@ export default function Chat() {
 
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
+    let recentMsgs, response, responseText, emotionalState;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -1057,49 +1057,19 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         }
       };
 
-      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       try {
         response = await callLLMWithRetry(fullPrompt);
-        responseObj = parseCharacterResponse(response);
       } catch (llmErr) {
         throw llmErr;
       }
 
-      msgType = responseObj.message_type || "text_only";
-      const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
-      const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
-
-      // text_content is for visible dialogue ONLY — never an image prompt
-      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
-      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
-      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
+      // Clean raw response: strip internal labels and parser artifacts
+      responseText = String(response).trim();
+      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]") || responseText.startsWith("message_type")) {
         responseText = "";
       }
 
-      // image_generation_prompts is INTERNAL ONLY — never shown to user
-      imagePrompts = hasImage
-        ? (responseObj.image_generation_prompts?.length > 0 ? responseObj.image_generation_prompts : [])
-        : [];
 
-      console.log(`[MSG-TYPE] message_type="${msgType}" | hasText=${hasText} | hasImage=${hasImage} | imagePrompts=${imagePrompts.length} | textLength=${responseText.length}`);
-
-      // Persist scheduled events extracted from this chat turn
-      if (responseObj.scheduled_events?.length > 0 && convoId) {
-        for (const ev of responseObj.scheduled_events) {
-          if (!ev.trigger_time || !ev.description) continue;
-          base44.entities.ScheduledEvent.create({
-            character_ids: [characterId],
-            character_names: [character.name],
-            description: ev.description,
-            trigger_time: ev.trigger_time,
-            status: "pending",
-            type: "narrative",
-            source: "chat",
-            conversation_id: convoId,
-            primary_character_id: characterId
-          }).catch(() => {});
-        }
-      }
 
       // Calculate typing delay based on user's WPM setting
       let typingDelayMs = 0;
@@ -1233,50 +1203,10 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       }
     }
 
-    if (!primaryTextMsg && msgType === "text_only") {
-      // Fallback: create text message directly (preserves compatibility)
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+    // Fallback: if action+dialogue submission didn't create a dialogue message, use fallback
+    if (!primaryTextMsg && dialogueText) {
+      primaryTextMsg = await createTextMessage(dialogueText);
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
-
-    } else if (msgType === "image_only") {
-      // --- IMAGE ONLY --- send image as standalone message, no text bubble
-      if (imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 300);
-        for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 300 + i * 800);
-        }
-      } else {
-        // Fallback: LLM said image_only but gave no prompt — send text if available
-        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
-      }
-
-    } else if (msgType === "text_then_image") {
-      // --- TEXT FIRST, THEN IMAGE ---
-      primaryTextMsg = await createTextMessage(responseText || "");
-      if (imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 800);
-        for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 800 + i * 800);
-        }
-      }
-      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
-
-    } else if (msgType === "image_then_text") {
-      // --- IMAGE FIRST, THEN TEXT ---
-      if (imagePrompts.length > 0) {
-        await createImageMessage(imagePrompts[0], 300);
-        for (let i = 1; i < imagePrompts.length; i++) {
-          await createImageMessage(imagePrompts[i], 300 + i * 800);
-        }
-      }
-      // Text arrives after a short delay so image appears first visually
-      await new Promise(r => setTimeout(r, 600));
-      primaryTextMsg = await createTextMessage(responseText || "");
-      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
-
-    } else {
-      // Unknown type fallback — text only
-      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
     }
 
     // Use primary text message for relationship/conversation tracking (or first image msg id for context)
