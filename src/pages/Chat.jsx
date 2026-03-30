@@ -684,20 +684,7 @@ export default function Chat() {
 
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only", narrativeText, dialogueText;
-    let deferredWebLookup = null;
-
-    // Helper: validate that dialogue is meaningful (not just punctuation) — define BEFORE use
-    const isMeaningfulDialogue = (text) => {
-      if (!text || !text.trim()) return false;
-      const trimmed = text.trim();
-      // Reject if it's only punctuation/ellipses
-      const onlyPunctuation = /^[\s\.\,\;\:\!\?\-—–…'""`~*]+$/;
-      if (onlyPunctuation.test(trimmed)) return false;
-      // Must have at least one alphanumeric character
-      return /[a-zA-Z0-9]/.test(trimmed);
-    };
-
+    let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -787,23 +774,6 @@ export default function Chat() {
         }
       }
 
-      // Fetch current presence state for action validation context
-      let presenceContext = "";
-      try {
-        const presenceStates = await base44.asServiceRole.entities.PresenceState.filter({ character_id: characterId });
-        const presenceState = presenceStates[0];
-        if (presenceState) {
-          const presenceNote = presenceState.state === 'same_space'
-            ? `\n\nPRESENCE: You are currently WITH the user (in same space). Physical actions and shared interactions are allowed. You've been together since ${presenceState.meeting_started_at ? new Date(presenceState.meeting_started_at).toLocaleTimeString() : 'earlier'}.`
-            : presenceState.meeting_scheduled
-            ? `\n\nPRESENCE: You have a scheduled meeting with the user at ${presenceState.scheduled_time ? new Date(presenceState.scheduled_time).toLocaleTimeString() : 'a specific time'}${presenceState.meeting_location ? ` at ${presenceState.meeting_location}` : ''}. You are NOT yet together. Act as if you're approaching or heading to the meeting, but NO physical interaction until you arrive and greet them in narrative. Once you're together, the system will detect your arrival and allow physical actions.`
-            : `\n\nPRESENCE: You are currently REMOTE from the user (separate locations). Do NOT use physical actions like touching, hugging, or sitting together. Communicate via text, calls, or video. If you want to meet, suggest it and the system will track it. If you're supposed to be arriving, narrate that arrival explicitly (e.g., "I walk up to you" or "I sit down across from you") and THEN physical actions are allowed.`;
-          presenceContext = presenceNote;
-        }
-      } catch (_) {
-        // Presence state fetch failed, continue without it
-      }
-
       // Get contextually relevant memories for long-term recall
       // Uses smart retrieval: scores ALL stored memories against the current message
       // so archived/older memories surface when relevant — never silently dropped
@@ -888,8 +858,10 @@ export default function Chat() {
       }
 
       // Perform web lookup asynchronously if user asked for one (non-blocking)
-      // Deferred to after LLM call to avoid rate limit
-      deferredWebLookup = lookupMatch && lookupMatch[1] ? { query: lookupMatch[1].trim() } : null;
+      if (lookupMatch && lookupMatch[1]) {
+        const query = lookupMatch[1].trim();
+        base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
+      }
 
       const userDisplayName = userSettings.fictional_world_name || null;
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
@@ -994,43 +966,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      const responseStructureGuide = `Respond ONLY with valid JSON in this exact format:
-{
-  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",
-  "narrative": "Optional action/behavior description. ONLY if you are DOING something. Use character names.",
-  "dialogue": "Optional spoken words. ONLY if you are SAYING something. Raw speech, no labels.",
-  "image_generation_prompt": "INTERNAL ONLY vivid image description for generation. Never shown to user.",
-  "image_generation_prompts": ["For multiple images only"],
-  "scheduled_events": [{"description": "What will happen", "trigger_time": "ISO 8601 UTC datetime"}]
-}
-
-Rules:
-- Include narrative ONLY if performing an action (movement, gesture, behavior, location change)
-- Include dialogue ONLY if speaking
-- Both can exist in same response — they will be rendered separately but feel connected
-- Never combine narrative and dialogue into one field
-- Only include scheduled_events if specific action with concrete time is committed to
-- Omit fields you don't use`;
-
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${presenceContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}
-
-${lengthInstruction}
-${intensityInstruction}
-
-Conversation so far:
-${conversationLog}
-
-Write your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.
-- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.
-- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.
-- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.
-- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.
-- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.
-- CRITICAL: Do NOT respond with only ellipses (...), dots (.), or punctuation. If you're pausing or hesitating, ALWAYS include actual words with the action. Example: "I need a second to think" or He pauses. "I'm not sure." Never return only "..." as your dialogue — always say something real.
-
-${responseStructureGuide}
-
-${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${playAsInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
@@ -1058,9 +994,9 @@ ${imageRule}`;
       }
 
 
-      // Robust parser: returns structured { message_type, narrative, dialogue, image_generation_prompt, image_generation_prompts, scheduled_events }
+      // Robust parser: returns structured { message_type, text_content, image_generation_prompt, image_generation_prompts, scheduled_events }
       const parseCharacterResponse = (raw) => {
-        if (!raw) return { message_type: "text_only", narrative: "", dialogue: "" };
+        if (!raw) return { message_type: "text_only", text_content: "" };
 
         let obj = null;
 
@@ -1080,48 +1016,38 @@ ${imageRule}`;
         }
 
         if (obj && typeof obj === "object") {
-          // NEW SCHEMA: narrative + dialogue
+          // Normalize: support both old schema (text/image_prompt) and new schema (text_content/image_generation_prompt)
           const messageType = obj.message_type || (obj.image_prompt || obj.image_prompts?.length > 0 ? "text_then_image" : "text_only");
-          const narrative = obj.narrative || "";
-          const dialogue = obj.dialogue || "";
-          // BACKWARDS COMPAT: fallback to old text_content/text if new fields absent
-          const textContent = obj.text_content || obj.text || (dialogue || narrative);
+          const textContent = obj.text_content || obj.text || "";
           const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
           const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
           return {
             message_type: messageType,
-            narrative: narrative,
-            dialogue: dialogue,
-            text_content: textContent, // for backwards compat
+            text_content: textContent,
             image_generation_prompt: imgPrompt,
             image_generation_prompts: imgPrompts,
             scheduled_events: obj.scheduled_events || [],
           };
         }
 
-        // 4. Fallback: try to extract fields
-        const narrativeMatch = raw.match(/"narrative"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        const dialogueMatch = raw.match(/"dialogue"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (narrativeMatch || dialogueMatch) {
-          return {
-            message_type: "text_only",
-            narrative: narrativeMatch ? JSON.parse(`"${narrativeMatch[1]}"`) : "",
-            dialogue: dialogueMatch ? JSON.parse(`"${dialogueMatch[1]}"`) : "",
-            image_generation_prompts: [],
-          };
+        // 4. Fallback: try to extract text_content or text field
+        const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+        if (textMatch) {
+          try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
+          catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [] }; }
         }
 
         // 5. Last resort: plain text
         const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
         if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
-          return { message_type: "text_only", narrative: "", dialogue: stripped, image_generation_prompts: [] };
+          return { message_type: "text_only", text_content: stripped, image_generation_prompts: [] };
         }
 
-        return { message_type: "text_only", narrative: "", dialogue: "", image_generation_prompts: [] };
+        return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       };
 
       let retries = 2;
-      let responseObj = { message_type: "text_only", narrative: "", dialogue: "", text_content: "", image_generation_prompts: [] };
+      let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1133,11 +1059,8 @@ ${imageRule}`;
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
-          // Exponential backoff: 8s, then 16s with jitter
-          const delayMs = Math.pow(2, 3 - retries) * 8000 + Math.random() * 3000;
-          console.log(`[RETRY] Rate limit hit, waiting ${Math.round(delayMs / 1000)}s before retry ${3 - retries}/2`);
           retries--;
-          await new Promise(r => setTimeout(r, delayMs));
+          await new Promise(r => setTimeout(r, 3000));
         }
       }
 
@@ -1145,30 +1068,12 @@ ${imageRule}`;
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
 
-      // NEW: Extract narrative and dialogue separately
-      let narrativeText = (responseObj.narrative || "").trim();
-      let dialogueText = (responseObj.dialogue || "").trim();
-      
-      // Backwards compat: if no narrative/dialogue but has text_content, treat as dialogue
-      if (!narrativeText && !dialogueText) {
-        dialogueText = hasText ? (responseObj.text_content?.trim() || "") : "";
+      // text_content is for visible dialogue ONLY — never an image prompt
+      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
+      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
+      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
+        responseText = "";
       }
-
-      // Safety net: if either looks like raw JSON or a prompt blob, clear it
-      if (narrativeText.startsWith("{") || narrativeText.startsWith("```") || narrativeText.startsWith("[IMAGE]")) {
-        narrativeText = "";
-      }
-      if (dialogueText.startsWith("{") || dialogueText.startsWith("```") || dialogueText.startsWith("[IMAGE]")) {
-        dialogueText = "";
-      }
-
-      // CRITICAL: Reject dialogue that is only punctuation/ellipses — enforce meaningful speech
-      if (dialogueText && !isMeaningfulDialogue(dialogueText)) {
-        console.log(`[DIALOGUE-VALIDATION] Rejected empty/punctuation-only dialogue: "${dialogueText}"`);
-        dialogueText = ""; // Clear invalid dialogue, will use fallback below
-      }
-
-      responseText = dialogueText || narrativeText; // Keep responseText for backwards compat logging
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
       imagePrompts = hasImage
@@ -1258,157 +1163,77 @@ ${imageRule}`;
       return imgMsg;
     };
 
-    // Helper: create a narrative message (action/behavior)
-    const createNarrativeMessage = async (narrativeContent) => {
-      if (!narrativeContent?.trim()) return null;
-      const narMsg = await base44.entities.Message.create({
+    // Helper: create a text-only message and auto-play voice
+    const createTextMessage = async (textContent) => {
+      if (!textContent?.trim()) return null;
+      const txtMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
         character_id: characterId,
         character_name: character.name,
-        content: narrativeContent,  // action description
-        is_narrative: true,  // marks this as action, not dialogue
+        content: textContent,  // visible dialogue only — never an image prompt
         emotional_state: emotionalState,
         timestamp: new Date().toISOString(),
       });
-      if (!narMsg?.id) return null;
-      setMessages(prev => prev.some(m => m.id === narMsg.id) ? prev : [...prev, narMsg]);
-      return narMsg;
-    };
-
-    // Helper: create a dialogue message and auto-play voice
-    const createDialogueMessage = async (dialogueContent) => {
-      if (!dialogueContent?.trim()) return null;
-      const dlgMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: dialogueContent,  // spoken words only
-        is_narrative: false,  // marks this as dialogue, not action
-        emotional_state: emotionalState,
-        timestamp: new Date().toISOString(),
-      });
-      if (!dlgMsg?.id) return null;
-      setMessages(prev => prev.some(m => m.id === dlgMsg.id) ? prev : [...prev, dlgMsg]);
-      // TTS: only fire on dialogue messages, only speak the dialogue
+      if (!txtMsg?.id) return null;
+      setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
+      // TTS: only fire on text messages, only speak visible text_content
       setTimeout(() => {
-        playCharacterVoice(dlgMsg.id, dialogueContent, character, userSettings, false);
+        playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
       }, 500);
-      return dlgMsg;
+      return txtMsg;
     };
 
-    // Track if any message was successfully sent and references
-    let anyMessageSent = false;
-    let primaryMsg = null;
+    let primaryTextMsg = null;
 
-    console.log("Narrative:", narrativeText);
-    console.log("Dialogue:", dialogueText);
+    if (msgType === "text_only") {
+      // --- TEXT ONLY ---
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
-    // --- SAFE SEQUENTIAL SUBMISSION: narrative and dialogue are independent ---
-    
-    // 1. Submit Narrative (if valid and present)
-    if (narrativeText && narrativeText.trim().length > 0) {
-      console.log("Submitting narrative...");
-      try {
-        const narMsg = await createNarrativeMessage(narrativeText);
-        if (narMsg) {
-          anyMessageSent = true;
-          if (!primaryMsg) primaryMsg = narMsg;
-          await new Promise(r => setTimeout(r, 300));
-        }
-      } catch (err) {
-        console.error("Narrative failed:", err);
-        // Continue to dialogue even if narrative fails
-      }
-    }
-
-    // 2. Submit Dialogue (if valid and present)
-    // CRITICAL: Only submit if dialogue is meaningful (not just punctuation)
-    if (dialogueText && dialogueText.trim().length > 0) {
-      if (isMeaningfulDialogue(dialogueText)) {
-        console.log("Submitting meaningful dialogue...");
-        try {
-          const dlgMsg = await createDialogueMessage(dialogueText);
-          if (dlgMsg) {
-            anyMessageSent = true;
-            if (!primaryMsg) primaryMsg = dlgMsg;
-            await new Promise(r => setTimeout(r, 300));
-          }
-        } catch (err) {
-          console.error("Dialogue failed:", err);
+    } else if (msgType === "image_only") {
+      // --- IMAGE ONLY --- send image as standalone message, no text bubble
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 300);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 300 + i * 800);
         }
       } else {
-        console.log(`[SKIP-DIALOGUE] Rejecting non-meaningful dialogue: "${dialogueText}"`);
-        // Will fall through to fallback if no narrative or images succeed
+        // Fallback: LLM said image_only but gave no prompt — send text if available
+        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
       }
-    }
 
-    // 3. Images come after text
-    if (imagePrompts.length > 0 && (msgType === "text_then_image" || msgType === "image_then_text" || msgType === "image_only")) {
-      const initialImageDelay = anyMessageSent ? 300 : 0;
-      try {
-        const firstImageMsg = await createImageMessage(imagePrompts[0], initialImageDelay);
-        if (firstImageMsg) anyMessageSent = true;
-
+    } else if (msgType === "text_then_image") {
+      // --- TEXT FIRST, THEN IMAGE ---
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 800);
         for (let i = 1; i < imagePrompts.length; i++) {
-          const subsequentImageMsg = await createImageMessage(imagePrompts[i], 300 + i * 800);
-          if (subsequentImageMsg) anyMessageSent = true;
+          await createImageMessage(imagePrompts[i], 800 + i * 800);
         }
-      } catch (err) {
-        console.error("Image generation failed:", err);
-        // Continue — don't block if images fail
       }
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else if (msgType === "image_then_text") {
+      // --- IMAGE FIRST, THEN TEXT ---
+      if (imagePrompts.length > 0) {
+        await createImageMessage(imagePrompts[0], 300);
+        for (let i = 1; i < imagePrompts.length; i++) {
+          await createImageMessage(imagePrompts[i], 300 + i * 800);
+        }
+      }
+      // Text arrives after a short delay so image appears first visually
+      await new Promise(r => setTimeout(r, 600));
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
+
+    } else {
+      // Unknown type fallback — text only
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
     }
 
-    // If no meaningful dialogue/narrative generated, create a proper verbal fallback
-    if (!anyMessageSent || (!dialogueText && !narrativeText && imagePrompts.length === 0)) {
-      console.log("[FALLBACK] No meaningful dialogue/narrative. Creating proper verbal fallback...");
-      
-      // Use a context-appropriate fallback response instead of "..."
-      const fallbackResponses = {
-        thinking: "Give me a second to think about that.",
-        hesitating: "I'm not sure what to say right now.",
-        listening: "I'm listening.",
-        processing: "Hold on, I'm processing.",
-        pausing: "Let me think for a moment.",
-        responding: "Yeah, I hear you."
-      };
-      
-      // Pick context-appropriate fallback based on character status
-      let fallbackContent = fallbackResponses.listening;
-      const charStatus = getCharacterStatus(character);
-      if (charStatus === 'asleep') fallbackContent = "(offline - asleep)";
-      else if (charStatus === 'work') fallbackContent = "I'm at work, give me a second.";
-      else if (charStatus === 'school') fallbackContent = "I'm in class, I'll respond when I can.";
-      else if (charStatus === 'gym') fallbackContent = "I'm working out, just a sec.";
-      else if (Math.random() > 0.5) fallbackContent = fallbackResponses.processing;
-      
-      try {
-        const fallbackMsg = await base44.entities.Message.create({
-          conversation_id: convoId,
-          sender_type: "character",
-          character_id: characterId,
-          character_name: character.name,
-          content: fallbackContent,  // Real speech, not punctuation
-          is_narrative: false,
-          emotional_state: emotionalState,
-          timestamp: new Date().toISOString(),
-        });
-        if (fallbackMsg?.id) {
-          anyMessageSent = true;
-          setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
-          console.log("[FALLBACK] Created verbal fallback: " + fallbackMsg.id);
-        } else {
-          setSendError("Character response failed to save. Try again.");
-          return;
-        }
-      } catch (fallbackErr) {
-        console.error("[FALLBACK] Fallback creation failed:", fallbackErr);
-        setSendError("Character response failed to save. Try again.");
-        return;
-      }
-    }
+    // Use primary text message for relationship/conversation tracking (or first image msg id for context)
+    const charMsg = primaryTextMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
@@ -1450,12 +1275,10 @@ Reply with ONLY the single emoji or the word "none".`,
         const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
         if (picked && validEmojis.includes(picked)) {
           // One character reaction per message — replace any existing character reaction
-          const nonCharReactions = (userMsg?.reactions || []).filter(r => r.reactor_type !== "character");
+          const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
           const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
-          if (userMsg?.id) {
-            await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
-            setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
-          }
+          await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
+          setMessages(prev => prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m));
         }
       }, 2000 + Math.random() * 3000);
     }
@@ -1503,43 +1326,19 @@ Reply with ONLY the single emoji or the word "none".`,
     }).catch(() => {});
 
     // Extract memories from this turn (fire-and-forget)
-    // Pass both narrative and dialogue so memory captures the full moment
-    if (narrativeText || dialogueText) {
+    if (responseText) {
       base44.functions.invoke("extractMemoriesFromTurn", {
         characterId,
         conversationId: convoId,
         userMessage: text,
-        characterNarrative: narrativeText, // action/behavior
-        characterDialogue: dialogueText,   // spoken words
-        characterReply: narrativeText ? `${narrativeText} "${dialogueText}"` : dialogueText, // for backwards compat
-      }).catch(() => {});
-    }
-
-    // Detect scheduled meetings from this conversation turn (fire-and-forget)
-    base44.functions.invoke("extractScheduledMeeting", {
-      characterId,
-      userMessage: text,
-      characterResponse: responseText,
-      recentMessages: recentMsgs.slice(-5),
-      conversationId: convoId,
-    }).catch(() => {});
-
-    // Detect and update presence state from narrative (fire-and-forget)
-    // Only look at narrative text for presence changes (actions/movement)
-    if (narrativeText) {
-      base44.functions.invoke("detectAndUpdatePresence", {
-        characterId,
-        narrativeText: narrativeText,
-        conversationId: convoId,
+        characterReply: responseText,
       }).catch(() => {});
     }
 
     base44.functions.invoke("updateRelationshipLevels", {
       characterId,
       userMessage: text,
-      characterNarrative: narrativeText || null,
-      characterDialogue: dialogueText || null,
-      characterReply: (narrativeText ? `${narrativeText} ` : "") + (dialogueText || "(action sent)"),
+      characterReply: responseText || "(image)",
       recentMessages: recentMsgs,
       playingAsCharacterId: activeCharacter?.id || null,
     }).then(async res => {
@@ -1562,19 +1361,12 @@ Reply with ONLY the single emoji or the word "none".`,
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
-    const previewText = dialogueText || narrativeText?.substring(0, 60) || "(message sent)";
+    const previewText = responseText || "(image sent)";
     await base44.entities.Conversation.update(convoId, {
       last_message_preview: previewText.substring(0, 100),
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
     });
-
-    // Execute deferred web lookup after LLM response succeeds (fire-and-forget)
-    if (deferredWebLookup) {
-      setTimeout(() => {
-        base44.functions.invoke('performWebLookup', { characterId, searchQuery: deferredWebLookup.query }).catch(() => {});
-      }, 1000);
-    }
   };
 
   return (

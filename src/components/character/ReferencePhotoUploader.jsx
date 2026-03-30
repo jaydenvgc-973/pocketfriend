@@ -73,18 +73,18 @@ export default function ReferencePhotoUploader({
 
     // Base photorealistic directive
     promptParts.push(`Realistic portrait photo of ${descriptor}.`);
-    promptParts.push(`Natural lighting, candid, authentic. Not a stock photo.`);
+    promptParts.push(`Candid, natural lighting, authentic. Not a stock photo.`);
 
     if (imageCount > 0 && hasText) {
-      promptParts.push(`IDENTITY LOCK — copy these features EXACTLY from the reference photos (${weightPercent}% influence): face shape, facial bone structure, facial features (eyes, nose, lips, eyebrows), skin tone, ethnicity/nationality, hair color, hair texture, hair length and style, and body type/build. Do NOT copy clothing, background, or setting from the reference — those can be anything.`);
-      promptParts.push(`Additional appearance details to layer in (${weightPercent}% influence): ${descriptionText.trim()}`);
+      promptParts.push(`Match the person's exact appearance from the reference photos (${weightPercent}% influence).`);
+      promptParts.push(`Additional appearance details (${weightPercent}% influence): ${descriptionText.trim()}`);
     } else if (imageCount > 0) {
-      promptParts.push(`IDENTITY LOCK — copy these features EXACTLY from the reference photos (100% influence): face shape, facial bone structure, facial features (eyes, nose, lips, eyebrows), skin tone, ethnicity/nationality, hair color, hair texture, hair length and style, and body type/build. This person must be immediately recognizable as the same individual from the reference photos. Do NOT copy clothing, background, or setting — generate a fresh scene instead.`);
+      promptParts.push(`Match the person's exact appearance from the reference photos (100% reference influence).`);
     } else if (hasText) {
       promptParts.push(`Appearance details (100% influence): ${descriptionText.trim()}`);
     }
 
-    promptParts.push(`STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Not an illustration, not a painting, not a digital render. Natural skin texture, real human proportions, correct facial symmetry.`);
+    promptParts.push(`STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. Not an illustration, not a painting, not a digital render, natural skin texture, real human proportions.`);
 
     const finalPrompt = promptParts.join(" ");
 

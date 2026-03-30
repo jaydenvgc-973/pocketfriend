@@ -21,7 +21,6 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const time = message.timestamp ? format(new Date(message.timestamp), "h:mm a") : "";
   const hasReactions = message.reactions?.length > 0;
   const [showDelete, setShowDelete] = useState(false);
-  const isDarkTheme = true; // app uses dark theme
   const [showImageDelete, setShowImageDelete] = useState(false);
   const [imageRetrying, setImageRetrying] = useState(false);
   const [imageRetryFailed, setImageRetryFailed] = useState(false);
@@ -76,46 +75,36 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       className={`flex items-center gap-2 ${isNarrative ? "justify-center" : isUser ? "justify-end" : "justify-start"} px-4 mb-1`}
     >
       <div className={`relative ${isNarrative ? "max-w-2xl" : "max-w-[80%]"} ${isNarrative ? "items-center" : isUser ? "items-end" : "items-start"} flex flex-col`}>
-        {/* Narrative (action) — no message bubble, italicized, centered, distinct styling */}
-        {isNarrative && (
-          <div className="text-center px-4 py-2.5 italic text-muted-foreground text-sm leading-relaxed max-w-lg">
-            {message.content}
-          </div>
-        )}
-
-        {!isNarrative && showName && !isUser && message.character_name && (
+        {showName && !isUser && !isNarrative && message.character_name && (
           <span className="text-xs text-primary/70 ml-3 mb-1 font-medium">{message.character_name}</span>
         )}
-        {!isNarrative && isUser && playingAsLabel && (
+        {isUser && !isNarrative && playingAsLabel && (
           <span className="text-xs text-amber-400/80 mr-3 mb-1 font-medium">{playingAsLabel}</span>
         )}
 
-        {/* Delete button — not shown for narratives */}
-        {!isNarrative && (
-          <AnimatePresence>
-            {showDelete && (
-              <motion.button
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                className={`absolute z-50 ${isUser ? "-right-2" : "-left-2"} top-1/2 -translate-y-1/2 flex items-center justify-center p-1.5 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors shadow-md`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(message.id);
-                  setShowDelete(false);
-                }}
-                title="Delete message"
-              >
-                <X className="w-4 h-4" />
-              </motion.button>
-            )}
-          </AnimatePresence>
-        )}
+        {/* Delete button */}
+        <AnimatePresence>
+          {showDelete && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              className={`absolute z-50 ${isUser ? "-right-2" : "-left-2"} top-1/2 -translate-y-1/2 flex items-center justify-center p-1.5 rounded-full bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors shadow-md`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(message.id);
+                setShowDelete(false);
+              }}
+              title="Delete message"
+            >
+              <X className="w-4 h-4" />
+            </motion.button>
+          )}
+        </AnimatePresence>
 
-        {/* Message bubble with reaction trigger — not shown for narratives */}
-        {!isNarrative && (
-          <div className="group relative" onClick={() => setShowDelete(!showDelete)} onKeyDown={() => {}}>
-            <div className={`${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}>
+        {/* Message bubble with reaction trigger */}
+        <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
+          <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {/* Image placeholder: character tried to send an image but URL never attached */}
             {isImagePlaceholder && (
               <div className="w-56 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-secondary/60 p-4 py-5">
@@ -218,34 +207,32 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               onSelect={handleRegenSelect}
               isRegenerating={isRegenerating}
             />
-              {message.content && (
-                <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
-              )}
-            </div>
-
-            {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
-            {!isUser && (
-              <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
-                {hasReactions && (
-                  <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
-                )}
-                {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
-              </div>
+            {message.content && (
+              <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
             )}
           </div>
-        )}
-      
 
-        {!isNarrative && time && (
+          {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
+          {!isNarrative && !isUser && (
+            <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
+              {hasReactions && (
+                <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
+              )}
+              {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
+            </div>
+          )}
+        </div>
+
+        {time && (
           <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
         )}
         
-        {!isNarrative && voiceError && !isUser && (
+        {voiceError && !isUser && (
           <span className="text-[10px] text-red-400 mt-1 ml-2">Voice error: {voiceError}</span>
         )}
       </div>
 
-      {/* Voice button outside bubble on the right - visible on dialogue messages only */}
+      {/* Voice button outside bubble on the right - visible on all character messages */}
       {!isNarrative && !isUser && onPlayVoice && (
         <motion.button
           whileHover={{ scale: 1.1 }}
