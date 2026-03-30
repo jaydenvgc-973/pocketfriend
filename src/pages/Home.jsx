@@ -11,7 +11,7 @@ import CharacterInteractionSimulator from "@/components/home/CharacterInteractio
 import BottomNav from "@/components/BottomNav";
 import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
-import ThomasPopulationFix from "@/components/home/ThomasPopulationFix";
+import ThomasAndersonFix from "@/components/home/ThomasAndersonFix";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
@@ -119,10 +119,10 @@ export default function Home() {
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
-  // Check if Thomas exists in database but is missing from active display
-  const thomasExists = characters.some(c => c.name === 'Thomas');
-  const thomasInDisplay = activeCustomChars.some(c => c.name === 'Thomas');
-  const showThomasFix = thomasExists && !thomasInDisplay;
+  // Check if Thomas Anderson exists in database but is missing from active display
+  const thomasAnderson = characters.find(c => c.name === 'Thomas Anderson' || c.name === 'Thomas');
+  const thomasInDisplay = activeCustomChars.some(c => c.id === thomasAnderson?.id);
+  const showThomasAndersonFix = thomasAnderson && !thomasInDisplay;
 
   return (
     <div className="min-h-screen bg-background">
@@ -161,8 +161,8 @@ export default function Home() {
        </div>
 
       <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
-        {showThomasFix && (
-          <ThomasPopulationFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
+        {showThomasAndersonFix && (
+          <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
         )}
         {defaultChar && (
           <div>
