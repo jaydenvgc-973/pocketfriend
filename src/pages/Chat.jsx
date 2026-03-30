@@ -1277,7 +1277,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     }
 
     // Use primary text message for relationship/conversation tracking (or first image msg id for context)
-    const charMsg = primaryTextMsg;
+    const charMsg = primaryMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
