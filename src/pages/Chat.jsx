@@ -1035,7 +1035,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       };
 
       // Exponential backoff retry for rate limits
-      const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 5) => {
+      const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
         let retryCount = 0;
         while (retryCount <= maxRetries) {
           try {
@@ -1045,17 +1045,12 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
               model
             });
           } catch (err) {
-            const errMsg = err?.message || String(err);
-            const isRateLimit = errMsg.includes('rate') || errMsg.includes('429') || errMsg.includes('Rate limit') || errMsg.includes('exceeded');
+            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
+            if (!isRateLimit || retryCount === maxRetries) throw err;
             
-            if (!isRateLimit || retryCount === maxRetries) {
-              console.error('[LLM_ERROR]', errMsg);
-              throw err;
-            }
-            
-            // Exponential backoff: 3s, 6s, 12s, 24s, 48s
-            const delayMs = Math.pow(2, retryCount + 1) * 1500;
-            console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${Math.round(delayMs / 1000)}s`);
+            // Exponential backoff: 2s, 4s, 8s
+            const delayMs = Math.pow(2, retryCount + 1) * 1000;
+            console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`);
             await new Promise(r => setTimeout(r, delayMs));
             retryCount++;
           }
@@ -1065,7 +1060,6 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       try {
         response = await callLLMWithRetry(fullPrompt);
-        // Parse using local parser
         responseObj = parseCharacterResponse(response);
       } catch (llmErr) {
         throw llmErr;
@@ -1075,10 +1069,10 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
 
-      // Extract clean text content from parsed response
-      responseText = (responseObj.text_content || "").trim();
-      // Safety: reject if still looks like JSON/parser output
-      if (!responseText || responseText.startsWith("{") || responseText.startsWith("[") || responseText.startsWith("```")) {
+      // text_content is for visible dialogue ONLY — never an image prompt
+      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
+      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
+      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
         responseText = "";
       }
 
@@ -1125,35 +1119,6 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     }
 
     setIsTyping(false);
-
-    // --- PARSE CHARACTER RESPONSE INTO ACTION + DIALOGUE ---
-    // Try backend function first, fall back to local parser if needed
-    let actionText = null;
-    let dialogueText = responseText; // Start with clean extracted text
-
-    try {
-      const parseRes = await base44.functions.invoke('parseCharacterResponse', {
-        characterResponse: response,
-        characterName: character.name,
-      });
-      // Backend successfully parsed — use those values
-      if (parseRes?.data?.action) actionText = parseRes.data.action?.trim() || null;
-      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue?.trim() || dialogueText;
-    } catch (_parseErr) {
-      // Backend failed: fall back to local parser + responseText
-      // actionText stays null (no action extracted locally)
-      // dialogueText already set to responseText above
-    }
-    
-    // Minimal validation: only reject if it's clearly metadata, not normal dialogue
-    // (avoid over-rejecting valid speech that might contain brackets or braces)
-    if (actionText && actionText.startsWith("{") && actionText.includes("message_type")) {
-      actionText = null;
-    }
-    // For dialogue, only reject if it's pure JSON/metadata structure
-    if (dialogueText && ((dialogueText.startsWith("{") && dialogueText.includes("message_type")) || dialogueText === "" || dialogueText === null)) {
-      dialogueText = null;
-    }
 
     // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
@@ -1222,43 +1187,10 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 
     let primaryTextMsg = null;
 
-    // --- SUBMIT ACTION + DIALOGUE SEPARATELY ---
-    // Use the new system to submit action first, then dialogue
-    if (actionText || dialogueText) {
-      try {
-        const submitRes = await base44.functions.invoke('submitCharacterActionAndDialogue', {
-          characterId,
-          characterName: character.name,
-          conversationId: convoId,
-          action: actionText,
-          dialogue: dialogueText,
-          emotionalState,
-          isAutonomous: false,
-        });
-
-        if (submitRes?.data?.success && submitRes.data.messages?.length > 0) {
-          // Add all submitted messages to local state
-          submitRes.data.messages.forEach(msg => {
-            setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-          });
-          // Use the dialogue message as primary, or action if no dialogue
-          primaryTextMsg = submitRes.data.messages.find(m => !m.is_narrative) || submitRes.data.messages[0];
-        }
-      } catch (submitErr) {
-        console.error('Failed to submit action/dialogue:', submitErr);
-        setSendError("Failed to save character response. Try again.");
-        return;
-      }
-    }
-
-    if (!primaryTextMsg && msgType === "text_only") {
-      // Fallback: create text message directly only if we have real dialogue
-      if (dialogueText?.trim()) {
-        primaryTextMsg = await createTextMessage(dialogueText);
-      }
-      // If still no message after narrative+dialogue submission, that's the real issue
-      // Don't use generic error text—only fail if truly nothing submitted
-      if (!primaryTextMsg) { setSendError("Failed to save character response. Try again."); return; }
+    if (msgType === "text_only") {
+      // --- TEXT ONLY ---
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
+      if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_only") {
       // --- IMAGE ONLY --- send image as standalone message, no text bubble
@@ -1269,22 +1201,19 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         }
       } else {
         // Fallback: LLM said image_only but gave no prompt — send text if available
-        if (dialogueText) {
-          primaryTextMsg = await createTextMessage(dialogueText);
-        }
+        primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
       }
 
     } else if (msgType === "text_then_image") {
       // --- TEXT FIRST, THEN IMAGE ---
-      if (dialogueText) {
-        primaryTextMsg = await createTextMessage(dialogueText);
-      }
+      primaryTextMsg = await createTextMessage(responseText || "");
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 800);
         for (let i = 1; i < imagePrompts.length; i++) {
           await createImageMessage(imagePrompts[i], 800 + i * 800);
         }
       }
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_then_text") {
       // --- IMAGE FIRST, THEN TEXT ---
@@ -1296,15 +1225,12 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       }
       // Text arrives after a short delay so image appears first visually
       await new Promise(r => setTimeout(r, 600));
-      if (dialogueText) {
-        primaryTextMsg = await createTextMessage(dialogueText);
-      }
+      primaryTextMsg = await createTextMessage(responseText || "");
+      if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else {
       // Unknown type fallback — text only
-      if (dialogueText) {
-        primaryTextMsg = await createTextMessage(dialogueText);
-      }
+      primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
     }
 
     // Use primary text message for relationship/conversation tracking (or first image msg id for context)
@@ -1401,14 +1327,12 @@ Reply with ONLY the single emoji or the word "none".`,
     }).catch(() => {});
 
     // Extract memories from this turn (fire-and-forget)
-    // Include both action and dialogue so character remembers what they did
-    if (actionText || dialogueText) {
+    if (responseText) {
       base44.functions.invoke("extractMemoriesFromTurn", {
         characterId,
         conversationId: convoId,
         userMessage: text,
-        characterAction: actionText,
-        characterReply: dialogueText,
+        characterReply: responseText,
       }).catch(() => {});
     }
 
@@ -1444,36 +1368,6 @@ Reply with ONLY the single emoji or the word "none".`,
       last_message_date: new Date().toISOString(),
       emotional_context: emotionalState,
     });
-
-    // AUTONOMY: Occasionally generate autonomous actions (fire-and-forget)
-    // Characters should act independently sometimes, not just respond to user messages
-    if (Math.random() > 0.7) {
-      setTimeout(() => {
-        base44.functions.invoke('generateAutonomousAction', {
-          characterId,
-          characterName: character.name,
-          characterSummary: character.personality_summary,
-          recentMessages: messages.slice(-5),
-          currentLocation: character.current_activity,
-        }).then(res => {
-          if (res?.data?.success && res.data.action) {
-            // Submit autonomous action as narrative entry
-            base44.entities.Message.create({
-              conversation_id: convoId,
-              sender_type: 'character',
-              character_id: characterId,
-              character_name: character.name,
-              content: res.data.action,
-              emotional_state: emotionalState,
-              is_narrative: true,
-              timestamp: new Date().toISOString(),
-            }).then(msg => {
-              setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-            }).catch(() => {});
-          }
-        }).catch(() => {});
-      }, 3000 + Math.random() * 5000);
-    }
   };
 
   return (
