@@ -1042,9 +1042,9 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
       }
 
 
-      // Robust parser: returns structured { message_type, text_content, image_generation_prompt, image_generation_prompts, scheduled_events }
+      // Robust parser: returns structured single message or array of messages
       const parseCharacterResponse = (raw) => {
-        if (!raw) return { message_type: "text_only", text_content: "" };
+        if (!raw) return [{ message_type: "text_only", is_narrative: false, text_content: "" }];
 
         let obj = null;
 
@@ -1057,47 +1057,66 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
           if (fenceMatch) try { obj = JSON.parse(fenceMatch[1].trim()); } catch {}
         }
 
-        // 3. Try to find a JSON object anywhere in the string
+        // 3. Try to find a JSON object or array anywhere in the string
         if (!obj) {
-          const braceMatch = raw.match(/\{[\s\S]*\}/);
-          if (braceMatch) try { obj = JSON.parse(braceMatch[0]); } catch {}
+          const match = raw.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
+          if (match) try { obj = JSON.parse(match[0]); } catch {}
         }
 
         if (obj && typeof obj === "object") {
-          // Normalize: support both old schema (text/image_prompt) and new schema (text_content/image_generation_prompt)
+          // If it's an array, process each message
+          if (Array.isArray(obj)) {
+            return obj.map(item => {
+              const messageType = item.message_type || "text_only";
+              const textContent = item.text_content || item.text || "";
+              const imgPrompt = item.image_generation_prompt || item.image_prompt || null;
+              const imgPrompts = item.image_generation_prompts || item.image_prompts || (imgPrompt ? [imgPrompt] : []);
+              const isNarrative = typeof item.is_narrative === 'boolean' ? item.is_narrative : false;
+              return {
+                message_type: messageType,
+                is_narrative: isNarrative,
+                text_content: textContent,
+                image_generation_prompt: imgPrompt,
+                image_generation_prompts: imgPrompts,
+                scheduled_events: item.scheduled_events || [],
+              };
+            });
+          }
+          
+          // Single object
           const messageType = obj.message_type || (obj.image_prompt || obj.image_prompts?.length > 0 ? "text_then_image" : "text_only");
           const textContent = obj.text_content || obj.text || "";
           const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
           const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
           const isNarrative = typeof obj.is_narrative === 'boolean' ? obj.is_narrative : false;
-          return {
+          return [{
             message_type: messageType,
             is_narrative: isNarrative,
             text_content: textContent,
             image_generation_prompt: imgPrompt,
             image_generation_prompts: imgPrompts,
             scheduled_events: obj.scheduled_events || [],
-          };
+          }];
         }
 
         // 4. Fallback: try to extract text_content or text field
         const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
         if (textMatch) {
-          try { return { message_type: "text_only", is_narrative: false, text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
-          catch { return { message_type: "text_only", is_narrative: false, text_content: textMatch[1], image_generation_prompts: [] }; }
+          try { return [{ message_type: "text_only", is_narrative: false, text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }]; }
+          catch { return [{ message_type: "text_only", is_narrative: false, text_content: textMatch[1], image_generation_prompts: [] }]; }
         }
 
         // 5. Last resort: plain text
         const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
         if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
-          return { message_type: "text_only", is_narrative: false, text_content: stripped, image_generation_prompts: [] };
+          return [{ message_type: "text_only", is_narrative: false, text_content: stripped, image_generation_prompts: [] }];
         }
 
-        return { message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] };
+        return [{ message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] }];
       };
 
       let retries = 2;
-      let responseObj = { message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] };
+      let responseObjs = [{ message_type: "text_only", is_narrative: false, text_content: "", image_generation_prompts: [] }];
       while (retries >= 0) {
         try {
           response = await base44.integrations.Core.InvokeLLM({
@@ -1105,7 +1124,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
             add_context_from_internet: true,
             model: 'gemini_3_flash'
           });
-          responseObj = parseCharacterResponse(response);
+          responseObjs = parseCharacterResponse(response);
           break;
         } catch (llmErr) {
           if (retries === 0) throw llmErr;
@@ -1114,6 +1133,8 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         }
       }
 
+      // Process only the first message for primary response (will handle array after text generation)
+      const responseObj = responseObjs[0];
       msgType = responseObj.message_type || "text_only";
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
@@ -1291,6 +1312,21 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
     } else {
       // Unknown type fallback — text only
       primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.", responseObj.is_narrative);
+    }
+
+    // Handle additional messages if LLM returned an array (e.g., separate narrative + dialogue)
+    if (responseObjs.length > 1) {
+      let delayMs = 800;
+      for (let i = 1; i < responseObjs.length; i++) {
+        const additionalMsg = responseObjs[i];
+        setTimeout(async () => {
+          const additionalText = additionalMsg.text_content?.trim() || "";
+          if (additionalText) {
+            await createTextMessage(additionalText, additionalMsg.is_narrative);
+          }
+        }, delayMs);
+        delayMs += 800;
+      }
     }
 
     // Use primary text message for relationship/conversation tracking (or first image msg id for context)
