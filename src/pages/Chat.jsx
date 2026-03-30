@@ -1045,9 +1045,8 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
               model
             });
           } catch (err) {
-            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('exceeded');
-            if (!isRateLimit) throw err; // Not a rate limit, fail immediately
-            if (retryCount >= maxRetries) throw err; // Hit max retries, give up
+            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
+            if (!isRateLimit || retryCount === maxRetries) throw err;
             
             // Exponential backoff: 2s, 4s, 8s
             const delayMs = Math.pow(2, retryCount + 1) * 1000;
@@ -1125,7 +1124,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     // --- PARSE CHARACTER RESPONSE INTO ACTION + DIALOGUE ---
     // Try backend function first, fall back to local parser if needed
     let actionText = null;
-    let dialogueText = responseText; // Start with clean extracted text
+    let dialogueText = null;
 
     try {
       const parseRes = await base44.functions.invoke('parseCharacterResponse', {
@@ -1134,20 +1133,23 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       });
       // Backend successfully parsed — use those values
       if (parseRes?.data?.action) actionText = parseRes.data.action?.trim() || null;
-      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue?.trim() || dialogueText;
+      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue?.trim() || null;
     } catch (_parseErr) {
-      // Backend failed: fall back to local parser + responseText
-      // actionText stays null (no action extracted locally)
-      // dialogueText already set to responseText above
+      // Backend failed: fall back to treating entire response as dialogue
+      dialogueText = (responseText || "").trim() || null;
     }
     
-    // Minimal validation: only reject if it's clearly metadata, not normal dialogue
-    // (avoid over-rejecting valid speech that might contain brackets or braces)
+    // Safety: if we got narrative but no dialogue, use full response as dialogue
+    // (they often contain both and should be available)
+    if (actionText && !dialogueText) {
+      dialogueText = responseText?.trim() || null;
+    }
+    
+    // Reject only if clearly internal metadata
     if (actionText && actionText.startsWith("{") && actionText.includes("message_type")) {
       actionText = null;
     }
-    // For dialogue, only reject if it's pure JSON/metadata structure
-    if (dialogueText && ((dialogueText.startsWith("{") && dialogueText.includes("message_type")) || dialogueText === "" || dialogueText === null)) {
+    if (dialogueText && dialogueText.startsWith("{") && dialogueText.includes("message_type")) {
       dialogueText = null;
     }
 
