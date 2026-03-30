@@ -221,7 +221,6 @@ export default function CreateCharacter() {
 
   const generateName = async () => {
     setIsGeneratingName(true);
-    // Use built-in name pool with anti-repetition logic
     const { first_name, last_name } = generateRandomName();
     setData(prev => {
       const next = { ...prev, first_name, last_name, middle_name: "" };

@@ -3,8 +3,10 @@ import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Gamepad2, X } from "lucide-react";
 import GameContainer from "./GameContainer";
+import FightingGame from "./FightingGame";
 
 const GAMES = [
+  { id: "fighting",     label: "Fight Night",   emoji: "⚔️", desc: "Turn-based retro fighting — no mercy",    color: "from-red-500/20 to-orange-600/10" },
   { id: "tictactoe",    label: "Tic-Tac-Toe",   emoji: "⭕", desc: "Classic 3×3 strategy — outsmart the AI",   color: "from-amber-500/20 to-yellow-600/10" },
   { id: "dotsandboxes", label: "Dots & Boxes",   emoji: "📦", desc: "Connect lines, claim boxes, score points", color: "from-blue-500/20 to-indigo-600/10" },
   { id: "pool",         label: "Pool",           emoji: "🎱", desc: "Aim & shoot — sink your balls first",      color: "from-green-500/20 to-emerald-700/10" },
@@ -98,14 +100,35 @@ export default function GameLauncher({ character, conversationId, onGameEnd }) {
         document.body
       )}
 
-      <GameContainer
-        isOpen={!!activeGame}
-        game={activeGame}
-        character={character}
-        conversationId={conversationId}
-        onClose={() => setActiveGame(null)}
-        onGameEnd={handleGameEnd}
-      />
+      {activeGame === 'fighting' ? (
+        <AnimatePresence>
+          {activeGame && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
+            >
+              <FightingGame
+                character={character}
+                onEnd={() => {
+                  setActiveGame(null);
+                  handleGameEnd({ gameId: 'fighting' });
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      ) : (
+        <GameContainer
+          isOpen={!!activeGame}
+          game={activeGame}
+          character={character}
+          conversationId={conversationId}
+          onClose={() => setActiveGame(null)}
+          onGameEnd={handleGameEnd}
+        />
+      )}
     </>
   );
 }
