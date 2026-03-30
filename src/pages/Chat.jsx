@@ -400,13 +400,18 @@ export default function Chat() {
     if (unsubscribeRef.current) unsubscribeRef.current();
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Only process events for this conversation and character combo
+      // Only process events for this conversation
       if (event.data?.conversation_id !== conversationId) return;
 
       if (event.type === "create") {
+        console.log(`[SUBSCRIPTION] Message created: id=${event.data.id.substring(0,8)} | sender=${event.data.sender_type} | content="${event.data.content?.substring(0,50)}"  | convId=${event.data.conversation_id?.substring(0,8)}`);
         setMessages(prev => {
           // Prevent duplicates: check if message already exists
-          if (prev.some(m => m.id === event.data.id)) return prev;
+          if (prev.some(m => m.id === event.data.id)) {
+            console.log(`[SUBSCRIPTION] Duplicate detected, skipping`);
+            return prev;
+          }
+          console.log(`[SUBSCRIPTION] Adding message to state`);
           return [...prev, event.data];
         });
         
@@ -1246,6 +1251,7 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
     // Helper: create a text-only message and auto-play voice
     const createTextMessage = async (textContent, isNarrative = false) => {
       if (!textContent?.trim()) return null;
+      console.log(`[CREATE-TEXT] Creating text message | convoId=${convoId.substring(0,8)} | charId=${characterId.substring(0,8)} | text="${textContent.substring(0,50)}"`);
       const txtMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
@@ -1256,7 +1262,9 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         is_narrative: isNarrative,
         timestamp: new Date().toISOString(),
       });
+      console.log(`[CREATE-TEXT] Message created: id=${txtMsg?.id?.substring(0,8)} | success=${!!txtMsg?.id}`);
       if (!txtMsg?.id) return null;
+      console.log(`[CREATE-TEXT] Adding to local state`);
       setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
       // TTS: only fire on text messages, only speak visible text_content (skip narratives)
       if (!isNarrative) {
