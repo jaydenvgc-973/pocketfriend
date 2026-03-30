@@ -288,10 +288,17 @@ export default function Chat() {
     const loadConvo = async () => {
       try {
         // Fetch conversations for this character
-        const convos = await base44.entities.Conversation.filter(
+        // STRICT ISOLATION: for direct/phone, only use conversations where character_ids contains
+        // EXACTLY this one character (length === 1). This prevents cross-character contamination.
+        const allConvos = await base44.entities.Conversation.filter(
           { type: chatType, character_ids: [characterId], created_by: currentUser.email },
           "-updated_date",
-          1
+          20
+        );
+        const convos = allConvos.filter(c =>
+          c.character_ids &&
+          c.character_ids.length === 1 &&
+          c.character_ids[0] === characterId
         );
 
         let convoId = null;
