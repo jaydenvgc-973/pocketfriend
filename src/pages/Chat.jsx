@@ -1124,7 +1124,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     // --- PARSE CHARACTER RESPONSE INTO ACTION + DIALOGUE ---
     // Try backend function first, fall back to local parser if needed
     let actionText = null;
-    let dialogueText = null;
+    let dialogueText = responseText; // Start with clean extracted text
 
     try {
       const parseRes = await base44.functions.invoke('parseCharacterResponse', {
@@ -1133,23 +1133,20 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       });
       // Backend successfully parsed — use those values
       if (parseRes?.data?.action) actionText = parseRes.data.action?.trim() || null;
-      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue?.trim() || null;
+      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue?.trim() || dialogueText;
     } catch (_parseErr) {
-      // Backend failed: fall back to treating entire response as dialogue
-      dialogueText = (responseText || "").trim() || null;
+      // Backend failed: fall back to local parser + responseText
+      // actionText stays null (no action extracted locally)
+      // dialogueText already set to responseText above
     }
     
-    // Safety: if we got narrative but no dialogue, use full response as dialogue
-    // (they often contain both and should be available)
-    if (actionText && !dialogueText) {
-      dialogueText = responseText?.trim() || null;
-    }
-    
-    // Reject only if clearly internal metadata
+    // Minimal validation: only reject if it's clearly metadata, not normal dialogue
+    // (avoid over-rejecting valid speech that might contain brackets or braces)
     if (actionText && actionText.startsWith("{") && actionText.includes("message_type")) {
       actionText = null;
     }
-    if (dialogueText && dialogueText.startsWith("{") && dialogueText.includes("message_type")) {
+    // For dialogue, only reject if it's pure JSON/metadata structure
+    if (dialogueText && ((dialogueText.startsWith("{") && dialogueText.includes("message_type")) || dialogueText === "" || dialogueText === null)) {
       dialogueText = null;
     }
 
