@@ -1133,7 +1133,6 @@ Apply this rule to ALL narrative text, dialogue context, and action descriptions
         }
       }
 
-      // Process only the first message for primary response (will handle array after text generation)
       const responseObj = responseObjs[0];
       msgType = responseObj.message_type || "text_only";
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
