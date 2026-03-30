@@ -685,6 +685,18 @@ export default function Chat() {
     setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only", narrativeText, dialogueText;
+
+    // Helper: validate that dialogue is meaningful (not just punctuation) — define BEFORE use
+    const isMeaningfulDialogue = (text) => {
+      if (!text || !text.trim()) return false;
+      const trimmed = text.trim();
+      // Reject if it's only punctuation/ellipses
+      const onlyPunctuation = /^[\s\.\,\;\:\!\?\-—–…'""`~*]+$/;
+      if (onlyPunctuation.test(trimmed)) return false;
+      // Must have at least one alphanumeric character
+      return /[a-zA-Z0-9]/.test(trimmed);
+    };
+
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
@@ -1199,17 +1211,6 @@ ${imageRule}`;
     }
 
     setIsTyping(false);
-
-    // Helper: validate that dialogue is meaningful (not just punctuation)
-    const isMeaningfulDialogue = (text) => {
-      if (!text || !text.trim()) return false;
-      const trimmed = text.trim();
-      // Reject if it's only punctuation/ellipses
-      const onlyPunctuation = /^[\s\.\,\;\:\!\?\-—–…'""`~*]+$/;
-      if (onlyPunctuation.test(trimmed)) return false;
-      // Must have at least one alphanumeric character
-      return /[a-zA-Z0-9]/.test(trimmed);
-    };
 
     // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
