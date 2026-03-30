@@ -44,6 +44,7 @@ export default function Chat() {
   const [messages, setMessages] = useState([]);
   const [isTyping, setIsTyping] = useState(false);
   const [conversationId, setConversationId] = useState(null);
+  const [userScrolledAway, setUserScrolledAway] = useState(false);
   const [lastChangeReason, setLastChangeReason] = useState(null);
   const [previousLevels, setPreviousLevels] = useState(null);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
@@ -479,8 +480,26 @@ export default function Chat() {
   }, [conversationId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isTyping]);
+    // Only auto-scroll to bottom on initial load (empty messages becoming populated)
+    // or when user is already at the bottom, not when they manually scrolled up
+    if (!userScrolledAway) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages.length > 0 && messages[messages.length - 1]?.id, userScrolledAway]); // Only react to new messages when already at bottom
+
+  // Detect when user scrolls away from bottom
+  useEffect(() => {
+    const container = document.querySelector('[data-chat-container="true"]');
+    if (!container) return;
+
+    const handleScroll = () => {
+      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
+      setUserScrolledAway(!isAtBottom);
+    };
+
+    container.addEventListener('scroll', handleScroll);
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, []);
 
   const [sendError, setSendError] = useState(null);
 
@@ -1437,7 +1456,7 @@ Reply with ONLY the single emoji or the word "none".`,
           lastChangeReason={lastChangeReason}
         />
       )}
-      <div className="flex-1 overflow-y-auto py-4 space-y-1">
+      <div className="flex-1 overflow-y-auto py-4 space-y-1" data-chat-container="true">
         {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterId={characterId} characterName={character?.name} />}
         <AnimatePresence>
           {messages.map(msg => (
