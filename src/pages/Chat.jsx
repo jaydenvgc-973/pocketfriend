@@ -1300,10 +1300,33 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       }
     }
 
-    // If no message was successfully sent, show error
+    // If no message was successfully sent, create a fallback acknowledgment message
     if (!anyMessageSent) {
-      setSendError("Character response failed to save. Try again.");
-      return;
+      console.log("[FALLBACK] No narrative/dialogue/image saved. Creating acknowledgment message...");
+      try {
+        const fallbackMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: "...",  // Minimal acknowledgment
+          is_narrative: false,
+          emotional_state: emotionalState,
+          timestamp: new Date().toISOString(),
+        });
+        if (fallbackMsg?.id) {
+          anyMessageSent = true;
+          setMessages(prev => prev.some(m => m.id === fallbackMsg.id) ? prev : [...prev, fallbackMsg]);
+          console.log("[FALLBACK] Acknowledgment message created: " + fallbackMsg.id);
+        } else {
+          setSendError("Character response failed to save. Try again.");
+          return;
+        }
+      } catch (fallbackErr) {
+        console.error("[FALLBACK] Even fallback failed:", fallbackErr);
+        setSendError("Character response failed to save. Try again.");
+        return;
+      }
     }
 
     if (emotionalState !== character.emotional_state) {
