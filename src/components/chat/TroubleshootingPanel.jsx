@@ -5,12 +5,13 @@ import { X, Wrench, AlertCircle, CheckCircle2, Clock, Loader2, ChevronRight } fr
 import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
-  { id: 'thread_load', label: 'Thread not loading correctly', description: 'Check if the conversation is properly linked to this character' },
-  { id: 'missing_messages', label: 'Messages missing from thread', description: 'Restore messages that exist but aren\'t showing' },
+  { id: 'thread_load', label: 'Thread not loading correctly', description: 'Check if conversation is properly linked to this character — detect cross-character routing' },
+  { id: 'missing_messages', label: 'Messages missing from thread', description: 'Restore messages that exist in DB but aren\'t showing' },
   { id: 'unread_stuck', label: 'Unread notification stuck', description: 'Fix out-of-sync unread counts' },
   { id: 'pending_messages', label: 'Messages not delivering', description: 'Deliver pending messages stuck in queue' },
-  { id: 'media_missing', label: 'Images not showing', description: 'Recover image references and visibility' },
+  { id: 'media_missing', label: 'Images not loading', description: 'Deep scan: find messages with missing/failed image URLs and attempt recovery' },
   { id: 'archived_messages', label: 'Hidden or archived messages', description: 'Recover messages hidden from view' },
+  { id: 'character_identity', label: 'Wrong character responding', description: 'Detect if messages from another character are appearing in this thread' },
 ];
 
 export default function TroubleshootingPanel({ isOpen, onClose, conversationId, characterId }) {
@@ -36,6 +37,7 @@ export default function TroubleshootingPanel({ isOpen, onClose, conversationId, 
       const res = await base44.functions.invoke('troubleshootThread', {
         conversationId,
         characterId,
+        selectedIssues, // only run diagnostics for what the user selected
       });
 
       if (res?.data?.data) {

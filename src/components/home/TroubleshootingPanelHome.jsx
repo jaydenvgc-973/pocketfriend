@@ -7,13 +7,12 @@ import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
   { id: 'mark_read', label: 'Mark messages as read', description: 'Reset all unread notification counts to 0' },
-  { id: 'deep_diagnostic_ethan', label: 'Deep diagnostic for Ethan notification', description: 'Find and fix stuck/phantom messages causing red dot' },
   { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
   { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
   { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },
   { id: 'availability_display', label: 'Availability incorrect', description: 'Verify work schedule display' },
   { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
-  { id: 'protected_character', label: 'Protected character status', description: 'Verify protection is active' },
+  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect and fix characters sharing threads, memories, or routing' },
   { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
 ];
 
@@ -38,77 +37,34 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
     setResults(null);
 
     try {
-      // Special handling for deep diagnostic and notification dots
-      if (selectedIssues.includes('deep_diagnostic_ethan') || selectedIssues.includes('notification_dots')) {
-        const res = await base44.functions.invoke('simpleEthanFix', {});
-        
-        if (res?.data) {
-          setResults({
-            summary: `Reset complete: Marked ${res.data.marked} messages as read. All notification dots cleared.`,
-            fixes_applied: [
-              `Marked ${res.data.marked} unread messages as read`,
-              `Total found: ${res.data.total_found}`,
-              'Invalidating all UI caches now...',
-            ],
-            checks: [
-              {
-                name: 'Notification Dots Reset',
-                status: res.data.success ? 'passed' : 'warning',
-                message: `Success: ${res.data.success}`,
-              },
-            ],
-          });
-        } else {
-          setError('Reset failed');
-        }
-      } else if (selectedIssues.includes('simulated_interaction')) {
+      // Route simulated_interaction separately — it has its own dedicated function
+      if (selectedIssues.includes('simulated_interaction') && selectedIssues.length === 1) {
         const res = await base44.functions.invoke('troubleshootSimulatedInteraction', {});
-        
         if (res?.data?.data) {
           setResults({
             summary: res.data.data.summary,
-            fixed: res.data.data.fixes_applied,
-            issues_found: res.data.data.issues_found,
-            checks: res.data.data.checks_performed.map(check => ({
-              name: check,
-              status: 'info',
-              message: 'Diagnostic performed'
+            fixed: res.data.data.fixes_applied || [],
+            issues_found: res.data.data.issues_found || [],
+            checks: (res.data.data.checks_performed || []).map(check => ({
+              name: check, status: 'info', message: 'Diagnostic performed'
             }))
           });
         } else {
           setError('Simulated interaction diagnostic failed');
         }
       } else {
-        const res = await base44.functions.invoke('troubleshootHome', {
-          selectedIssues,
-        });
-
+        // All other selections go through troubleshootHome with ONLY the selected issues
+        const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
         if (res?.data?.data) {
           setResults(res.data.data);
-          
-          // If mark_read was selected, invalidate character queries to force UI refresh
-          if (selectedIssues.includes('mark_read')) {
-            await queryClient.invalidateQueries({ queryKey: ['characters'] });
-            await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-          }
         } else {
           setError('Failed to run troubleshooting');
         }
       }
-      
-      // Always invalidate after any diagnostic - aggressive cache clear
+
+      // Always invalidate UI caches after any diagnostic
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      
-      // If Ethan diagnostic or notification dots, also clear all conversation-specific caches
-      if (selectedIssues.includes('deep_diagnostic_ethan') || selectedIssues.includes('notification_dots')) {
-        const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
-        await queryClient.invalidateQueries({ queryKey: ['conversations', ETHAN_ID] });
-        
-        // Force refetch on all character cards
-        await new Promise(r => setTimeout(r, 100));
-        queryClient.refetchQueries({ queryKey: ['characters'] });
-      }
     } catch (err) {
       setError(err.message || 'Error running troubleshooting');
     } finally {
@@ -216,11 +172,11 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                   </div>
 
                   {/* Fixed */}
-                  {results.fixed.length > 0 && (
+                  {(results.fixed || results.fixes_applied || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Fixed</p>
                       <div className="space-y-1">
-                        {results.fixed.map((item, i) => (
+                        {(results.fixed || results.fixes_applied || []).map((item, i) => (
                           <div key={i} className="flex items-start gap-2 text-xs text-foreground">
                             <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                             <span>{item}</span>
@@ -231,11 +187,11 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                   )}
 
                   {/* Issues Found */}
-                  {results.issues_found.length > 0 && (
+                  {(results.issues_found || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Issues Found</p>
                       <div className="space-y-1">
-                        {results.issues_found.map((item, i) => (
+                        {(results.issues_found || []).map((item, i) => (
                           <div key={i} className="flex items-start gap-2 text-xs text-foreground">
                             <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                             <span>{item}</span>

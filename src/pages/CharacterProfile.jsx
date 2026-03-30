@@ -2,7 +2,7 @@ import React, { useState, useCallback } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -11,6 +11,7 @@ import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard"
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
+import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -90,6 +91,7 @@ export default function CharacterProfile() {
   const { characterId } = useParams();
   const navigate = useNavigate();
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
+  const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
@@ -198,8 +200,22 @@ export default function CharacterProfile() {
     <div className="min-h-screen bg-background pb-24">
       <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/home" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></Link>
-        <h2 className="text-sm font-semibold">{character.name}</h2>
+        <h2 className="text-sm font-semibold flex-1">{character.name}</h2>
+        <button
+          onClick={() => setShowTroubleshooting(true)}
+          className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+          title="Profile troubleshooting"
+        >
+          <Wrench className="w-4 h-4" />
+        </button>
       </div>
+
+      <ProfileTroubleshootingPanel
+        isOpen={showTroubleshooting}
+        onClose={() => setShowTroubleshooting(false)}
+        characterId={characterId}
+        characterName={character.name}
+      />
 
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
         {/* Avatar and Basic Info */}
