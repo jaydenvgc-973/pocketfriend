@@ -1045,8 +1045,9 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
               model
             });
           } catch (err) {
-            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
-            if (!isRateLimit || retryCount === maxRetries) throw err;
+            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('exceeded');
+            if (!isRateLimit) throw err; // Not a rate limit, fail immediately
+            if (retryCount >= maxRetries) throw err; // Hit max retries, give up
             
             // Exponential backoff: 2s, 4s, 8s
             const delayMs = Math.pow(2, retryCount + 1) * 1000;
