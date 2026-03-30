@@ -86,7 +86,7 @@ const RELATIONSHIP_TYPES = [
 ];
 
 const KNOWN_CHARACTER_RELATIONSHIP_TYPES = [
-  "Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss",
+  "Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss", "Member", "Rival", "Ex",
 ];
 
 const defaultData = {

@@ -100,28 +100,28 @@ export default function GameLauncher({ character, conversationId, onGameEnd }) {
         document.body
       )}
 
-      {activeGame === 'fighting' ? (
+      {activeGame === 'fighting' && (
         <AnimatePresence>
-          {activeGame && (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4"
-            >
-              <FightingGame
-                character={character}
-                onEnd={() => {
-                  setActiveGame(null);
-                  handleGameEnd({ gameId: 'fighting' });
-                }}
-              />
-            </motion.div>
-          )}
+          <motion.div
+            key="fighting-game"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="w-full my-4"
+          >
+            <FightingGame
+              character={character}
+              onEnd={() => {
+                setActiveGame(null);
+                handleGameEnd({ gameId: 'fighting' });
+              }}
+            />
+          </motion.div>
         </AnimatePresence>
-      ) : (
+      )}
+      {activeGame && activeGame !== 'fighting' && (
         <GameContainer
-          isOpen={!!activeGame}
+          isOpen={true}
           game={activeGame}
           character={character}
           conversationId={conversationId}

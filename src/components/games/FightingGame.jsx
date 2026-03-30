@@ -129,7 +129,7 @@ export default function FightingGame({ character, onEnd }) {
   };
 
   return (
-    <div className="w-full max-w-2xl rounded-2xl bg-gradient-to-b from-purple-900 via-blue-900 to-black p-6 border border-purple-500/30 space-y-4">
+    <div className="w-full rounded-2xl bg-gradient-to-b from-purple-900 via-blue-900 to-black p-6 border border-purple-500/30 space-y-4">
       {/* Health Bars */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1">
