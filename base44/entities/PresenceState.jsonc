@@ -1,0 +1,70 @@
+{
+  "name": "PresenceState",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character whose presence is being tracked"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "remote",
+        "separate",
+        "same_space"
+      ],
+      "default": "remote",
+      "description": "Current presence state: remote (far away), separate (same area but not together), same_space (physically together with user)"
+    },
+    "meeting_scheduled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether a meeting has been agreed upon in conversation"
+    },
+    "scheduled_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the scheduled meeting is expected to occur (ISO 8601 UTC)"
+    },
+    "narrative_confirmed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When presence was confirmed via narrative (arrival confirmed)"
+    },
+    "last_state_change": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the presence state last changed"
+    },
+    "last_narrative_trigger": {
+      "type": "string",
+      "description": "The narrative snippet that triggered the last presence state change (for debugging/memory)"
+    },
+    "meeting_location": {
+      "type": "string",
+      "description": "Where the meeting is taking place (if scheduled)"
+    },
+    "meeting_started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the SAME_SPACE state began (meeting arrival confirmed)"
+    },
+    "meeting_ended_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When SAME_SPACE state ended (separation confirmed)"
+    },
+    "conversation_id": {
+      "type": "string",
+      "description": "ID of the conversation where the meeting was scheduled"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Additional context about the presence state"
+    }
+  },
+  "required": [
+    "character_id",
+    "state"
+  ]
+}
