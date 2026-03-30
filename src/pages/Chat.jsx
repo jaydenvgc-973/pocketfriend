@@ -1060,6 +1060,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       try {
         response = await callLLMWithRetry(fullPrompt);
+        // Parse using local parser
         responseObj = parseCharacterResponse(response);
       } catch (llmErr) {
         throw llmErr;
@@ -1069,10 +1070,10 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
 
-      // text_content is for visible dialogue ONLY — never an image prompt
-      responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
-      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
-      if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
+      // Extract clean text content from parsed response
+      responseText = (responseObj.text_content || "").trim();
+      // Safety: reject if still looks like JSON/parser output
+      if (!responseText || responseText.startsWith("{") || responseText.startsWith("[") || responseText.startsWith("```")) {
         responseText = "";
       }
 
@@ -1121,26 +1122,29 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     setIsTyping(false);
 
     // --- PARSE CHARACTER RESPONSE INTO ACTION + DIALOGUE ---
-    // Use new system to separate actions from dialogue
+    // Try backend function first, fall back to local parser if needed
     let actionText = null;
-    let dialogueText = null;
+    let dialogueText = responseText; // Start with clean extracted text
 
     try {
       const parseRes = await base44.functions.invoke('parseCharacterResponse', {
         characterResponse: response,
         characterName: character.name,
       });
-      if (parseRes?.data?.action) actionText = parseRes.data.action;
-      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue;
+      // Backend successfully parsed — use those values
+      if (parseRes?.data?.action) actionText = parseRes.data.action?.trim() || null;
+      if (parseRes?.data?.dialogue) dialogueText = parseRes.data.dialogue?.trim() || dialogueText;
     } catch (_parseErr) {
-      // Fallback: if no action/dialogue parsed, treat responseText as dialogue ONLY if clean
-      if (responseText && !responseText.startsWith("{") && !responseText.startsWith("[") && !responseText.startsWith("```")) {
-        dialogueText = responseText;
-      }
+      // Backend failed: fall back to local parser + responseText
+      // actionText stays null (no action extracted locally)
+      // dialogueText already set to responseText above
     }
     
-    // Validate: don't allow JSON/parser output as dialogue
-    if (dialogueText && (dialogueText.startsWith("{") || dialogueText.startsWith("[") || dialogueText.startsWith("```"))) {
+    // Final validation: reject any metadata/parser labels
+    if (actionText && (actionText.includes("message_type") || actionText.includes("\"narrative\"") || actionText === "[ACTION]")) {
+      actionText = null;
+    }
+    if (dialogueText && (dialogueText.includes("message_type") || dialogueText.includes("\"dialogue\"") || dialogueText.startsWith("[") || dialogueText.startsWith("{"))) {
       dialogueText = null;
     }
 
