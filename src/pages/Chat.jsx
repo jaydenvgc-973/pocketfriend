@@ -121,21 +121,18 @@ export default function Chat() {
       if (!voiceGloballyEnabled) {
         console.log(`${diagnosticId} ABORT: voice_enabled is false at user settings level`);
         setPlayingAudioId(null);
-        setVoiceErrors(prev => ({ ...prev, [messageId]: 'Voice disabled in settings' }));
         return;
       }
       
       if (!charHasVoice) {
         console.log(`${diagnosticId} ABORT: character voice not enabled or no voice_name`);
         setPlayingAudioId(null);
-        setVoiceErrors(prev => ({ ...prev, [messageId]: 'Character voice not configured' }));
         return;
       }
       
       if (!hasApiKey) {
         console.log(`${diagnosticId} ABORT: No OpenAI API key found`);
         setPlayingAudioId(null);
-        setVoiceErrors(prev => ({ ...prev, [messageId]: 'No API key configured' }));
         return;
       }
       
