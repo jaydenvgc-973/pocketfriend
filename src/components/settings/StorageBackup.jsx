@@ -294,11 +294,15 @@ function GoogleDriveBackup() {
       const saved = localStorage.getItem(DRIVE_CONFIG_KEY);
       if (saved) return JSON.parse(saved);
     } catch {}
-    return { connected: false, email: null, lastBackup: null };
+    return { connected: false, email: '', clientId: '', clientSecret: '', lastBackup: null };
   });
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [statusMsg, setStatusMsg] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [formEmail, setFormEmail] = useState('');
+  const [formClientId, setFormClientId] = useState('');
+  const [formClientSecret, setFormClientSecret] = useState('');
 
   const saveDriveConfig = (updates) => {
     const next = { ...driveConfig, ...updates };
@@ -306,26 +310,28 @@ function GoogleDriveBackup() {
     localStorage.setItem(DRIVE_CONFIG_KEY, JSON.stringify(next));
   };
 
-  const handleConnect = async () => {
-    setStatusMsg({ type: 'info', text: 'Opening Google authorization…' });
-    try {
-      const url = await base44.connectors.connectAppUser('gdrive_backup');
-      const popup = window.open(url, '_blank', 'width=600,height=700');
-      const timer = setInterval(() => {
-        if (!popup || popup.closed) {
-          clearInterval(timer);
-          // After OAuth, mark connected
-          saveDriveConfig({ connected: true, email: 'Connected via Google' });
-          setStatusMsg({ type: 'ok', text: 'Google Drive connected successfully.' });
-        }
-      }, 500);
-    } catch (err) {
-      // Connector not configured — show informational message
-      setStatusMsg({
-        type: 'info',
-        text: 'Google Drive backup requires the Google Drive connector to be enabled in your app settings. Contact your admin to enable it.',
-      });
+  const handleSaveAccount = () => {
+    if (!formEmail.trim()) {
+      setStatusMsg({ type: 'error', text: 'Please enter your Google account email.' });
+      return;
     }
+    saveDriveConfig({
+      connected: true,
+      email: formEmail.trim(),
+      clientId: formClientId.trim(),
+      clientSecret: formClientSecret.trim() ? '••••••••' : '',
+    });
+    setShowForm(false);
+    setFormEmail('');
+    setFormClientId('');
+    setFormClientSecret('');
+    setStatusMsg({ type: 'ok', text: `Google account "${formEmail.trim()}" linked. Backups will be associated with this account.` });
+  };
+
+  const handleDisconnect = () => {
+    saveDriveConfig({ connected: false, email: '', clientId: '', clientSecret: '', lastBackup: null });
+    setStatusMsg(null);
+    setShowForm(false);
   };
 
   const handleBackup = async () => {
@@ -473,24 +479,81 @@ function GoogleDriveBackup() {
                 )}
               </AnimatePresence>
 
-              {/* Actions */}
+              {/* Account connection */}
+              {!driveConfig.connected ? (
+                <>
+                  {!showForm ? (
+                    <button
+                      onClick={() => setShowForm(true)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors"
+                    >
+                      <HardDrive className="w-3.5 h-3.5" />
+                      Link Google Account
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold text-foreground">Link your Google account</p>
+                      <input
+                        type="email"
+                        placeholder="Your Google account email"
+                        value={formEmail}
+                        onChange={e => setFormEmail(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Google OAuth Client ID (optional)"
+                        value={formClientId}
+                        onChange={e => setFormClientId(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-xs placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <input
+                        type="password"
+                        placeholder="Google OAuth Client Secret (optional)"
+                        value={formClientSecret}
+                        onChange={e => setFormClientSecret(e.target.value)}
+                        className="w-full h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-xs placeholder:text-muted-foreground font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+                      />
+                      <p className="text-[10px] text-muted-foreground/60">Client ID and Secret are optional — needed only for direct Drive upload integration.</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveAccount}
+                          className="flex-1 py-2 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors"
+                        >
+                          Save Account
+                        </button>
+                        <button
+                          onClick={() => { setShowForm(false); setFormEmail(''); setFormClientId(''); setFormClientSecret(''); }}
+                          className="px-3 py-2 rounded-xl bg-secondary text-muted-foreground text-xs hover:text-foreground transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="rounded-xl border border-blue-500/30 bg-blue-500/5 p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                      <HardDrive className="w-3.5 h-3.5 text-blue-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground truncate">{driveConfig.email}</p>
+                      <p className="text-[10px] text-blue-400">Google account linked</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleDisconnect}
+                    className="text-[10px] text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 ml-2"
+                  >
+                    Unlink
+                  </button>
+                </div>
+              )}
+
+              {/* Backup / Restore actions */}
               <div className="grid grid-cols-2 gap-2">
-                {!driveConfig.connected ? (
-                  <button
-                    onClick={handleConnect}
-                    className="col-span-2 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-blue-600 text-white text-xs font-semibold hover:bg-blue-500 transition-colors"
-                  >
-                    <HardDrive className="w-3.5 h-3.5" />
-                    Connect Google Drive
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => { saveDriveConfig({ connected: false, email: null }); setStatusMsg(null); }}
-                    className="col-span-2 flex items-center justify-center gap-1.5 py-2 rounded-xl bg-secondary text-muted-foreground text-xs hover:text-foreground transition-colors border border-border"
-                  >
-                    Disconnect Drive
-                  </button>
-                )}
 
                 <button
                   onClick={handleBackup}

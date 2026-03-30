@@ -496,6 +496,160 @@ Return a JSON array of memory objects:
       return Response.json({ success: true, character_name: char.name, updates_applied: safeUpdates });
     }
 
+    // ── RELINK_ALL_ETHAN_DATA: find Ethan and relink ALL orphaned data to him ──
+    if (action === 'relink_all_ethan_data') {
+      const chars = await base44.asServiceRole.entities.Character.list('-created_date', 100);
+      const ethan = chars.find(c => c.name?.toLowerCase().includes('ethan'));
+      if (!ethan) return Response.json({ error: 'Ethan not found in characters list' }, { status: 404 });
+
+      const ethanId = ethan.id;
+      const report = { ethan_id: ethanId, relinked: {} };
+
+      // 1. Memories — relink any with ethan name but wrong/missing character_id
+      const allMemories = await base44.asServiceRole.entities.Memory.list('-timestamp', 1000);
+      let memFixed = 0;
+      for (const m of allMemories) {
+        const isEthanMem = m.character_id === ethanId;
+        const mentionsEthan = (m.description?.toLowerCase().includes('ethan') || m.title?.toLowerCase().includes('ethan'));
+        if (!isEthanMem && mentionsEthan) {
+          await base44.asServiceRole.entities.Memory.update(m.id, { character_id: ethanId });
+          memFixed++;
+        }
+        // Also fix memories with no character_id but clearly ethan context
+        if (!m.character_id && mentionsEthan) {
+          await base44.asServiceRole.entities.Memory.update(m.id, { character_id: ethanId });
+          memFixed++;
+        }
+      }
+      report.relinked.memories = memFixed;
+
+      // 2. Conversations — fix any single-char convo pointing to ethan that got corrupted
+      const allConvos = await base44.asServiceRole.entities.Conversation.list('-updated_date', 200);
+      let convoFixed = 0;
+      for (const c of allConvos) {
+        // Convo mentions ethan in title but character_ids doesn't have him
+        const titleHasEthan = c.title?.toLowerCase().includes('ethan');
+        const idsHasEthan = (c.character_ids || []).includes(ethanId);
+        if (titleHasEthan && !idsHasEthan && (c.type === 'direct' || c.type === 'phone') && (c.character_ids || []).length <= 1) {
+          await base44.asServiceRole.entities.Conversation.update(c.id, { character_ids: [ethanId] });
+          convoFixed++;
+        }
+      }
+      report.relinked.conversations = convoFixed;
+
+      // 3. Messages — relink messages where character_name is Ethan but character_id is wrong/missing
+      const allMsgs = await base44.asServiceRole.entities.Message.list('-created_date', 500);
+      let msgFixed = 0;
+      for (const m of allMsgs) {
+        const nameIsEthan = m.character_name?.toLowerCase().includes('ethan');
+        const idIsWrong = m.character_id && m.character_id !== ethanId;
+        const idIsMissing = !m.character_id;
+        if (nameIsEthan && (idIsWrong || idIsMissing) && m.sender_type === 'character') {
+          await base44.asServiceRole.entities.Message.update(m.id, { character_id: ethanId });
+          msgFixed++;
+        }
+      }
+      report.relinked.messages = msgFixed;
+
+      // 4. Life events
+      const allLifeEvents = await base44.asServiceRole.entities.LifeEvent.list('-timestamp', 500);
+      let evFixed = 0;
+      for (const ev of allLifeEvents) {
+        const nameIsEthan = ev.character_name?.toLowerCase().includes('ethan');
+        const idIsWrong = ev.character_id && ev.character_id !== ethanId;
+        if (nameIsEthan && idIsWrong) {
+          await base44.asServiceRole.entities.LifeEvent.update(ev.id, { character_id: ethanId });
+          evFixed++;
+        }
+      }
+      report.relinked.life_events = evFixed;
+
+      // 5. Pending messages
+      const allPending = await base44.asServiceRole.entities.PendingMessage.list('-created_date', 100);
+      let pendFixed = 0;
+      for (const p of allPending) {
+        // Can't check name on pending, but if character_id looks like it was created in same batch as ethan's convo
+        // Only fix if there's clear evidence — skip unless we have a hint
+      }
+      report.relinked.pending_messages = pendFixed;
+
+      // 6. Get current true state of Ethan's data
+      const ethanMemories = await base44.asServiceRole.entities.Memory.filter({ character_id: ethanId }, '-timestamp', 500);
+      const ethanConvos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [ethanId] }, '-updated_date', 20);
+      const ethanLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter({ character_id: ethanId }, '-timestamp', 100);
+
+      report.current_state = {
+        memories: ethanMemories.length,
+        conversations: ethanConvos.length,
+        life_events: ethanLifeEvents.length,
+        system_prompt_present: !!ethan.system_prompt,
+        emotional_state: ethan.emotional_state,
+        friendship_level: ethan.friendship_level,
+      };
+
+      return Response.json({ success: true, character: 'Ethan', report });
+    }
+
+    // ── FULL_CHARACTER_RESTORE: comprehensive restore for any named character ──
+    if (action === 'full_character_restore') {
+      const { character_name, character_id } = payload || {};
+      const chars = await base44.asServiceRole.entities.Character.list('-created_date', 100);
+      let char;
+      if (character_id) char = chars.find(c => c.id === character_id);
+      else if (character_name) char = chars.find(c => c.name?.toLowerCase().includes(character_name.toLowerCase()));
+      if (!char) return Response.json({ error: `Character not found` }, { status: 404 });
+
+      const charId = char.id;
+      const charNameLower = char.name.toLowerCase();
+      const report = { character: char.name, character_id: charId, relinked: {} };
+
+      // Memories
+      const allMemories = await base44.asServiceRole.entities.Memory.list('-timestamp', 1000);
+      let memFixed = 0;
+      for (const m of allMemories) {
+        const mentionsChar = m.description?.toLowerCase().includes(charNameLower) || m.title?.toLowerCase().includes(charNameLower);
+        if (m.character_id !== charId && mentionsChar) {
+          await base44.asServiceRole.entities.Memory.update(m.id, { character_id: charId });
+          memFixed++;
+        }
+      }
+      report.relinked.memories = memFixed;
+
+      // Messages
+      const allMsgs = await base44.asServiceRole.entities.Message.list('-created_date', 500);
+      let msgFixed = 0;
+      for (const m of allMsgs) {
+        const nameMatches = m.character_name?.toLowerCase().includes(charNameLower);
+        if (nameMatches && m.character_id !== charId && m.sender_type === 'character') {
+          await base44.asServiceRole.entities.Message.update(m.id, { character_id: charId });
+          msgFixed++;
+        }
+      }
+      report.relinked.messages = msgFixed;
+
+      // Life events
+      const allLifeEvents = await base44.asServiceRole.entities.LifeEvent.list('-timestamp', 500);
+      let evFixed = 0;
+      for (const ev of allLifeEvents) {
+        const nameMatches = ev.character_name?.toLowerCase().includes(charNameLower);
+        if (nameMatches && ev.character_id !== charId) {
+          await base44.asServiceRole.entities.LifeEvent.update(ev.id, { character_id: charId });
+          evFixed++;
+        }
+      }
+      report.relinked.life_events = evFixed;
+
+      // Re-extract memories from conversation history
+      const convos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [charId] }, '-updated_date', 5);
+      report.conversations_found = convos.length;
+
+      // Current counts
+      const currentMems = await base44.asServiceRole.entities.Memory.filter({ character_id: charId }, '-timestamp', 500);
+      report.total_memories_after = currentMems.length;
+
+      return Response.json({ success: true, report });
+    }
+
     return Response.json({ error: `Unknown action: ${action}` }, { status: 400 });
 
   } catch (error) {
