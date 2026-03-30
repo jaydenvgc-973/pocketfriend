@@ -38,8 +38,15 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
     setResults(null);
 
     try {
-      // Route simulated_interaction separately — it has its own dedicated function
-      if (selectedIssues.includes('simulated_interaction') && selectedIssues.length === 1) {
+      // Route missing_characters separately — it has its own dedicated function
+      if (selectedIssues.includes('missing_characters') && selectedIssues.length === 1) {
+        const res = await base44.functions.invoke('findMissingCharacters', {});
+        if (res?.data?.data) {
+          setResults(res.data.data);
+        } else {
+          setError('Missing characters diagnostic failed');
+        }
+      } else if (selectedIssues.includes('simulated_interaction') && selectedIssues.length === 1) {
         const res = await base44.functions.invoke('troubleshootSimulatedInteraction', {});
         if (res?.data?.data) {
           setResults({

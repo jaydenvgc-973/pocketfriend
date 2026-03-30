@@ -114,9 +114,10 @@ export default function Home() {
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
   const activeCustomChars = customChars.filter(c => c.status === "active" || !c.status);
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
-  // Slot opens when a character moves away (they still exist) or is deleted
-  const canCreate = activeCustomChars.length < 10;
-  const canMoveBack = movedAwayChars.length > 0 && activeCustomChars.length < 10;
+  // Character limit: max 10 active custom characters. Slot opens when a character moves away or is deleted.
+  const CHARACTER_LIMIT = 10;
+  const canCreate = activeCustomChars.length < CHARACTER_LIMIT;
+  const canMoveBack = movedAwayChars.length > 0 && activeCustomChars.length < CHARACTER_LIMIT;
 
   return (
     <div className="min-h-screen bg-background">
@@ -167,7 +168,7 @@ export default function Home() {
         
         <div>
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/10</p>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters {activeCustomChars.length}/{CHARACTER_LIMIT}</p>
             {canCreate && (
               <Link to="/create">
                 <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
