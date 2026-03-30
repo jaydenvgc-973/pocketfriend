@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const emotionalColors = {
@@ -23,37 +23,35 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showImageDelete, setShowImageDelete] = useState(false);
   const [imageRetrying, setImageRetrying] = useState(false);
   const [imageRetryFailed, setImageRetryFailed] = useState(false);
-  const [retryTimeout, setRetryTimeout] = useState(null);
+  const [imageRetryStatus, setImageRetryStatus] = useState('idle'); // idle | recovering | regenerating | failed
 
   // A message is an "image placeholder" if it has no content, no image_url, and was sent by a character
-  // This means image generation was triggered but the URL was never attached
   const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && !message.content?.trim();
 
-  const handleImageRetry = async () => {
+  const handleImageRetry = async (forceRegenerate = false) => {
     if (imageRetrying) return;
     setImageRetrying(true);
     setImageRetryFailed(false);
-
-    const timeout = setTimeout(() => {
-      setImageRetrying(false);
-      setImageRetryFailed(true);
-    }, 5000);
-    setRetryTimeout(timeout);
+    setImageRetryStatus(forceRegenerate ? 'regenerating' : 'recovering');
 
     try {
-      const res = await base44.functions.invoke('recoverSingleImage', { messageId: message.id });
-      clearTimeout(timeout);
+      const res = await base44.functions.invoke('recoverSingleImage', {
+        messageId: message.id,
+        forceRegenerate,
+      });
       if (res?.data?.success && res?.data?.image_url) {
-        // Image recovered — subscription will update message
         setImageRetrying(false);
+        setImageRetryStatus('idle');
+        setImageRetryFailed(false);
       } else {
         setImageRetrying(false);
         setImageRetryFailed(true);
+        setImageRetryStatus('failed');
       }
     } catch {
-      clearTimeout(timeout);
       setImageRetrying(false);
       setImageRetryFailed(true);
+      setImageRetryStatus('failed');
     }
   };
 
@@ -96,27 +94,37 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {/* Image placeholder: character tried to send an image but URL never attached */}
             {isImagePlaceholder && (
-              <div className="w-52 h-44 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-secondary/60 p-4">
+              <div className="w-56 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-secondary/60 p-4 py-5">
                 {imageRetrying ? (
                   <>
-                    <Loader2 className="w-8 h-8 text-muted-foreground animate-spin" />
-                    <p className="text-xs text-muted-foreground text-center">Loading image...</p>
+                    <Loader2 className="w-8 h-8 text-primary/60 animate-spin" />
+                    <p className="text-xs text-muted-foreground text-center">
+                      {imageRetryStatus === 'regenerating' ? 'Regenerating image...' : 'Recovering image...'}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/50 text-center">This may take 10–20 seconds</p>
                   </>
                 ) : imageRetryFailed ? (
                   <>
-                    <ImageIcon className="w-8 h-8 text-muted-foreground/40" />
-                    <p className="text-xs text-muted-foreground text-center">Image failed to load</p>
-                    <div className="flex gap-2 mt-1">
+                    <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
+                    <p className="text-xs text-muted-foreground text-center font-medium">Image unavailable</p>
+                    <p className="text-[10px] text-muted-foreground/60 text-center">Recovery failed — try regenerating</p>
+                    <div className="flex flex-col gap-1.5 mt-1 w-full">
                       <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(); }}
-                        className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                        onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
                       >
-                        <RefreshCw className="w-3 h-3" /> Try Again
+                        <RefreshCw className="w-3 h-3" /> Regenerate Image
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Try Recovery Again
                       </button>
                       {onDelete && (
                         <button
                           onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors"
+                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors w-full"
                         >
                           <Trash2 className="w-3 h-3" /> Delete
                         </button>
@@ -125,14 +133,22 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                   </>
                 ) : (
                   <>
-                    <ImageIcon className="w-8 h-8 text-muted-foreground/50" />
+                    <ImageIcon className="w-7 h-7 text-muted-foreground/50" />
                     <p className="text-xs text-muted-foreground text-center">Photo incoming</p>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleImageRetry(); }}
-                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors mt-1"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Load Photo
-                    </button>
+                    <div className="flex flex-col gap-1.5 mt-1 w-full">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Load Photo
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Regenerate
+                      </button>
+                    </div>
                   </>
                 )}
               </div>
