@@ -684,7 +684,7 @@ export default function Chat() {
 
     setIsTyping(true);
 
-    let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
+    let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only", narrativeText, dialogueText;
     try {
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
