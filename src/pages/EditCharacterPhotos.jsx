@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
-import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import ReferencePhotoUploader from "@/components/character/ReferencePhotoUploader";
 
 export default function EditCharacterPhotos() {
@@ -58,11 +57,9 @@ export default function EditCharacterPhotos() {
       avatar_generation_prompt: newGenerationPrompt || selectedChar.avatar_generation_prompt,
       avatar_description_text: newDescriptionText !== undefined ? newDescriptionText : selectedChar.avatar_description_text,
     };
-    updated.system_prompt = buildSystemPrompt(updated);
     await base44.entities.Character.update(selectedChar.id, {
       avatar_url: newAvatarUrl,
       reference_image_urls: newRefUrls,
-      system_prompt: updated.system_prompt,
       ...(newGenerationPrompt ? { avatar_generation_prompt: newGenerationPrompt } : {}),
       ...(newDescriptionText !== undefined ? { avatar_description_text: newDescriptionText } : {}),
     });
@@ -140,11 +137,9 @@ export default function EditCharacterPhotos() {
                         try {
                           const result = await base44.integrations.Core.UploadFile({ file });
                           const updated = { ...selectedChar, avatar_url: result.file_url, reference_image_urls: [result.file_url] };
-                          updated.system_prompt = buildSystemPrompt(updated);
                           await base44.entities.Character.update(selectedChar.id, {
                             avatar_url: result.file_url,
                             reference_image_urls: [result.file_url],
-                            system_prompt: updated.system_prompt,
                           });
                           setSelectedChar(updated);
                           queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
