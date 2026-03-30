@@ -1035,7 +1035,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       };
 
       // Exponential backoff retry for rate limits
-      const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
+      const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 5) => {
         let retryCount = 0;
         while (retryCount <= maxRetries) {
           try {
@@ -1045,12 +1045,17 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
               model
             });
           } catch (err) {
-            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
-            if (!isRateLimit || retryCount === maxRetries) throw err;
+            const errMsg = err?.message || String(err);
+            const isRateLimit = errMsg.includes('rate') || errMsg.includes('429') || errMsg.includes('Rate limit') || errMsg.includes('exceeded');
             
-            // Exponential backoff: 2s, 4s, 8s
-            const delayMs = Math.pow(2, retryCount + 1) * 1000;
-            console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`);
+            if (!isRateLimit || retryCount === maxRetries) {
+              console.error('[LLM_ERROR]', errMsg);
+              throw err;
+            }
+            
+            // Exponential backoff: 3s, 6s, 12s, 24s, 48s
+            const delayMs = Math.pow(2, retryCount + 1) * 1500;
+            console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${Math.round(delayMs / 1000)}s`);
             await new Promise(r => setTimeout(r, delayMs));
             retryCount++;
           }
