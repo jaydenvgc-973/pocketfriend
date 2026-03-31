@@ -631,7 +631,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
       )}
 
       {/* ── WORKERS / EMPLOYEES ───────────────────────────────────────── */}
-      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym') && (
+      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government') && (
         <div className="space-y-3">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
