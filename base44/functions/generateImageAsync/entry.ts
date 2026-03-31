@@ -157,13 +157,82 @@ function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
 }
 
 /**
+ * Score how well a location name matches the prompt.
+ * Returns a confidence value 0.0–1.0.
+ * Handles: exact match, substring, partial word overlap, plural/singular, minor variations.
+ */
+function locationNameScore(locNameRaw, promptLower) {
+  const locName = locNameRaw.toLowerCase().trim();
+
+  // 1. Exact substring match
+  if (promptLower.includes(locName)) return 1.0;
+
+  // 2. Prompt substring inside loc name (e.g. "escuelita" in "escuelitas")
+  if (locName.includes(promptLower.split(' ').find(w => w.length >= 4 && locName.includes(w)) || '')) {
+    // only credit if that word is long enough to be meaningful
+    const promptWords = promptLower.split(/\s+/).filter(w => w.length >= 4);
+    for (const w of promptWords) {
+      if (locName.includes(w)) return 0.9;
+    }
+  }
+
+  // 3. Plural/singular stripping: try adding/removing trailing 's'
+  if (promptLower.includes(locName + 's') || promptLower.includes(locName.replace(/s$/, ''))) return 0.95;
+  const locNameNoS = locName.endsWith('s') ? locName.slice(0, -1) : locName + 's';
+  if (promptLower.includes(locNameNoS)) return 0.95;
+
+  // 4. All significant words of the location name appear somewhere in the prompt
+  const locWords = locName.split(/\s+/).filter(w => w.length >= 3);
+  if (locWords.length > 0) {
+    const allMatch = locWords.every(w => promptLower.includes(w));
+    if (allMatch) return 0.85;
+    const matchCount = locWords.filter(w => promptLower.includes(w)).length;
+    if (matchCount > 0) return 0.5 + (matchCount / locWords.length) * 0.3;
+  }
+
+  // 5. Levenshtein-like: check each prompt token against loc name
+  const promptTokens = promptLower.split(/\s+/).filter(w => w.length >= 4);
+  for (const token of promptTokens) {
+    // Simple character overlap ratio
+    const shorter = token.length < locName.length ? token : locName;
+    const longer = token.length >= locName.length ? token : locName;
+    let matches = 0;
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer.includes(shorter[i])) matches++;
+    }
+    const ratio = matches / longer.length;
+    if (ratio >= 0.8 && Math.abs(token.length - locName.length) <= 3) return 0.75;
+  }
+
+  return 0.0;
+}
+
+/**
+ * Get the default zone for a location category when no zone is specified.
+ * e.g. nightlife/bar → "Main Floor", home → "Living Room"
+ */
+function getDefaultZoneHint(category) {
+  const defaults = {
+    social: "main floor",
+    home: "living room",
+    gym: "workout floor",
+    workplace: "office",
+    food_drink: "main area",
+    medical: "waiting",
+    education: "classroom",
+  };
+  return defaults[category] || null;
+}
+
+/**
  * Main resolver: parse the prompt → find Location → find Zone → return images + labels.
- * Returns { locationImages, locationName, zoneName, matchConfidence }
+ * Returns { locationImages, locationName, zoneName, matchConfidence, confidenceScore }
  * matchConfidence: "high" | "medium" | "low" | "none"
+ * confidenceScore: 0.0–1.0 (used for failsafe threshold)
  */
 function resolveLocationAndZone(prompt, locations, characterId) {
   if (!prompt || !locations || locations.length === 0) {
-    return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none" };
+    return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none", confidenceScore: 0 };
   }
 
   const pl = prompt.toLowerCase();
@@ -186,43 +255,59 @@ function resolveLocationAndZone(prompt, locations, characterId) {
     }
   }
 
-  // ── STEP 2: Exact Location name match (highest confidence) ──
+  // ── STEP 2: Score ALL locations against the prompt, pick best ──
+  // This replaces the old exact-only check and handles fuzzy/plural/partial matches
+  let bestLoc = null;
+  let bestScore = 0.0;
   for (const loc of ordered) {
-    if (pl.includes(loc.name.toLowerCase())) {
-      const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, loc, possessiveZoneHint);
-      return {
-        locationImages: zoneImages,
-        locationName: loc.name,
-        zoneName,
-        matchConfidence: matchType === "exact_zone_name" ? "high" : matchType === "zone_keyword" ? "high" : "medium",
-      };
-    }
+    const score = locationNameScore(loc.name, pl);
+    if (score > bestScore) { bestScore = score; bestLoc = loc; }
+  }
+
+  if (bestLoc && bestScore >= 0.7) {
+    // High-confidence location name match — use this location
+    const zoneHint = possessiveZoneHint || getDefaultZoneHint(bestLoc.category);
+    const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, bestLoc, zoneHint);
+    const confidence = bestScore >= 0.9 ? "high" : "medium";
+    console.log(`[LOCATION-MATCH] "${bestLoc.name}" score=${bestScore.toFixed(2)} zone="${zoneName}" matchType=${matchType}`);
+    return {
+      locationImages: zoneImages,
+      locationName: bestLoc.name,
+      zoneName,
+      matchConfidence: confidence,
+      confidenceScore: bestScore,
+    };
   }
 
   // ── STEP 3: Keyword match on location keywords field ──
   for (const loc of ordered) {
     if (loc.keywords?.some(kw => kw && pl.includes(kw.toLowerCase()))) {
-      const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, loc, possessiveZoneHint);
+      const zoneHint = possessiveZoneHint || getDefaultZoneHint(loc.category);
+      const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, loc, zoneHint);
+      console.log(`[LOCATION-KEYWORD] "${loc.name}" zone="${zoneName}"`);
       return {
         locationImages: zoneImages,
         locationName: loc.name,
         zoneName,
         matchConfidence: matchType === "exact_zone_name" ? "high" : "medium",
+        confidenceScore: 0.8,
       };
     }
   }
 
   // ── STEP 4: Possessive + category match (e.g. "his bed" → character-specific home) ──
   if (possessiveCategoryHint) {
-    // Prefer character-specific location in that category first
     const catLoc = ordered.find(l => l.category === possessiveCategoryHint);
     if (catLoc) {
-      const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, possessiveZoneHint);
+      const zoneHint = possessiveZoneHint || getDefaultZoneHint(catLoc.category);
+      const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, zoneHint);
+      console.log(`[LOCATION-POSSESSIVE] "${catLoc.name}" zone="${zoneName}"`);
       return {
         locationImages: zoneImages,
         locationName: catLoc.name,
         zoneName,
         matchConfidence: "medium",
+        confidenceScore: 0.75,
       };
     }
   }
@@ -243,20 +328,22 @@ function resolveLocationAndZone(prompt, locations, characterId) {
     if (keywords.some(kw => pl.includes(kw))) {
       const catLoc = ordered.find(l => l.category === cat);
       if (catLoc) {
-        const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, possessiveZoneHint);
+        const zoneHint = possessiveZoneHint || getDefaultZoneHint(cat);
+        const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, zoneHint);
         if (zoneImages.length > 0) {
           return {
             locationImages: zoneImages,
             locationName: catLoc.name,
             zoneName,
             matchConfidence: "low",
+            confidenceScore: 0.5,
           };
         }
       }
     }
   }
 
-  return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none" };
+  return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none", confidenceScore: 0 };
 }
 
 // ── ROOM LOCK PROMPT ──────────────────────────────────────────────────────────
@@ -368,16 +455,19 @@ Deno.serve(async (req) => {
             { created_by: createdBy }, '-created_date', 100
           );
 
-          const { locationImages: imgs, locationName, zoneName, matchConfidence } =
+          const { locationImages: imgs, locationName, zoneName, matchConfidence, confidenceScore } =
             resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
 
-          if (imgs.length > 0 && matchConfidence !== "none") {
+          // FAILSAFE: Only use location references if confidence >= 0.7
+          // Below threshold → fall back to generic generation (no contamination from wrong location)
+          if (imgs.length > 0 && confidenceScore >= 0.7) {
             locationImages = imgs;
             resolvedLocationName = locationName;
             resolvedZoneName = zoneName;
             locationNote = buildRoomLockNote(locationName, zoneName);
-
-            console.log(`[LOCATION] Matched: "${locationName}" → Zone: "${zoneName}" | Confidence: ${matchConfidence} | Images: ${imgs.length}`);
+            console.log(`[LOCATION] ✓ Matched: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)} | Confidence: ${matchConfidence} | Images: ${imgs.length}`);
+          } else if (imgs.length > 0) {
+            console.log(`[LOCATION] ✗ Match below threshold (score=${confidenceScore.toFixed(2)}) — falling back to generic generation`);
           }
         }
       } catch (err) {
