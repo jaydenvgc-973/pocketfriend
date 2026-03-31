@@ -291,6 +291,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     worker_pay_rates: editingLocation?.worker_pay_rates || {},
     worker_pay_type: editingLocation?.worker_pay_type || {},
     worker_job_titles: editingLocation?.worker_job_titles || {},
+    worker_shifts: editingLocation?.worker_shifts || {},
   });
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
@@ -699,12 +700,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                             <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
                             <Input
                               type="time"
-                              value={worker?.work_start_time || '09:00'}
-                              onChange={(e) => {
-                                const chars = [...characters];
-                                const idx = chars.findIndex(c => c.id === workerId);
-                                if (idx >= 0) chars[idx].work_start_time = e.target.value;
-                              }}
+                              value={form.worker_shifts?.[workerId]?.start || '09:00'}
+                              onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })}
                               className="h-8 text-xs"
                             />
                           </div>
@@ -712,12 +709,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                             <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
                             <Input
                               type="time"
-                              value={worker?.work_end_time || '17:00'}
-                              onChange={(e) => {
-                                const chars = [...characters];
-                                const idx = chars.findIndex(c => c.id === workerId);
-                                if (idx >= 0) chars[idx].work_end_time = e.target.value;
-                              }}
+                              value={form.worker_shifts?.[workerId]?.end || '17:00'}
+                              onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })}
                               className="h-8 text-xs"
                             />
                           </div>
