@@ -1,79 +1,62 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// This function is called by a scheduled automation every 3 hours.
+// It archives old messages for ALL conversations across ALL users — no frontend involvement.
+
+const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
+const KEEP_RECENT = 50;
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
 
-    const body = await req.json().catch(() => ({}));
-    const { conversationId, keepRecent = 50 } = body;
+    // Fetch all conversations (service role — no user auth needed for scheduled task)
+    const allConversations = await base44.asServiceRole.entities.Conversation.list('-updated_date', 500);
 
-    if (!conversationId) {
-      return Response.json({ error: 'conversationId required' }, { status: 400 });
-    }
+    let totalArchived = 0;
+    let conversationsProcessed = 0;
 
-    // PROTECTED CHARACTER: Never archive Ethan's conversations
-    const ETHAN_CHARACTER_ID = '69c0d59d7e382cc866ded9c9';
-    const ETHAN_CONVERSATION_IDS = [
-      '69c0d5a7e269fe0f4e917ab6', // main direct chat
-      '69c0e3456895176175365657', // phone chat
-      '69c873d9627e2d2f732dc4b2', // second direct chat
-      '69c852bd41aa232960967ce0', // group chat
-      '69c7daa7865ac7c2f35fa875', // Lila & Ethan group
-      '69c7a44325108f819a49ce5e', // NPC/Mace chat
-      '69c6076b71939c9ac942ea6e', // James & Ethan group
-      '69c0ff7467e7bc3499496c1f', // Matt & Ethan group
-    ];
-    if (ETHAN_CONVERSATION_IDS.includes(conversationId)) {
-      return Response.json({ success: true, archived: 0, message: 'Protected character — archiving skipped' });
-    }
+    for (const convo of allConversations) {
+      // Skip protected characters
+      const isProtected = (convo.character_ids || []).some(id => PROTECTED_CHARACTER_IDS.includes(id));
+      if (isProtected) continue;
 
-    // Fetch all messages for this conversation, sorted by creation date
-    const allMessages = await base44.entities.Message.filter(
-      { conversation_id: conversationId },
-      "-created_date",
-      1000
-    );
+      // Fetch messages for this conversation
+      const messages = await base44.asServiceRole.entities.Message.filter(
+        { conversation_id: convo.id },
+        '-created_date',
+        1000
+      );
 
-    if (!allMessages || allMessages.length <= keepRecent) {
-      return Response.json({ 
-        success: true, 
-        archived: 0, 
-        message: 'No messages to archive' 
-      });
-    }
+      if (!messages || messages.length <= KEEP_RECENT) continue;
 
-    // Mark older messages as archived (add archive_date, keep them in DB)
-    const toArchive = allMessages.slice(keepRecent);
-    let archivedCount = 0;
+      const toArchive = messages.slice(KEEP_RECENT).filter(m => !m.archived_date);
+      if (toArchive.length === 0) continue;
 
-    for (const msg of toArchive) {
-      try {
-        // Mark message as archived without deleting it
-        await base44.entities.Message.update(msg.id, {
+      for (const msg of toArchive) {
+        await base44.asServiceRole.entities.Message.update(msg.id, {
           archived_date: new Date().toISOString()
         }).catch(() => {});
-        archivedCount++;
-      } catch (e) {
-        // Continue even if individual archive fails
+        totalArchived++;
       }
+
+      // Extract memories from archived messages (fire-and-forget per conversation)
+      const characterId = convo.character_ids?.[0];
+      if (characterId) {
+        base44.asServiceRole.functions.invoke('extractMemoriesFromArchive', {
+          conversationId: convo.id,
+          characterId
+        }).catch(() => {});
+      }
+
+      conversationsProcessed++;
     }
 
-    return Response.json({
-      success: true,
-      archived: archivedCount,
-      totalMessages: allMessages.length,
-      visibleMessages: keepRecent
-    });
+    console.log(`[archiveOldMessages] Done — ${conversationsProcessed} conversations, ${totalArchived} messages archived`);
+    return Response.json({ success: true, conversationsProcessed, totalArchived });
 
   } catch (error) {
-    return Response.json({ 
-      error: error.message,
-      success: false 
-    }, { status: 500 });
+    console.error('[archiveOldMessages] Error:', error.message);
+    return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 });

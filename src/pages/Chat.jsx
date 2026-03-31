@@ -350,16 +350,6 @@ export default function Chat() {
           setConversationId(convo.id);
         }
 
-        // Archive old messages and extract memories asynchronously (fire-and-forget)
-        // Never archive for protected characters
-        const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
-        if (convoId && !PROTECTED_CHARACTER_IDS.includes(characterId)) {
-          setTimeout(() => {
-            base44.functions.invoke('archiveOldMessages', { conversationId: convoId, keepRecent: 50 }).catch(() => {});
-            base44.functions.invoke('extractMemoriesFromArchive', { conversationId: convoId, characterId }).catch(() => {});
-          }, 2000);
-        }
-
         // Load pending messages and deliver them
         const pending = await base44.entities.PendingMessage.filter(
           { character_id: characterId, delivered: false }
