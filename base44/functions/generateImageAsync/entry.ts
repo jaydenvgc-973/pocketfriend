@@ -29,26 +29,26 @@ const ZONE_HINTS = {
  */
 function findZoneImages(promptLower, location) {
   const zones = location.zones || [];
-  if (zones.length === 0) return (location.image_urls || []).slice(0, 3);
+  if (zones.length === 0) return (location.image_urls || []).slice(0, 4);
 
   // 1. Exact zone name match
   for (const zone of zones) {
     if (zone.image_urls?.length > 0 && promptLower.includes(zone.zone_name.toLowerCase())) {
-      return zone.image_urls.slice(0, 3);
+      return zone.image_urls.slice(0, 4);
     }
   }
   // 2. Zone hint keyword match
   for (const [keyword, targetZone] of Object.entries(ZONE_HINTS)) {
     if (promptLower.includes(keyword)) {
       const matched = zones.find(z => z.image_urls?.length > 0 && z.zone_name.toLowerCase().includes(targetZone));
-      if (matched) return matched.image_urls.slice(0, 3);
+      if (matched) return matched.image_urls.slice(0, 4);
     }
   }
   // 3. First zone with images
   const first = zones.find(z => z.image_urls?.length > 0);
-  if (first) return first.image_urls.slice(0, 3);
+  if (first) return first.image_urls.slice(0, 4);
 
-  return (location.image_urls || []).slice(0, 3);
+  return (location.image_urls || []).slice(0, 4);
 }
 
 /**
@@ -147,9 +147,19 @@ Deno.serve(async (req) => {
           const savedLocations = await base44.asServiceRole.entities.LocationReference.filter(
             { created_by: createdBy }, '-created_date', 100
           );
-          locationImages = findLocationImages(cleanPrompt, savedLocations, characterId);
+          locationImages = findLocationImages(cleanPrompt, savedLocations, characterId).slice(0, 4);
           if (locationImages.length > 0) {
-            locationNote = `\n\nLOCATION CONSISTENCY: Reference images of this specific location are provided. The generated image MUST match the visual style, layout, furniture, lighting, and atmosphere shown in those references. This must look like the SAME place. Vary the camera angle and framing naturally, but keep the environment visually consistent.`;
+            locationNote = `\n\nLOCATION CONSISTENCY — CRITICAL: Reference images of this exact room/space are provided. You MUST reproduce the environment with 75–90% visual fidelity to those references. Follow these rules strictly:
+
+1. FURNITURE: Every piece of furniture visible in the reference must appear in the generated image. Match the exact style, shape, color, material, and placement of each item — sofas, chairs, tables, shelving, lamps, rugs, etc. Do not swap, remove, or add furniture.
+2. WALL COLOR & FINISH: Reproduce the exact wall color(s), paint finish, wallpaper pattern, and any accent walls from the reference.
+3. FLOORING: Match the exact floor type (hardwood, tile, carpet, etc.), color, grain direction, and pattern.
+4. WALL ART & DECOR: Any artwork, photos, mirrors, shelves, or decorative objects on the walls must appear in the same relative positions.
+5. LIGHTING: Match the ambient lighting tone, any visible light fixtures, lamps, and window light direction.
+6. OVERALL COMPOSITION: The room layout and spatial proportions must match the reference. 
+7. CAMERA ANGLE ONLY: The ONLY thing that should change between the reference and the generated image is the camera angle, framing, or focal point. Everything else stays the same.
+
+This image must be instantly recognizable as the SAME room from the reference photos — just viewed from a different angle.`;
           }
         }
       } catch (_) {
@@ -160,23 +170,25 @@ Deno.serve(async (req) => {
     let referenceImages;
     let enhancedPrompt = cleanPrompt + locationNote;
 
+    // Always put location images FIRST so the model treats them as the primary environment reference
     if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
       referenceImages = [
+        ...locationImages.slice(0, 3),
         ...characterReferenceImages.slice(0, 2),
         ...userReferenceImages.slice(0, 2),
-        ...locationImages.slice(0, 2),
       ].filter(Boolean);
-      enhancedPrompt = `${cleanPrompt}${locationNote}\n\nCRITICAL: This photo features BOTH ${characterName} AND the user together. The first reference images are of ${characterName} — replicate their exact face and appearance. The next reference images are of the USER — replicate their exact face, features, skin tone, and appearance with pristine accuracy. Both people must look like their respective reference images.`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}\n\nCRITICAL: This photo features BOTH ${characterName} AND the user together. The first reference images show the ROOM — reproduce it with high fidelity. The next reference images are of ${characterName} — replicate their exact face and appearance. The remaining reference images are of the USER — replicate their exact face, features, skin tone, and appearance with pristine accuracy. Both people must look like their respective reference images.`;
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       referenceImages = userReferenceImages.slice(0, 3);
       enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this photo is the USER (not ${characterName}). Use the provided reference images to replicate their exact face, features, and appearance with pristine accuracy.`;
     } else if (hasCharacterImages) {
       // "character" or fallback — NEVER include user references
+      // Location images come FIRST so the model anchors on the room before the subject
       referenceImages = [
+        ...locationImages.slice(0, 3),
         ...characterReferenceImages.slice(0, 3),
-        ...locationImages.slice(0, 2),
       ].filter(Boolean);
-      enhancedPrompt = `${cleanPrompt}${locationNote}\n\nCRITICAL: The subject of this photo is ${characterName}. Use the provided character reference images to replicate their exact face, features, and appearance. Do NOT include any other person.`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}\n\nCRITICAL: The subject of this photo is ${characterName}. The first reference images show the ROOM — reproduce it with high fidelity (same furniture, walls, floors, decor). The remaining reference images are of ${characterName} — replicate their exact face, features, and appearance. Do NOT include any other person.`;
     } else if (locationImages.length > 0) {
       // No character refs but have location refs
       referenceImages = locationImages;
