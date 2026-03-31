@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2 } from "lucide-react";
+import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, ChevronDown } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -20,6 +20,28 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [isAutoPrompting, setIsAutoPrompting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState(null);
+
+  // Environment selector state
+  const [locations, setLocations] = useState([]);
+  const [selectedLocation, setSelectedLocation] = useState(null); // full location object
+  const [selectedZone, setSelectedZone] = useState(null);         // zone_name string
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [showZonePicker, setShowZonePicker] = useState(false);
+
+  // Load locations when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+    base44.entities.LocationReference.list('-created_date', 100)
+      .then(locs => setLocations(locs || []))
+      .catch(() => {});
+  }, [isOpen]);
+
+  const availableZones = selectedLocation?.zones?.filter(z => z.image_urls?.length > 0) || [];
+
+  const clearEnvironment = () => {
+    setSelectedLocation(null);
+    setSelectedZone(null);
+  };
 
   const handleRefUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -85,46 +107,68 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   };
 
   const handleGenerate = async () => {
-    if ((!prompt.trim() && !referenceImageUrl) || !character || !conversationId) return;
+    if ((!prompt.trim() && !referenceImageUrl && !selectedLocation) || !character || !conversationId) return;
     setIsGenerating(true);
     setGenerateError(null);
     try {
       const charName = character.name;
       const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender].filter(Boolean).join(', ');
-      const referenceImages = [];
-      if (character.avatar_url) referenceImages.push(character.avatar_url);
-      if (character.reference_image_urls?.length > 0) referenceImages.push(...character.reference_image_urls.slice(0, 3));
-      // User-uploaded reference comes last (most influential)
-      // User-selected reference (uploaded or from gallery) comes last — most influential
-      if (referenceImageUrl) referenceImages.push(referenceImageUrl);
+      const charReferenceImages = [];
+      if (character.avatar_url) charReferenceImages.push(character.avatar_url);
+      if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 3));
+      if (referenceImageUrl) charReferenceImages.push(referenceImageUrl);
 
       const promptText = prompt.trim() || "candid natural moment, everyday life";
-      const fullPrompt = `Portrait photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${promptText}\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting with realistic shadows and highlights. True-to-life skin texture — pores, subtle imperfections, natural undertones. Depth of field consistent with a real camera lens. Authentic candid feel — not posed, not a model shoot. CRITICAL: Not an illustration, not a painting, not a digital render, not CGI, not uncanny valley. Real human proportions, natural skin texture, genuine expression. The image must be indistinguishable from a real photograph.${referenceImageUrl ? ' Match the scene, environment, and lighting style of the uploaded reference image.' : ''}`;
 
-      const genRes = await base44.integrations.Core.GenerateImage({
-        prompt: fullPrompt,
-        existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-      });
-
-      if (!genRes?.url) throw new Error('No image URL returned');
-
-      // Create a message in the conversation as if the character sent it
+      // Create a placeholder message then call generateImageAsync (which handles location locking)
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: "character",
         character_id: character.id,
         character_name: character.name,
         content: "",
-        image_url: genRes.url,
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
       });
 
+      if (!newMsg?.id) throw new Error('Failed to create message');
+
+      // Build the prompt for generateImageAsync
+      const fullPrompt = `[CHARACTER] ${promptText}`;
+
+      // Call generateImageAsync which handles location locking, character refs, etc.
+      const genRes = await base44.functions.invoke('generateImageAsync', {
+        messageId: newMsg.id,
+        prompt: fullPrompt,
+        characterReferenceImages: charReferenceImages,
+        userReferenceImages: [],
+        characterName: charName,
+        subjectType: "character",
+        characterId: character.id,
+        manualLocationId: selectedLocation?.id || null,
+        manualZoneId: selectedZone || null,
+      });
+
+      if (genRes?.data?.filtered) {
+        await base44.entities.Message.delete(newMsg.id).catch(() => {});
+        throw new Error('Image blocked by content filter. Try a different description.');
+      }
+
+      if (!genRes?.data?.imageUrl) {
+        await base44.entities.Message.delete(newMsg.id).catch(() => {});
+        throw new Error('No image URL returned');
+      }
+
+      // genRes already has the message updated with image_url via generateImageAsync
+      const genRes2 = genRes; // kept for memory store below
+      const genResUrl = genRes.data.imageUrl;
+
       // Store memory so character remembers sending this
+      const envNote = selectedLocation ? ` at ${selectedLocation.name}${selectedZone ? ` (${selectedZone})` : ''}` : '';
       base44.entities.Memory.create({
         character_id: character.id,
-        title: `Sent a photo: ${prompt.trim().substring(0, 60)}`,
-        description: `You sent the user a photo based on their prompt: "${prompt.trim()}". They generated it via the media gallery.`,
+        title: `Sent a photo: ${promptText.substring(0, 60)}`,
+        description: `You sent the user a photo${envNote}. Prompt: "${promptText}".`,
         emotional_impact: 'positive',
         timestamp: new Date().toISOString(),
         source_context: `gallery_generated_${newMsg.id}`,
@@ -191,6 +235,95 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       <p className="text-sm font-medium text-foreground">Generate a photo from {character.name}</p>
                     </div>
                     <p className="text-xs text-muted-foreground">{character.name} will "send" it in the chat and remember it.</p>
+
+                    {/* Environment selector */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Location picker button */}
+                        <button
+                          onClick={() => { setShowLocationPicker(v => !v); setShowZonePicker(false); }}
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${selectedLocation ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
+                        >
+                          <MapPin className="w-3.5 h-3.5" />
+                          {selectedLocation ? selectedLocation.name : 'Choose Location'}
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+
+                        {/* Zone picker button — only if location selected and has zones */}
+                        {selectedLocation && availableZones.length > 0 && (
+                          <button
+                            onClick={() => { setShowZonePicker(v => !v); setShowLocationPicker(false); }}
+                            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${selectedZone ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
+                          >
+                            {selectedZone ? selectedZone : 'Choose Zone'}
+                            <ChevronDown className="w-3 h-3" />
+                          </button>
+                        )}
+
+                        {/* Clear button */}
+                        {selectedLocation && (
+                          <button onClick={clearEnvironment} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Clear environment">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Selected environment display */}
+                      {selectedLocation && (
+                        <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-primary/5 border border-primary/20">
+                          {/* Zone thumbnail if available */}
+                          {selectedZone && (() => {
+                            const zone = availableZones.find(z => z.zone_name === selectedZone);
+                            return zone?.image_urls?.[0] ? (
+                              <img src={zone.image_urls[0]} alt={selectedZone} className="w-10 h-10 rounded-md object-cover flex-shrink-0 ring-1 ring-primary/30" />
+                            ) : null;
+                          })()}
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-medium text-primary leading-tight">{selectedLocation.name}</p>
+                            {selectedZone && <p className="text-[10px] text-primary/70">{selectedZone}</p>}
+                            {!selectedZone && availableZones.length > 0 && <p className="text-[10px] text-muted-foreground/60">No zone selected — will use first available</p>}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Location picker dropdown */}
+                      {showLocationPicker && locations.length > 0 && (
+                        <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                          {locations.map(loc => (
+                            <button
+                              key={loc.id}
+                              onClick={() => { setSelectedLocation(loc); setSelectedZone(null); setShowLocationPicker(false); }}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${selectedLocation?.id === loc.id ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                            >
+                              <MapPin className="w-3 h-3 flex-shrink-0 text-muted-foreground" />
+                              <span className="font-medium">{loc.name}</span>
+                              {loc.location_type === 'character_specific' && loc.character_name && (
+                                <span className="text-muted-foreground/60 ml-auto">{loc.character_name}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Zone picker dropdown */}
+                      {showZonePicker && availableZones.length > 0 && (
+                        <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden">
+                          {availableZones.map(zone => (
+                            <button
+                              key={zone.zone_name}
+                              onClick={() => { setSelectedZone(zone.zone_name); setShowZonePicker(false); }}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${selectedZone === zone.zone_name ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                            >
+                              {zone.image_urls?.[0] && (
+                                <img src={zone.image_urls[0]} alt={zone.zone_name} className="w-8 h-8 rounded-md object-cover flex-shrink-0" />
+                              )}
+                              <span className="font-medium">{zone.zone_name}</span>
+                              <span className="ml-auto text-muted-foreground/50">{zone.image_urls?.length || 0} ref{zone.image_urls?.length !== 1 ? 's' : ''}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Reference image — upload or pick from gallery */}
                     <div className="space-y-2">
@@ -263,7 +396,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
                       onClick={handleGenerate}
-                      disabled={(!prompt.trim() && !referenceImageUrl) || isGenerating}
+                      disabled={(!prompt.trim() && !referenceImageUrl && !selectedLocation) || isGenerating}
                       className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                     >
                       {isGenerating ? (

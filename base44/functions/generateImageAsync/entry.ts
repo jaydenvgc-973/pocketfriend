@@ -417,7 +417,7 @@ CRITICAL RULE: A person who knows this space in real life must look at the resul
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId } = await req.json();
+    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId, manualLocationId, manualZoneId } = await req.json();
 
     if (!messageId || !prompt) {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
@@ -484,29 +484,53 @@ Deno.serve(async (req) => {
 
     if (resolvedSubjectType !== "user") {
       try {
-        const charRecord = characterId
-          ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
-          : null;
-        const createdBy = charRecord?.created_by;
-
-        if (createdBy) {
-          const savedLocations = await base44.asServiceRole.entities.LocationReference.filter(
-            { created_by: createdBy }, '-created_date', 100
-          );
-
-          const { locationImages: imgs, locationName, zoneName, matchConfidence, confidenceScore } =
-            resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
-
-          // FAILSAFE: Only use location references if confidence >= 0.7
-          // Below threshold → fall back to generic generation (no contamination from wrong location)
-          if (imgs.length > 0 && confidenceScore >= 0.7) {
+        // ── MANUAL SELECTION PATH (highest priority — bypasses all text parsing) ──
+        if (manualLocationId) {
+          const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
+          if (manualLoc) {
+            resolvedLocationName = manualLoc.name;
+            let imgs = [];
+            if (manualZoneId && manualLoc.zones?.length > 0) {
+              const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId);
+              if (zone?.image_urls?.length > 0) {
+                imgs = zone.image_urls.slice(0, 6);
+                resolvedZoneName = zone.zone_name;
+              }
+            }
+            // Fallback: if no zone matched, use flat image_urls or first zone
+            if (imgs.length === 0) {
+              const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
+              imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || manualLoc.image_urls?.slice(0, 6) || [];
+              resolvedZoneName = firstZoneWithImages?.zone_name || null;
+            }
             locationImages = imgs;
-            resolvedLocationName = locationName;
-            resolvedZoneName = zoneName;
-            locationNote = buildRoomLockNote(locationName, zoneName);
-            console.log(`[LOCATION] ✓ Matched: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)} | Confidence: ${matchConfidence} | Images: ${imgs.length}`);
-          } else if (imgs.length > 0) {
-            console.log(`[LOCATION] ✗ Match below threshold (score=${confidenceScore.toFixed(2)}) — falling back to generic generation`);
+            locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
+            console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
+          }
+        } else {
+          // ── AUTOMATIC TEXT-PARSING PATH (fallback when no manual selection) ──
+          const charRecord = characterId
+            ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
+            : null;
+          const createdBy = charRecord?.created_by;
+
+          if (createdBy) {
+            const savedLocations = await base44.asServiceRole.entities.LocationReference.filter(
+              { created_by: createdBy }, '-created_date', 100
+            );
+
+            const { locationImages: imgs, locationName, zoneName, matchConfidence, confidenceScore } =
+              resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
+
+            if (imgs.length > 0 && confidenceScore >= 0.7) {
+              locationImages = imgs;
+              resolvedLocationName = locationName;
+              resolvedZoneName = zoneName;
+              locationNote = buildRoomLockNote(locationName, zoneName);
+              console.log(`[LOCATION] ✓ AUTO: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)} | Images: ${imgs.length}`);
+            } else if (imgs.length > 0) {
+              console.log(`[LOCATION] ✗ Auto match below threshold (score=${confidenceScore.toFixed(2)}) — no environment applied`);
+            }
           }
         }
       } catch (err) {
