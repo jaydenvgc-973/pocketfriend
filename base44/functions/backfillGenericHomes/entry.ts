@@ -27,52 +27,33 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Create or reuse a generic apartment for this character
-      const genericHomes = await base44.asServiceRole.entities.LocationReference.filter(
-        { is_default_generic: true, generic_type: 'apartment', created_by: user.email }
-      );
+      // Create per-character generic home with full location fields
+      const homeLocation = await base44.asServiceRole.entities.LocationReference.create({
+        name: `Home - ${character.name}`,
+        location_type: 'global',
+        category: 'home',
+        description: `Residential home for ${character.name}`,
+        is_default_generic: true,
+        generic_type: 'apartment',
+        resident_character_ids: [character.id],
+        resident_character_names: [character.name],
+        zones: [
+          { zone_name: 'Living Room', image_urls: [] },
+          { zone_name: 'Bedroom', image_urls: [] },
+          { zone_name: 'Kitchen', image_urls: [] },
+          { zone_name: 'Bathroom', image_urls: [] },
+        ],
+        rent_or_housing_cost: 1200,
+        utility_costs: {
+          electricity: 80,
+          water: 40,
+          gas: 50,
+          internet: 60,
+          other: 0,
+        },
+      });
 
-      let homeLocation;
-      if (genericHomes.length === 0) {
-        // Create new generic apartment
-        homeLocation = await base44.asServiceRole.entities.LocationReference.create({
-          name: `Generic Apartment #${Math.floor(Math.random() * 10000)}`,
-          location_type: 'global',
-          category: 'home',
-          description: 'A comfortable generic apartment',
-          is_default_generic: true,
-          generic_type: 'apartment',
-          resident_character_ids: [character.id],
-          resident_character_names: [character.name],
-          rent_or_housing_cost: 1200,
-          utility_costs: {
-            electricity: 80,
-            water: 40,
-            gas: 50,
-            internet: 60,
-            other: 0,
-          },
-        });
-      } else {
-        // Add to existing generic apartment
-        homeLocation = genericHomes[0];
-        const updatedResidents = Array.from(new Set([
-          ...(homeLocation.resident_character_ids || []),
-          character.id,
-        ]));
-        const updatedResidentNames = Array.from(new Set([
-          ...(homeLocation.resident_character_names || []),
-          character.name,
-        ]));
-
-        homeLocation = await base44.asServiceRole.entities.LocationReference.update(
-          homeLocation.id,
-          {
-            resident_character_ids: updatedResidents,
-            resident_character_names: updatedResidentNames,
-          }
-        );
-      }
+      console.log(`[BACKFILL] Created home for ${character.name}: ${homeLocation.id}`);
 
       // Create financial record
       const financial = await base44.asServiceRole.entities.CharacterFinancial.create({
@@ -117,10 +98,14 @@ Deno.serve(async (req) => {
       processedCount++;
     }
 
+    console.log(`[BACKFILL] Summary: Created ${results.filter(r => r.status === 'success').length} homes | Already assigned ${results.filter(r => r.status === 'already_has_home').length} | Total characters: ${allCharacters.length}`);
+
     return Response.json({
       success: true,
       processedCount,
       totalCharacters: allCharacters.length,
+      createdCount: results.filter(r => r.status === 'success').length,
+      alreadyAssignedCount: results.filter(r => r.status === 'already_has_home').length,
       results,
     });
   } catch (error) {

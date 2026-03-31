@@ -46,6 +46,7 @@ function LocationCard({ location, onDelete, onEdit }) {
   const CatIcon = catDef.icon;
   const zones = location.zones || [];
   const totalImages = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
+  const isGenericHome = location.is_default_generic;
 
   return (
     <motion.div
@@ -71,8 +72,15 @@ function LocationCard({ location, onDelete, onEdit }) {
                 <User className="w-3 h-3" /> {location.character_name || "Character"}
               </span>
             )}
-            <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
-            <span className="text-xs text-muted-foreground">· {totalImages} img{totalImages !== 1 ? "s" : ""}</span>
+            {!isGenericHome && (
+              <>
+                <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
+                <span className="text-xs text-muted-foreground">· {totalImages} img{totalImages !== 1 ? "s" : ""}</span>
+              </>
+            )}
+            {isGenericHome && (
+              <span className="text-xs text-amber-500/80 font-medium">Generic Home</span>
+            )}
             {(location.owner_character_name || (location.owner_is_npc && location.owner_npc_name)) && (
               <span className="text-xs text-muted-foreground/70">
                 · {location.owner_role || "owner"}: {location.owner_is_npc ? location.owner_npc_name : location.owner_character_name}
@@ -221,6 +229,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     owner_is_npc: editingLocation?.owner_is_npc || false,
     owner_npc_name: editingLocation?.owner_npc_name || "",
     owner_role: editingLocation?.owner_role || "owner",
+    is_default_generic: editingLocation?.is_default_generic || false,
   });
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
@@ -252,7 +261,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     update("zones", updated);
   };
 
-  const canSave = form.name.trim() && form.zones.length > 0;
+  // Generic homes don't require zones or images; other locations require at least one zone
+  const isGenericHome = form.is_default_generic;
+  const canSave = form.name.trim() && (isGenericHome || form.zones.length > 0);
 
   const handleSave = () => {
     if (!canSave) return;
@@ -386,7 +397,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
         )}
 
         {/* Zone editors */}
-        {form.zones.length === 0 && (
+        {form.zones.length === 0 && !isGenericHome && (
           <div className="py-4 rounded-xl border border-dashed border-destructive/30 bg-destructive/5 text-center">
             <p className="text-xs text-destructive font-medium">At least one zone is required before uploading images.</p>
             <p className="text-xs text-muted-foreground mt-1">Select a room or zone from the list above to get started.</p>
@@ -497,7 +508,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
         </Button>
       </div>
 
-      {!canSave && form.name.trim() && form.zones.length === 0 && (
+      {!canSave && form.name.trim() && form.zones.length === 0 && !isGenericHome && (
         <p className="text-xs text-destructive text-center">Add at least one zone before saving.</p>
       )}
     </motion.div>
