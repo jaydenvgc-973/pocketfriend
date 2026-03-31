@@ -44,22 +44,33 @@ Deno.serve(async (req) => {
     // Build prompt based on reason
     let prompt = '';
 
+    // Shared quality footer appended to every prompt
+    const qualityFooter = `\nABSOLUTE RULES — NO EXCEPTIONS: No floating text anywhere in the image. No text overlays, captions, labels, or watermarks of any kind. No brand logos or stamps. Clean image only.`;
+
     if (reason === 'custom_prompt' && customPrompt) {
       // User wrote their own prompt — apply it with character context and quality requirements
       prompt = `Photorealistic photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${customPrompt}
-Natural lighting, authentic photo quality. Real photograph — not illustration or painting. Perfect anatomy, no artifacts.`;
+Natural lighting, authentic photo quality. Real photograph — not illustration or painting. Perfect anatomy, no artifacts.${qualityFooter}`;
     } else if (reason === 'flawed') {
-      // Emphasize technical quality and correct anatomy
+      // Reuse the same scene/context but drastically increase reference photo adherence and fix technical issues
       prompt = `Photorealistic portrait photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${baseContext}
-CRITICAL QUALITY REQUIREMENTS: Perfect human anatomy, correct proportions, natural hands with exactly 5 fingers, realistic skin texture, no artifacts, no distortions, no extra limbs or merged faces. Ultra high-resolution, professional photography quality. Natural lighting. Real photograph — not illustration or painting. Correct facial symmetry. Perfect eyes with natural gaze.`;
+REFERENCE PHOTOS ARE MANDATORY: The provided reference images define this person's exact appearance. You MUST reproduce their face, skin tone, hair, and features with maximum fidelity — treat the reference photos as the authoritative source.
+TECHNICAL FIX REQUIREMENTS: Perfect human anatomy, correct proportions, natural hands with exactly 5 fingers, realistic skin texture, no artifacts, no distortions, no extra or merged limbs, correct facial symmetry, natural eye gaze. Ultra high-resolution, professional photography quality. Natural lighting. Real photograph — not an illustration, painting, or digital render.${qualityFooter}`;
     } else if (reason === 'no_avatar') {
-      // Force strong adherence to reference photos
-      prompt = `Photorealistic photo of ${charName}. CRITICAL: This person MUST look EXACTLY like the reference photos provided — same face, same features, same complexion, same hair, same eye color, same facial structure. Do NOT invent a different face. The reference photos are the ground truth for what this person looks like. ${charDesc ? `Additional details: ${charDesc}.` : ''} ${baseContext}
-Reproduce their exact likeness from the reference images. Candid, natural lighting, authentic photo quality.`;
+      // Maximum possible likeness enforcement — face, hair, structure all overemphasized
+      prompt = `Photorealistic photo of ${charName}. ${baseContext}
+EXTREME LIKENESS REQUIREMENT: The reference photos provided are the SOLE source of truth for what this person looks like. You MUST replicate with extreme precision:
+- FACE: Exact facial bone structure, jaw shape, cheekbones, forehead width, chin shape — pixel-perfect match to references.
+- EYES: Exact eye shape, size, spacing, color, and expression from the reference photos.
+- NOSE & MOUTH: Exact nose shape, lip shape, and mouth structure as shown in references.
+- SKIN: Exact complexion, undertone, skin texture, and any distinguishing marks from references.
+- HAIR: Exact hair color, texture, cut, length, style, and how it falls — replicate precisely.
+Do NOT invent, average, or approximate. The reference photos ARE this person. ${charDesc ? `Additional context: ${charDesc}.` : ''}
+Candid, natural lighting, authentic photo quality. Real photograph — not an illustration or painting.${qualityFooter}`;
     } else {
       // dont_like — fresh take, same character
       prompt = `Photorealistic portrait photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${baseContext}
-Fresh composition and framing — different angle, different lighting mood, different expression than before. Keep the same person and their consistent appearance from references, but try a new creative take. Authentic, candid, natural lighting. Real photograph quality.`;
+Fresh composition and framing — different angle, different lighting mood, different expression than before. Keep the same person and their consistent appearance from references, but try a new creative take. Authentic, candid, natural lighting. Real photograph quality.${qualityFooter}`;
     }
 
     // Generate the image
