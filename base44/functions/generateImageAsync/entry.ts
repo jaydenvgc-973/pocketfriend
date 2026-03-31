@@ -29,26 +29,33 @@ const ZONE_HINTS = {
  */
 function findZoneImages(promptLower, location) {
   const zones = location.zones || [];
-  if (zones.length === 0) return (location.image_urls || []).slice(0, 4);
+  // Max 6 images per zone — more references = stronger room lock
+  const MAX_ZONE_IMGS = 6;
+  if (zones.length === 0) return (location.image_urls || []).slice(0, MAX_ZONE_IMGS);
 
   // 1. Exact zone name match
   for (const zone of zones) {
     if (zone.image_urls?.length > 0 && promptLower.includes(zone.zone_name.toLowerCase())) {
-      return zone.image_urls.slice(0, 4);
+      return zone.image_urls.slice(0, MAX_ZONE_IMGS);
     }
   }
-  // 2. Zone hint keyword match
+  // 2. Zone hint keyword match — also combine multi-angle shots of same zone
   for (const [keyword, targetZone] of Object.entries(ZONE_HINTS)) {
     if (promptLower.includes(keyword)) {
-      const matched = zones.find(z => z.image_urls?.length > 0 && z.zone_name.toLowerCase().includes(targetZone));
-      if (matched) return matched.image_urls.slice(0, 4);
+      // Collect ALL zones whose names match targetZone (multiple angles of same room)
+      const matchedZones = zones.filter(z => z.image_urls?.length > 0 && z.zone_name.toLowerCase().includes(targetZone));
+      if (matchedZones.length > 0) {
+        // Combine all angles of the same zone to build strongest possible room reference
+        const combined = matchedZones.flatMap(z => z.image_urls || []).slice(0, MAX_ZONE_IMGS);
+        if (combined.length > 0) return combined;
+      }
     }
   }
   // 3. First zone with images
   const first = zones.find(z => z.image_urls?.length > 0);
-  if (first) return first.image_urls.slice(0, 4);
+  if (first) return first.image_urls.slice(0, MAX_ZONE_IMGS);
 
-  return (location.image_urls || []).slice(0, 4);
+  return (location.image_urls || []).slice(0, MAX_ZONE_IMGS);
 }
 
 /**
@@ -147,23 +154,75 @@ Deno.serve(async (req) => {
           const savedLocations = await base44.asServiceRole.entities.LocationReference.filter(
             { created_by: createdBy }, '-created_date', 100
           );
-          locationImages = findLocationImages(cleanPrompt, savedLocations, characterId).slice(0, 4);
+          locationImages = findLocationImages(cleanPrompt, savedLocations, characterId).slice(0, 6);
           if (locationImages.length > 0) {
-            locationNote = `\n\nLOCATION CONSISTENCY — ABSOLUTE REQUIREMENT: Reference images of this exact room/space are provided. You MUST reproduce the environment with 90–99% visual fidelity. The generated image must look like a photograph taken in the IDENTICAL room — only the camera angle may differ. Every other detail must be preserved exactly as shown.
+            locationNote = `
 
-REPLICATE THESE ELEMENTS WITH PIXEL-PERFECT ACCURACY:
-1. FURNITURE: Every single piece of furniture must appear — exact model, style, shape, color, fabric/material, texture, and spatial placement. Sofas, chairs, tables, shelving units, beds, dressers, ottomans, rugs — all must match exactly. Do NOT substitute, remove, recolor, or add any furniture.
-2. FABRIC & UPHOLSTERY: Match the exact fabric texture, pattern, weave, and color of every upholstered surface — sofa cushions, throw pillows, curtains, rugs, bedding, chair covers.
-3. FLOORING: Reproduce the exact floor material (hardwood species, tile pattern, carpet pile, etc.), color, grain direction, grout lines, and finish.
-4. WINDOW TREATMENTS: Curtains, blinds, shades, or shutters must match exactly — same fabric, color, pattern, length, and hang style.
-5. WALL COLOR & FINISH: Exact wall paint color, sheen level, wallpaper pattern, wainscoting, trim color, and any accent walls.
-6. WALL ART & DECOR: Every picture, painting, mirror, clock, shelf bracket, and wall-mounted object must appear in the same position and orientation.
-7. BOOKSHELVES & SHELVING: Reproduce the exact contents, arrangement, and style of any shelving units or bookcases.
-8. LIGHTING FIXTURES: Match all ceiling lights, floor lamps, table lamps, and sconces — same style, position, and warm/cool tone they cast.
-9. DECORATIVE OBJECTS: Every vase, plant, sculpture, remote control, throw blanket, candle — every object visible in the reference must be present.
-10. SPATIAL LAYOUT: Room proportions, ceiling height, window placement, and door positions must match exactly.
+════════════════════════════════════════════════════════════
+ROOM IDENTITY LOCK — THIS IS A MANDATORY ARCHITECTURAL CONSTRAINT
+════════════════════════════════════════════════════════════
+The provided reference images are NOT mood boards. They are NOT inspiration. They are NOT general style guides.
+They are the GROUND TRUTH of this specific room. Treat them as a locked environment blueprint.
 
-THE ONLY PERMITTED CHANGE IS CAMERA ANGLE/FRAMING. Everything else must be an exact reproduction of the reference. This must be instantly and unmistakably recognizable as the same room.`;
+YOU ARE PHOTOGRAPHING THE SAME ROOM AGAIN FROM A DIFFERENT ANGLE.
+This is not a new room. This is not a similar room. This is THE EXACT SAME ROOM.
+The reference images are multiple photographs of one persistent real space.
+Your job is to generate another photograph of that same space.
+
+WHAT YOU MUST LOCK IN — NO EXCEPTIONS:
+─────────────────────────────────────────
+FLOORING: Reproduce the exact floor material, species, color, plank direction, tile pattern, grout color, carpet pile, and finish. If it is dark hardwood, it stays dark hardwood. If it has a specific grain pattern, match it. Do not lighten, darken, or change the material.
+
+WALLS: Exact paint color, sheen, any wallpaper pattern, wainscoting, baseboard trim color, crown molding, and accent walls. Every wall must match identically.
+
+FURNITURE — EVERY PIECE:
+- Reproduce each piece of furniture with exact shape, proportions, style, color, and material.
+- A square coffee table stays a square coffee table. A round one stays round.
+- A low modern sofa stays a low modern sofa. Do not swap it for a different silhouette.
+- A dark wood bed frame stays a dark wood bed frame.
+- Do not remove, add, or substitute ANY furniture piece.
+- Placement: If a couch is against a certain wall, keep it there. If a bed is under a window, keep it there. If a dresser is beside a door, keep it there. These spatial relationships are locked.
+
+FABRICS & UPHOLSTERY:
+- Exact fabric texture, weave pattern, and color of every cushion, pillow, blanket, curtain panel, and rug.
+- A beige woven rug stays a beige woven rug — same pile height, same weave, same color family.
+- Dark leather stays dark leather. Linen stays linen. Velvet stays velvet.
+- Do not change the color, pattern, or material of any fabric or upholstered surface.
+
+WINDOW TREATMENTS: Curtains, blinds, shades, or shutters must match exactly — same fabric, color, pattern, length, fullness, hardware/rods, and hang position. If they are open, show them open. If closed, show them closed.
+
+WALL ART & MOUNTED OBJECTS: Every framed photo, painting, mirror, clock, shelf bracket, and decorative wall piece must appear in the same position on the same wall, at the same height and orientation. Do not move them.
+
+SHELVING & BOOKCASES: Reproduce the exact contents, density, color arrangement, and decorative objects on every shelf. Bookcases must match identically including the books, objects, and overall composition.
+
+LIGHTING FIXTURES: All ceiling lights, pendants, floor lamps, table lamps, and sconces must match in style, position, and the warm/cool quality of the light they emit.
+
+DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, bowl, remote, throw blanket, and tabletop object that defines this room must be present. Do not remove or substitute defining objects.
+
+SPATIAL PROPORTIONS: Room dimensions, ceiling height, window size and placement, door positions, and the overall sense of space must match exactly.
+
+─────────────────────────────────────────
+WHAT YOU ARE ALLOWED TO CHANGE:
+─────────────────────────────────────────
+✓ Camera angle and framing (you may pan, tilt, zoom, or reframe)
+✓ The subject's pose, position, or expression
+✓ Lighting conditions if explicitly requested (e.g. nighttime vs daytime)
+✓ Any element the user's prompt EXPLICITLY requests be changed
+
+WHAT YOU ARE NEVER ALLOWED TO CHANGE (UNLESS EXPLICITLY PROMPTED):
+✗ The room's furniture — not style, not color, not placement, not shape
+✗ The floor material or color
+✗ The wall color
+✗ The window treatments
+✗ Any wall art or decorative objects
+✗ The room's design language or aesthetic
+✗ The spatial layout or furniture arrangement
+
+If the prompt says "same room different angle" — treat this as the STRICTEST possible constraint. ONLY the camera moves. Nothing else.
+
+THE RESULT MUST BE INSTANTLY AND UNMISTAKABLY RECOGNIZABLE AS THE SAME ROOM.
+A person who knows this room in real life must look at the result and say "yes, that is the exact same room."
+════════════════════════════════════════════════════════════`;
           }
         }
       } catch (_) {
@@ -174,28 +233,37 @@ THE ONLY PERMITTED CHANGE IS CAMERA ANGLE/FRAMING. Everything else must be an ex
     let referenceImages;
     let enhancedPrompt = cleanPrompt + locationNote;
 
-    // Always put location images FIRST so the model treats them as the primary environment reference
+    // Location images ALWAYS come first and dominate — they are the locked environment blueprint
+    // When a saved room exists, it is the primary reference. Character/person refs are secondary.
+    const hasLocationImages = locationImages.length > 0;
+
     if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
       referenceImages = [
-        ...locationImages.slice(0, 3),
+        ...locationImages.slice(0, 4),       // Room first — max 4 room refs to dominate
         ...characterReferenceImages.slice(0, 2),
         ...userReferenceImages.slice(0, 2),
       ].filter(Boolean);
-      enhancedPrompt = `${cleanPrompt}${locationNote}\n\nCRITICAL: This photo features BOTH ${characterName} AND the user together. The first reference images show the ROOM — reproduce it with high fidelity. The next reference images are of ${characterName} — replicate their exact face and appearance. The remaining reference images are of the USER — replicate their exact face, features, skin tone, and appearance with pristine accuracy. Both people must look like their respective reference images.`;
+      const roomNote = hasLocationImages
+        ? `REFERENCE IMAGE ORDER: Images 1–${Math.min(locationImages.length, 4)} are of THE ROOM — this is the locked environment. Images ${Math.min(locationImages.length, 4) + 1}–${Math.min(locationImages.length, 4) + Math.min(characterReferenceImages.length, 2)} are of ${characterName}. Final images are of the USER. Reproduce the room with near-locked fidelity. Both people must look exactly like their references.`
+        : `CRITICAL: This photo features BOTH ${characterName} AND the user together. Replicate both faces and appearances with pristine accuracy.`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}\n\n${roomNote}`;
     } else if (resolvedSubjectType === "user" && hasUserImages) {
-      referenceImages = userReferenceImages.slice(0, 3);
+      referenceImages = userReferenceImages.slice(0, 4);
       enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this photo is the USER (not ${characterName}). Use the provided reference images to replicate their exact face, features, and appearance with pristine accuracy.`;
     } else if (hasCharacterImages) {
       // "character" or fallback — NEVER include user references
-      // Location images come FIRST so the model anchors on the room before the subject
+      // Location images come FIRST and get maximum slots — the room is the anchor
       referenceImages = [
-        ...locationImages.slice(0, 3),
-        ...characterReferenceImages.slice(0, 3),
+        ...locationImages.slice(0, 4),       // Room gets up to 4 slots — locked environment
+        ...characterReferenceImages.slice(0, 3),  // Character gets up to 3 slots
       ].filter(Boolean);
-      enhancedPrompt = `${cleanPrompt}${locationNote}\n\nCRITICAL: The subject of this photo is ${characterName}. The first reference images show the ROOM — reproduce it with high fidelity (same furniture, walls, floors, decor). The remaining reference images are of ${characterName} — replicate their exact face, features, and appearance. Do NOT include any other person.`;
-    } else if (locationImages.length > 0) {
+      const roomInstruction = hasLocationImages
+        ? `REFERENCE IMAGE ORDER: The first ${Math.min(locationImages.length, 4)} image(s) are of THE ROOM — this is the locked environment blueprint. Reproduce it with near-locked visual fidelity (same furniture, exact placement, same floors, walls, decor, lighting). The remaining reference images are of ${characterName} — place them in that exact room. Replicate ${characterName}'s exact face and appearance. Do NOT include any other person. Do NOT redesign the room.`
+        : `CRITICAL: The subject of this photo is ${characterName}. Replicate their exact face, features, and appearance. Do NOT include any other person.`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}\n\n${roomInstruction}`;
+    } else if (hasLocationImages) {
       // No character refs but have location refs
-      referenceImages = locationImages;
+      referenceImages = locationImages.slice(0, 6);
       enhancedPrompt = `${cleanPrompt}${locationNote}`;
     } else {
       referenceImages = undefined;
