@@ -140,15 +140,18 @@ function LocationCard({ location, onDelete, onEdit }) {
               {location.description && (
                 <p className="text-xs text-muted-foreground">{location.description}</p>
               )}
-              {location.resident_character_names?.length > 0 && (
+              {(location.resident_character_ids?.length > 0 || location.resident_family_members?.length > 0) && (
                 <div>
                   <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">Residents</p>
                   <div className="flex flex-wrap gap-1">
-                    {location.resident_character_names.map(name => (
+                    {location.resident_character_names?.map(name => (
                       <span key={name} className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full">{name}</span>
                     ))}
+                    {location.resident_family_members?.map(fam => (
+                      <span key={fam.name} className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{fam.name}</span>
+                    ))}
                   </div>
-                  {location.resident_character_ids?.length > 1 && (
+                  {(location.resident_character_ids?.length + (location.resident_family_members?.length || 0)) > 1 && (
                     <p className="text-[10px] text-muted-foreground/70 mt-1">
                       Split: {location.cost_split_method === "custom" ? "custom" : "evenly"}
                     </p>
@@ -269,6 +272,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     description: editingLocation?.description || "",
     keywords: editingLocation?.keywords?.join(", ") || "",
     zones: editingLocation?.zones || [],
+    resident_character_ids: editingLocation?.resident_character_ids || [],
+    resident_family_members: editingLocation?.resident_family_members || [],
+    cost_split_method: editingLocation?.cost_split_method || "even",
+    resident_cost_split: editingLocation?.resident_cost_split || {},
     owner_character_id: editingLocation?.owner_character_id || "",
     owner_character_name: editingLocation?.owner_character_name || "",
     owner_is_npc: editingLocation?.owner_is_npc || false,
@@ -482,9 +489,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
 
           {/* Resident list */}
           <div className="space-y-2">
-            {form.resident_character_ids?.length > 0 ? (
+            {form.resident_character_ids?.length > 0 || form.resident_family_members?.length > 0 ? (
               <>
                 <div className="space-y-2 max-h-44 overflow-y-auto">
+                  {/* Active character residents */}
                   {form.resident_character_ids.map((resId, idx) => {
                     const resChar = characters.find(c => c.id === resId);
                     return (
@@ -500,10 +508,28 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                       </div>
                     );
                   })}
+                  {/* Family member residents */}
+                  {form.resident_family_members?.map((fam, idx) => (
+                    <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
+                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">
+                        {fam.name?.[0]?.toUpperCase() || "?"}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm text-foreground">{fam.name}</p>
+                        <p className="text-xs text-muted-foreground/70 capitalize">{fam.relationship_type}</p>
+                      </div>
+                      <button
+                        onClick={() => update("resident_family_members", form.resident_family_members.filter((_, i) => i !== idx))}
+                        className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
                 </div>
 
                 {/* Cost split method — only show if multiple residents */}
-                {form.resident_character_ids.length > 1 && (
+                {(form.resident_character_ids.length + (form.resident_family_members?.length || 0)) > 1 && (
                   <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
                     <label className="text-xs font-semibold text-foreground uppercase">Split costs</label>
                     <div className="flex gap-2">
@@ -549,8 +575,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
             )}
           </div>
 
-          {/* Add resident button */}
-          <div className="space-y-2 max-h-44 overflow-y-auto rounded-xl border border-border bg-card">
+          {/* Add resident: active characters + family members */}
+          <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card">
+            {/* Active characters */}
             {characters.map(char => {
               const alreadyResident = form.resident_character_ids?.includes(char.id);
               return (
@@ -570,6 +597,35 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                 </button>
               );
             })}
+
+            {/* Family members from all characters */}
+            {characters.flatMap(char =>
+              (char.family_members || []).map((fam, idx) => {
+                const familyKey = `${char.id}__${fam.name}`;
+                const alreadyResident = form.resident_family_members?.some(f => f.name === fam.name);
+                return (
+                  <button
+                    key={familyKey}
+                    onClick={() => {
+                      if (!alreadyResident) {
+                        update("resident_family_members", [...(form.resident_family_members || []), { name: fam.name, relationship_type: fam.relationship_type, source_character_id: char.id }]);
+                      }
+                    }}
+                    disabled={alreadyResident}
+                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                  >
+                    <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">
+                      {fam.name?.[0]?.toUpperCase() || "?"}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm text-foreground font-medium truncate">{fam.name}</p>
+                      <p className="text-xs text-muted-foreground/70 capitalize">{fam.relationship_type} of {char.name}</p>
+                    </div>
+                    {alreadyResident && <span className="text-xs text-primary font-medium">✓</span>}
+                  </button>
+                );
+              })
+            )}
           </div>
         </div>
       )}
