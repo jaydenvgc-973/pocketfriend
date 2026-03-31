@@ -630,6 +630,103 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
         </div>
       )}
 
+      {/* ── WORKERS / EMPLOYEES ───────────────────────────────────────── */}
+      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym') && (
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+              Add characters who work at this location. Set their pay, title, and work schedule.
+            </p>
+          </div>
+
+          {/* Workers list */}
+          <div className="space-y-2">
+            {form.worker_character_ids?.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
+                {form.worker_character_ids.map((workerId, idx) => {
+                  const worker = characters.find(c => c.id === workerId);
+                  return (
+                    <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
+                      <div className="flex items-center gap-2 justify-between">
+                        <span className="text-sm font-medium text-foreground">{worker?.name || workerId}</span>
+                        <button
+                          onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))}
+                          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
+                          <select
+                            value={form.worker_pay_type[workerId] || 'hourly'}
+                            onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })}
+                            className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground"
+                          >
+                            <option value="hourly">Hourly</option>
+                            <option value="annual">Annual</option>
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs">$</span>
+                            <Input
+                              type="number"
+                              value={form.worker_pay_rates[workerId] || 0}
+                              onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })}
+                              className="h-8 text-xs flex-1"
+                              placeholder="15"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Title</label>
+                          <Input
+                            type="text"
+                            value={form.worker_job_titles[workerId] || ''}
+                            onChange={(e) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: e.target.value })}
+                            placeholder="e.g. Manager"
+                            className="h-8 text-xs"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No workers added yet.</p>
+            )}
+          </div>
+
+          {/* Add worker selector */}
+          <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card">
+            {characters.map(char => {
+              const alreadyWorker = form.worker_character_ids?.includes(char.id);
+              return (
+                <button
+                  key={char.id}
+                  onClick={() => {
+                    if (!alreadyWorker) {
+                      update("worker_character_ids", [...(form.worker_character_ids || []), char.id]);
+                    }
+                  }}
+                  disabled={alreadyWorker}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                >
+                  <CharacterAvatar character={char} size="sm" />
+                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                  {alreadyWorker && <span className="text-xs text-primary font-medium">✓ Working</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* ── OWNER / LANDLORD ───────────────────────────────────────────── */}
       <div className="space-y-3">
         <div>
