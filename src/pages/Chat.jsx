@@ -30,6 +30,7 @@ import {
   buildStatusPromptContext,
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
+import { filterDashes } from "@/lib/dashFilter";
 
 // Voice playback cache and active audio tracking
 const voiceCache = new Map();
@@ -1091,6 +1092,9 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
         responseText = "";
       }
+      // DASH FILTER: remove AI-generated dashes (— – and spaced -) from visible dialogue
+      // Real people texting never use dashes for pauses or dramatic effect
+      responseText = filterDashes(responseText);
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
       imagePrompts = hasImage
@@ -1175,6 +1179,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
           userReferenceImages: useUserRefs ? userRefImages : [],
           characterName: character.name,
           subjectType,
+          characterId,
         }).catch(() => {});
       }, delayMs);
       return imgMsg;

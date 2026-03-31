@@ -1,0 +1,68 @@
+{
+  "name": "LocationReference",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "The display name of the location (e.g. 'Jayden's Apartment', 'Downtown Coffee Shop')"
+    },
+    "location_type": {
+      "type": "string",
+      "enum": [
+        "global",
+        "character_specific"
+      ],
+      "default": "global",
+      "description": "Whether this location is shared across all characters or specific to one"
+    },
+    "character_id": {
+      "type": "string",
+      "description": "If character_specific, the ID of the character this belongs to"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character if character_specific"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "home",
+        "workplace",
+        "social",
+        "outdoor",
+        "food_drink",
+        "medical",
+        "education",
+        "other"
+      ],
+      "default": "other",
+      "description": "Category for grouping and matching"
+    },
+    "room_label": {
+      "type": "string",
+      "description": "For home categories: which room this is (e.g. 'living room', 'bedroom', 'kitchen', 'bathroom', 'exterior', 'backyard')"
+    },
+    "image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Reference images for this location (4-5 recommended)"
+    },
+    "description": {
+      "type": "string",
+      "description": "Optional description of the location's style, layout, or atmosphere"
+    },
+    "keywords": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Keywords used to detect when a character is at this location"
+    }
+  },
+  "required": [
+    "name",
+    "location_type"
+  ]
+}

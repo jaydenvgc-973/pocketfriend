@@ -23,6 +23,7 @@ import EditCharacterEmotions from './pages/EditCharacterEmotions';
 import EditCharacterRelationships from './pages/EditCharacterRelationships';
 import EditCharacterProfile from './pages/EditCharacterProfile';
 import Moments from './pages/Moments';
+import Locations from './pages/Locations';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 
 const AuthenticatedApp = () => {
@@ -60,6 +61,7 @@ const AuthenticatedApp = () => {
       <Route path="/edit-character-photos" element={<EditCharacterPhotos />} />
       <Route path="/edit-character-emotions" element={<EditCharacterEmotions />} />
       <Route path="/moments" element={<Moments />} />
+      <Route path="/locations" element={<Locations />} />
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
       <Route path="*" element={<PageNotFound />} />
