@@ -23,6 +23,27 @@
       "type": "string",
       "description": "Display name of the character if character_specific"
     },
+    "owner_character_id": {
+      "type": "string",
+      "description": "ID of the active character who owns/operates this location (landlord, manager, revenue earner). For global spaces this may be reassigned if the owner is deleted."
+    },
+    "owner_character_name": {
+      "type": "string",
+      "description": "Display name of the owning character or NPC"
+    },
+    "owner_is_npc": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if the owner is an NPC (no linked character record) rather than an active character"
+    },
+    "owner_npc_name": {
+      "type": "string",
+      "description": "Free-text name of the NPC owner if owner_is_npc is true"
+    },
+    "owner_role": {
+      "type": "string",
+      "description": "The owner's role at this location, e.g. 'landlord', 'manager', 'owner', 'operator'"
+    },
     "category": {
       "type": "string",
       "enum": [

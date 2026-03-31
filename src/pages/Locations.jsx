@@ -72,7 +72,12 @@ function LocationCard({ location, onDelete, onEdit }) {
               </span>
             )}
             <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
-            <span className="text-xs text-muted-foreground">· {totalImages} image{totalImages !== 1 ? "s" : ""}</span>
+            <span className="text-xs text-muted-foreground">· {totalImages} img{totalImages !== 1 ? "s" : ""}</span>
+            {(location.owner_character_name || (location.owner_is_npc && location.owner_npc_name)) && (
+              <span className="text-xs text-muted-foreground/70">
+                · {location.owner_role || "owner"}: {location.owner_is_npc ? location.owner_npc_name : location.owner_character_name}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -211,6 +216,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     description: editingLocation?.description || "",
     keywords: editingLocation?.keywords?.join(", ") || "",
     zones: editingLocation?.zones || [],
+    owner_character_id: editingLocation?.owner_character_id || "",
+    owner_character_name: editingLocation?.owner_character_name || "",
+    owner_is_npc: editingLocation?.owner_is_npc || false,
+    owner_npc_name: editingLocation?.owner_npc_name || "",
+    owner_role: editingLocation?.owner_role || "owner",
   });
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
@@ -249,10 +259,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     const charObj = form.location_type === "character_specific"
       ? characters.find(c => c.id === form.character_id)
       : null;
+    const ownerChar = !form.owner_is_npc && form.owner_character_id
+      ? characters.find(c => c.id === form.owner_character_id)
+      : null;
     onSave({
       ...form,
       keywords: form.keywords.split(",").map(k => k.trim()).filter(Boolean),
       character_name: charObj?.name || "",
+      owner_character_name: ownerChar?.name || form.owner_character_name || "",
     });
   };
 
@@ -389,6 +403,75 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
             />
           ))}
         </div>
+      </div>
+
+      {/* ── OWNER / LANDLORD ───────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Owner / Landlord (optional)</label>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {form.location_type === "global"
+              ? "Assign a character or NPC who owns or earns revenue from this space. Can be reassigned if the owner leaves."
+              : "Assign the landlord or owner of this character-specific space."}
+          </p>
+        </div>
+
+        {/* Owner type toggle */}
+        <div className="grid grid-cols-2 gap-2">
+          <button
+            onClick={() => update("owner_is_npc", false)}
+            className={`py-2 px-3 rounded-xl text-sm border transition-colors ${!form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}
+          >
+            👤 Active Character
+          </button>
+          <button
+            onClick={() => update("owner_is_npc", true)}
+            className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}
+          >
+            🧑‍🤝‍🧑 NPC
+          </button>
+        </div>
+
+        {!form.owner_is_npc ? (
+          <div className="space-y-2 max-h-44 overflow-y-auto">
+            <button
+              onClick={() => update("owner_character_id", "")}
+              className={`w-full flex items-center gap-2 p-2 rounded-xl border text-sm transition-colors ${!form.owner_character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+            >
+              <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs">—</span>
+              No owner assigned
+            </button>
+            {characters.map(c => (
+              <button key={c.id} onClick={() => update("owner_character_id", c.id)}
+                className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+                <CharacterAvatar character={c} size="sm" />
+                <span className="text-sm text-foreground">{c.name}</span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <Input
+            value={form.owner_npc_name}
+            onChange={e => update("owner_npc_name", e.target.value)}
+            placeholder="NPC name (e.g. Mr. Hassan, The Landlord)"
+            className="h-10 rounded-xl text-sm"
+          />
+        )}
+
+        {/* Owner role */}
+        {(form.owner_character_id || (form.owner_is_npc && form.owner_npc_name.trim())) && (
+          <div className="flex flex-wrap gap-2">
+            {["owner", "landlord", "manager", "operator"].map(role => (
+              <button
+                key={role}
+                onClick={() => update("owner_role", role)}
+                className={`px-3 py-1.5 rounded-full text-xs border transition-colors capitalize ${form.owner_role === role ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+              >
+                {role}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Description */}
