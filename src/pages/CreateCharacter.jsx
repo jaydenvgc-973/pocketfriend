@@ -332,6 +332,127 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
     setShowMemoryForm(false);
   };
 
+  const [isRandomCreating, setIsRandomCreating] = useState(false);
+
+  const handleRandomCreate = async () => {
+    setIsRandomCreating(true);
+    try {
+      // Pick random attributes
+      const randomGender = GENDERS[Math.floor(Math.random() * GENDERS.length)];
+      const randomAge = AGES[Math.floor(Math.random() * AGES.length)];
+      const randomEthnicity = ETHNICITIES[Math.floor(Math.random() * ETHNICITIES.length)];
+      const randomLiving = LIVING[Math.floor(Math.random() * LIVING.length)];
+      const randomArchetype = ARCHETYPES[Math.floor(Math.random() * ARCHETYPES.length)];
+      const randomEnergy = ENERGY_SCALE[Math.floor(Math.random() * ENERGY_SCALE.length)];
+      const randomJob = JOB_TYPES[Math.floor(Math.random() * JOB_TYPES.length)];
+      const randomZodiac = ZODIAC_SIGNS[Math.floor(Math.random() * ZODIAC_SIGNS.length)];
+      const shuffledVibes = [...VIBES].sort(() => Math.random() - 0.5);
+      const randomVibes = shuffledVibes.slice(0, 2 + Math.floor(Math.random() * 3));
+      const randomOrientation = SEXUAL_ORIENTATIONS.filter(o => !o.includes("(DL)") && o !== "Prefer not to say")[Math.floor(Math.random() * 5)];
+
+      const { first_name, last_name } = generateRandomName();
+      const birthday = calculateBirthdateFromZodiac(randomZodiac, randomAge) || "";
+
+      const fullName = `${first_name} ${last_name}`;
+      const charProfile = `Name: ${fullName}. Age: ${randomAge}. Background: ${randomEthnicity}. Gender: ${randomGender}. Archetype: ${randomArchetype.label}. Social energy: ${randomEnergy.value}. Vibes: ${randomVibes.join(", ")}. Living situation: ${randomLiving}. Job type: ${randomJob}.`;
+
+      // Generate all in parallel
+      const [personality, generatedMemories, sleepSchedule, avatarResult, backstory] = await Promise.all([
+        base44.integrations.Core.InvokeLLM({
+          prompt: `Create a personality summary (2-3 sentences, raw and real, third person) for: ${charProfile}. Make it feel like a real person, not a description. No flowery language.`
+        }),
+        base44.integrations.Core.InvokeLLM({
+          prompt: `Generate 4 specific memories for this character that shaped who they are. CHARACTER: ${charProfile}. Return ONLY a JSON object with a "memories" array. Each memory: { title, description, emotional_impact, lesson_learned }`,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              memories: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    title: { type: "string" },
+                    description: { type: "string" },
+                    emotional_impact: { type: "string" },
+                    lesson_learned: { type: "string" }
+                  }
+                }
+              }
+            }
+          }
+        }),
+        base44.integrations.Core.InvokeLLM({
+          prompt: `Given this character's job (${randomJob}) and social energy (${randomEnergy.value}), return their realistic sleep schedule. Return ONLY JSON with sleep_start_time and wake_up_time in HH:MM 24-hour format.`,
+          response_json_schema: {
+            type: "object",
+            properties: {
+              sleep_start_time: { type: "string" },
+              wake_up_time: { type: "string" }
+            }
+          }
+        }),
+        base44.integrations.Core.GenerateImage({
+          prompt: `Portrait photo of a real person. ${randomAge} ${randomEthnicity} descent. Gender: ${randomGender}. ${randomVibes.join(", ")} energy. ${randomArchetype.label} personality. Natural lighting, realistic, photographic, candid feel. Photorealistic, cinematic, high-resolution. Not an illustration, not a painting, natural skin texture.`
+        }),
+        base44.integrations.Core.InvokeLLM({
+          prompt: `Write a 2-sentence backstory for a ${randomAge} ${randomGender} who is ${randomEthnicity}, ${randomLiving}, works in ${randomJob}, and has a ${randomArchetype.label} personality. Third person, grounded, no names for other people.`
+        }),
+      ]);
+
+      const charData = {
+        name: fullName,
+        created_by: currentUser?.email,
+        gender: randomGender.toLowerCase(),
+        archetype: randomArchetype.label,
+        social_energy: randomEnergy.value,
+        sexual_orientation: randomOrientation,
+        personality_summary: typeof personality === "string" ? personality : JSON.stringify(personality),
+        personality_traits: randomVibes,
+        communication_style: `${randomVibes.join(", ")} communication style. Real, unpolished speech.`,
+        age_range: randomAge,
+        ethnicities: [randomEthnicity],
+        background_story: typeof backstory === "string" ? backstory : `${randomAge} ${randomEthnicity} ${randomGender.toLowerCase()}. ${randomLiving}.`,
+        current_situation: randomLiving,
+        emotional_state: "calm",
+        birthday: birthday || undefined,
+        zodiac_sign: randomZodiac,
+        avatar_url: avatarResult?.url,
+        memories: generatedMemories?.memories?.length > 0 ? generatedMemories.memories : undefined,
+        work_details: { job_title: "", workplace_type: randomJob, work_environment: "" },
+        user_respect_level: 50,
+        friendship_level: 75,
+        romantic_level: 0,
+        attraction_level: 0,
+        chosen_family_level: 0,
+        sleep_start_time: sleepSchedule?.sleep_start_time || "23:00",
+        wake_up_time: sleepSchedule?.wake_up_time || "07:00",
+        religion: "None",
+        belief_level: "moderate",
+        status: "active",
+        is_finalized: true,
+        family_members: [],
+      };
+      charData.system_prompt = buildSystemPrompt(charData, []);
+
+      const res = await base44.functions.invoke("createCharacterWithRelationships", {
+        characterData: charData,
+        characterRelationships: []
+      });
+
+      if (res?.data?.success) {
+        localStorage.removeItem(DRAFT_KEY);
+        queryClient.invalidateQueries({ queryKey: ["characters"] });
+        await new Promise(r => setTimeout(r, 500));
+        navigate("/home");
+      } else {
+        throw new Error("Failed to create random character");
+      }
+    } catch (err) {
+      setIsRandomCreating(false);
+      alert("Failed to create random character. Please try again.");
+    }
+  };
+
   const removeMemory = (title) => update("memories", data.memories.filter(m => m.title !== title));
 
   const handleCreate = async () => {
@@ -1022,6 +1143,22 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
             </Button>
           )}
         </div>
+        {step === 0 && (
+          <div className="mt-3">
+            <Button
+              variant="outline"
+              onClick={handleRandomCreate}
+              disabled={isRandomCreating}
+              className="w-full h-12 rounded-xl gap-2 border-dashed text-muted-foreground hover:text-foreground hover:border-primary/50"
+            >
+              <Sparkles className="w-4 h-4" />
+              {isRandomCreating ? "Generating character..." : "Random — create someone automatically"}
+            </Button>
+            {isRandomCreating && (
+              <p className="text-[11px] text-muted-foreground text-center mt-2">Generating a full character with avatar, memories, and personality...</p>
+            )}
+          </div>
+        )}
       </div>
       <div className="pb-28" />
       <BottomNav />
