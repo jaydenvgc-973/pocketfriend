@@ -4,9 +4,56 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 // Only use user references when subjectType is "user" or "joint"
 // Never use user references for "character" images
 
+// Zone hint keywords — maps prompt words to zone names for precise matching
+const ZONE_HINTS = {
+  "living room": "living room", "lounge": "living room", "couch": "living room", "sofa": "living room",
+  "kitchen": "kitchen", "cooking": "kitchen", "fridge": "kitchen",
+  "bedroom": "bedroom", "bed": "bedroom", "sleeping": "bedroom",
+  "bathroom": "bathroom", "shower": "bathroom", "mirror": "bathroom",
+  "dining room": "dining room", "dining table": "dining room",
+  "hallway": "hallway", "entryway": "entryway", "front door": "entryway",
+  "backyard": "backyard", "patio": "backyard",
+  "exterior": "front exterior", "garage": "garage", "basement": "basement",
+  "workout floor": "workout floor", "weights": "weight room", "treadmill": "cardio zone",
+  "locker room": "locker room", "pool": "pool", "sauna": "sauna",
+  "desk": "desk / workspace", "break room": "break room", "conference": "conference room",
+  "waiting room": "waiting area", "waiting area": "waiting area",
+  "patient room": "patient room", "patient bed": "patient room",
+  "operating room": "operating room", "recovery room": "recovery room",
+  "classroom": "classroom", "cafeteria": "cafeteria", "library": "library",
+};
+
+/**
+ * Find zone-accurate image URLs from a location record.
+ * Tries to match the prompt to the most specific zone first.
+ */
+function findZoneImages(promptLower, location) {
+  const zones = location.zones || [];
+  if (zones.length === 0) return (location.image_urls || []).slice(0, 3);
+
+  // 1. Exact zone name match
+  for (const zone of zones) {
+    if (zone.image_urls?.length > 0 && promptLower.includes(zone.zone_name.toLowerCase())) {
+      return zone.image_urls.slice(0, 3);
+    }
+  }
+  // 2. Zone hint keyword match
+  for (const [keyword, targetZone] of Object.entries(ZONE_HINTS)) {
+    if (promptLower.includes(keyword)) {
+      const matched = zones.find(z => z.image_urls?.length > 0 && z.zone_name.toLowerCase().includes(targetZone));
+      if (matched) return matched.image_urls.slice(0, 3);
+    }
+  }
+  // 3. First zone with images
+  const first = zones.find(z => z.image_urls?.length > 0);
+  if (first) return first.image_urls.slice(0, 3);
+
+  return (location.image_urls || []).slice(0, 3);
+}
+
 /**
  * Match a prompt against saved LocationReference records.
- * Returns up to 3 reference image URLs for the best matching location.
+ * Returns zone-accurate reference image URLs.
  * Character-specific locations are prioritized over global ones.
  */
 function findLocationImages(prompt, locations, characterId) {
@@ -20,35 +67,38 @@ function findLocationImages(prompt, locations, characterId) {
   const globalLocations = locations.filter(l => l.location_type === 'global');
   const ordered = [...characterLocations, ...globalLocations];
 
+  // 1. Exact location name match → zone-accurate images
   for (const loc of ordered) {
-    if (!loc.image_urls || loc.image_urls.length === 0) continue;
-
-    // Exact name match
     if (pl.includes(loc.name.toLowerCase())) {
-      return loc.image_urls.slice(0, 3);
-    }
-
-    // Keyword match
-    if (loc.keywords && loc.keywords.some(kw => pl.includes(kw.toLowerCase()))) {
-      return loc.image_urls.slice(0, 3);
+      const imgs = findZoneImages(pl, loc);
+      if (imgs.length > 0) return imgs;
     }
   }
-
-  // Category-level fuzzy match
+  // 2. Keyword match → zone-accurate images
+  for (const loc of ordered) {
+    if (loc.keywords?.some(kw => pl.includes(kw.toLowerCase()))) {
+      const imgs = findZoneImages(pl, loc);
+      if (imgs.length > 0) return imgs;
+    }
+  }
+  // 3. Category-level fuzzy match
   const categoryKeywords = {
     home: ['home', 'apartment', 'house', 'living room', 'bedroom', 'kitchen', 'bathroom', 'backyard'],
+    gym: ['gym', 'workout', 'weights', 'treadmill', 'locker room', 'fitness'],
     workplace: ['work', 'office', 'job', 'workplace', 'store', 'shop'],
     social: ['bar', 'club', 'party', 'lounge'],
     outdoor: ['park', 'outside', 'outdoors', 'trail'],
     food_drink: ['coffee', 'cafe', 'restaurant', 'diner'],
-    medical: ['hospital', 'clinic', 'doctor'],
+    medical: ['hospital', 'clinic', 'doctor', 'waiting room', 'patient'],
     education: ['school', 'class', 'college', 'campus', 'library'],
   };
-
   for (const [cat, keywords] of Object.entries(categoryKeywords)) {
     if (keywords.some(kw => pl.includes(kw))) {
-      const catLoc = ordered.find(l => l.category === cat && l.image_urls?.length > 0);
-      if (catLoc) return catLoc.image_urls.slice(0, 3);
+      const catLoc = ordered.find(l => l.category === cat);
+      if (catLoc) {
+        const imgs = findZoneImages(pl, catLoc);
+        if (imgs.length > 0) return imgs;
+      }
     }
   }
 

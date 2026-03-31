@@ -28,6 +28,7 @@
       "enum": [
         "home",
         "workplace",
+        "gym",
         "social",
         "outdoor",
         "food_drink",
@@ -38,20 +39,9 @@
       "default": "other",
       "description": "Category for grouping and matching"
     },
-    "room_label": {
-      "type": "string",
-      "description": "For home categories: which room this is (e.g. 'living room', 'bedroom', 'kitchen', 'bathroom', 'exterior', 'backyard')"
-    },
-    "image_urls": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Reference images for this location (4-5 recommended)"
-    },
     "description": {
       "type": "string",
-      "description": "Optional description of the location's style, layout, or atmosphere"
+      "description": "Optional description of the location's overall style, layout, or atmosphere"
     },
     "keywords": {
       "type": "array",
@@ -59,6 +49,36 @@
         "type": "string"
       },
       "description": "Keywords used to detect when a character is at this location"
+    },
+    "zones": {
+      "type": "array",
+      "description": "Room/zone breakdown \u2014 each zone has its own reference images",
+      "items": {
+        "type": "object",
+        "properties": {
+          "zone_name": {
+            "type": "string",
+            "description": "The name of the room or zone (e.g. 'Kitchen', 'Locker Room', 'Patient Room')"
+          },
+          "image_urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Reference images for this specific zone (4-5 recommended)"
+          }
+        },
+        "required": [
+          "zone_name"
+        ]
+      }
+    },
+    "image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Legacy flat image list \u2014 kept for backwards compatibility only. Prefer zones."
     }
   },
   "required": [
