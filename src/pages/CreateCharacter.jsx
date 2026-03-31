@@ -693,28 +693,38 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         }
 
         // Pre-create both direct and phone conversations so they exist immediately
-        if (newChar?.id) {
-          Promise.all([
-            base44.entities.Conversation.create({
-              title: `Chat with ${newChar.name}`,
-              type: "direct",
-              character_ids: [newChar.id],
-            }),
-            base44.entities.Conversation.create({
-              title: `Text with ${newChar.name}`,
-              type: "phone",
-              character_ids: [newChar.id],
-            }),
-          ]).catch(() => {});
-        }
+         if (newChar?.id) {
+           Promise.all([
+             base44.entities.Conversation.create({
+               title: `Chat with ${newChar.name}`,
+               type: "direct",
+               character_ids: [newChar.id],
+             }),
+             base44.entities.Conversation.create({
+               title: `Text with ${newChar.name}`,
+               type: "phone",
+               character_ids: [newChar.id],
+             }),
+           ]).catch(() => {});
+         }
 
-        // Invalidate ALL character cache variants to guarantee Home page refresh
-        queryClient.invalidateQueries({ queryKey: ["characters"] });
-        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-        queryClient.invalidateQueries({ queryKey: ["user"] });
-        // Force a fresh refetch before navigating
-        await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
-        navigate("/home");
+         // Setup character's home with default location registration
+         if (newChar?.id) {
+           base44.functions.invoke('setupCharacterHome', {
+             characterId: newChar.id,
+             characterName: newChar.name,
+           }).catch(() => {});
+         }
+
+         // Invalidate ALL character cache variants to guarantee Home page refresh
+         queryClient.invalidateQueries({ queryKey: ["characters"] });
+         queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+         queryClient.invalidateQueries({ queryKey: ["user"] });
+         queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
+         queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+         // Force a fresh refetch before navigating
+         await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
+         navigate("/home");
       } else {
         throw new Error(res?.data?.error || "Failed to create character");
       }
