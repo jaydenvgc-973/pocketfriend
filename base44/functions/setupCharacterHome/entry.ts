@@ -6,7 +6,20 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, characterName } = await req.json();
+    let characterId, characterName;
+    const body = await req.json();
+    
+    // Support both direct params and automation payload format
+    if (body.event) {
+      // Automation trigger format
+      characterId = body.data?.id;
+      characterName = body.data?.name;
+    } else {
+      // Direct function call format
+      characterId = body.characterId;
+      characterName = body.characterName;
+    }
+
     if (!characterId || !characterName) {
       return Response.json({ error: 'characterId and characterName required' }, { status: 400 });
     }
