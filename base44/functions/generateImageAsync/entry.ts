@@ -428,8 +428,47 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
 
+    // ── SERVER-SIDE CHARACTER REF RESOLUTION ──────────────────────────────────
+    // Always fetch the character record so we have the latest avatar + reference images,
+    // regardless of what the frontend passed in. This prevents "no refs" when the
+    // frontend passes an empty array.
+    let resolvedCharacterRefs = characterReferenceImages || [];
+    let characterAppearanceNote = "";
+
+    if (characterId) {
+      try {
+        const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
+        if (charRecord) {
+          // Build server-side ref list: avatar first, then reference_image_urls
+          const serverRefs = [];
+          if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
+          if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
+
+          // Use server-side refs if frontend passed nothing or server has more
+          if (serverRefs.length > resolvedCharacterRefs.length) {
+            resolvedCharacterRefs = serverRefs;
+            console.log(`[CHAR-REFS] Using server-side refs: ${serverRefs.length} images for ${charRecord.name}`);
+          }
+
+          // Build appearance description text for when refs are sparse/missing
+          const appearanceParts = [];
+          if (charRecord.age_range) appearanceParts.push(charRecord.age_range);
+          if (charRecord.gender) appearanceParts.push(charRecord.gender);
+          if (charRecord.ethnicities?.length > 0) appearanceParts.push(charRecord.ethnicities.join(', '));
+          if (charRecord.appearance_notes) appearanceParts.push(charRecord.appearance_notes);
+          if (charRecord.avatar_description_text) appearanceParts.push(charRecord.avatar_description_text);
+
+          if (appearanceParts.length > 0) {
+            characterAppearanceNote = `\n\nCHARACTER APPEARANCE — ${charRecord.name}: ${appearanceParts.join(', ')}. Generate this specific person consistently.`;
+          }
+        }
+      } catch (err) {
+        console.error('[CHAR-REFS] Failed to fetch character:', err.message);
+      }
+    }
+
     const hasUserImages = userReferenceImages && userReferenceImages.length > 0;
-    const hasCharacterImages = characterReferenceImages && characterReferenceImages.length > 0;
+    const hasCharacterImages = resolvedCharacterRefs.length > 0;
 
     // Parse [TAG] from start of prompt
     let resolvedSubjectType = subjectType || "character";
@@ -481,43 +520,50 @@ Deno.serve(async (req) => {
     let enhancedPrompt = cleanPrompt + locationNote;
     const hasLocationImages = locationImages.length > 0;
 
-    const locationCount = Math.min(locationImages.length, 4);
-    const charCount = Math.min((characterReferenceImages || []).length, 3);
+    // Slot budget: location gets 3 max, character gets 4 max — prioritize face fidelity
+    const locationCount = Math.min(locationImages.length, 3);
+    const charCount = Math.min(resolvedCharacterRefs.length, 4);
     const userCount = Math.min((userReferenceImages || []).length, 2);
 
     if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
       referenceImages = [
-        ...locationImages.slice(0, 4),
-        ...characterReferenceImages.slice(0, 2),
+        ...locationImages.slice(0, 3),
+        ...resolvedCharacterRefs.slice(0, 2),
         ...userReferenceImages.slice(0, 2),
       ].filter(Boolean);
 
       const roomNote = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} (replicate exactly). Final images = the USER (replicate exactly). Both people must be placed inside the locked room.`
+        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = the USER (replicate exactly). Both people must be placed inside the locked room.`
         : `CRITICAL: Features BOTH ${characterName} AND the user. Replicate both faces and appearances with pristine accuracy.`;
-      enhancedPrompt = `${cleanPrompt}${locationNote}\n\n${roomNote}`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       referenceImages = userReferenceImages.slice(0, 4);
       enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.`;
 
     } else if (hasCharacterImages) {
+      // Character refs come AFTER location refs but get more slots (4 vs 3) for face priority
       referenceImages = [
-        ...locationImages.slice(0, 4),
-        ...characterReferenceImages.slice(0, 3),
+        ...locationImages.slice(0, 3),
+        ...resolvedCharacterRefs.slice(0, 4),
       ].filter(Boolean);
 
       const roomInstruction = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — this is the locked environment blueprint. Reproduce it with near-locked visual fidelity. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} — place them naturally inside that exact room. Replicate ${characterName}'s face and appearance. Do NOT include any other person. Do NOT redesign or reimagine the room.`
+        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} — the person who must appear in the scene. Replicate ${characterName}'s exact face, skin tone, hair, and body with maximum fidelity. Do NOT include any other person. Do NOT redesign the room.`
         : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance. Do NOT include any other person.`;
-      enhancedPrompt = `${cleanPrompt}${locationNote}\n\n${roomInstruction}`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomInstruction}`;
 
     } else if (hasLocationImages) {
-      referenceImages = locationImages.slice(0, 6);
-      enhancedPrompt = `${cleanPrompt}${locationNote}`;
+      // No character refs at all — use location refs + strong appearance text
+      referenceImages = locationImages.slice(0, 5);
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}`;
+      if (characterAppearanceNote) {
+        console.log(`[CHAR-REFS] No reference images available — using appearance text description only`);
+      }
 
     } else {
       referenceImages = undefined;
+      enhancedPrompt = `${cleanPrompt}${characterAppearanceNote}`;
     }
 
     const response = await base44.integrations.Core.GenerateImage({
