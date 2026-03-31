@@ -36,7 +36,21 @@ export default function Home() {
       ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
       : [],
     enabled: !!currentUser?.email,
+    staleTime: 0,
+    refetchOnMount: true,
+    refetchOnWindowFocus: true,
   });
+
+  // Real-time: immediately reflect any character create/update/delete
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    const unsubscribe = base44.entities.Character.subscribe((event) => {
+      if (event.type === "create" || event.type === "update" || event.type === "delete") {
+        queryClient.invalidateQueries({ queryKey: ["characters", currentUser.email] });
+      }
+    });
+    return () => unsubscribe();
+  }, [currentUser?.email, queryClient]);
 
   const deleteMutation = useMutation({
     mutationFn: async ({ id, cause, closeness }) => {

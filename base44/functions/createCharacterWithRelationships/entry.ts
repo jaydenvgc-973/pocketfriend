@@ -74,6 +74,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Pre-create direct and phone conversations so the character is immediately fully accessible
+    await Promise.all([
+      base44.asServiceRole.entities.Conversation.create({
+        title: `Chat with ${newCharacter.name}`,
+        type: "direct",
+        character_ids: [newCharacter.id],
+        created_by: user.email,
+      }),
+      base44.asServiceRole.entities.Conversation.create({
+        title: `Text with ${newCharacter.name}`,
+        type: "phone",
+        character_ids: [newCharacter.id],
+        created_by: user.email,
+      }),
+    ]);
+
     return Response.json({
       success: true,
       character: newCharacter,

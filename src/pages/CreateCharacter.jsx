@@ -440,9 +440,45 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       });
 
       if (res?.data?.success) {
+        const newChar = res.data.character;
         localStorage.removeItem(DRAFT_KEY);
+
+        // Persist memories to Memory entity
+        if (generatedMemories?.memories?.length > 0 && newChar?.id) {
+          generatedMemories.memories.forEach(mem => {
+            base44.entities.Memory.create({
+              character_id: newChar.id,
+              title: mem.title,
+              description: mem.description,
+              emotional_impact: mem.emotional_impact || "",
+              lesson_learned: mem.lesson_learned || "",
+              timestamp: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString(),
+              source_context: "character_creation",
+            }).catch(() => {});
+          });
+        }
+
+        // Pre-create both direct and phone conversations
+        if (newChar?.id) {
+          Promise.all([
+            base44.entities.Conversation.create({
+              title: `Chat with ${newChar.name}`,
+              type: "direct",
+              character_ids: [newChar.id],
+            }),
+            base44.entities.Conversation.create({
+              title: `Text with ${newChar.name}`,
+              type: "phone",
+              character_ids: [newChar.id],
+            }),
+          ]).catch(() => {});
+        }
+
+        // Invalidate ALL character cache variants
         queryClient.invalidateQueries({ queryKey: ["characters"] });
-        await new Promise(r => setTimeout(r, 500));
+        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+        queryClient.invalidateQueries({ queryKey: ["user"] });
+        await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
         navigate("/home");
       } else {
         throw new Error("Failed to create random character");
@@ -618,12 +654,46 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       });
 
       if (res?.data?.success) {
+        const newChar = res.data.character;
         localStorage.removeItem(DRAFT_KEY);
-        // Force clear all character-related caches
+
+        // Persist generated memories to the Memory entity for long-term recall
+        if (finalMemories && newChar?.id) {
+          finalMemories.forEach(mem => {
+            base44.entities.Memory.create({
+              character_id: newChar.id,
+              title: mem.title,
+              description: mem.description,
+              emotional_impact: mem.emotional_impact || "",
+              lesson_learned: mem.lesson_learned || "",
+              timestamp: new Date(Date.now() - Math.random() * 365 * 24 * 60 * 60 * 1000).toISOString(),
+              source_context: "character_creation",
+            }).catch(() => {});
+          });
+        }
+
+        // Pre-create both direct and phone conversations so they exist immediately
+        if (newChar?.id) {
+          Promise.all([
+            base44.entities.Conversation.create({
+              title: `Chat with ${newChar.name}`,
+              type: "direct",
+              character_ids: [newChar.id],
+            }),
+            base44.entities.Conversation.create({
+              title: `Text with ${newChar.name}`,
+              type: "phone",
+              character_ids: [newChar.id],
+            }),
+          ]).catch(() => {});
+        }
+
+        // Invalidate ALL character cache variants to guarantee Home page refresh
         queryClient.invalidateQueries({ queryKey: ["characters"] });
+        queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
         queryClient.invalidateQueries({ queryKey: ["user"] });
-        // Wait briefly for query invalidation to propagate, then navigate
-        await new Promise(r => setTimeout(r, 500));
+        // Force a fresh refetch before navigating
+        await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
         navigate("/home");
       } else {
         throw new Error(res?.data?.error || "Failed to create character");
