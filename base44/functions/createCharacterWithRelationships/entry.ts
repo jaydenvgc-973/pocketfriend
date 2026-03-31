@@ -21,8 +21,8 @@ Deno.serve(async (req) => {
       created_by: user.email
     };
 
-    // Create the new character
-    const newCharacter = await base44.asServiceRole.entities.Character.create(safeCharacterData);
+    // Create the new character — use user-scoped client so created_by = user.email (not service account)
+    const newCharacter = await base44.entities.Character.create(safeCharacterData);
 
     if (!newCharacter || !newCharacter.id) {
       return Response.json({ error: 'Failed to create character' }, { status: 500 });

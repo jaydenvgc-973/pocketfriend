@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle } from "lucide-react";
@@ -72,66 +72,45 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', character.id],
     queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id], created_by: character.created_by }),
-    staleTime: 0,
+    staleTime: 30000, // 30s — don't re-fetch on every render
   });
 
-  // STRICT unread count: only delivered, visible, non-read character messages per thread
-  // Never counts: pending (undelivered), hidden, or non-character messages
-  const countUnread = async () => {
-    if (conversations.length === 0) {
-      console.log(`[BADGE] ${character.name} has no conversations — unread = 0`);
-      setUnreadChat(0);
-      setUnreadPhone(0);
-      return;
-    }
-
-    try {
-      const directConvos = conversations.filter(c => c.type === "direct");
-      const phoneConvos = conversations.filter(c => c.type === "phone");
-
-      // Count unread messages per thread, not global
-      let chatTotal = 0;
-      let phoneTotal = 0;
-
-      // For each direct conversation, count its unread character messages
-      for (const convo of directConvos) {
-        const threadUnread = await base44.entities.Message.filter({
-          conversation_id: convo.id,
+  // Single batched query: fetch ALL unread character messages for this character at once
+  // instead of N queries per conversation (which caused 429 rate limit storms)
+  const debounceRef = useRef(null);
+  const countUnread = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(async () => {
+      if (conversations.length === 0) {
+        setUnreadChat(0);
+        setUnreadPhone(0);
+        return;
+      }
+      try {
+        const directIds = new Set(conversations.filter(c => c.type === "direct").map(c => c.id));
+        const phoneIds = new Set(conversations.filter(c => c.type === "phone").map(c => c.id));
+        // One single query for all unread character messages for this character
+        const allUnread = await base44.entities.Message.filter({
+          character_id: character.id,
           sender_type: "character",
           is_read: false,
         });
-        chatTotal += threadUnread.length;
-        if (threadUnread.length > 0) {
-          console.log(`[BADGE] ${character.name} direct convo ${convo.id.substring(0, 8)}... has ${threadUnread.length} unread`);
+        let chatTotal = 0;
+        let phoneTotal = 0;
+        for (const msg of allUnread) {
+          if (directIds.has(msg.conversation_id)) chatTotal++;
+          else if (phoneIds.has(msg.conversation_id)) phoneTotal++;
         }
+        setUnreadChat(chatTotal);
+        setUnreadPhone(phoneTotal);
+      } catch {
+        setUnreadChat(0);
+        setUnreadPhone(0);
       }
+    }, 800); // debounce 800ms so rapid invalidations don't pile up
+  }, [conversations, character.id]);
 
-      // For each phone conversation, count its unread character messages
-      for (const convo of phoneConvos) {
-        const threadUnread = await base44.entities.Message.filter({
-          conversation_id: convo.id,
-          sender_type: "character",
-          is_read: false,
-        });
-        phoneTotal += threadUnread.length;
-        if (threadUnread.length > 0) {
-          console.log(`[BADGE] ${character.name} phone convo ${convo.id.substring(0, 8)}... has ${threadUnread.length} unread`);
-        }
-      }
-
-      console.log(`[BADGE] ${character.name} | FINAL: chat_unread=${chatTotal} | phone_unread=${phoneTotal}`);
-      setUnreadChat(chatTotal);
-      setUnreadPhone(phoneTotal);
-    } catch (err) {
-      console.error('[BADGE] Failed to count unread messages:', err.message);
-      setUnreadChat(0);
-      setUnreadPhone(0);
-    }
-  };
-
-  // Recount immediately when conversations list changes (includes invalidations from chat page)
   useEffect(() => {
-    console.log(`[BADGE] Conversations updated for ${character.name} — recounting unread`);
     countUnread();
   }, [conversations.length, character.id]);
 
@@ -139,29 +118,22 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
   useEffect(() => {
     const handleFocus = () => {
       queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
-      setTimeout(() => countUnread(), 200);
+      countUnread();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
   }, [conversations, character.id, queryClient]);
 
-  // Real-time: recount only when a character message is created or updated (delivered into a thread)
-  // This never fires for PendingMessage — those are a separate entity
+  // Real-time: recount when a relevant message changes for this character
   useEffect(() => {
     const unsubscribe = base44.entities.Message.subscribe((event) => {
       const isForThisChar = event.data?.character_id === character.id;
-      const isCharMsg = event.data?.sender_type === "character";
-      // Only recount on character message create/update — not on user messages or unrelated events
-      if (isForThisChar && isCharMsg && (event.type === "create" || event.type === "update")) {
-        setTimeout(() => countUnread(), 300);
-      }
-      // Also recount when user messages are marked (triggers is_read changes downstream)
-      if (event.type === "update" && event.data?.character_id === character.id) {
-        setTimeout(() => countUnread(), 300);
+      if (isForThisChar && (event.type === "create" || event.type === "update")) {
+        countUnread();
       }
     });
     return () => unsubscribe();
-  }, [character.id, conversations]);
+  }, [character.id, countUnread]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
