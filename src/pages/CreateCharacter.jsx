@@ -16,6 +16,8 @@ import BottomNav from "@/components/BottomNav";
 import RelationshipStep from "@/components/character/RelationshipStep";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import ReligionStep from "@/components/create/ReligionStep";
+import CharacterTraitsStep from "@/components/character/CharacterTraitsStep";
+import { CHARACTER_TRAITS } from "@/components/character/CharacterTraitsStep";
 
 const ETHNICITIES = ["Black / African American", "Latino / Hispanic", "White / Caucasian", "Asian", "Middle Eastern", "Mixed / Multiracial", "Other"];
 const GENDERS = ["Male", "Female", "Non-binary"];
@@ -115,6 +117,19 @@ voice_style_note: "",
 religion: "None",
 belief_level: "moderate",
 religion_custom: "",
+// traits
+is_photogenic: false,
+trait_oversharer: false,
+trait_dry_humor: false,
+trait_night_owl: false,
+trait_hot_and_cold: false,
+trait_flirty: false,
+trait_overcorrects: false,
+trait_blunt: false,
+trait_easily_distracted: false,
+trait_romanticizes: false,
+trait_hard_to_read: false,
+trait_competitive: false,
 };
 
 function loadDraft() {
@@ -642,6 +657,11 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         religion: data.religion || "None",
         belief_level: data.belief_level || "moderate",
         religion_custom: data.religion_custom || undefined,
+        // character traits & quirks
+        is_photogenic: data.is_photogenic || false,
+        ...Object.fromEntries(
+          CHARACTER_TRAITS.filter(t => t.key !== "is_photogenic").map(t => [t.key, data[t.key] || false])
+        ),
         status: "active",
         is_finalized: true,
       };
@@ -1100,6 +1120,13 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       onChange={(field, value) => update(field, value)}
     />,
 
+    // Step: Traits & Quirks
+    <CharacterTraitsStep
+      key="traits"
+      data={data}
+      onChange={(key, value) => update(key, value)}
+    />,
+
     // Step 9: Voice Settings
     <div key="voice" className="space-y-4">
       <div>
@@ -1178,8 +1205,9 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
     true, // 7: memories optional
     true, // 8: relationship optional
     true, // 9: religion optional
-    true, // 10: voice optional
-    true, // 11: photo optional
+    true, // 10: traits optional
+    true, // 11: voice optional
+    true, // 12: photo optional
   ][step];
 
   return (

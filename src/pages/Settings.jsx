@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles } from "lucide-react";
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
@@ -338,6 +338,17 @@ export default function Settings() {
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">Location References</p>
                 <p className="text-xs text-muted-foreground">Upload reference images for consistent visual environments</p>
+              </div>
+            </button>
+          </Link>
+          <Link to="/edit-character-traits" className="mt-2 block">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <Sparkles className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Character Traits & Quirks</p>
+                <p className="text-xs text-muted-foreground">Photogenic, dry humor, night owl, flirty & more</p>
               </div>
             </button>
           </Link>

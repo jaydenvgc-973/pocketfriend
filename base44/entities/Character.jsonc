@@ -24,6 +24,61 @@
       "default": false,
       "description": "Bonus trait: Character loves being photographed, acts as selfie royalty, and sends more images."
     },
+    "trait_oversharer": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Oversharer \u2014 tells you more than you asked for, sends walls of text."
+    },
+    "trait_dry_humor": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Dry humor \u2014 deadpan, rarely signals when they're joking."
+    },
+    "trait_night_owl": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Night owl \u2014 most alive after midnight, best conversations late."
+    },
+    "trait_hot_and_cold": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Hot and cold \u2014 warm one day, distant the next, not manipulative just internal."
+    },
+    "trait_flirty": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Naturally flirty \u2014 can't turn it off, doesn't always mean anything."
+    },
+    "trait_overcorrects": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Overcorrects after conflict \u2014 tries too hard to make things right."
+    },
+    "trait_blunt": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Brutally honest \u2014 says exactly what they think even when unnecessary."
+    },
+    "trait_easily_distracted": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Easily distracted \u2014 mid-conversation pivots, random tangents."
+    },
+    "trait_romanticizes": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Romanticizes everything \u2014 finds meaning in small moments."
+    },
+    "trait_hard_to_read": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Hard to read \u2014 you're never sure where you stand."
+    },
+    "trait_competitive": {
+      "type": "boolean",
+      "default": false,
+      "description": "Trait: Quietly competitive \u2014 keeps score, hates losing even at trivial things."
+    },
     "lives_alone": {
       "type": "boolean",
       "description": "True if the character lives alone, influencing clothing choices at home.",
