@@ -530,10 +530,8 @@ export default function Locations() {
   const { data: locations = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
-      // Fetch ALL locations (including service-role-created ones like generic homes and NPC hub)
-      const all = await base44.asServiceRole.entities.LocationReference.list("-created_date", 500);
-      // Filter to user's app context but include system-created locations
-      return all || [];
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
   });
