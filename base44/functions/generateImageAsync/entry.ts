@@ -4,112 +4,327 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 // Only use user references when subjectType is "user" or "joint"
 // Never use user references for "character" images
 
-// Zone hint keywords — maps prompt words to zone names for precise matching
-const ZONE_HINTS = {
-  "living room": "living room", "lounge": "living room", "couch": "living room", "sofa": "living room",
-  "kitchen": "kitchen", "cooking": "kitchen", "fridge": "kitchen",
-  "bedroom": "bedroom", "bed": "bedroom", "sleeping": "bedroom",
-  "bathroom": "bathroom", "shower": "bathroom", "mirror": "bathroom",
-  "dining room": "dining room", "dining table": "dining room",
-  "hallway": "hallway", "entryway": "entryway", "front door": "entryway",
-  "backyard": "backyard", "patio": "backyard",
-  "exterior": "front exterior", "garage": "garage", "basement": "basement",
-  "workout floor": "workout floor", "weights": "weight room", "treadmill": "cardio zone",
-  "locker room": "locker room", "pool": "pool", "sauna": "sauna",
-  "desk": "desk / workspace", "break room": "break room", "conference": "conference room",
-  "waiting room": "waiting area", "waiting area": "waiting area",
-  "patient room": "patient room", "patient bed": "patient room",
-  "operating room": "operating room", "recovery room": "recovery room",
-  "classroom": "classroom", "cafeteria": "cafeteria", "library": "library",
-};
+// ── ZONE KEYWORD MAP ──────────────────────────────────────────────────────────
+// Maps prompt keywords → canonical zone name fragments for fuzzy matching
+const ZONE_KEYWORD_MAP = [
+  { keywords: ["living room", "lounge", "couch", "sofa", "sectional", "tv room", "family room"], zone: "living room" },
+  { keywords: ["kitchen", "cooking", "stove", "fridge", "counter", "microwave", "sink", "oven"], zone: "kitchen" },
+  { keywords: ["bedroom", "bed", "sleeping", "nightstand", "dresser", "closet", "pillow", "duvet", "mattress"], zone: "bedroom" },
+  { keywords: ["bathroom", "shower", "bathtub", "toilet", "vanity", "sink", "towel rack"], zone: "bathroom" },
+  { keywords: ["dining room", "dining table", "dinner table", "eating"], zone: "dining room" },
+  { keywords: ["hallway", "corridor", "entryway", "front door", "foyer"], zone: "hallway" },
+  { keywords: ["backyard", "patio", "deck", "garden", "yard", "outside", "grill", "fire pit", "pool outside"], zone: "backyard" },
+  { keywords: ["garage", "car", "parking"], zone: "garage" },
+  { keywords: ["basement", "downstairs"], zone: "basement" },
+  { keywords: ["office", "desk", "workspace", "home office", "work from home"], zone: "office" },
+  // Gym zones
+  { keywords: ["workout floor", "weights", "weight room", "dumbbell", "barbell", "squat rack", "bench press"], zone: "weight" },
+  { keywords: ["treadmill", "cardio", "elliptical", "bike", "rowing"], zone: "cardio" },
+  { keywords: ["locker room", "changing room", "showers"], zone: "locker" },
+  { keywords: ["pool area", "swimming pool"], zone: "pool" },
+  { keywords: ["sauna", "steam room"], zone: "sauna" },
+  // Bar/club zones
+  { keywords: ["vip section", "vip area", "vip booth", "vip lounge", "the vip"], zone: "vip" },
+  { keywords: ["main floor", "dance floor", "dancefloor", "general floor"], zone: "main floor" },
+  { keywords: ["behind the bar", "bar area", "bartending", "bar counter", "bar top"], zone: "bar area" },
+  { keywords: ["rooftop", "roof deck", "roof bar", "rooftop bar"], zone: "rooftop" },
+  { keywords: ["patio", "outdoor area", "outdoor seating", "outdoor patio"], zone: "patio" },
+  { keywords: ["entrance", "lobby", "foyer", "entry"], zone: "entrance" },
+  // Workplace zones
+  { keywords: ["break room", "lunch room", "breakroom"], zone: "break room" },
+  { keywords: ["conference room", "meeting room", "boardroom"], zone: "conference" },
+  { keywords: ["waiting room", "waiting area", "reception"], zone: "waiting" },
+  // Medical
+  { keywords: ["patient room", "patient bed", "hospital room", "hospital bed"], zone: "patient" },
+  { keywords: ["operating room", "or ", "surgery"], zone: "operating" },
+  { keywords: ["recovery room", "recovery area"], zone: "recovery" },
+  // School
+  { keywords: ["classroom", "class", "lecture hall"], zone: "classroom" },
+  { keywords: ["cafeteria", "school lunch", "lunch room"], zone: "cafeteria" },
+  { keywords: ["library", "study hall"], zone: "library" },
+];
+
+// Possessive implication: "his bed" → implies the character's home location, zone = bedroom
+// These are resolved BEFORE location matching so we can bias toward character-specific home
+const POSSESSIVE_ZONE_MAP = [
+  { pattern: /\bhis bed\b|\bher bed\b|\btheir bed\b|\bown bed\b/, zone: "bedroom", category: "home" },
+  { pattern: /\bhis couch\b|\bher couch\b|\bhis sofa\b|\bher sofa\b|\btheir couch\b/, zone: "living room", category: "home" },
+  { pattern: /\bhis (apartment|place|home|house|room|flat)\b|\bher (apartment|place|home|house|room|flat)\b/, zone: null, category: "home" },
+  { pattern: /\bhis kitchen\b|\bher kitchen\b|\btheir kitchen\b/, zone: "kitchen", category: "home" },
+  { pattern: /\bhis backyard\b|\bher backyard\b|\btheir backyard\b|\bhis patio\b|\bher patio\b/, zone: "backyard", category: "home" },
+  { pattern: /\bhis bathroom\b|\bher bathroom\b|\btheir bathroom\b/, zone: "bathroom", category: "home" },
+  { pattern: /\bhis office\b|\bher office\b|\btheir office\b|\bdesk at (home|his|her)\b/, zone: "office", category: "home" },
+  { pattern: /\bhis bedroom\b|\bher bedroom\b|\btheir bedroom\b/, zone: "bedroom", category: "home" },
+  { pattern: /\bhis living room\b|\bher living room\b|\btheir living room\b/, zone: "living room", category: "home" },
+];
 
 /**
- * Find zone-accurate image URLs from a location record.
- * Tries to match the prompt to the most specific zone first.
+ * Score how well a zone name matches a target zone keyword fragment.
+ * Higher = better match.
  */
-function findZoneImages(promptLower, location) {
-  const zones = location.zones || [];
-  // Max 6 images per zone — more references = stronger room lock
-  const MAX_ZONE_IMGS = 6;
-  if (zones.length === 0) return (location.image_urls || []).slice(0, MAX_ZONE_IMGS);
-
-  // 1. Exact zone name match
-  for (const zone of zones) {
-    if (zone.image_urls?.length > 0 && promptLower.includes(zone.zone_name.toLowerCase())) {
-      return zone.image_urls.slice(0, MAX_ZONE_IMGS);
-    }
-  }
-  // 2. Zone hint keyword match — also combine multi-angle shots of same zone
-  for (const [keyword, targetZone] of Object.entries(ZONE_HINTS)) {
-    if (promptLower.includes(keyword)) {
-      // Collect ALL zones whose names match targetZone (multiple angles of same room)
-      const matchedZones = zones.filter(z => z.image_urls?.length > 0 && z.zone_name.toLowerCase().includes(targetZone));
-      if (matchedZones.length > 0) {
-        // Combine all angles of the same zone to build strongest possible room reference
-        const combined = matchedZones.flatMap(z => z.image_urls || []).slice(0, MAX_ZONE_IMGS);
-        if (combined.length > 0) return combined;
-      }
-    }
-  }
-  // 3. First zone with images
-  const first = zones.find(z => z.image_urls?.length > 0);
-  if (first) return first.image_urls.slice(0, MAX_ZONE_IMGS);
-
-  return (location.image_urls || []).slice(0, MAX_ZONE_IMGS);
+function zoneMatchScore(zoneName, targetZoneFragment) {
+  const zn = zoneName.toLowerCase();
+  const tf = targetZoneFragment.toLowerCase();
+  if (zn === tf) return 100;
+  if (zn.includes(tf)) return 80;
+  if (tf.includes(zn)) return 60;
+  // Partial word overlap
+  const znWords = zn.split(/\s+/);
+  const tfWords = tf.split(/\s+/);
+  const overlap = znWords.filter(w => tfWords.some(t => t.includes(w) || w.includes(t))).length;
+  if (overlap > 0) return 30 + overlap * 10;
+  return 0;
 }
 
 /**
- * Match a prompt against saved LocationReference records.
- * Returns zone-accurate reference image URLs.
- * Character-specific locations are prioritized over global ones.
+ * Given a prompt and a location record, resolve the best matching zone's images.
+ * Returns { zoneImages, zoneName, matchType }
+ * matchType: "exact_zone_name" | "zone_keyword" | "first_zone" | "location_flat"
  */
-function findLocationImages(prompt, locations, characterId) {
-  if (!prompt || !locations || locations.length === 0) return [];
+function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
+  const zones = (location.zones || []).filter(z => z.image_urls?.length > 0);
+  const MAX = 6;
+
+  if (zones.length === 0) {
+    return {
+      zoneImages: (location.image_urls || []).slice(0, MAX),
+      zoneName: null,
+      matchType: "location_flat",
+    };
+  }
+
+  const hint = forcedZoneHint?.toLowerCase() || null;
+
+  // 1. Exact zone name in prompt (highest confidence)
+  for (const zone of zones) {
+    if (promptLower.includes(zone.zone_name.toLowerCase())) {
+      return {
+        zoneImages: zone.image_urls.slice(0, MAX),
+        zoneName: zone.zone_name,
+        matchType: "exact_zone_name",
+      };
+    }
+  }
+
+  // 2. If we have a forced hint (from possessive or keyword inference), score zones against it
+  if (hint) {
+    let bestZone = null;
+    let bestScore = 0;
+    for (const zone of zones) {
+      const score = zoneMatchScore(zone.zone_name, hint);
+      if (score > bestScore) { bestScore = score; bestZone = zone; }
+    }
+    if (bestZone && bestScore >= 30) {
+      // Collect ALL zones that match well (multiple angles of same area)
+      const allMatchingZones = zones.filter(z => zoneMatchScore(z.zone_name, hint) >= 30);
+      const combined = allMatchingZones.flatMap(z => z.image_urls || []).slice(0, MAX);
+      return {
+        zoneImages: combined,
+        zoneName: bestZone.zone_name,
+        matchType: "zone_keyword",
+      };
+    }
+  }
+
+  // 3. Keyword inference from prompt against ZONE_KEYWORD_MAP
+  for (const entry of ZONE_KEYWORD_MAP) {
+    if (entry.keywords.some(kw => promptLower.includes(kw))) {
+      let bestZone = null;
+      let bestScore = 0;
+      for (const zone of zones) {
+        const score = zoneMatchScore(zone.zone_name, entry.zone);
+        if (score > bestScore) { bestScore = score; bestZone = zone; }
+      }
+      if (bestZone && bestScore >= 30) {
+        const allMatchingZones = zones.filter(z => zoneMatchScore(z.zone_name, entry.zone) >= 30);
+        const combined = allMatchingZones.flatMap(z => z.image_urls || []).slice(0, MAX);
+        return {
+          zoneImages: combined,
+          zoneName: bestZone.zone_name,
+          matchType: "zone_keyword",
+        };
+      }
+    }
+  }
+
+  // 4. First zone with images (weakest fallback — better than generic)
+  const first = zones[0];
+  return {
+    zoneImages: first.image_urls.slice(0, MAX),
+    zoneName: first.zone_name,
+    matchType: "first_zone",
+  };
+}
+
+/**
+ * Main resolver: parse the prompt → find Location → find Zone → return images + labels.
+ * Returns { locationImages, locationName, zoneName, matchConfidence }
+ * matchConfidence: "high" | "medium" | "low" | "none"
+ */
+function resolveLocationAndZone(prompt, locations, characterId) {
+  if (!prompt || !locations || locations.length === 0) {
+    return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none" };
+  }
 
   const pl = prompt.toLowerCase();
 
+  // Prioritize character-specific locations over global ones
   const characterLocations = characterId
     ? locations.filter(l => l.location_type === 'character_specific' && l.character_id === characterId)
     : [];
   const globalLocations = locations.filter(l => l.location_type === 'global');
   const ordered = [...characterLocations, ...globalLocations];
 
-  // 1. Exact location name match → zone-accurate images
+  // ── STEP 1: Check possessive patterns to infer zone hint and category bias ──
+  let possessiveZoneHint = null;
+  let possessiveCategoryHint = null;
+  for (const entry of POSSESSIVE_ZONE_MAP) {
+    if (entry.pattern.test(pl)) {
+      possessiveZoneHint = entry.zone;
+      possessiveCategoryHint = entry.category;
+      break;
+    }
+  }
+
+  // ── STEP 2: Exact Location name match (highest confidence) ──
   for (const loc of ordered) {
     if (pl.includes(loc.name.toLowerCase())) {
-      const imgs = findZoneImages(pl, loc);
-      if (imgs.length > 0) return imgs;
+      const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, loc, possessiveZoneHint);
+      return {
+        locationImages: zoneImages,
+        locationName: loc.name,
+        zoneName,
+        matchConfidence: matchType === "exact_zone_name" ? "high" : matchType === "zone_keyword" ? "high" : "medium",
+      };
     }
   }
-  // 2. Keyword match → zone-accurate images
+
+  // ── STEP 3: Keyword match on location keywords field ──
   for (const loc of ordered) {
-    if (loc.keywords?.some(kw => pl.includes(kw.toLowerCase()))) {
-      const imgs = findZoneImages(pl, loc);
-      if (imgs.length > 0) return imgs;
+    if (loc.keywords?.some(kw => kw && pl.includes(kw.toLowerCase()))) {
+      const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, loc, possessiveZoneHint);
+      return {
+        locationImages: zoneImages,
+        locationName: loc.name,
+        zoneName,
+        matchConfidence: matchType === "exact_zone_name" ? "high" : "medium",
+      };
     }
   }
-  // 3. Category-level fuzzy match
+
+  // ── STEP 4: Possessive + category match (e.g. "his bed" → character-specific home) ──
+  if (possessiveCategoryHint) {
+    // Prefer character-specific location in that category first
+    const catLoc = ordered.find(l => l.category === possessiveCategoryHint);
+    if (catLoc) {
+      const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, possessiveZoneHint);
+      return {
+        locationImages: zoneImages,
+        locationName: catLoc.name,
+        zoneName,
+        matchConfidence: "medium",
+      };
+    }
+  }
+
+  // ── STEP 5: Category-level fuzzy match from prompt keywords ──
   const categoryKeywords = {
-    home: ['home', 'apartment', 'house', 'living room', 'bedroom', 'kitchen', 'bathroom', 'backyard'],
-    gym: ['gym', 'workout', 'weights', 'treadmill', 'locker room', 'fitness'],
-    workplace: ['work', 'office', 'job', 'workplace', 'store', 'shop'],
-    social: ['bar', 'club', 'party', 'lounge'],
-    outdoor: ['park', 'outside', 'outdoors', 'trail'],
-    food_drink: ['coffee', 'cafe', 'restaurant', 'diner'],
+    home: ['home', 'apartment', 'house', 'place', 'flat', 'living room', 'bedroom', 'kitchen', 'bathroom', 'backyard', 'couch', 'bed', 'sofa'],
+    gym: ['gym', 'workout', 'weights', 'treadmill', 'locker room', 'fitness', 'lifting'],
+    workplace: ['work', 'office', 'job', 'workplace', 'store', 'shop', 'at work'],
+    social: ['bar', 'club', 'nightclub', 'party', 'lounge', 'vip', 'dance floor'],
+    outdoor: ['park', 'trail', 'outside', 'outdoors', 'nature', 'street'],
+    food_drink: ['coffee', 'cafe', 'restaurant', 'diner', 'brunch'],
     medical: ['hospital', 'clinic', 'doctor', 'waiting room', 'patient'],
     education: ['school', 'class', 'college', 'campus', 'library'],
   };
+
   for (const [cat, keywords] of Object.entries(categoryKeywords)) {
     if (keywords.some(kw => pl.includes(kw))) {
       const catLoc = ordered.find(l => l.category === cat);
       if (catLoc) {
-        const imgs = findZoneImages(pl, catLoc);
-        if (imgs.length > 0) return imgs;
+        const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, possessiveZoneHint);
+        if (zoneImages.length > 0) {
+          return {
+            locationImages: zoneImages,
+            locationName: catLoc.name,
+            zoneName,
+            matchConfidence: "low",
+          };
+        }
       }
     }
   }
 
-  return [];
+  return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none" };
+}
+
+// ── ROOM LOCK PROMPT ──────────────────────────────────────────────────────────
+function buildRoomLockNote(locationName, zoneName) {
+  const placeLabel = [locationName, zoneName].filter(Boolean).join(' → ');
+  return `
+
+════════════════════════════════════════════════════════════
+ENVIRONMENT IDENTITY LOCK: ${placeLabel}
+THIS IS A MANDATORY ARCHITECTURAL CONSTRAINT — NOT A SUGGESTION
+════════════════════════════════════════════════════════════
+The reference images provided are NOT inspiration, NOT mood boards, NOT style guides.
+They are the GROUND TRUTH photographs of this specific ${zoneName || 'space'}.
+${locationName ? `Location: ${locationName}` : ''}${zoneName ? `\nZone: ${zoneName}` : ''}
+
+YOU ARE GENERATING A NEW PHOTOGRAPH OF THE EXACT SAME ROOM/SPACE FROM A DIFFERENT ANGLE.
+Not a similar room. Not a reimagined version. The IDENTICAL space.
+
+WHAT IS LOCKED — ZERO EXCEPTIONS:
+────────────────────────────────────
+ZONE INTEGRITY: You are working within the "${zoneName || 'matched area'}" zone only. Do NOT blend elements from other zones or rooms within this location.
+
+FLOORING: Exact material, species, color, plank direction, tile pattern, grout lines, carpet pile, and finish. Dark hardwood stays dark hardwood. Tile stays that exact tile. No lightening, darkening, or material substitution.
+
+WALLS: Exact paint color, sheen level, any wallpaper, wainscoting, baseboard trim color, crown molding profile, and accent walls. Every wall surface must match.
+
+FURNITURE — EVERY SINGLE PIECE:
+• Each furniture item must match in exact shape, proportions, style, color, fabric, and material.
+• A square coffee table stays square. A round table stays round.
+• A low modern sofa stays low and modern — do not swap the silhouette.
+• A dark wood bed frame stays dark wood.
+• Do NOT add, remove, substitute, or restyle ANY furniture.
+• SPATIAL RELATIONSHIPS ARE LOCKED: couch position, bed position, dresser position, table position. If a couch is against the left wall in the reference, keep it there. If a bed is under a window, keep it there.
+
+FABRICS & UPHOLSTERY: Exact texture, weave, pattern, and color of every cushion, throw pillow, blanket, curtain, rug, and chair cover. Beige woven rug stays beige and woven. Dark leather stays dark leather. Linen stays linen.
+
+WINDOW TREATMENTS: Curtains, blinds, shades, shutters — same fabric, color, length, fullness, rod/track hardware. If open in reference, show open. If closed, show closed.
+
+WALL ART & MOUNTED OBJECTS: Every framed photo, painting, mirror, clock, and wall-mounted object must appear in the same wall position at the same height and orientation.
+
+SHELVING & BOOKCASES: Reproduce contents, arrangement, density, and objects exactly.
+
+LIGHTING FIXTURES: All ceiling fixtures, pendants, floor lamps, table lamps, and sconces must match in style, position, and light temperature (warm/cool).
+
+DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, remote, throw blanket — every object that defines this space must be present and in place.
+
+SPATIAL PROPORTIONS: Room dimensions, ceiling height, window size, window placement, door positions.
+
+────────────────────────────────────
+PERMITTED CHANGES:
+✓ Camera angle, framing, zoom, and perspective
+✓ Subject pose, position, expression, and action
+✓ Time of day / lighting conditions ONLY IF explicitly requested
+✓ Any element the prompt EXPLICITLY asks to change
+
+PROHIBITED CHANGES (unless explicitly requested):
+✗ Furniture style, color, shape, or placement
+✗ Floor material or color
+✗ Wall color or finish
+✗ Window treatments
+✗ Wall art or decorative objects
+✗ Room layout, design language, or aesthetic
+✗ Adding or removing any room-defining element
+
+CRITICAL RULE: "Same room different angle" means ONLY the camera moves. Nothing else changes.
+CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist, they are the source of truth.
+CRITICAL RULE: A person who knows this space in real life must look at the result and immediately recognize it as the same place.
+════════════════════════════════════════════════════════════`;
 }
 
 Deno.serve(async (req) => {
@@ -129,142 +344,88 @@ Deno.serve(async (req) => {
     const hasUserImages = userReferenceImages && userReferenceImages.length > 0;
     const hasCharacterImages = characterReferenceImages && characterReferenceImages.length > 0;
 
-    // Parse [TAG] from start of prompt as override (set by LLM in system prompt)
+    // Parse [TAG] from start of prompt
     let resolvedSubjectType = subjectType || "character";
     const tagMatch = prompt.match(/^\[(USER|CHARACTER|JOINT)\]/i);
-    if (tagMatch) {
-      resolvedSubjectType = tagMatch[1].toLowerCase();
-    }
-    // Strip the tag from the actual prompt
+    if (tagMatch) resolvedSubjectType = tagMatch[1].toLowerCase();
     const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
 
-    // ── LOCATION REFERENCE LOOKUP ────────────────────────────────────
-    // Fetch saved locations for this user and try to find matching location images
-    // Only inject location references for character/joint images (not user-only shots)
+    // ── LOCATION + ZONE RESOLUTION ────────────────────────────────────────────
     let locationImages = [];
     let locationNote = "";
+    let resolvedLocationName = null;
+    let resolvedZoneName = null;
+
     if (resolvedSubjectType !== "user") {
       try {
-        // Use service role to fetch all locations for this app user
         const charRecord = characterId
           ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
           : null;
         const createdBy = charRecord?.created_by;
+
         if (createdBy) {
           const savedLocations = await base44.asServiceRole.entities.LocationReference.filter(
             { created_by: createdBy }, '-created_date', 100
           );
-          locationImages = findLocationImages(cleanPrompt, savedLocations, characterId).slice(0, 6);
-          if (locationImages.length > 0) {
-            locationNote = `
 
-════════════════════════════════════════════════════════════
-ROOM IDENTITY LOCK — THIS IS A MANDATORY ARCHITECTURAL CONSTRAINT
-════════════════════════════════════════════════════════════
-The provided reference images are NOT mood boards. They are NOT inspiration. They are NOT general style guides.
-They are the GROUND TRUTH of this specific room. Treat them as a locked environment blueprint.
+          const { locationImages: imgs, locationName, zoneName, matchConfidence } =
+            resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
 
-YOU ARE PHOTOGRAPHING THE SAME ROOM AGAIN FROM A DIFFERENT ANGLE.
-This is not a new room. This is not a similar room. This is THE EXACT SAME ROOM.
-The reference images are multiple photographs of one persistent real space.
-Your job is to generate another photograph of that same space.
+          if (imgs.length > 0 && matchConfidence !== "none") {
+            locationImages = imgs;
+            resolvedLocationName = locationName;
+            resolvedZoneName = zoneName;
+            locationNote = buildRoomLockNote(locationName, zoneName);
 
-WHAT YOU MUST LOCK IN — NO EXCEPTIONS:
-─────────────────────────────────────────
-FLOORING: Reproduce the exact floor material, species, color, plank direction, tile pattern, grout color, carpet pile, and finish. If it is dark hardwood, it stays dark hardwood. If it has a specific grain pattern, match it. Do not lighten, darken, or change the material.
-
-WALLS: Exact paint color, sheen, any wallpaper pattern, wainscoting, baseboard trim color, crown molding, and accent walls. Every wall must match identically.
-
-FURNITURE — EVERY PIECE:
-- Reproduce each piece of furniture with exact shape, proportions, style, color, and material.
-- A square coffee table stays a square coffee table. A round one stays round.
-- A low modern sofa stays a low modern sofa. Do not swap it for a different silhouette.
-- A dark wood bed frame stays a dark wood bed frame.
-- Do not remove, add, or substitute ANY furniture piece.
-- Placement: If a couch is against a certain wall, keep it there. If a bed is under a window, keep it there. If a dresser is beside a door, keep it there. These spatial relationships are locked.
-
-FABRICS & UPHOLSTERY:
-- Exact fabric texture, weave pattern, and color of every cushion, pillow, blanket, curtain panel, and rug.
-- A beige woven rug stays a beige woven rug — same pile height, same weave, same color family.
-- Dark leather stays dark leather. Linen stays linen. Velvet stays velvet.
-- Do not change the color, pattern, or material of any fabric or upholstered surface.
-
-WINDOW TREATMENTS: Curtains, blinds, shades, or shutters must match exactly — same fabric, color, pattern, length, fullness, hardware/rods, and hang position. If they are open, show them open. If closed, show them closed.
-
-WALL ART & MOUNTED OBJECTS: Every framed photo, painting, mirror, clock, shelf bracket, and decorative wall piece must appear in the same position on the same wall, at the same height and orientation. Do not move them.
-
-SHELVING & BOOKCASES: Reproduce the exact contents, density, color arrangement, and decorative objects on every shelf. Bookcases must match identically including the books, objects, and overall composition.
-
-LIGHTING FIXTURES: All ceiling lights, pendants, floor lamps, table lamps, and sconces must match in style, position, and the warm/cool quality of the light they emit.
-
-DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, bowl, remote, throw blanket, and tabletop object that defines this room must be present. Do not remove or substitute defining objects.
-
-SPATIAL PROPORTIONS: Room dimensions, ceiling height, window size and placement, door positions, and the overall sense of space must match exactly.
-
-─────────────────────────────────────────
-WHAT YOU ARE ALLOWED TO CHANGE:
-─────────────────────────────────────────
-✓ Camera angle and framing (you may pan, tilt, zoom, or reframe)
-✓ The subject's pose, position, or expression
-✓ Lighting conditions if explicitly requested (e.g. nighttime vs daytime)
-✓ Any element the user's prompt EXPLICITLY requests be changed
-
-WHAT YOU ARE NEVER ALLOWED TO CHANGE (UNLESS EXPLICITLY PROMPTED):
-✗ The room's furniture — not style, not color, not placement, not shape
-✗ The floor material or color
-✗ The wall color
-✗ The window treatments
-✗ Any wall art or decorative objects
-✗ The room's design language or aesthetic
-✗ The spatial layout or furniture arrangement
-
-If the prompt says "same room different angle" — treat this as the STRICTEST possible constraint. ONLY the camera moves. Nothing else.
-
-THE RESULT MUST BE INSTANTLY AND UNMISTAKABLY RECOGNIZABLE AS THE SAME ROOM.
-A person who knows this room in real life must look at the result and say "yes, that is the exact same room."
-════════════════════════════════════════════════════════════`;
+            console.log(`[LOCATION] Matched: "${locationName}" → Zone: "${zoneName}" | Confidence: ${matchConfidence} | Images: ${imgs.length}`);
           }
         }
-      } catch (_) {
-        // Location lookup failed silently — continue without
+      } catch (err) {
+        console.error('[LOCATION] Resolution failed:', err.message);
       }
     }
 
+    // ── REFERENCE IMAGE ASSEMBLY ───────────────────────────────────────────────
+    // Location/zone images ALWAYS first — they are the dominant reference
     let referenceImages;
     let enhancedPrompt = cleanPrompt + locationNote;
-
-    // Location images ALWAYS come first and dominate — they are the locked environment blueprint
-    // When a saved room exists, it is the primary reference. Character/person refs are secondary.
     const hasLocationImages = locationImages.length > 0;
+
+    const locationCount = Math.min(locationImages.length, 4);
+    const charCount = Math.min((characterReferenceImages || []).length, 3);
+    const userCount = Math.min((userReferenceImages || []).length, 2);
 
     if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
       referenceImages = [
-        ...locationImages.slice(0, 4),       // Room first — max 4 room refs to dominate
+        ...locationImages.slice(0, 4),
         ...characterReferenceImages.slice(0, 2),
         ...userReferenceImages.slice(0, 2),
       ].filter(Boolean);
+
       const roomNote = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${Math.min(locationImages.length, 4)} are of THE ROOM — this is the locked environment. Images ${Math.min(locationImages.length, 4) + 1}–${Math.min(locationImages.length, 4) + Math.min(characterReferenceImages.length, 2)} are of ${characterName}. Final images are of the USER. Reproduce the room with near-locked fidelity. Both people must look exactly like their references.`
-        : `CRITICAL: This photo features BOTH ${characterName} AND the user together. Replicate both faces and appearances with pristine accuracy.`;
+        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} (replicate exactly). Final images = the USER (replicate exactly). Both people must be placed inside the locked room.`
+        : `CRITICAL: Features BOTH ${characterName} AND the user. Replicate both faces and appearances with pristine accuracy.`;
       enhancedPrompt = `${cleanPrompt}${locationNote}\n\n${roomNote}`;
+
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       referenceImages = userReferenceImages.slice(0, 4);
-      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this photo is the USER (not ${characterName}). Use the provided reference images to replicate their exact face, features, and appearance with pristine accuracy.`;
+      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.`;
+
     } else if (hasCharacterImages) {
-      // "character" or fallback — NEVER include user references
-      // Location images come FIRST and get maximum slots — the room is the anchor
       referenceImages = [
-        ...locationImages.slice(0, 4),       // Room gets up to 4 slots — locked environment
-        ...characterReferenceImages.slice(0, 3),  // Character gets up to 3 slots
+        ...locationImages.slice(0, 4),
+        ...characterReferenceImages.slice(0, 3),
       ].filter(Boolean);
+
       const roomInstruction = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: The first ${Math.min(locationImages.length, 4)} image(s) are of THE ROOM — this is the locked environment blueprint. Reproduce it with near-locked visual fidelity (same furniture, exact placement, same floors, walls, decor, lighting). The remaining reference images are of ${characterName} — place them in that exact room. Replicate ${characterName}'s exact face and appearance. Do NOT include any other person. Do NOT redesign the room.`
-        : `CRITICAL: The subject of this photo is ${characterName}. Replicate their exact face, features, and appearance. Do NOT include any other person.`;
+        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — this is the locked environment blueprint. Reproduce it with near-locked visual fidelity. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} — place them naturally inside that exact room. Replicate ${characterName}'s face and appearance. Do NOT include any other person. Do NOT redesign or reimagine the room.`
+        : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance. Do NOT include any other person.`;
       enhancedPrompt = `${cleanPrompt}${locationNote}\n\n${roomInstruction}`;
+
     } else if (hasLocationImages) {
-      // No character refs but have location refs
       referenceImages = locationImages.slice(0, 6);
       enhancedPrompt = `${cleanPrompt}${locationNote}`;
+
     } else {
       referenceImages = undefined;
     }
@@ -276,11 +437,18 @@ A person who knows this room in real life must look at the result and say "yes, 
 
     if (response?.url) {
       await base44.entities.Message.update(messageId, { image_url: response.url });
-      return Response.json({ success: true, imageUrl: response.url, locationMatched: locationImages.length > 0 });
+      return Response.json({
+        success: true,
+        imageUrl: response.url,
+        locationMatched: hasLocationImages,
+        locationName: resolvedLocationName,
+        zoneName: resolvedZoneName,
+      });
     }
 
     return Response.json({ success: false, error: 'No image URL generated' });
   } catch (error) {
+    console.error('[generateImageAsync]', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
