@@ -23,9 +23,21 @@ Deno.serve(async (req) => {
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender].filter(Boolean).join(', ');
 
     // Build reference images — always prioritize avatar + reference photos
-    const referenceImages = [];
-    if (character?.avatar_url) referenceImages.push(character.avatar_url);
-    if (character?.reference_image_urls?.length > 0) referenceImages.push(...character.reference_image_urls.slice(0, 3));
+    // For flawed/no_avatar: repeat the avatar multiple times to force higher model weight on it
+    const baseRefs = [];
+    if (character?.avatar_url) baseRefs.push(character.avatar_url);
+    if (character?.reference_image_urls?.length > 0) baseRefs.push(...character.reference_image_urls.slice(0, 3));
+
+    let referenceImages = baseRefs;
+    if ((reason === 'flawed' || reason === 'no_avatar') && character?.avatar_url) {
+      // Repeat avatar 3x at the front so the model heavily weights it
+      referenceImages = [
+        character.avatar_url,
+        character.avatar_url,
+        character.avatar_url,
+        ...baseRefs.filter(u => u !== character.avatar_url),
+      ];
+    }
 
     // Reconstruct base context from conversation
     let baseContext = '';
