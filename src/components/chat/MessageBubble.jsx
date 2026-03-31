@@ -27,14 +27,25 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [imageRetryStatus, setImageRetryStatus] = useState('idle'); // idle | recovering | regenerating | failed
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [regenError, setRegenError] = useState(null);
 
   const handleRegenSelect = async (reason, customPrompt) => {
     setIsRegenerating(true);
+    setRegenError(null);
+    let hadError = false;
     try {
-      await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt });
+      const res = await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt });
+      if (res?.data?.filtered) {
+        setRegenError(res.data.error || 'Image was blocked by content filter. Try a different description.');
+        hadError = true;
+        return;
+      }
+    } catch {
+      setRegenError('Failed to regenerate. Please try again.');
+      hadError = true;
     } finally {
       setIsRegenerating(false);
-      setShowRegenModal(false);
+      if (!hadError) setShowRegenModal(false);
     }
   };
 
@@ -203,9 +214,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
             )}
             <RegenerateImageModal
               isOpen={showRegenModal}
-              onClose={() => setShowRegenModal(false)}
+              onClose={() => { setShowRegenModal(false); setRegenError(null); }}
               onSelect={handleRegenSelect}
               isRegenerating={isRegenerating}
+              error={regenError}
             />
             {message.content && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>

@@ -63,10 +63,20 @@ Fresh composition and framing — different angle, different lighting mood, diff
     }
 
     // Generate the image
-    const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-      prompt,
-      existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-    });
+    let genRes;
+    try {
+      genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
+        prompt,
+        existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+      });
+    } catch (genErr) {
+      const msg = genErr?.message || '';
+      const isFiltered = msg.includes('filtered') || msg.includes('guidelines') || msg.includes('blocked') || msg.includes('violated');
+      if (isFiltered) {
+        return Response.json({ success: false, filtered: true, error: 'This image was blocked by the content filter. Try rephrasing the prompt to avoid suggestive or explicit content.' });
+      }
+      throw genErr;
+    }
 
     if (!genRes?.url) return Response.json({ success: false, error: 'Generation returned no URL' }, { status: 500 });
 

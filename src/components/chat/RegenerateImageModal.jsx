@@ -38,7 +38,7 @@ const REASONS = [
   },
 ];
 
-export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating }) {
+export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating, error }) {
   const [customPrompt, setCustomPrompt] = useState("");
   const [showPromptInput, setShowPromptInput] = useState(false);
 
@@ -139,6 +139,9 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
                     );
                   })}
                 </div>
+                {error && (
+                  <p className="text-xs text-destructive text-center px-4 pb-2">{error}</p>
+                )}
                 <p className="text-[10px] text-muted-foreground/50 text-center pb-4">Your feedback helps generate a better image</p>
               </>
             )}
