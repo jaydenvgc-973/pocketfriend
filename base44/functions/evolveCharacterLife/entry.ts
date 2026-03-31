@@ -27,6 +27,40 @@ Deno.serve(async (req) => {
         : character.current_situation || 'Has a job and daily life.';
       const places = (character.frequented_places || []).join(', ') || 'local spots';
 
+      // --- STRUCTURED LIFE CONTEXT (schedule, education, occupation, location) ---
+      const workScheduleContext = (() => {
+        const start = character.work_start_time || '09:00';
+        const end = character.work_end_time || '17:00';
+        const days = (character.work_days || [1,2,3,4,5]).map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ');
+        return `Work schedule: ${start}–${end} on ${days}`;
+      })();
+
+      const sleepScheduleContext = character.sleep_start_time
+        ? `Sleep schedule: ${character.sleep_start_time}–${character.wake_up_time || '07:00'}`
+        : '';
+
+      const educationContext = (() => {
+        if (!character.current_education_activity || character.current_education_activity === 'none') return '';
+        const d = character.education_details || {};
+        const parts = [`Currently enrolled: ${d.course_name || character.current_education_activity}`];
+        if (d.institution) parts.push(`at ${d.institution}`);
+        if (character.education_expected_completion_date) parts.push(`(expected completion: ${new Date(character.education_expected_completion_date).toLocaleDateString()})`);
+        return parts.join(' ');
+      })();
+
+      const jobTrainingContext = (() => {
+        if (!character.current_job_training_activity || character.current_job_training_activity === 'none') return '';
+        const d = character.job_training_details || {};
+        const parts = [`Job training: ${d.training_name || character.current_job_training_activity}`];
+        if (d.company) parts.push(`at ${d.company}`);
+        if (d.position_title) parts.push(`for ${d.position_title} role`);
+        return parts.join(' ');
+      })();
+
+      const locationContext = [character.city, character.state].filter(Boolean).join(', ') || '';
+
+      const structuredLifeContext = [workScheduleContext, sleepScheduleContext, educationContext, jobTrainingContext, locationContext ? `Location: ${locationContext}` : ''].filter(Boolean).join('\n');
+
       // Fetch recent life events (last 10) for context
       const recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter(
         { character_id: character.id },
@@ -160,6 +194,9 @@ Places they frequent: ${places}
 Health habits: ${character.health_habits || 'not established'}
 Current health status: ${character.health_status || 'healthy'}
 
+STRUCTURED LIFE CONTEXT (treat as ground truth — do not contradict these):
+${structuredLifeContext || 'No structured schedule data available.'}
+
 ONGOING RELATIONSHIPS:
 ${relationshipContext || 'None established yet.'}
 ${departedContext}
@@ -177,6 +214,9 @@ REALISM RULES — READ CAREFULLY:
 7. AVOID PERFECTION: Real people sometimes make poor choices, say the wrong thing, avoid their problems, or act from emotion rather than reason.
 8. DAY/TIME MATTERS: ${dayOfWeek} at ${timeOfDay} shapes what's plausible. A Friday night feels different from a Tuesday morning.
 9. ENVIRONMENT SHAPES EVENTS: Bars lead to different outcomes than gyms. Work leads to different pressures than home.
+10. SCHEDULE IS GROUND TRUTH: The structured life context above (work hours, sleep, education, training) takes priority over guessing. If ${name} is in class right now, they're in class. If they should be sleeping, they are.
+11. OCCUPATION SHAPES LIFE: If ${name} recently changed jobs or started training, that affects their stress, schedule, income, and daily narrative.
+12. EDUCATION MATTERS: If ${name} is enrolled in something, it affects their time, social circle, aspirations, and daily stress.
 
 TODAY'S TASK:
 Generate realistic life updates grounded in current time, the character's history, and their specific vulnerabilities/strengths.

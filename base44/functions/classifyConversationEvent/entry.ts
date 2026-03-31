@@ -268,7 +268,27 @@ If nothing meaningful happened, return: { "events": [] }`;
         audit.achievements_granted = granted;
       }
 
-      // ── 6. Update LifeEvent systems_updated ──────────────────────────
+      // ── 6. Life Context Intelligence — update schedule/occupation/location if event implies it ──
+      const LIFE_CONTEXT_TRIGGERS = new Set([
+        'life_milestone_event', 'medical_event', 'growth_event', 'recovery_event',
+        'location_change_event', 'setback_event', 'legal_or_social_consequence_event',
+      ]);
+      const lifeContextKeywords = ['job', 'work', 'hired', 'fired', 'class', 'school', 'enroll', 'college',
+        'doctor', 'surgery', 'hospital', 'appointment', 'clinic', 'moved', 'moving', 'training', 'internship'];
+      const descLower = (event.description + ' ' + event.title).toLowerCase();
+      const hasLifeContextKeyword = lifeContextKeywords.some(k => descLower.includes(k));
+
+      if (LIFE_CONTEXT_TRIGGERS.has(event.event_type) || hasLifeContextKeyword) {
+        base44.asServiceRole.functions.invoke('updateCharacterLifeContext', {
+          character_id: characterId,
+          event_type: event.event_type,
+          event_description: `${event.title}: ${event.description}`,
+          conversation_id: conversationId,
+        }).catch(() => {}); // fire-and-forget — don't block main response
+        audit.systems.push('life_context');
+      }
+
+      // ── 7. Update LifeEvent systems_updated ──────────────────────────
       await base44.asServiceRole.entities.LifeEvent.update(lifeEvent.id, {
         systems_updated: audit.systems,
       });
