@@ -100,6 +100,159 @@
         "type": "string"
       },
       "description": "Legacy flat image list \u2014 kept for backwards compatibility only. Prefer zones."
+    },
+    "resident_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters who live at this location (for residential locations)"
+    },
+    "resident_character_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of residents for quick reference"
+    },
+    "worker_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters who work at this location"
+    },
+    "worker_pay_rates": {
+      "type": "object",
+      "description": "Pay rates by character_id (e.g. { 'char_123': 15.00, 'char_456': 20.00 })",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "operating_hours": {
+      "type": "object",
+      "description": "Operating hours for the location",
+      "properties": {
+        "monday_open": {
+          "type": "string",
+          "description": "Opening time in HH:MM format (24h)"
+        },
+        "monday_close": {
+          "type": "string",
+          "description": "Closing time in HH:MM format (24h)"
+        },
+        "tuesday_open": {
+          "type": "string"
+        },
+        "tuesday_close": {
+          "type": "string"
+        },
+        "wednesday_open": {
+          "type": "string"
+        },
+        "wednesday_close": {
+          "type": "string"
+        },
+        "thursday_open": {
+          "type": "string"
+        },
+        "thursday_close": {
+          "type": "string"
+        },
+        "friday_open": {
+          "type": "string"
+        },
+        "friday_close": {
+          "type": "string"
+        },
+        "saturday_open": {
+          "type": "string"
+        },
+        "saturday_close": {
+          "type": "string"
+        },
+        "sunday_open": {
+          "type": "string"
+        },
+        "sunday_close": {
+          "type": "string"
+        }
+      }
+    },
+    "utility_costs": {
+      "type": "object",
+      "description": "Monthly utility costs (in USD)",
+      "properties": {
+        "electricity": {
+          "type": "number",
+          "description": "Monthly electricity cost in USD"
+        },
+        "water": {
+          "type": "number",
+          "description": "Monthly water cost in USD"
+        },
+        "gas": {
+          "type": "number",
+          "description": "Monthly gas cost in USD"
+        },
+        "internet": {
+          "type": "number",
+          "description": "Monthly internet cost in USD"
+        },
+        "other": {
+          "type": "number",
+          "description": "Other utility costs in USD"
+        }
+      }
+    },
+    "rent_or_housing_cost": {
+      "type": "number",
+      "description": "Monthly rent or housing cost in USD (for residential locations)"
+    },
+    "operating_cost": {
+      "type": "number",
+      "description": "Monthly operating cost in USD (for business locations)"
+    },
+    "cost_split_method": {
+      "type": "string",
+      "enum": [
+        "even",
+        "custom"
+      ],
+      "default": "even",
+      "description": "How to split costs among residents: 'even' for equal split, 'custom' for custom amounts"
+    },
+    "resident_cost_split": {
+      "type": "object",
+      "description": "Custom cost split by resident (character_id -> amount in USD)",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "income_generated": {
+      "type": "number",
+      "description": "Total income generated at this location (aggregate, for reference)"
+    },
+    "last_income_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When income was last calculated"
+    },
+    "is_default_generic": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is a default generic location created automatically for a new character"
+    },
+    "generic_type": {
+      "type": "string",
+      "enum": [
+        "apartment",
+        "house",
+        "studio",
+        "shared_house",
+        "dorm"
+      ],
+      "description": "Type of generic residential location if is_default_generic is true"
     }
   },
   "required": [

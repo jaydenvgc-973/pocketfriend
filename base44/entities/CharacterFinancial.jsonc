@@ -1,0 +1,118 @@
+{
+  "name": "CharacterFinancial",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this financial record belongs to"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "home_location_id": {
+      "type": "string",
+      "description": "ID of the character's home location"
+    },
+    "home_location_name": {
+      "type": "string",
+      "description": "Display name of the home location"
+    },
+    "is_homeless": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if character has no permanent home"
+    },
+    "work_location_id": {
+      "type": "string",
+      "description": "ID of primary work location (if employed)"
+    },
+    "work_location_name": {
+      "type": "string",
+      "description": "Display name of work location"
+    },
+    "hourly_rate": {
+      "type": "number",
+      "description": "Hourly pay rate at current work location (USD)"
+    },
+    "total_income": {
+      "type": "number",
+      "default": 0,
+      "description": "Cumulative total income earned (USD)"
+    },
+    "total_expenses": {
+      "type": "number",
+      "default": 0,
+      "description": "Cumulative total expenses paid (USD)"
+    },
+    "current_balance": {
+      "type": "number",
+      "default": 0,
+      "description": "Current money balance (USD)"
+    },
+    "income_sources": {
+      "type": "array",
+      "description": "Breakdown of income by location",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "total_earned": {
+            "type": "number"
+          },
+          "last_payment_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "expense_sources": {
+      "type": "array",
+      "description": "Breakdown of expenses by location",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "expense_type": {
+            "type": "string",
+            "enum": [
+              "rent",
+              "utilities",
+              "other"
+            ]
+          },
+          "total_paid": {
+            "type": "number"
+          },
+          "monthly_cost": {
+            "type": "number"
+          },
+          "last_payment_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time financial data was recalculated"
+    }
+  },
+  "required": [
+    "character_id",
+    "character_name"
+  ]
+}
