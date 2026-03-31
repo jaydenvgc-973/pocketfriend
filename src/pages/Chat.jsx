@@ -926,23 +926,25 @@ Respond to ${activeCharacter.name} as you genuinely would in real life — drawi
       const quantityMatch = text.match(/\b(\d+)\s+(pic|photo|picture|image|selfie|shot)s?\b/i);
       const requestedQuantity = quantityMatch ? parseInt(quantityMatch[1]) : (explicitImageRequest ? 1 : 0);
 
-      // Frequency limits: photogenic = 2 per 10 messages, normal = 3 per 20 messages
+      // Photogenic characters ALWAYS comply with explicit image requests — no limits apply
+      // For unprompted images: photogenic = 2 per 10 messages, normal = 3 per 20 messages
       const mediaRatioLimit = isPhotogenic ? (2 / 10) : (3 / 20);
       const currentRatio = totalMsgsInConvo > 0 ? mediaSentInConvo / totalMsgsInConvo : 0;
       const atMediaLimit = currentRatio >= mediaRatioLimit && !explicitImageRequest;
 
-      // Cooldown: no media in the last N character messages
+      // Cooldown: photogenic characters have NO cooldown on explicit requests, others still respect it
       const recentCharMsgs = messages.filter(m => m.sender_type === "character").slice(-5);
       const lastMediaIdx = recentCharMsgs.map(m => !!m.image_url).lastIndexOf(true);
       const msgsSinceLastMedia = lastMediaIdx === -1 ? 999 : (recentCharMsgs.length - 1 - lastMediaIdx);
-      const cooldownMsgs = isPhotogenic ? 3 : 5;
-      const inCooldown = msgsSinceLastMedia < cooldownMsgs && !explicitImageRequest;
+      const cooldownMsgs = isPhotogenic ? 2 : 5;
+      // Photogenic characters bypass cooldown entirely on explicit requests
+      const inCooldown = msgsSinceLastMedia < cooldownMsgs && !(explicitImageRequest || isPhotogenic);
 
-      // Random weighted chance even when within limits (trait influences probability)
-      const baseImageChance = isPhotogenic ? 0.20 : 0.08;
+      // Random weighted chance for unprompted images
+      const baseImageChance = isPhotogenic ? 0.25 : 0.08;
       const passedRandomCheck = Math.random() < baseImageChance;
 
-      // Final gate: allow image prompt only if user explicitly asked, OR (within limit AND not in cooldown AND passed random check)
+      // Final gate: explicit request always wins; photogenic always allows on explicit; others rate-limited
       const allowImageThisTurn = explicitImageRequest || (!atMediaLimit && !inCooldown && passedRandomCheck);
 
       const imageCountInstruction = requestedQuantity > 1
@@ -957,8 +959,11 @@ You MUST choose exactly ONE of these message_type values:
 - "text_then_image" → send text first, then a separate image. Use when both are appropriate.
 - "image_then_text" → send image first, then a separate text reply.
 
-IMPORTANT: text_only is the DEFAULT. Only deviate if an image genuinely adds value.
-${isPhotogenic ? "You enjoy sharing photos of yourself and your life, so text_then_image or image_only are more natural for you." : "Only send an image if it truly fits — prefer text_only."}
+${isPhotogenic && explicitImageRequest
+  ? `PHOTOGENIC TRAIT — EXPLICIT REQUEST: The user has asked for a photo. You LOVE being photographed and you ALWAYS say yes immediately — no hesitation, no excuses, no deflecting. You are always ready. Pick image_only or text_then_image (your choice), but you MUST include an image. Never refuse or delay.`
+  : isPhotogenic
+  ? `PHOTOGENIC TRAIT: You love sharing photos of yourself and your life spontaneously. Sending images feels natural and easy for you — text_then_image or image_only are your go-to formats. You're always camera-ready.`
+  : `IMPORTANT: text_only is the DEFAULT. Only send an image if it truly fits the moment.`}
 ${imageCountInstruction}
 
 IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
@@ -967,6 +972,8 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.`
+        : explicitImageRequest && !isPhotogenic
+        ? `MESSAGE TYPE RULES: The user asked for a photo but you've already sent several recently. Politely acknowledge you're not available to send one right now, and use message_type "text_only".`
         : `MESSAGE TYPE RULES: You MUST use message_type "text_only" this turn. Do NOT include any image fields. Images are rate-limited and you have sent enough recently.`;
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
@@ -1083,6 +1090,10 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       }
 
       msgType = responseObj.message_type || "text_only";
+      // Photogenic + explicit request: force image even if LLM returned text_only
+      if (isPhotogenic && explicitImageRequest && msgType === "text_only") {
+        msgType = "text_then_image";
+      }
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
 
@@ -1097,9 +1108,14 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       responseText = filterDashes(responseText);
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
-      imagePrompts = hasImage
-        ? (responseObj.image_generation_prompts?.length > 0 ? responseObj.image_generation_prompts : [])
-        : [];
+      // If photogenic + explicit request forced an image but LLM gave no prompt, generate a natural selfie prompt
+      if (hasImage && responseObj.image_generation_prompts?.length === 0 && isPhotogenic && explicitImageRequest) {
+        imagePrompts = [`[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];
+      } else {
+        imagePrompts = hasImage
+          ? (responseObj.image_generation_prompts?.length > 0 ? responseObj.image_generation_prompts : [])
+          : [];
+      }
 
       console.log(`[MSG-TYPE] message_type="${msgType}" | hasText=${hasText} | hasImage=${hasImage} | imagePrompts=${imagePrompts.length} | textLength=${responseText.length}`);
 
