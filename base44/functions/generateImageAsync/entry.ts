@@ -393,6 +393,48 @@ DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, remote, throw bl
 SPATIAL PROPORTIONS: Room dimensions, ceiling height, window size, window placement, door positions.
 
 ────────────────────────────────────
+SPATIAL FUNCTIONALITY RULES — THIS ROOM MUST BE PHYSICALLY USABLE:
+────────────────────────────────────
+This is a real space that real people move through. The layout must make physical sense.
+
+ACCESS POINTS ARE SACRED — DO NOT BLOCK:
+• Doors must have clear swing clearance — no furniture touching or overlapping the door arc.
+• Closet doors must have open space in front of them — a bed, dresser, or shelf placed against a closet door is WRONG and physically impossible.
+• Hallways and walkways visible in the reference must remain passable — at minimum 24 inches of clear floor.
+• Windows must remain accessible — no furniture stacked against them unless the reference shows that.
+• Bedroom: the side(s) of the bed that are accessible in the reference must stay accessible. Do not slide the bed to block a closet or wall that has clearance in the reference.
+• Living room: keep the clear path between the couch and the coffee table. Keep the walking path from the doorway to the seating area open.
+• Kitchen: counter and appliance frontage must have working clearance. The path between counter runs must remain walkable.
+• Bar/nightclub: bar front access, booth entry gaps, stage approaches, and exit paths must remain open.
+• Office: chair must be able to roll back from the desk without hitting a wall.
+
+FURNITURE MUST NOT INTERSECT OR OVERLAP:
+• No two pieces of furniture can occupy the same floor space.
+• A chair cannot be inside a table. A lamp cannot be inside a couch. A bed cannot overlap a dresser.
+• If objects appear close in the reference, keep that proximity — but they must not merge or clip.
+
+CHARACTER PLACEMENT IN THIS ROOM:
+• Place the subject only in spots where a person could physically be — on a seating surface, standing in open floor space, lying on a bed with the rest of the room intact.
+• Do NOT place the character where they would block a door, stand inside furniture, or be pressed against a wall with no room.
+• Sitting on the bed is fine — but the rest of the room must remain as-is. Do not shift the bed or surrounding furniture to center the shot.
+• Standing in a doorway must look intentional — they are in the frame of the door, not clipping through the wall.
+
+DO NOT SACRIFICE LAYOUT FOR COMPOSITION:
+• Do not move furniture to better frame the character. The room is fixed. The camera angle can change — the room cannot.
+• Do not compress the room to fit more objects in frame. Let objects be partially off-screen if needed.
+• A correct result is a room that someone who has been in this space would immediately recognize as correct AND functional.
+
+SPATIAL LOGIC SELF-CHECK — before finalizing the image, verify:
+✓ Every door has clearance to open
+✓ Every closet has clear floor space in front of it
+✓ Every walkway shown in the reference remains passable
+✓ No furniture overlaps or clips another object
+✓ The character is placed in a physically believable spot
+✓ The room could be used normally by a real person
+
+If any of these checks fail, correct the layout before rendering.
+
+────────────────────────────────────
 PERMITTED CHANGES:
 ✓ Camera angle, framing, zoom, and perspective
 ✓ Subject pose, position, expression, and action
@@ -407,10 +449,12 @@ PROHIBITED CHANGES (unless explicitly requested):
 ✗ Wall art or decorative objects
 ✗ Room layout, design language, or aesthetic
 ✗ Adding or removing any room-defining element
+✗ Moving furniture to improve composition at the cost of room functionality
+✗ Blocking any door, closet, walkway, or access point
 
 CRITICAL RULE: "Same room different angle" means ONLY the camera moves. Nothing else changes.
 CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist, they are the source of truth.
-CRITICAL RULE: A person who knows this space in real life must look at the result and immediately recognize it as the same place.
+CRITICAL RULE: A person who knows this space in real life must look at the result and immediately recognize it as the same place AND believe someone could actually live and move in it.
 ════════════════════════════════════════════════════════════`;
 }
 
