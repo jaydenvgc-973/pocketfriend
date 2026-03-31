@@ -61,6 +61,12 @@ export default function Chat() {
   const queryClient = useQueryClient();
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
+  const isMountedRef = useRef(true);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
@@ -283,6 +289,7 @@ export default function Chat() {
     if (!characterId || !character || !currentUser.email) return;
     
     // Reset state immediately when switching characters to prevent cross-contamination
+    isMountedRef.current = true; // re-arm for this character session
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
@@ -699,7 +706,7 @@ export default function Chat() {
       }
     }
 
-    setIsTyping(true);
+    if (isMountedRef.current) setIsTyping(true);
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     try {
@@ -1149,12 +1156,14 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
     } catch (err) {
-      setIsTyping(false);
-      setSendError("Couldn't get a response. Try again.");
+      if (isMountedRef.current) {
+        setIsTyping(false);
+        setSendError("Couldn't get a response. Try again.");
+      }
       return;
     }
 
-    setIsTyping(false);
+    if (isMountedRef.current) setIsTyping(false);
 
     // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
@@ -1175,18 +1184,23 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       : (character.reference_image_urls || []);
 
     // Helper: create a stable image-only message and kick off async generation
+    // If user navigated away, write directly to DB as unread (no local state update)
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
+      const navigatedAway = !isMountedRef.current;
       const imgMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
         character_id: characterId,
         character_name: character.name,
-        content: "",           // image-only: no visible text
+        content: "",
         emotional_state: emotionalState,
+        is_read: navigatedAway ? false : true, // unread if away so badge fires
         timestamp: new Date().toISOString(),
       });
       if (!imgMsg?.id) return null;
-      setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
+      if (!navigatedAway) {
+        setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
+      }
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
           messageId: imgMsg.id,
@@ -1196,29 +1210,48 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
           characterName: character.name,
           subjectType,
           characterId,
+        }).then(() => {
+          // After image lands, update conversation preview so badge shows on Home
+          base44.entities.Conversation.update(convoId, {
+            last_message_preview: "(photo)",
+            last_message_date: new Date().toISOString(),
+          }).catch(() => {});
+          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }).catch(() => {});
       }, delayMs);
       return imgMsg;
     };
 
     // Helper: create a text-only message and auto-play voice
+    // If user navigated away, message is saved unread so the badge fires on CharacterCard
     const createTextMessage = async (textContent) => {
       if (!textContent?.trim()) return null;
+      const navigatedAway = !isMountedRef.current;
       const txtMsg = await base44.entities.Message.create({
         conversation_id: convoId,
         sender_type: "character",
         character_id: characterId,
         character_name: character.name,
-        content: textContent,  // visible dialogue only — never an image prompt
+        content: textContent,
         emotional_state: emotionalState,
+        is_read: navigatedAway ? false : true, // unread if away so badge fires
         timestamp: new Date().toISOString(),
       });
       if (!txtMsg?.id) return null;
-      setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
-      // TTS: only fire on text messages, only speak visible text_content
-      setTimeout(() => {
-        playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
-      }, 500);
+      if (!navigatedAway) {
+        setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
+        // TTS only when user is still on the page
+        setTimeout(() => {
+          playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
+        }, 500);
+      } else {
+        // User is away — update conversation so unread badge shows on CharacterCard
+        base44.entities.Conversation.update(convoId, {
+          last_message_preview: textContent.substring(0, 100),
+          last_message_date: new Date().toISOString(),
+        }).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+      }
       return txtMsg;
     };
 
