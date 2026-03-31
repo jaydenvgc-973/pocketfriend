@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
@@ -8,7 +8,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
 import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard";
-import FinancialSummary from "@/components/character/FinancialSummary";
+import CharacterFinancialSummary from "@/components/character/CharacterFinancialSummary";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
@@ -234,6 +234,9 @@ export default function CharacterProfile() {
           </div>
         </div>
 
+        {/* Financial Summary */}
+        <CharacterFinancialSummary characterId={characterId} />
+
         {/* Your Connection */}
         <div className="bg-card border border-border rounded-2xl p-4">
           <p className="text-xs text-muted-foreground uppercase tracking-wider mb-4">Your Connection</p>
@@ -261,9 +264,6 @@ export default function CharacterProfile() {
             <CharacterFeelingsCard character={character} />
           </div>
         </div>
-
-        {/* Financial Summary */}
-        <FinancialSummary characterId={characterId} characterName={character.name} />
 
         {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">

@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import BottomNav from "@/components/BottomNav";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
+import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import { Link } from "react-router-dom";
 
 // ── Zone presets per category ────────────────────────────────────────────────
@@ -91,6 +92,16 @@ function LocationCard({ location, onDelete, onEdit }) {
             )}
             {isGenericHome && (
               <span className="text-xs text-amber-500/80 font-medium">Generic Home</span>
+            )}
+            {(location.category === 'home' || location.category === 'generic') && location.rent_or_housing_cost && (
+              <span className="text-xs text-green-400/80 font-medium">
+                ${location.rent_or_housing_cost}/mo rent
+              </span>
+            )}
+            {location.category === 'gym' && location.gym_membership_fee && (
+              <span className="text-xs text-blue-400/80 font-medium">
+                ${location.gym_membership_fee}/mo membership
+              </span>
             )}
             {(location.owner_character_name || (location.owner_is_npc && location.owner_npc_name)) && (
               <span className="text-xs text-muted-foreground/70">
@@ -241,6 +252,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     owner_npc_name: editingLocation?.owner_npc_name || "",
     owner_role: editingLocation?.owner_role || "owner",
     is_default_generic: editingLocation?.is_default_generic || false,
+    rent_or_housing_cost: editingLocation?.rent_or_housing_cost || 1200,
+    bedroom_count: editingLocation?.bedroom_count || 1,
+    gym_membership_fee: editingLocation?.gym_membership_fee || 50,
+    utility_costs: editingLocation?.utility_costs || { electricity: 80, water: 40, gas: 50, internet: 60, other: 0 },
+    operating_hours: editingLocation?.operating_hours || [],
+    worker_character_ids: editingLocation?.worker_character_ids || [],
+    worker_pay_rates: editingLocation?.worker_pay_rates || {},
+    worker_pay_type: editingLocation?.worker_pay_type || {},
+    worker_job_titles: editingLocation?.worker_job_titles || {},
   });
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
@@ -504,6 +524,80 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
         className="rounded-xl min-h-[60px] text-sm resize-none"
       />
 
+      {/* ── RESIDENTIAL / GYM / BUSINESS COSTS ─────────────────────── */}
+      {(form.category === 'home' || form.category === 'generic') && (
+        <div className="space-y-3 bg-primary/5 border border-primary/20 rounded-xl p-4">
+          <div>
+            <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Rent</label>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">$</span>
+              <Input
+                type="number"
+                value={form.rent_or_housing_cost}
+                onChange={e => update("rent_or_housing_cost", parseFloat(e.target.value))}
+                placeholder="1200"
+                className="h-10 rounded-xl flex-1"
+              />
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">Base rent. Updates automatically with bedrooms unless manually adjusted.</p>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Bedrooms</label>
+            <Input
+              type="number"
+              min="1"
+              value={form.bedroom_count}
+              onChange={e => {
+                const count = parseInt(e.target.value) || 1;
+                const newRent = 1200 + ((count - 1) * 300);
+                update("bedroom_count", count);
+                // Auto-update rent if not manually edited
+                if (form.rent_or_housing_cost === 1200 || form.rent_or_housing_cost === 1200 + ((form.bedroom_count - 1) * 300)) {
+                  update("rent_or_housing_cost", newRent);
+                }
+              }}
+              className="h-10 rounded-xl"
+            />
+            <p className="text-xs text-muted-foreground mt-1">Each bedroom adds ~$300 to base rent.</p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-foreground uppercase">Monthly Utilities</label>
+            {Object.entries(form.utility_costs).map(([key, val]) => (
+              <div key={key} className="flex items-center gap-2">
+                <label className="text-xs text-muted-foreground capitalize w-20">{key}:</label>
+                <div className="flex items-center gap-2 flex-1">
+                  <span className="text-sm">$</span>
+                  <Input
+                    type="number"
+                    value={val || 0}
+                    onChange={e => update("utility_costs", { ...form.utility_costs, [key]: parseFloat(e.target.value) || 0 })}
+                    className="h-8 rounded-lg flex-1 text-sm"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {form.category === 'gym' && (
+        <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
+          <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Membership Fee</label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">$</span>
+            <Input
+              type="number"
+              value={form.gym_membership_fee}
+              onChange={e => update("gym_membership_fee", parseFloat(e.target.value))}
+              placeholder="50"
+              className="h-10 rounded-xl flex-1"
+            />
+          </div>
+        </div>
+      )}
+
       {/* Keywords */}
       <Input
         value={form.keywords}
@@ -511,6 +605,56 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
         placeholder="Keywords for matching: my place, the gym... (comma-separated)"
         className="h-11 rounded-xl text-sm"
       />
+
+      {/* ── HOURS OF OPERATION ────────────────────────────────────── */}
+      <div className="space-y-3">
+        <LocationHoursEditor
+          hours={form.operating_hours}
+          onChange={(hours) => update("operating_hours", hours)}
+        />
+      </div>
+
+      {/* ── WORKER PAY SETTINGS ───────────────────────────────────── */}
+      {form.worker_character_ids && form.worker_character_ids.length > 0 && (
+        <div className="bg-secondary/30 border border-border rounded-xl p-4 space-y-3">
+          <h4 className="text-sm font-semibold text-foreground">Worker Pay</h4>
+          {form.worker_character_ids.map((workerId) => {
+            const worker = characters.find(c => c.id === workerId);
+            return (
+              <div key={workerId} className="space-y-2 bg-card p-3 rounded-lg">
+                <p className="text-xs font-medium text-foreground">{worker?.name || workerId}</p>
+                <div className="grid grid-cols-3 gap-2">
+                  <select
+                    value={form.worker_pay_type[workerId] || 'hourly'}
+                    onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })}
+                    className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground"
+                  >
+                    <option value="hourly">Hourly</option>
+                    <option value="annual">Annual</option>
+                  </select>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs">$</span>
+                    <Input
+                      type="number"
+                      value={form.worker_pay_rates[workerId] || 0}
+                      onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })}
+                      className="h-8 text-xs flex-1"
+                      placeholder="15"
+                    />
+                  </div>
+                  <Input
+                    type="text"
+                    value={form.worker_job_titles[workerId] || ''}
+                    onChange={(e) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: e.target.value })}
+                    placeholder="Job title"
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
