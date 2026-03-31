@@ -10,6 +10,11 @@
       "type": "string",
       "description": "Display name of the character"
     },
+    "is_npc": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is an NPC record (affects payment rules)"
+    },
     "home_location_id": {
       "type": "string",
       "description": "ID of the character's home location"
@@ -23,17 +28,38 @@
       "default": false,
       "description": "True if character has no permanent home"
     },
-    "work_location_id": {
-      "type": "string",
-      "description": "ID of primary work location (if employed)"
+    "work_location_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of work locations (primary and secondary jobs)"
     },
-    "work_location_name": {
-      "type": "string",
-      "description": "Display name of work location"
+    "work_location_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of work locations"
     },
-    "hourly_rate": {
+    "hourly_rates": {
+      "type": "object",
+      "description": "Hourly pay rate by location_id (e.g. { 'loc_123': 15.00 })",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "annual_salaries": {
+      "type": "object",
+      "description": "Annual salary by location_id (e.g. { 'loc_123': 52000 })",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "current_balance": {
       "type": "number",
-      "description": "Hourly pay rate at current work location (USD)"
+      "default": 6000,
+      "description": "Current money balance (USD). Defaults to $6,000 for new characters."
     },
     "total_income": {
       "type": "number",
@@ -44,11 +70,6 @@
       "type": "number",
       "default": 0,
       "description": "Cumulative total expenses paid (USD)"
-    },
-    "current_balance": {
-      "type": "number",
-      "default": 0,
-      "description": "Current money balance (USD)"
     },
     "income_sources": {
       "type": "array",
@@ -62,6 +83,16 @@
           "location_name": {
             "type": "string"
           },
+          "pay_type": {
+            "type": "string",
+            "enum": [
+              "hourly",
+              "annual"
+            ]
+          },
+          "pay_amount": {
+            "type": "number"
+          },
           "total_earned": {
             "type": "number"
           },
@@ -72,37 +103,51 @@
         }
       }
     },
-    "expense_sources": {
+    "recurring_expenses": {
       "type": "array",
-      "description": "Breakdown of expenses by location",
+      "description": "All recurring expenses",
       "items": {
         "type": "object",
         "properties": {
-          "location_id": {
-            "type": "string"
-          },
-          "location_name": {
-            "type": "string"
-          },
           "expense_type": {
             "type": "string",
             "enum": [
               "rent",
               "utilities",
-              "other"
+              "groceries",
+              "gym",
+              "phone",
+              "streaming",
+              "custom"
             ]
           },
-          "total_paid": {
-            "type": "number"
+          "location_id": {
+            "type": "string",
+            "description": "Location ID if tied to a place (rent, utilities, gym)"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-text description for custom expenses"
           },
           "monthly_cost": {
             "type": "number"
+          },
+          "total_paid": {
+            "type": "number",
+            "default": 0
           },
           "last_payment_date": {
             "type": "string",
             "format": "date-time"
           }
-        }
+        },
+        "required": [
+          "expense_type",
+          "monthly_cost"
+        ]
       }
     },
     "last_updated": {

@@ -8,6 +8,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import FamilyEditor from "@/components/character/FamilyEditor";
 import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard";
+import FinancialSummary from "@/components/character/FinancialSummary";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
@@ -260,6 +261,9 @@ export default function CharacterProfile() {
             <CharacterFeelingsCard character={character} />
           </div>
         </div>
+
+        {/* Financial Summary */}
+        <FinancialSummary characterId={characterId} characterName={character.name} />
 
         {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">

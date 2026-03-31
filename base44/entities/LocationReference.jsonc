@@ -55,9 +55,15 @@
         "food_drink",
         "medical",
         "education",
-        "other"
+        "grocery",
+        "religion",
+        "government",
+        "public",
+        "business",
+        "school",
+        "generic"
       ],
-      "default": "other",
+      "default": "generic",
       "description": "Category for grouping and matching"
     },
     "description": {
@@ -129,54 +135,47 @@
         "type": "number"
       }
     },
-    "operating_hours": {
+    "worker_pay_type": {
       "type": "object",
-      "description": "Operating hours for the location",
-      "properties": {
-        "monday_open": {
-          "type": "string",
-          "description": "Opening time in HH:MM format (24h)"
+      "description": "Pay type by character_id ('hourly' or 'annual') (e.g. { 'char_123': 'hourly', 'char_456': 'annual' })",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "worker_job_titles": {
+      "type": "object",
+      "description": "Job title by character_id (e.g. { 'char_123': 'Manager', 'char_456': 'Barista' })",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "operating_hours": {
+      "type": "array",
+      "description": "Operating hours / active hours for the location. Multiple windows allowed for varied schedules.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "day_of_week": {
+            "type": "integer",
+            "description": "0=Sunday, 6=Saturday. If null, applies to all days."
+          },
+          "open_time": {
+            "type": "string",
+            "description": "Opening time in HH:MM format (24h)"
+          },
+          "close_time": {
+            "type": "string",
+            "description": "Closing time in HH:MM format (24h)"
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional label like 'Morning Service' or 'Sunday Only'"
+          }
         },
-        "monday_close": {
-          "type": "string",
-          "description": "Closing time in HH:MM format (24h)"
-        },
-        "tuesday_open": {
-          "type": "string"
-        },
-        "tuesday_close": {
-          "type": "string"
-        },
-        "wednesday_open": {
-          "type": "string"
-        },
-        "wednesday_close": {
-          "type": "string"
-        },
-        "thursday_open": {
-          "type": "string"
-        },
-        "thursday_close": {
-          "type": "string"
-        },
-        "friday_open": {
-          "type": "string"
-        },
-        "friday_close": {
-          "type": "string"
-        },
-        "saturday_open": {
-          "type": "string"
-        },
-        "saturday_close": {
-          "type": "string"
-        },
-        "sunday_open": {
-          "type": "string"
-        },
-        "sunday_close": {
-          "type": "string"
-        }
+        "required": [
+          "open_time",
+          "close_time"
+        ]
       }
     },
     "utility_costs": {
@@ -208,6 +207,30 @@
     "rent_or_housing_cost": {
       "type": "number",
       "description": "Monthly rent or housing cost in USD (for residential locations)"
+    },
+    "bedroom_count": {
+      "type": "integer",
+      "default": 1,
+      "description": "Number of bedrooms in residential location. Affects rent automatically."
+    },
+    "gym_membership_fee": {
+      "type": "number",
+      "description": "Monthly gym membership fee in USD (for gym locations)"
+    },
+    "gym_members": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters with active gym memberships"
+    },
+    "grocery_household_size": {
+      "type": "integer",
+      "description": "Used to calculate grocery costs for residential locations. Defaults to number of active residents."
+    },
+    "grocery_average_spend": {
+      "type": "number",
+      "description": "Average monthly grocery spend baseline in USD. Defaults to U.S. average adjusted for household size."
     },
     "operating_cost": {
       "type": "number",

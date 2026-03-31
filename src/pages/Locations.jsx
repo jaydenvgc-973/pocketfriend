@@ -16,14 +16,19 @@ import { Link } from "react-router-dom";
 
 // ── Zone presets per category ────────────────────────────────────────────────
 const ZONE_PRESETS = {
-  home: ["Living Room", "Kitchen", "Bedroom", "Bathroom", "Dining Room", "Hallway", "Entryway", "Backyard", "Front Exterior", "Garage", "Basement", "Studio"],
+  home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
   gym: ["Workout Floor", "Front Desk", "Locker Room", "Bathroom", "Stretching Area", "Cardio Zone", "Weight Room", "Pool", "Sauna"],
-  workplace: ["Desk / Workspace", "Break Room", "Conference Room", "Reception", "Hallway", "Parking Lot", "Rooftop"],
+  workplace: ["Office", "Office 1", "Office 2", "Break Room", "Conference Room", "Reception", "Hallway", "Parking"],
   social: ["Main Floor", "Bar Area", "VIP Section", "Outdoor Patio", "Entrance", "Bathroom"],
   food_drink: ["Dining Area", "Counter / Bar", "Outdoor Seating", "Bathroom", "Entrance"],
+  grocery: ["Main Floor", "Produce", "Deli", "Checkout", "Entrance"],
+  religion: ["Main Sanctuary", "Prayer Room", "Office", "Fellowship Hall", "Entrance"],
   outdoor: ["Main Area", "Trail", "Parking", "Entrance", "Shelter / Pavilion"],
   education: ["Classroom", "Hallway", "Office", "Cafeteria", "Gym", "Courtyard", "Library", "Auditorium"],
   medical: ["Waiting Area", "Front Desk", "Triage", "Patient Room", "Hallway", "Operating Room", "Recovery Room", "Pharmacy"],
+  business: ["Office", "Office 1", "Office 2", "Conference Room", "Break Room", "Reception", "Hallway"],
+  government: ["Office", "Reception", "Hallway", "Meeting Room", "Entrance"],
+  generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
 };
 
@@ -31,12 +36,18 @@ const CATEGORIES = [
   { value: "home", label: "Home", icon: Home },
   { value: "workplace", label: "Workplace", icon: Briefcase },
   { value: "gym", label: "Gym", icon: Dumbbell },
+  { value: "grocery", label: "Grocery Store", icon: Coffee },
+  { value: "religion", label: "Religion / Worship", icon: GraduationCap },
   { value: "food_drink", label: "Food & Drink", icon: Coffee },
   { value: "outdoor", label: "Outdoors", icon: Trees },
   { value: "social", label: "Social / Nightlife", icon: Wine },
   { value: "education", label: "Education", icon: GraduationCap },
   { value: "medical", label: "Medical", icon: Heart },
-  { value: "other", label: "Other", icon: MapPin },
+  { value: "business", label: "Business", icon: Briefcase },
+  { value: "school", label: "School", icon: GraduationCap },
+  { value: "government", label: "Government", icon: MapPin },
+  { value: "public", label: "Public", icon: MapPin },
+  { value: "generic", label: "Generic", icon: MapPin },
 ];
 
 // ── LocationCard ─────────────────────────────────────────────────────────────

@@ -708,12 +708,19 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
            ]).catch(() => {});
          }
 
-         // Setup character's home with default location registration
+         // Setup character's home with default location registration + financial record
          if (newChar?.id) {
-           base44.functions.invoke('setupCharacterHome', {
-             characterId: newChar.id,
-             characterName: newChar.name,
-           }).catch(() => {});
+           Promise.all([
+             base44.functions.invoke('setupCharacterHome', {
+               characterId: newChar.id,
+               characterName: newChar.name,
+             }).catch(() => {}),
+             base44.functions.invoke('initializeCharacterFinancials', {
+               characterId: newChar.id,
+               characterName: newChar.name,
+               isNpc: false,
+             }).catch(() => {}),
+           ]);
          }
 
          // Invalidate ALL character cache variants to guarantee Home page refresh
