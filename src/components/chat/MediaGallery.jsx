@@ -99,7 +99,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       if (referenceImageUrl) referenceImages.push(referenceImageUrl);
 
       const promptText = prompt.trim() || "candid natural moment, everyday life";
-      const fullPrompt = `Photorealistic photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${promptText} Natural lighting, authentic photo quality. Real photograph — not illustration.${referenceImageUrl ? ' Match the scene/style of the uploaded reference image.' : ''}`;
+      const fullPrompt = `Portrait photo of ${charName}${charDesc ? ` (${charDesc})` : ''}. ${promptText}\n\n📸 STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting with realistic shadows and highlights. True-to-life skin texture — pores, subtle imperfections, natural undertones. Depth of field consistent with a real camera lens. Authentic candid feel — not posed, not a model shoot. CRITICAL: Not an illustration, not a painting, not a digital render, not CGI, not uncanny valley. Real human proportions, natural skin texture, genuine expression. The image must be indistinguishable from a real photograph.${referenceImageUrl ? ' Match the scene, environment, and lighting style of the uploaded reference image.' : ''}`;
 
       const genRes = await base44.integrations.Core.GenerateImage({
         prompt: fullPrompt,
