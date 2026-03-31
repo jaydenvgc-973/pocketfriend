@@ -657,40 +657,70 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
-                          <select
-                            value={form.worker_pay_type[workerId] || 'hourly'}
-                            onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })}
-                            className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground"
-                          >
-                            <option value="hourly">Hourly</option>
-                            <option value="annual">Annual</option>
-                          </select>
-                        </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
-                          <div className="flex items-center gap-1">
-                            <span className="text-xs">$</span>
+                      <div className="space-y-2">
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
+                            <select
+                              value={form.worker_pay_type[workerId] || 'hourly'}
+                              onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })}
+                              className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground"
+                            >
+                              <option value="hourly">Hourly</option>
+                              <option value="annual">Annual</option>
+                            </select>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
+                            <div className="flex items-center gap-1">
+                              <span className="text-xs">$</span>
+                              <Input
+                                type="number"
+                                value={form.worker_pay_rates[workerId] || 0}
+                                onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })}
+                                className="h-8 text-xs flex-1"
+                                placeholder="15"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Title</label>
                             <Input
-                              type="number"
-                              value={form.worker_pay_rates[workerId] || 0}
-                              onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })}
-                              className="h-8 text-xs flex-1"
-                              placeholder="15"
+                              type="text"
+                              value={form.worker_job_titles[workerId] || ''}
+                              onChange={(e) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: e.target.value })}
+                              placeholder="e.g. Manager"
+                              className="h-8 text-xs"
                             />
                           </div>
                         </div>
-                        <div className="flex flex-col gap-1">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Title</label>
-                          <Input
-                            type="text"
-                            value={form.worker_job_titles[workerId] || ''}
-                            onChange={(e) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: e.target.value })}
-                            placeholder="e.g. Manager"
-                            className="h-8 text-xs"
-                          />
+                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
+                            <Input
+                              type="time"
+                              value={worker?.work_start_time || '09:00'}
+                              onChange={(e) => {
+                                const chars = [...characters];
+                                const idx = chars.findIndex(c => c.id === workerId);
+                                if (idx >= 0) chars[idx].work_start_time = e.target.value;
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="flex flex-col gap-1">
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
+                            <Input
+                              type="time"
+                              value={worker?.work_end_time || '17:00'}
+                              onChange={(e) => {
+                                const chars = [...characters];
+                                const idx = chars.findIndex(c => c.id === workerId);
+                                if (idx >= 0) chars[idx].work_end_time = e.target.value;
+                              }}
+                              className="h-8 text-xs"
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
