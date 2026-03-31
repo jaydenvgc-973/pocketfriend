@@ -84,6 +84,11 @@ function LocationCard({ location, onDelete, onEdit }) {
                 <User className="w-3 h-3" /> {location.character_name || "Character"}
               </span>
             )}
+            {location.resident_character_ids?.length > 0 && (
+              <span className="text-xs text-blue-400/80 font-medium">
+                {location.resident_character_ids.length} resident{location.resident_character_ids.length > 1 ? "s" : ""}
+              </span>
+            )}
             {!isGenericHome && (
               <>
                 <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
@@ -135,11 +140,29 @@ function LocationCard({ location, onDelete, onEdit }) {
               {location.description && (
                 <p className="text-xs text-muted-foreground">{location.description}</p>
               )}
+              {location.resident_character_names?.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">Residents</p>
+                  <div className="flex flex-wrap gap-1">
+                    {location.resident_character_names.map(name => (
+                      <span key={name} className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full">{name}</span>
+                    ))}
+                  </div>
+                  {location.resident_character_ids?.length > 1 && (
+                    <p className="text-[10px] text-muted-foreground/70 mt-1">
+                      Split: {location.cost_split_method === "custom" ? "custom" : "evenly"}
+                    </p>
+                  )}
+                </div>
+              )}
               {location.keywords?.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {location.keywords.map(kw => (
-                    <span key={kw} className="text-xs bg-secondary px-2 py-0.5 rounded-full text-muted-foreground">{kw}</span>
-                  ))}
+                <div>
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">Keywords</p>
+                  <div className="flex flex-wrap gap-1">
+                    {location.keywords.map(kw => (
+                      <span key={kw} className="text-xs bg-secondary px-2 py-0.5 rounded-full text-muted-foreground">{kw}</span>
+                    ))}
+                  </div>
                 </div>
               )}
               {zones.length === 0 && (
@@ -446,6 +469,110 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
           ))}
         </div>
       </div>
+
+      {/* ── RESIDENTS ─────────────────────────────────────────────────── */}
+      {(form.category === 'home' || form.category === 'generic') && (
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives here?</label>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+              Add resident characters. Rent and utilities will be split among them.
+            </p>
+          </div>
+
+          {/* Resident list */}
+          <div className="space-y-2">
+            {form.resident_character_ids?.length > 0 ? (
+              <>
+                <div className="space-y-2 max-h-44 overflow-y-auto">
+                  {form.resident_character_ids.map((resId, idx) => {
+                    const resChar = characters.find(c => c.id === resId);
+                    return (
+                      <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
+                        {resChar && <CharacterAvatar character={resChar} size="sm" />}
+                        <span className="text-sm text-foreground flex-1">{resChar?.name || resId}</span>
+                        <button
+                          onClick={() => update("resident_character_ids", form.resident_character_ids.filter((_, i) => i !== idx))}
+                          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Cost split method — only show if multiple residents */}
+                {form.resident_character_ids.length > 1 && (
+                  <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
+                    <label className="text-xs font-semibold text-foreground uppercase">Split costs</label>
+                    <div className="flex gap-2">
+                      {["even", "custom"].map(method => (
+                        <button
+                          key={method}
+                          onClick={() => update("cost_split_method", method)}
+                          className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors capitalize ${form.cost_split_method === method ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}
+                        >
+                          {method === "even" ? "Split evenly" : "Custom split"}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Custom split inputs */}
+                    {form.cost_split_method === "custom" && (
+                      <div className="space-y-2 mt-2">
+                        {form.resident_character_ids.map((resId, idx) => {
+                          const resChar = characters.find(c => c.id === resId);
+                          return (
+                            <div key={idx} className="flex items-center gap-2">
+                              <label className="text-xs text-muted-foreground w-24 truncate">{resChar?.name || resId}:</label>
+                              <div className="flex items-center gap-1 flex-1">
+                                <span className="text-xs">$</span>
+                                <Input
+                                  type="number"
+                                  value={form.resident_cost_split?.[resId] || 0}
+                                  onChange={e => update("resident_cost_split", { ...form.resident_cost_split, [resId]: parseFloat(e.target.value) || 0 })}
+                                  placeholder="0"
+                                  className="h-8 text-xs flex-1"
+                                />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : (
+              <p className="text-xs text-muted-foreground italic">No residents added yet.</p>
+            )}
+          </div>
+
+          {/* Add resident button */}
+          <div className="space-y-2 max-h-44 overflow-y-auto rounded-xl border border-border bg-card">
+            {characters.map(char => {
+              const alreadyResident = form.resident_character_ids?.includes(char.id);
+              return (
+                <button
+                  key={char.id}
+                  onClick={() => {
+                    if (!alreadyResident) {
+                      update("resident_character_ids", [...(form.resident_character_ids || []), char.id]);
+                    }
+                  }}
+                  disabled={alreadyResident}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                >
+                  <CharacterAvatar character={char} size="sm" />
+                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── OWNER / LANDLORD ───────────────────────────────────────────── */}
       <div className="space-y-3">
