@@ -149,17 +149,21 @@ Deno.serve(async (req) => {
           );
           locationImages = findLocationImages(cleanPrompt, savedLocations, characterId).slice(0, 4);
           if (locationImages.length > 0) {
-            locationNote = `\n\nLOCATION CONSISTENCY — CRITICAL: Reference images of this exact room/space are provided. You MUST reproduce the environment with 75–90% visual fidelity to those references. Follow these rules strictly:
+            locationNote = `\n\nLOCATION CONSISTENCY — ABSOLUTE REQUIREMENT: Reference images of this exact room/space are provided. You MUST reproduce the environment with 90–99% visual fidelity. The generated image must look like a photograph taken in the IDENTICAL room — only the camera angle may differ. Every other detail must be preserved exactly as shown.
 
-1. FURNITURE: Every piece of furniture visible in the reference must appear in the generated image. Match the exact style, shape, color, material, and placement of each item — sofas, chairs, tables, shelving, lamps, rugs, etc. Do not swap, remove, or add furniture.
-2. WALL COLOR & FINISH: Reproduce the exact wall color(s), paint finish, wallpaper pattern, and any accent walls from the reference.
-3. FLOORING: Match the exact floor type (hardwood, tile, carpet, etc.), color, grain direction, and pattern.
-4. WALL ART & DECOR: Any artwork, photos, mirrors, shelves, or decorative objects on the walls must appear in the same relative positions.
-5. LIGHTING: Match the ambient lighting tone, any visible light fixtures, lamps, and window light direction.
-6. OVERALL COMPOSITION: The room layout and spatial proportions must match the reference. 
-7. CAMERA ANGLE ONLY: The ONLY thing that should change between the reference and the generated image is the camera angle, framing, or focal point. Everything else stays the same.
+REPLICATE THESE ELEMENTS WITH PIXEL-PERFECT ACCURACY:
+1. FURNITURE: Every single piece of furniture must appear — exact model, style, shape, color, fabric/material, texture, and spatial placement. Sofas, chairs, tables, shelving units, beds, dressers, ottomans, rugs — all must match exactly. Do NOT substitute, remove, recolor, or add any furniture.
+2. FABRIC & UPHOLSTERY: Match the exact fabric texture, pattern, weave, and color of every upholstered surface — sofa cushions, throw pillows, curtains, rugs, bedding, chair covers.
+3. FLOORING: Reproduce the exact floor material (hardwood species, tile pattern, carpet pile, etc.), color, grain direction, grout lines, and finish.
+4. WINDOW TREATMENTS: Curtains, blinds, shades, or shutters must match exactly — same fabric, color, pattern, length, and hang style.
+5. WALL COLOR & FINISH: Exact wall paint color, sheen level, wallpaper pattern, wainscoting, trim color, and any accent walls.
+6. WALL ART & DECOR: Every picture, painting, mirror, clock, shelf bracket, and wall-mounted object must appear in the same position and orientation.
+7. BOOKSHELVES & SHELVING: Reproduce the exact contents, arrangement, and style of any shelving units or bookcases.
+8. LIGHTING FIXTURES: Match all ceiling lights, floor lamps, table lamps, and sconces — same style, position, and warm/cool tone they cast.
+9. DECORATIVE OBJECTS: Every vase, plant, sculpture, remote control, throw blanket, candle — every object visible in the reference must be present.
+10. SPATIAL LAYOUT: Room proportions, ceiling height, window placement, and door positions must match exactly.
 
-This image must be instantly recognizable as the SAME room from the reference photos — just viewed from a different angle.`;
+THE ONLY PERMITTED CHANGE IS CAMERA ANGLE/FRAMING. Everything else must be an exact reproduction of the reference. This must be instantly and unmistakably recognizable as the same room.`;
           }
         }
       } catch (_) {
