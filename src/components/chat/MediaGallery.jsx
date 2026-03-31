@@ -515,6 +515,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         onClose={() => setRegenTarget(null)}
         onSelect={handleRegenSelect}
         isRegenerating={isRegenerating}
+        originalPrompt={regenTarget ? (messages.find(m => m.id === regenTarget.id)?.generation_context?.prompt || null) : null}
       />
     </>
   );

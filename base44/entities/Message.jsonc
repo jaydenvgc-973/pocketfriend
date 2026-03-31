@@ -92,6 +92,44 @@
           }
         }
       }
+    },
+    "generation_context": {
+      "type": "object",
+      "description": "Stored generation metadata for image messages \u2014 used to power accurate regeneration",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "The original user-facing scene prompt (without system instructions)"
+        },
+        "character_id": {
+          "type": "string"
+        },
+        "character_reference_images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "location_id": {
+          "type": "string"
+        },
+        "zone_name": {
+          "type": "string"
+        },
+        "location_name": {
+          "type": "string"
+        },
+        "location_reference_images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "subject_type": {
+          "type": "string",
+          "description": "character | user | joint"
+        }
+      }
     }
   },
   "required": [

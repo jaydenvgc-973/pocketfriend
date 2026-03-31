@@ -640,7 +640,21 @@ Deno.serve(async (req) => {
     });
 
     if (response?.url) {
-      await base44.entities.Message.update(messageId, { image_url: response.url });
+      // Store generation context so regeneration can reuse the exact same scene
+      const generationContext = {
+        prompt: cleanPrompt,
+        character_id: characterId || null,
+        character_reference_images: resolvedCharacterRefs.slice(0, 4),
+        location_id: manualLocationId || null,
+        zone_name: resolvedZoneName || null,
+        location_name: resolvedLocationName || null,
+        location_reference_images: locationImages.slice(0, 3),
+        subject_type: resolvedSubjectType,
+      };
+      await base44.entities.Message.update(messageId, {
+        image_url: response.url,
+        generation_context: generationContext,
+      });
       return Response.json({
         success: true,
         imageUrl: response.url,

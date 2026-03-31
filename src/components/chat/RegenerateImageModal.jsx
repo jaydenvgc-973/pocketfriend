@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine } from "lucide-react";
@@ -8,7 +8,7 @@ const REASONS = [
     id: "flawed",
     icon: AlertTriangle,
     label: "Image is flawed",
-    description: "Wrong anatomy, artifacts, or generation errors",
+    description: "Wrong anatomy, artifacts, or composition errors — retry the same scene",
     color: "text-amber-400",
     bg: "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/60",
   },
@@ -16,7 +16,7 @@ const REASONS = [
     id: "no_avatar",
     icon: UserX,
     label: "Doesn't look like them",
-    description: "Doesn't match the character's reference photos",
+    description: "Same scene, stronger character likeness",
     color: "text-blue-400",
     bg: "bg-blue-500/10 border-blue-500/30 hover:border-blue-500/60",
   },
@@ -24,7 +24,7 @@ const REASONS = [
     id: "dont_like",
     icon: ThumbsDown,
     label: "Don't like it",
-    description: "Generate something completely different",
+    description: "Edit the original scene prompt and regenerate",
     color: "text-muted-foreground",
     bg: "bg-secondary border-border hover:border-primary/40",
   },
@@ -32,37 +32,65 @@ const REASONS = [
     id: "custom_prompt",
     icon: PenLine,
     label: "Use my own prompt",
-    description: "Describe exactly what you want",
+    description: "Write a fully custom prompt",
     color: "text-primary",
     bg: "bg-primary/10 border-primary/30 hover:border-primary/60",
   },
 ];
 
-export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating, error }) {
-  const [customPrompt, setCustomPrompt] = useState("");
+export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRegenerating, error, originalPrompt }) {
+  const [editPrompt, setEditPrompt] = useState("");
   const [showPromptInput, setShowPromptInput] = useState(false);
+  const [promptMode, setPromptMode] = useState(null); // 'dont_like' | 'custom_prompt'
+
+  // When opening dont_like, pre-fill with original prompt
+  useEffect(() => {
+    if (!isOpen) {
+      setShowPromptInput(false);
+      setEditPrompt("");
+      setPromptMode(null);
+    }
+  }, [isOpen]);
 
   const handleSelect = (id) => {
-    if (id === "custom_prompt") {
+    if (id === "dont_like") {
+      setPromptMode("dont_like");
+      setEditPrompt(originalPrompt || "");
       setShowPromptInput(true);
       return;
     }
-    setShowPromptInput(false);
+    if (id === "custom_prompt") {
+      setPromptMode("custom_prompt");
+      setEditPrompt("");
+      setShowPromptInput(true);
+      return;
+    }
+    // flawed / no_avatar — regenerate immediately, no input needed
     onSelect(id, null);
   };
 
-  const handleCustomSubmit = () => {
-    if (!customPrompt.trim()) return;
-    onSelect("custom_prompt", customPrompt.trim());
-    setCustomPrompt("");
+  const handleSubmit = () => {
+    if (!editPrompt.trim()) return;
+    onSelect(promptMode, editPrompt.trim());
+    setEditPrompt("");
     setShowPromptInput(false);
+    setPromptMode(null);
   };
 
   const handleClose = () => {
     setShowPromptInput(false);
-    setCustomPrompt("");
+    setEditPrompt("");
+    setPromptMode(null);
     onClose();
   };
+
+  const promptTitle = promptMode === "dont_like"
+    ? "Edit the original prompt"
+    : "Describe what you want";
+
+  const promptPlaceholder = promptMode === "dont_like"
+    ? "Edit the scene description above..."
+    : "e.g. 'at the beach, golden hour, smiling'";
 
   return createPortal(
     <AnimatePresence>
@@ -83,7 +111,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
           >
             <div className="flex items-center justify-between px-5 py-4 border-b border-border">
               <h3 className="text-sm font-semibold text-foreground">
-                {showPromptInput ? "Describe what you want" : "Why regenerate?"}
+                {showPromptInput ? promptTitle : "Why regenerate?"}
               </h3>
               <button onClick={handleClose} className="p-1 hover:bg-secondary rounded-lg transition-colors">
                 <X className="w-4 h-4 text-muted-foreground" />
@@ -92,24 +120,27 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
 
             {showPromptInput ? (
               <div className="p-4 space-y-3">
+                {promptMode === "dont_like" && originalPrompt && (
+                  <p className="text-[10px] text-muted-foreground/60">Original prompt pre-loaded — edit it below</p>
+                )}
                 <textarea
-                  value={customPrompt}
-                  onChange={e => setCustomPrompt(e.target.value)}
-                  placeholder="e.g. 'at the beach, golden hour, smiling' or 'in the kitchen cooking, casual outfit'"
-                  rows={3}
+                  value={editPrompt}
+                  onChange={e => setEditPrompt(e.target.value)}
+                  placeholder={promptPlaceholder}
+                  rows={4}
                   autoFocus
                   className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
                 />
                 <div className="flex gap-2">
                   <button
-                    onClick={() => setShowPromptInput(false)}
+                    onClick={() => { setShowPromptInput(false); setEditPrompt(""); setPromptMode(null); }}
                     className="flex-1 py-2.5 rounded-2xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     Back
                   </button>
                   <button
-                    onClick={handleCustomSubmit}
-                    disabled={!customPrompt.trim() || isRegenerating}
+                    onClick={handleSubmit}
+                    disabled={!editPrompt.trim() || isRegenerating}
                     className="flex-1 py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                   >
                     {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
