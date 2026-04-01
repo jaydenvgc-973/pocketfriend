@@ -87,7 +87,16 @@ function LocationCard({ location, onDelete, onEdit, characters = [] }) {
                 <User className="w-3 h-3" /> {location.character_name || "Character"}
               </span>
             )}
-            {location.resident_character_ids?.length > 0 && (
+            {(location.category === 'home' || location.category === 'generic') && (
+              location.resident_character_ids?.length > 0 ? (
+                <span className="text-xs text-blue-400/80 font-medium">
+                  {location.resident_character_ids.length} resident{location.resident_character_ids.length > 1 ? "s" : ""}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground/60 italic">vacant</span>
+              )
+            )}
+            {location.category !== 'home' && location.category !== 'generic' && location.resident_character_ids?.length > 0 && (
               <span className="text-xs text-blue-400/80 font-medium">
                 {location.resident_character_ids.length} resident{location.resident_character_ids.length > 1 ? "s" : ""}
               </span>
