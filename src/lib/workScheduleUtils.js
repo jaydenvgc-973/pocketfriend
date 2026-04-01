@@ -1,27 +1,339 @@
 /**
- * Determines if a character is currently at work based on their work schedule.
- * Falls back to default schedule (9 AM - 5 PM, Monday-Friday) if none is set.
+/**
+ * workScheduleUtils.js
+ *
+ * Unified schedule utilities for work, school/education, and religion attendance.
+ * All three systems use the same logic layer — location hours + character-specific schedule.
+ *
+ * Two time layers:
+ *   1. Location operating_hours  — when the place is open/active
+ *   2. Character schedule/shift  — when the character is supposed to be there
+ *
+ * Both layers reinforce each other. If a location has hours and the character is
+ * linked to it, those hours inform attendance expectations.
  */
-export function isCharacterAtWork(character) {
-  const workStart = character?.work_start_time || "09:00";
-  const workEnd = character?.work_end_time || "17:00";
-  const workDays = character?.work_days || [1, 2, 3, 4, 5]; // Default: Monday-Friday
 
+// ── Parse "HH:MM" → total minutes ──────────────────────────────────────────
+function toMinutes(timeStr) {
+  if (!timeStr) return null;
+  const parts = timeStr.split(':').map(Number);
+  return parts[0] * 60 + (parts[1] || 0);
+}
+
+function isInWindow(currentMinutes, startStr, endStr) {
+  const start = toMinutes(startStr);
+  const end = toMinutes(endStr);
+  if (start == null || end == null) return false;
+  if (start <= end) return currentMinutes >= start && currentMinutes < end;
+  // Crosses midnight
+  return currentMinutes >= start || currentMinutes < end;
+}
+
+function getLocalMinutes() {
   const now = new Date();
-  const currentDay = now.getDay();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return et.getHours() * 60 + et.getMinutes();
+}
 
-  // Check if today is a work day
-  if (!workDays.includes(currentDay)) {
-    return false;
+function getLocalDay() {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return et.getDay(); // 0=Sun
+}
+
+// ── Location hours helpers ──────────────────────────────────────────────────
+
+/**
+ * Returns true if a location is currently "active/open" based on its operating_hours.
+ * If no hours defined, returns null (unknown / always-possible).
+ */
+export function isLocationActiveNow(location) {
+  const hours = location?.operating_hours;
+  if (!hours || hours.length === 0) return null; // unknown
+
+  const currentMinutes = getLocalMinutes();
+  const currentDay = getLocalDay();
+
+  for (const window of hours) {
+    const dayMatch = window.day_of_week == null || window.day_of_week === currentDay;
+    if (dayMatch && isInWindow(currentMinutes, window.open_time, window.close_time)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Get the character's shift at a specific location from the location's worker_shifts map.
+ * Returns { start, end } or null.
+ */
+export function getCharacterShiftAtLocation(characterId, location) {
+  if (!location?.worker_shifts || !characterId) return null;
+  const shift = location.worker_shifts[characterId];
+  if (!shift?.start || !shift?.end) return null;
+  return shift;
+}
+
+/**
+ * Check if character is currently within their shift at a given location.
+ */
+export function isCharacterOnShift(characterId, location) {
+  const shift = getCharacterShiftAtLocation(characterId, location);
+  if (!shift) return false;
+  const currentMinutes = getLocalMinutes();
+  const currentDay = getLocalDay();
+
+  // Check work_days from character if needed — shifts are per-location
+  return isInWindow(currentMinutes, shift.start, shift.end);
+}
+
+// ── Work ───────────────────────────────────────────────────────────────────
+
+/**
+ * Determines if a character is currently at work.
+ *
+ * Priority:
+ *   1. If a linked workplace location has shift data for this character → use that
+ *   2. Fall back to character's own work_start_time / work_end_time / work_days
+ *
+ * Accepts optional `workplaceLocation` (LocationReference record) for richer data.
+ */
+export function isCharacterAtWork(character, workplaceLocation = null) {
+  const unemployedKeywords = ['unemployed', 'between jobs', 'crime', 'none'];
+  const workType = (character?.work_details?.workplace_type || '').toLowerCase();
+  if (unemployedKeywords.some(k => workType.includes(k))) return false;
+  if (!character?.work_details?.job_title && !character?.occupation_location_id && !workplaceLocation) {
+    // No job info at all
+    const workDaysDefault = character?.work_days || [1, 2, 3, 4, 5];
+    const workStartDefault = character?.work_start_time || '09:00';
+    const workEndDefault = character?.work_end_time || '17:00';
+    const currentMinutes = getLocalMinutes();
+    const currentDay = getLocalDay();
+    if (!workDaysDefault.includes(currentDay)) return false;
+    return isInWindow(currentMinutes, workStartDefault, workEndDefault);
   }
 
-  const [workH, workM] = workStart.split(":").map(Number);
-  const [endH, endM] = workEnd.split(":").map(Number);
+  // Layer 1: Location-specific shift
+  if (workplaceLocation && character?.id) {
+    const onShift = isCharacterOnShift(character.id, workplaceLocation);
+    if (onShift) return true;
+    // If location has hours, check those too
+    const locationActive = isLocationActiveNow(workplaceLocation);
+    if (locationActive === true) {
+      // Location is open — use character's own work schedule as fallback
+    }
+  }
 
-  const startMinutes = workH * 60 + workM;
-  const endMinutes = endH * 60 + endM;
+  // Layer 2: Character's own work schedule
+  const workDays = character?.work_days || [1, 2, 3, 4, 5];
+  const workStart = character?.work_start_time || '09:00';
+  const workEnd = character?.work_end_time || '17:00';
+  const currentMinutes = getLocalMinutes();
+  const currentDay = getLocalDay();
 
-  // Check if current time is within work hours
-  return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+  if (!workDays.includes(currentDay)) return false;
+  return isInWindow(currentMinutes, workStart, workEnd);
+}
+
+// ── School / Education (same system as Work) ───────────────────────────────
+
+/**
+ * Determines if a character is currently attending school/education.
+ *
+ * School and Education are the same system. Uses the same two-layer approach:
+ *   1. Location's operating_hours (class times / school hours)
+ *   2. Character's education_details or current_education_activity
+ *
+ * Returns { attending: boolean, label: string }
+ */
+export function isCharacterAtSchool(character, educationLocation = null) {
+  if (!character?.current_education_activity || character.current_education_activity === 'none') {
+    return { attending: false, label: '' };
+  }
+
+  const currentMinutes = getLocalMinutes();
+  const currentDay = getLocalDay();
+  const currentHour = Math.floor(currentMinutes / 60);
+
+  // Layer 1: Education location hours
+  if (educationLocation) {
+    const locationActive = isLocationActiveNow(educationLocation);
+    if (locationActive === true) {
+      const courseName = character.education_details?.course_name || character.current_education_activity;
+      return { attending: true, label: `at school — ${courseName}` };
+    }
+    if (locationActive === false) {
+      // Location is explicitly closed
+      return { attending: false, label: '' };
+    }
+    // null = no hours defined, fall through to time-of-day check
+  }
+
+  // Layer 2: Plausible class-time window (8am–9pm)
+  if (currentHour >= 8 && currentHour < 21) {
+    const courseName = character.education_details?.course_name || character.current_education_activity;
+    const label = educationLocation
+      ? `at ${educationLocation.name} — ${courseName}`
+      : `at school — ${courseName}`;
+    return { attending: true, label };
+  }
+
+  return { attending: false, label: '' };
+}
+
+/**
+ * Get a display label for school attendance status — mirrors work status labels.
+ * Returns one of: 'in class', 'at school', 'running late to class', 'after school', null
+ */
+export function getSchoolStatusLabel(character, educationLocation = null) {
+  const result = isCharacterAtSchool(character, educationLocation);
+  if (result.attending) return 'in class';
+  if (character?.current_education_activity && character.current_education_activity !== 'none') {
+    const currentHour = Math.floor(getLocalMinutes() / 60);
+    if (currentHour >= 15 && currentHour < 22) return 'after school';
+  }
+  return null;
+}
+
+// ── Religious Attendance (location-aware layer on top of religionUtils) ────
+
+/**
+ * Determines if a character should currently be at their religious location.
+ * Works alongside the existing prayer-time logic in religionUtils.js.
+ *
+ * Checks:
+ *   1. Character's belief level (must be moderate or devout)
+ *   2. Religion location's operating_hours (service times, prayer times)
+ *   3. Falls back to SERVICE_DAYS logic from religionUtils
+ *
+ * Returns { attending: boolean, label: string }
+ */
+export function isCharacterAtReligiousLocation(character, religionLocation = null) {
+  if (!character?.religion || character.religion === 'None') return { attending: false, label: '' };
+  if (character.belief_level === 'in_name_only') return { attending: false, label: '' };
+
+  // Layer 1: Location hours if a religion location is linked
+  if (religionLocation) {
+    const locationActive = isLocationActiveNow(religionLocation);
+    if (locationActive === true) {
+      const label = `at ${religionLocation.name}`;
+      return { attending: true, label };
+    }
+    if (locationActive === false) return { attending: false, label: '' };
+  }
+
+  // Layer 2: Time-of-day plausibility for service attendance
+  const currentDay = getLocalDay();
+  const currentHour = Math.floor(getLocalMinutes() / 60);
+
+  // Christianity: Sunday services (9am-1pm)
+  if (character.religion === 'Christianity' && currentDay === 0 && currentHour >= 9 && currentHour < 13) {
+    const label = religionLocation ? `at ${religionLocation.name}` : 'at church';
+    return { attending: character.belief_level === 'devout', label };
+  }
+  // Islam: Friday Jumu'ah (11:30am-1:30pm)
+  if (character.religion === 'Islam' && currentDay === 5 && currentHour >= 11 && currentHour < 14) {
+    const label = religionLocation ? `at ${religionLocation.name}` : 'at mosque';
+    return { attending: character.belief_level === 'devout', label };
+  }
+  // Judaism: Saturday Shabbat (9am-12pm)
+  if (character.religion === 'Judaism' && currentDay === 6 && currentHour >= 9 && currentHour < 12) {
+    const label = religionLocation ? `at ${religionLocation.name}` : 'at synagogue';
+    return { attending: character.belief_level === 'devout', label };
+  }
+
+  return { attending: false, label: '' };
+}
+
+// ── Gym ────────────────────────────────────────────────────────────────────
+
+/**
+ * Check if a character is likely at the gym based on location hours.
+ */
+export function isCharacterAtGym(character, gymLocation = null) {
+  if (!gymLocation) return false;
+  if (!gymLocation.gym_members?.includes(character?.id)) return false;
+  const locationActive = isLocationActiveNow(gymLocation);
+  return locationActive === true;
+}
+
+// ── Shared-space helpers for autonomy + character cards ────────────────────
+
+/**
+ * Given a character and an array of all linked locations for this user,
+ * find the best current location for that character.
+ *
+ * Returns { location, role, status } or null.
+ * role: 'worker' | 'student' | 'worshipper' | 'resident' | 'gym_member' | 'visitor'
+ * status: 'at_work' | 'at_school' | 'at_worship' | 'at_gym' | 'at_home' | null
+ */
+export function resolveCharacterCurrentLocation(character, allLocations) {
+  if (!character || !allLocations) return null;
+
+  // 1. Work location
+  if (character.occupation_location_id) {
+    const loc = allLocations.find(l => l.id === character.occupation_location_id);
+    if (loc) {
+      const onShift = isCharacterOnShift(character.id, loc);
+      const locationOpen = isLocationActiveNow(loc);
+      const charAtWork = isCharacterAtWork(character, loc);
+      if (onShift || charAtWork) {
+        return { location: loc, role: 'worker', status: 'at_work' };
+      }
+    }
+  }
+
+  // Also check additional_occupation_locations
+  if (character.additional_occupation_locations?.length > 0) {
+    for (const extra of character.additional_occupation_locations) {
+      const loc = allLocations.find(l => l.id === extra.location_id);
+      if (loc) {
+        const charAtWork = isCharacterAtWork(character, loc);
+        if (charAtWork) return { location: loc, role: 'worker', status: 'at_work' };
+      }
+    }
+  }
+
+  // 2. Education/school location
+  if (character.education_location_id) {
+    const loc = allLocations.find(l => l.id === character.education_location_id);
+    if (loc) {
+      const result = isCharacterAtSchool(character, loc);
+      if (result.attending) return { location: loc, role: 'student', status: 'at_school' };
+    }
+  }
+
+  // Also check additional_education_locations
+  if (character.additional_education_locations?.length > 0) {
+    for (const extra of character.additional_education_locations) {
+      const loc = allLocations.find(l => l.id === extra.location_id);
+      if (loc) {
+        const result = isCharacterAtSchool(character, loc);
+        if (result.attending) return { location: loc, role: 'student', status: 'at_school' };
+      }
+    }
+  }
+
+  // 3. Religion location
+  const religionLocation = allLocations.find(l => l.category === 'religion' && !l.is_default_generic);
+  if (religionLocation) {
+    const result = isCharacterAtReligiousLocation(character, religionLocation);
+    if (result.attending) return { location: religionLocation, role: 'worshipper', status: 'at_worship' };
+  }
+
+  // 4. Gym
+  const gymLocation = allLocations.find(l => l.category === 'gym' && l.gym_members?.includes(character.id));
+  if (gymLocation) {
+    const atGym = isCharacterAtGym(character, gymLocation);
+    if (atGym) return { location: gymLocation, role: 'gym_member', status: 'at_gym' };
+  }
+
+  // 5. Home
+  const homeLocation = allLocations.find(l =>
+    (l.category === 'home' || l.category === 'generic') &&
+    l.resident_character_ids?.includes(character.id)
+  );
+  if (homeLocation) return { location: homeLocation, role: 'resident', status: 'at_home' };
+
+  return null;
 }

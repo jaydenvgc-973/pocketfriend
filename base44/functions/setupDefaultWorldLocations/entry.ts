@@ -114,7 +114,42 @@ Deno.serve(async (req) => {
       results.grocery = { id: found?.id, created: false };
     }
 
-    // ── 4. Upgrade NPC Hub to apartment-building structure ─────────────────
+    // ── 4. Generic Place of Worship ────────────────────────────────────────
+    const worshipExists = existingNames.some(n =>
+      n.includes('generic place of worship') || n.includes('generic church') || n.includes('generic mosque')
+    );
+    if (!worshipExists) {
+      const worship = await base44.asServiceRole.entities.LocationReference.create({
+        name: 'Generic Place of Worship',
+        location_type: 'global',
+        category: 'religion',
+        description: 'A generic place of worship used as a fallback for religious attendance. Can represent a church, mosque, temple, synagogue, or any other house of worship.',
+        keywords: ['church', 'mosque', 'temple', 'synagogue', 'worship', 'service', 'prayer', 'fellowship', 'bible study', 'kingdom hall', 'prayer center', 'religious'],
+        is_default_generic: true,
+        owner_is_npc: true,
+        owner_npc_name: 'Congregation',
+        owner_role: 'operator',
+        zones: [
+          { zone_name: 'Main Sanctuary', image_urls: [] },
+          { zone_name: 'Prayer Room', image_urls: [] },
+          { zone_name: 'Fellowship Hall', image_urls: [] },
+          { zone_name: 'Office', image_urls: [] },
+          { zone_name: 'Entrance', image_urls: [] },
+        ],
+        // Default Sunday morning service hours
+        operating_hours: [
+          { day_of_week: 0, open_time: '09:00', close_time: '13:00', note: 'Sunday Service' },
+          { day_of_week: 3, open_time: '18:00', close_time: '20:00', note: 'Midweek Service' },
+        ],
+      });
+      created.push('Generic Place of Worship');
+      results.worship = { id: worship.id, created: true };
+    } else {
+      const found = existing.find(l => (l.name || '').toLowerCase().includes('generic place of worship') || (l.name || '').toLowerCase().includes('generic church'));
+      results.worship = { id: found?.id, created: false };
+    }
+
+    // ── 5. Upgrade NPC Hub to apartment-building structure ─────────────────
     const npcHubs = await base44.asServiceRole.entities.LocationReference.filter(
       { created_by: user.email, name: 'NPC Hub' }
     );

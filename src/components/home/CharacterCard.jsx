@@ -56,7 +56,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway }) {
+export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {} }) {
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditName, setShowEditName] = useState(false);
@@ -230,7 +230,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway }) {
                 )}
               </div>
               {!isMovedAway && (() => {
-                const statusDisplay = getCharacterStatusDisplay(character);
+                const workLocation = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
+                const educationLocation = character.education_location_id ? locationMap[character.education_location_id] : null;
+                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation });
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,

@@ -28,11 +28,13 @@ Deno.serve(async (req) => {
     );
     const userCharIds = new Set(userCharacters.map(c => c.id));
 
-    // Filter to: user-created + generic homes + NPC Hub
+    // Filter to: user-created + generic homes + NPC Hub + default world locations
+    const DEFAULT_WORLD_NAMES = ['generic park', 'generic hospital', 'generic grocery store'];
+
     const relevantLocations = allLocations.filter(loc => {
       // User-created
       if (loc.created_by === user.email) return true;
-      
+
       // Generic homes for their characters
       if (loc.is_default_generic) {
         const hasUserChar = (loc.resident_character_ids || []).some(id => userCharIds.has(id));
@@ -41,6 +43,10 @@ Deno.serve(async (req) => {
 
       // NPC Hub (shared, contains their NPCs)
       if (loc.name === 'NPC Hub') return true;
+
+      // Default world locations (park, hospital, grocery) — available to all users
+      const nameLower = (loc.name || '').toLowerCase();
+      if (DEFAULT_WORLD_NAMES.some(n => nameLower.includes(n))) return true;
 
       return false;
     });

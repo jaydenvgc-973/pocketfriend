@@ -49,8 +49,9 @@ export default function OccupationLocationPicker({
   });
 
   // Filter by relevant category
-  const OCCUPATION_CATS = ['workplace', 'business', 'food_drink', 'gym', 'medical', 'social', 'grocery', 'religion', 'school', 'government', 'generic'];
-  const EDUCATION_CATS = ['education', 'school', 'generic', 'business'];
+  // School and Education are the same system
+  const OCCUPATION_CATS = ['workplace', 'business', 'food_drink', 'gym', 'medical', 'social', 'grocery', 'religion', 'school', 'education', 'government', 'generic'];
+  const EDUCATION_CATS = ['education', 'school', 'generic', 'business', 'government'];
   const relevantCats = linkType === 'occupation' ? OCCUPATION_CATS : EDUCATION_CATS;
 
   const filteredLocations = locations.filter(loc => {

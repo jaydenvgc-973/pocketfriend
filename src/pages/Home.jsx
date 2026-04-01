@@ -41,6 +41,18 @@ export default function Home() {
     refetchOnWindowFocus: true,
   });
 
+  // Fetch locations for location-aware status display on character cards
+  const { data: locationsData } = useQuery({
+    queryKey: ["locationReferences", currentUser?.email],
+    queryFn: async () => {
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      return res?.data?.locations || [];
+    },
+    enabled: !!currentUser?.email,
+    staleTime: 60000, // 1 minute — locations don't change often
+  });
+  const locationMap = Object.fromEntries((locationsData || []).map(l => [l.id, l]));
+
   // One-time: ensure default world locations exist for this user
   useEffect(() => {
     if (!currentUser?.email) return;
@@ -192,7 +204,7 @@ export default function Home() {
         {defaultChar && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
-            <CharacterCard character={defaultChar} />
+            <CharacterCard character={defaultChar} locationMap={locationMap} />
           </div>
         )}
         {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
@@ -232,10 +244,11 @@ export default function Home() {
                 <CharacterCard key={c.id} character={c}
                   onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
                   onMoveAway={(id) => moveAwayMutation.mutate(id)}
+                  locationMap={locationMap}
                 />
               ))}
               {movedAwayChars.map(c => (
-                <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} />
+                <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationMap={locationMap} />
               ))}
               <Link to="/create">
                 <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
