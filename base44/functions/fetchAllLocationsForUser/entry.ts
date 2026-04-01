@@ -49,46 +49,28 @@ Deno.serve(async (req) => {
       }
     }
 
-    const DEFAULT_WORLD_NAMES = ['generic park', 'generic hospital', 'generic grocery store'];
     const RESIDENTIAL_CATEGORIES = new Set(['home', 'generic']);
 
     const relevantLocations = allLocations.filter(loc => {
-      // 1. User-created locations — always show, regardless of occupancy
+      // 1. User-created locations — always show
       if (loc.created_by === user.email) return true;
 
-      // 2. Generic homes linked to any of their characters
-      //    FIXED: do NOT require residents to be currently attached.
-      //    A generic home created for a character is always relevant even if empty.
-      if (loc.is_default_generic) {
-        // Check any linkage: current residents, character_id field, or character_specific type
-        const hasResidentLink = (loc.resident_character_ids || []).some(id => userCharIds.has(id));
-        const hasCharLink = loc.character_id && userCharIds.has(loc.character_id);
-        const hasWorkerLink = (loc.worker_character_ids || []).some(id => userCharIds.has(id));
-        if (hasResidentLink || hasCharLink || hasWorkerLink) return true;
-        // Also include if it was created in service role but mentions a user char name
-        // (fallback: include all generic homes if no other user has explicit claim)
-        // We include it if there's no created_by OR if it seems globally created
-        if (!loc.created_by || loc.created_by === 'system') return true;
-      }
+      // 2. Any is_default_generic location — always show (park, hospital, grocery, homes, etc.)
+      //    These are shared world locations created by the service role for all users.
+      if (loc.is_default_generic) return true;
 
-      // 3. Residential locations (home/generic) that reference any of the user's characters
-      //    This covers named homes like "Ethan and Lila's home" that were system-created
+      // 3. Residential locations that reference any of the user's characters
       if (RESIDENTIAL_CATEGORIES.has(loc.category)) {
         const hasResidentLink = (loc.resident_character_ids || []).some(id => userCharIds.has(id));
         const hasCharLink = loc.character_id && userCharIds.has(loc.character_id);
-        const hasWorkerLink = (loc.worker_character_ids || []).some(id => userCharIds.has(id));
-        if (hasResidentLink || hasCharLink || hasWorkerLink) return true;
+        if (hasResidentLink || hasCharLink) return true;
       }
 
-      // 4. Any location (any category) directly linked from a character's profile fields
+      // 4. Any location directly linked from a character's profile fields
       if (charLinkedLocationIds.has(loc.id)) return true;
 
       // 5. NPC Hub
       if (loc.name === 'NPC Hub') return true;
-
-      // 6. Default world locations — available to all users
-      const nameLower = (loc.name || '').toLowerCase();
-      if (DEFAULT_WORLD_NAMES.some(n => nameLower.includes(n))) return true;
 
       return false;
     });

@@ -90,7 +90,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [] }) {
             {(location.category === 'home' || location.category === 'generic') && (
               location.resident_character_ids?.length > 0 ? (
                 <span className="text-xs text-blue-400/80 font-medium">
-                  {location.resident_character_ids.length} resident{location.resident_character_ids.length > 1 ? "s" : ""}
+                  {location.resident_character_names?.join(', ') || `${location.resident_character_ids.length} resident${location.resident_character_ids.length > 1 ? "s" : ""}`}
                 </span>
               ) : (
                 <span className="text-xs text-muted-foreground/60 italic">vacant</span>
@@ -101,15 +101,8 @@ function LocationCard({ location, onDelete, onEdit, characters = [] }) {
                 {location.resident_character_ids.length} resident{location.resident_character_ids.length > 1 ? "s" : ""}
               </span>
             )}
-            {!isGenericHome && (
-              <>
-                <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
-                <span className="text-xs text-muted-foreground">· {totalImages} img{totalImages !== 1 ? "s" : ""}</span>
-              </>
-            )}
-            {isGenericHome && (
-              <span className="text-xs text-amber-500/80 font-medium">Generic Home</span>
-            )}
+            <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
+            <span className="text-xs text-muted-foreground">· {totalImages} img{totalImages !== 1 ? "s" : ""}</span>
             {(location.category === 'home' || location.category === 'generic') && location.rent_or_housing_cost && (
               <span className="text-xs text-green-400/80 font-medium">
                 ${location.rent_or_housing_cost}/mo rent
