@@ -113,6 +113,11 @@ function LocationCard({ location, onDelete, onEdit, characters = [] }) {
                 ${location.gym_membership_fee}/mo membership
               </span>
             )}
+            {location.category === 'religion' && location.religion_denomination && (
+              <span className="text-xs text-purple-400/80 font-medium">
+                {location.religion_denomination}
+              </span>
+            )}
             {(location.owner_character_name || (location.owner_is_npc && location.owner_npc_name)) && (
               <span className="text-xs text-muted-foreground/70">
                 · {location.owner_role || "owner"}: {location.owner_is_npc ? location.owner_npc_name : location.owner_character_name}
@@ -289,6 +294,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
     owner_npc_name: editingLocation?.owner_npc_name || "",
     owner_role: editingLocation?.owner_role || "owner",
     is_default_generic: editingLocation?.is_default_generic || false,
+    religion_denomination: editingLocation?.religion_denomination || "",
     rent_or_housing_cost: editingLocation?.rent_or_housing_cost || 1200,
     bedroom_count: editingLocation?.bedroom_count || 1,
     gym_membership_fee: editingLocation?.gym_membership_fee || 50,
@@ -409,6 +415,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
           ))}
         </div>
       </div>
+
+      {/* ── RELIGION DENOMINATION — only for religion category ─────────── */}
+      {form.category === 'religion' && (
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Religion / Denomination</label>
+          <div className="grid grid-cols-2 gap-2">
+            {["Christianity", "Catholicism", "Islam", "Judaism", "Hinduism", "Buddhism", "Sikhism", "Jehovah's Witnesses", "Seventh-day Adventist", "Baptist", "Pentecostal", "Non-denominational", "Other"].map(rel => (
+              <button
+                key={rel}
+                onClick={() => update("religion_denomination", form.religion_denomination === rel ? "" : rel)}
+                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left ${form.religion_denomination === rel ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+              >
+                {rel}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── ZONE SECTION — required ─────────────────────────────────────── */}
       <div className="space-y-3">

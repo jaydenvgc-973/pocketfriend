@@ -25,7 +25,7 @@
     },
     "owner_character_id": {
       "type": "string",
-      "description": "ID of the active character who owns/operates this location (landlord, manager, revenue earner). For global spaces this may be reassigned if the owner is deleted."
+      "description": "ID of the active character who owns/operates this location"
     },
     "owner_character_name": {
       "type": "string",
@@ -34,7 +34,7 @@
     "owner_is_npc": {
       "type": "boolean",
       "default": false,
-      "description": "True if the owner is an NPC (no linked character record) rather than an active character"
+      "description": "True if the owner is an NPC rather than an active character"
     },
     "owner_npc_name": {
       "type": "string",
@@ -66,6 +66,25 @@
       "default": "generic",
       "description": "Category for grouping and matching"
     },
+    "religion_denomination": {
+      "type": "string",
+      "enum": [
+        "Christianity",
+        "Catholicism",
+        "Islam",
+        "Judaism",
+        "Hinduism",
+        "Buddhism",
+        "Sikhism",
+        "Jehovah's Witnesses",
+        "Seventh-day Adventist",
+        "Baptist",
+        "Pentecostal",
+        "Non-denominational",
+        "Other"
+      ],
+      "description": "The religion or denomination associated with this place of worship (for category=religion only)"
+    },
     "description": {
       "type": "string",
       "description": "Optional description of the location's overall style, layout, or atmosphere"
@@ -84,15 +103,13 @@
         "type": "object",
         "properties": {
           "zone_name": {
-            "type": "string",
-            "description": "The name of the room or zone (e.g. 'Kitchen', 'Locker Room', 'Patient Room')"
+            "type": "string"
           },
           "image_urls": {
             "type": "array",
             "items": {
               "type": "string"
-            },
-            "description": "Reference images for this specific zone (4-5 recommended)"
+            }
           }
         },
         "required": [
@@ -112,7 +129,7 @@
       "items": {
         "type": "string"
       },
-      "description": "IDs of characters who live at this location (for residential locations)"
+      "description": "IDs of characters who live at this location"
     },
     "resident_character_names": {
       "type": "array",
@@ -130,46 +147,38 @@
     },
     "worker_pay_rates": {
       "type": "object",
-      "description": "Pay rates by character_id (e.g. { 'char_123': 15.00, 'char_456': 20.00 })",
       "additionalProperties": {
         "type": "number"
       }
     },
     "worker_pay_type": {
       "type": "object",
-      "description": "Pay type by character_id ('hourly' or 'annual') (e.g. { 'char_123': 'hourly', 'char_456': 'annual' })",
       "additionalProperties": {
         "type": "string"
       }
     },
     "worker_job_titles": {
       "type": "object",
-      "description": "Job title by character_id (e.g. { 'char_123': 'Manager', 'char_456': 'Barista' })",
       "additionalProperties": {
         "type": "string"
       }
     },
     "operating_hours": {
       "type": "array",
-      "description": "Operating hours / active hours for the location. Multiple windows allowed for varied schedules.",
       "items": {
         "type": "object",
         "properties": {
           "day_of_week": {
-            "type": "integer",
-            "description": "0=Sunday, 6=Saturday. If null, applies to all days."
+            "type": "integer"
           },
           "open_time": {
-            "type": "string",
-            "description": "Opening time in HH:MM format (24h)"
+            "type": "string"
           },
           "close_time": {
-            "type": "string",
-            "description": "Closing time in HH:MM format (24h)"
+            "type": "string"
           },
           "note": {
-            "type": "string",
-            "description": "Optional label like 'Morning Service' or 'Sunday Only'"
+            "type": "string"
           }
         },
         "required": [
@@ -180,61 +189,48 @@
     },
     "utility_costs": {
       "type": "object",
-      "description": "Monthly utility costs (in USD)",
       "properties": {
         "electricity": {
-          "type": "number",
-          "description": "Monthly electricity cost in USD"
+          "type": "number"
         },
         "water": {
-          "type": "number",
-          "description": "Monthly water cost in USD"
+          "type": "number"
         },
         "gas": {
-          "type": "number",
-          "description": "Monthly gas cost in USD"
+          "type": "number"
         },
         "internet": {
-          "type": "number",
-          "description": "Monthly internet cost in USD"
+          "type": "number"
         },
         "other": {
-          "type": "number",
-          "description": "Other utility costs in USD"
+          "type": "number"
         }
       }
     },
     "rent_or_housing_cost": {
-      "type": "number",
-      "description": "Monthly rent or housing cost in USD (for residential locations)"
+      "type": "number"
     },
     "bedroom_count": {
       "type": "integer",
-      "default": 1,
-      "description": "Number of bedrooms in residential location. Affects rent automatically."
+      "default": 1
     },
     "gym_membership_fee": {
-      "type": "number",
-      "description": "Monthly gym membership fee in USD (for gym locations)"
+      "type": "number"
     },
     "gym_members": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "IDs of characters with active gym memberships"
+      }
     },
     "grocery_household_size": {
-      "type": "integer",
-      "description": "Used to calculate grocery costs for residential locations. Defaults to number of active residents."
+      "type": "integer"
     },
     "grocery_average_spend": {
-      "type": "number",
-      "description": "Average monthly grocery spend baseline in USD. Defaults to U.S. average adjusted for household size."
+      "type": "number"
     },
     "operating_cost": {
-      "type": "number",
-      "description": "Monthly operating cost in USD (for business locations)"
+      "type": "number"
     },
     "cost_split_method": {
       "type": "string",
@@ -242,29 +238,24 @@
         "even",
         "custom"
       ],
-      "default": "even",
-      "description": "How to split costs among residents: 'even' for equal split, 'custom' for custom amounts"
+      "default": "even"
     },
     "resident_cost_split": {
       "type": "object",
-      "description": "Custom cost split by resident (character_id -> amount in USD)",
       "additionalProperties": {
         "type": "number"
       }
     },
     "income_generated": {
-      "type": "number",
-      "description": "Total income generated at this location (aggregate, for reference)"
+      "type": "number"
     },
     "last_income_updated": {
       "type": "string",
-      "format": "date-time",
-      "description": "When income was last calculated"
+      "format": "date-time"
     },
     "is_default_generic": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this is a default generic location created automatically for a new character"
+      "default": false
     },
     "generic_type": {
       "type": "string",
@@ -274,8 +265,7 @@
         "studio",
         "shared_house",
         "dorm"
-      ],
-      "description": "Type of generic residential location if is_default_generic is true"
+      ]
     }
   },
   "required": [
