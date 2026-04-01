@@ -334,10 +334,6 @@ export default function EditCharacterProfile() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-xs text-muted-foreground">Job Title</label>
-                  <Input value={form.job_title} onChange={e => setForm(p => ({ ...p, job_title: e.target.value }))} placeholder="e.g. Nurse, Graphic Designer, Barista" className="rounded-xl text-sm" />
-                </div>
-                <div className="space-y-2">
                   <label className="text-xs text-muted-foreground">Work Environment Description</label>
                   <Textarea value={form.work_environment} onChange={e => setForm(p => ({ ...p, work_environment: e.target.value }))} placeholder="Describe their day-to-day work environment..." className="rounded-xl min-h-[80px] text-sm resize-none" />
                 </div>

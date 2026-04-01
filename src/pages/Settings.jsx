@@ -284,6 +284,42 @@ export default function Settings() {
             })}
           </div>
         </div>
+        {movedAwayChars.length > 0 && (
+          <div className="space-y-4 pt-4 border-t border-border">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Characters Away ({movedAwayChars.length})</p>
+            <div className="space-y-3">
+              {movedAwayChars.map(char => (
+                <div key={char.id} className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border">
+                  <CharacterAvatar character={char} size="md" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground">{char.name}</p>
+                    <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => moveBackMutation.mutate(char.id)}
+                      disabled={moveBackMutation.isPending}
+                      className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
+                      title="Move back"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setPendingDelete(char)}
+                      className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+                      title="Delete"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <StorageBackup />
+        <CommonQuestions />
+
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
           <Link to="/edit-character-story">
@@ -364,41 +400,6 @@ export default function Settings() {
             </button>
           </Link>
         </div>
-        {movedAwayChars.length > 0 && (
-          <div className="space-y-4 pt-4 border-t border-border">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Characters Away ({movedAwayChars.length})</p>
-            <div className="space-y-3">
-              {movedAwayChars.map(char => (
-                <div key={char.id} className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border">
-                  <CharacterAvatar character={char} size="md" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground">{char.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => moveBackMutation.mutate(char.id)}
-                      disabled={moveBackMutation.isPending}
-                      className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-                      title="Move back"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setPendingDelete(char)}
-                      className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        <StorageBackup />
-        <CommonQuestions />
 
         {isAdmin && (
           <div className="pt-4 border-t border-border space-y-1">
