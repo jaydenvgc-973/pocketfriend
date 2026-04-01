@@ -41,6 +41,17 @@ export default function Home() {
     refetchOnWindowFocus: true,
   });
 
+  // One-time: ensure default world locations exist for this user
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    // Fire-and-forget — non-blocking, idempotent. Creates Generic Park / Hospital / Grocery Store if missing.
+    base44.functions.invoke('setupDefaultWorldLocations', {}).catch(() => {});
+    // Also run a light backfill to sync coworker inferences for existing characters
+    setTimeout(() => {
+      base44.functions.invoke('backfillCharactersToDefaultLocations', {}).catch(() => {});
+    }, 3000); // delay so it doesn't compete with initial page load
+  }, [currentUser?.email]);
+
   // Real-time: immediately reflect any character create/update/delete
   useEffect(() => {
     if (!currentUser?.email) return;

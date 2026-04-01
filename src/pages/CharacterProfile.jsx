@@ -13,6 +13,7 @@ import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEdit
 import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
+import NPCPromotionModal from "@/components/character/NPCPromotionModal";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -93,6 +94,7 @@ export default function CharacterProfile() {
   const navigate = useNavigate();
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [promotingNPC, setPromotingNPC] = useState(null); // { rel, sourceCharacter }
   
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
@@ -122,11 +124,18 @@ export default function CharacterProfile() {
   const age = character?.birthday ? calculateAge(character.birthday) : null;
 
   const handleConvertNPC = useCallback((rel) => {
-    // Preload NPC data into Create Character draft so user can refine and finalize
+    // Step 1: Show avatar selection modal BEFORE entering create flow
+    setPromotingNPC({ rel, sourceCharacter: character });
+  }, [character]);
+
+  const handleNPCPromotionComplete = useCallback((avatarUrl) => {
+    if (!promotingNPC) return;
+    const { rel } = promotingNPC;
+    // Preload NPC data into Create Character draft — preserve ALL relationship data
     const draft = {
       step: 0,
-      avatarUrl: null,
-      referenceUrls: [],
+      avatarUrl: avatarUrl || null,
+      referenceUrls: avatarUrl ? [avatarUrl] : [],
       data: {
         first_name: rel.person_name?.split(" ")[0] || rel.person_name || "",
         middle_name: "",
@@ -141,22 +150,28 @@ export default function CharacterProfile() {
         job_title: "", workplace_type: "", work_environment: "",
         occupation_description: "", criminal_record: "", zodiac_sign: "",
         frequented_places: [],
-        // Pre-wire relationship back to the source character
+        // Preserve all relationship data from the NPC
         known_character_relationships: character ? [{ character_id: character.id, relationship_type: rel.relationship_type || "Friend" }] : [],
         family_members: [],
         birthday: "",
-        user_respect_level: 50,
+        // CRITICAL: preserve all relationship levels and history
+        user_respect_level: rel.user_respect_level ?? 50,
         friendship_level: rel.friendship_level ?? 75,
         romantic_level: rel.romantic_level ?? 0,
         attraction_level: rel.attraction_level ?? 0,
         chosen_family_level: rel.chosen_family_level ?? 0,
         _npc_source_character_id: character?.id,
         _npc_source_rel: rel,
+        // Preserve history summary and context
+        _preserved_history: rel.history_summary || "",
+        _preserved_last_interaction: rel.last_interaction_summary || "",
+        _preserved_current_status: rel.current_status || "",
       }
     };
     localStorage.setItem(NPC_DRAFT_KEY, JSON.stringify(draft));
+    setPromotingNPC(null);
     navigate("/create");
-  }, [character, navigate]);
+  }, [promotingNPC, character, navigate]);
 
   const handleZodiacSelect = async (sign) => {
     if (!character || character.is_default) return;
@@ -661,6 +676,16 @@ export default function CharacterProfile() {
 
       </div>
       <BottomNav />
+
+      {/* NPC Promotion Modal — avatar step before create flow */}
+      {promotingNPC && (
+        <NPCPromotionModal
+          npcData={promotingNPC.rel}
+          sourceCharacter={promotingNPC.sourceCharacter}
+          onComplete={handleNPCPromotionComplete}
+          onCancel={() => setPromotingNPC(null)}
+        />
+      )}
     </div>
   );
 }
