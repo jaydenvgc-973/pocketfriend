@@ -44,11 +44,17 @@ export default function ReferencePhotoUploader({
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
     setIsUploading(true);
-    const uploaded = await Promise.all(files.map(f => base44.integrations.Core.UploadFile({ file: f })));
-    const newUrls = [...referenceUrls, ...uploaded.map(r => r.file_url)];
-    setReferenceUrls(newUrls);
-    setIsUploading(false);
-    onAvatarGenerated(generatedUrl, newUrls, generationPrompt, descriptionText);
+    try {
+      const uploaded = await Promise.all(files.map(f => base44.integrations.Core.UploadFile({ file: f })));
+      const newUrls = [...referenceUrls, ...uploaded.map(r => r.file_url)];
+      setReferenceUrls(newUrls);
+      onAvatarGenerated(generatedUrl, newUrls, generationPrompt, descriptionText);
+    } catch (error) {
+      console.error('Upload failed:', error);
+      alert('Failed to upload images. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const removeRef = (url) => {
@@ -60,43 +66,49 @@ export default function ReferencePhotoUploader({
   const generateAvatar = async () => {
     setIsGenerating(true);
 
-    // Calculate weighting:
-    // Each uploaded image counts as 1 "slot". The text description also counts as 1 "slot" (if provided).
-    // Total slots = referenceUrls.length + (descriptionText ? 1 : 0)
-    // Each slot has equal weight: 100% / totalSlots
-    const imageCount = referenceUrls.length;
-    const hasText = descriptionText.trim().length > 0;
-    const totalSlots = imageCount + (hasText ? 1 : 0);
-    const weightPercent = totalSlots > 0 ? Math.round(100 / totalSlots) : 100;
+    try {
+      // Calculate weighting:
+      // Each uploaded image counts as 1 "slot". The text description also counts as 1 "slot" (if provided).
+      // Total slots = referenceUrls.length + (descriptionText ? 1 : 0)
+      // Each slot has equal weight: 100% / totalSlots
+      const imageCount = referenceUrls.length;
+      const hasText = descriptionText.trim().length > 0;
+      const totalSlots = imageCount + (hasText ? 1 : 0);
+      const weightPercent = totalSlots > 0 ? Math.round(100 / totalSlots) : 100;
 
-    let promptParts = [];
+      let promptParts = [];
 
-    // Base photorealistic directive
-    promptParts.push(`Realistic portrait photo of ${descriptor}.`);
-    promptParts.push(`Candid, natural lighting, authentic. Not a stock photo.`);
+      // Base photorealistic directive
+      promptParts.push(`Realistic portrait photo of ${descriptor}.`);
+      promptParts.push(`Candid, natural lighting, authentic. Not a stock photo.`);
 
-    if (imageCount > 0 && hasText) {
-      promptParts.push(`Match the person's exact appearance from the reference photos (${weightPercent}% influence).`);
-      promptParts.push(`Additional appearance details (${weightPercent}% influence): ${descriptionText.trim()}`);
-    } else if (imageCount > 0) {
-      promptParts.push(`Match the person's exact appearance from the reference photos (100% reference influence).`);
-    } else if (hasText) {
-      promptParts.push(`Appearance details (100% influence): ${descriptionText.trim()}`);
+      if (imageCount > 0 && hasText) {
+        promptParts.push(`Match the person's exact appearance from the reference photos (${weightPercent}% influence).`);
+        promptParts.push(`Additional appearance details (${weightPercent}% influence): ${descriptionText.trim()}`);
+      } else if (imageCount > 0) {
+        promptParts.push(`Match the person's exact appearance from the reference photos (100% reference influence).`);
+      } else if (hasText) {
+        promptParts.push(`Appearance details (100% influence): ${descriptionText.trim()}`);
+      }
+
+      promptParts.push(`STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. Not an illustration, not a painting, not a digital render, natural skin texture, real human proportions.`);
+
+      const finalPrompt = promptParts.join(" ");
+
+      const result = await base44.integrations.Core.GenerateImage({
+        prompt: finalPrompt,
+        existing_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
+      });
+
+      setGeneratedUrl(result.url);
+      setGenerationPrompt(finalPrompt);
+      onAvatarGenerated(result.url, referenceUrls, finalPrompt, descriptionText);
+    } catch (error) {
+      console.error('Avatar generation failed:', error);
+      alert('Failed to generate avatar. Please try again.');
+    } finally {
+      setIsGenerating(false);
     }
-
-    promptParts.push(`STYLE DIRECTIVE: Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. No illustrations or artistic renderings — this must look like a real photograph. Not an illustration, not a painting, not a digital render, natural skin texture, real human proportions.`);
-
-    const finalPrompt = promptParts.join(" ");
-
-    const result = await base44.integrations.Core.GenerateImage({
-      prompt: finalPrompt,
-      existing_image_urls: referenceUrls.length > 0 ? referenceUrls : undefined,
-    });
-
-    setGeneratedUrl(result.url);
-    setGenerationPrompt(finalPrompt);
-    setIsGenerating(false);
-    onAvatarGenerated(result.url, referenceUrls, finalPrompt, descriptionText);
   };
 
   const canGenerate = referenceUrls.length > 0 || descriptionText.trim().length > 0;
