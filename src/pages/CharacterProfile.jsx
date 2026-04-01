@@ -413,6 +413,14 @@ export default function CharacterProfile() {
               {character.work_details.work_environment && (
                 <p className="text-sm text-foreground"><span className="font-medium">Environment:</span> {character.work_details.work_environment}</p>
               )}
+              {character.occupation_location_name && (
+                <p className="text-sm text-foreground"><span className="font-medium">Location:</span> {character.occupation_location_name}</p>
+              )}
+              {character.additional_occupation_locations?.length > 0 && character.additional_occupation_locations.map((loc, idx) => (
+                <p key={idx} className="text-sm text-foreground">
+                  <span className="font-medium">{loc.job_title ? `${loc.job_title} at` : "Also at"}:</span> {loc.location_name}
+                </p>
+              ))}
             </div>
           </div>
         )}
