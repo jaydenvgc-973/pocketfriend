@@ -15,139 +15,121 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Check by is_default_generic globally (these are created by service role, not user)
-    const existing = await base44.asServiceRole.entities.LocationReference.filter(
-      { is_default_generic: true }
-    );
-    const existingNames = existing.map(l => (l.name || '').toLowerCase());
+    // Consolidate duplicates first — each generic category should have exactly ONE location
+    const defaultCategories = [
+      { category: 'outdoor', names: ['generic park', 'park'], canonicalName: 'Generic Park' },
+      { category: 'medical', names: ['generic hospital', 'hospital'], canonicalName: 'Generic Hospital' },
+      { category: 'grocery', names: ['generic grocery', 'grocery'], canonicalName: 'Generic Grocery Store' },
+      { category: 'religion', names: ['generic place of worship', 'generic church'], canonicalName: 'Generic Place of Worship' },
+    ];
 
-    const created = [];
     const results = {};
+    const created = [];
 
-    // ── 1. Generic Park ────────────────────────────────────────────────────
-    const parkExists = existingNames.some(n =>
-      n === 'generic park' || n.includes('generic park')
-    );
-    if (!parkExists) {
-      const park = await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Park',
-        location_type: 'global',
-        category: 'outdoor',
-        description: 'A public park used for walks, outdoor recreation, fresh air, socializing, and general outdoor activities.',
-        keywords: ['park', 'outside', 'outdoors', 'walk', 'fresh air', 'the park', 'hanging out outside', 'sitting outside', 'recreation', 'nature'],
-        is_default_generic: true,
-        owner_is_npc: true,
-        owner_npc_name: 'City',
-        owner_role: 'operator',
-        zones: [
-          { zone_name: 'Main Field', image_urls: [] },
-          { zone_name: 'Walking Path', image_urls: [] },
-          { zone_name: 'Benches / Seating Area', image_urls: [] },
-          { zone_name: 'Playground', image_urls: [] },
-          { zone_name: 'Entrance', image_urls: [] },
-        ],
-      });
-      created.push('Generic Park');
-      results.park = { id: park.id, created: true };
-    } else {
-      const found = existing.find(l => (l.name || '').toLowerCase().includes('generic park'));
-      results.park = { id: found?.id, created: false };
-    }
+    // For each generic category, find/consolidate to ONE location
+    for (const catDef of defaultCategories) {
+      const categoryLocs = await base44.asServiceRole.entities.LocationReference.filter(
+        { category: catDef.category, is_default_generic: true }
+      );
 
-    // ── 2. Generic Hospital ────────────────────────────────────────────────
-    const hospitalExists = existingNames.some(n =>
-      n === 'generic hospital' || n.includes('generic hospital')
-    );
-    if (!hospitalExists) {
-      const hospital = await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Hospital',
-        location_type: 'global',
-        category: 'medical',
-        description: 'A general hospital used for appointments, treatment, patient visits, emergency visits, and medical work.',
-        keywords: ['hospital', 'emergency', 'ER', 'doctor appointment', 'appointment', 'patient', 'admitted', 'medical', 'clinic', 'checkup', 'surgery', 'treatment'],
-        is_default_generic: true,
-        owner_is_npc: true,
-        owner_npc_name: 'City Health System',
-        owner_role: 'operator',
-        zones: [
-          { zone_name: 'Waiting Area', image_urls: [] },
-          { zone_name: 'Front Desk', image_urls: [] },
-          { zone_name: 'Patient Room', image_urls: [] },
-          { zone_name: 'Emergency Room', image_urls: [] },
-          { zone_name: 'Hallway', image_urls: [] },
-          { zone_name: 'Pharmacy', image_urls: [] },
-        ],
-      });
-      created.push('Generic Hospital');
-      results.hospital = { id: hospital.id, created: true };
-    } else {
-      const found = existing.find(l => (l.name || '').toLowerCase().includes('generic hospital'));
-      results.hospital = { id: found?.id, created: false };
-    }
-
-    // ── 3. Generic Grocery Store ───────────────────────────────────────────
-    const groceryExists = existingNames.some(n =>
-      n === 'generic grocery store' || n.includes('generic grocery')
-    );
-    if (!groceryExists) {
-      const grocery = await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Grocery Store',
-        location_type: 'global',
-        category: 'grocery',
-        description: 'A general grocery store used for buying food, household shopping, and everyday errands like buying milk or groceries.',
-        keywords: ['grocery', 'groceries', 'store', 'supermarket', 'food shopping', 'buying food', 'market', 'milk', 'buying milk', 'shopping', 'errands', 'walmart', 'target run', 'food run'],
-        is_default_generic: true,
-        owner_is_npc: true,
-        owner_npc_name: 'Store Management',
-        owner_role: 'operator',
-        zones: [
-          { zone_name: 'Main Floor', image_urls: [] },
-          { zone_name: 'Produce Section', image_urls: [] },
-          { zone_name: 'Checkout', image_urls: [] },
-          { zone_name: 'Entrance', image_urls: [] },
-          { zone_name: 'Deli / Bakery', image_urls: [] },
-        ],
-      });
-      created.push('Generic Grocery Store');
-      results.grocery = { id: grocery.id, created: true };
-    } else {
-      const found = existing.find(l => (l.name || '').toLowerCase().includes('generic grocery'));
-      results.grocery = { id: found?.id, created: false };
-    }
-
-    // ── 4. Generic Place of Worship ────────────────────────────────────────
-    const worshipExists = existingNames.some(n =>
-      n.includes('generic place of worship') || n.includes('generic church') || n.includes('generic mosque')
-    );
-    if (!worshipExists) {
-      const worship = await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Place of Worship',
-        location_type: 'global',
-        category: 'religion',
-        description: 'A generic place of worship used as a fallback for religious attendance. Can represent a church, mosque, temple, synagogue, or any other house of worship.',
-        keywords: ['church', 'mosque', 'temple', 'synagogue', 'worship', 'service', 'prayer', 'fellowship', 'bible study', 'kingdom hall', 'prayer center', 'religious'],
-        is_default_generic: true,
-        owner_is_npc: true,
-        owner_npc_name: 'Congregation',
-        owner_role: 'operator',
-        zones: [
-          { zone_name: 'Main Sanctuary', image_urls: [] },
-          { zone_name: 'Prayer Room', image_urls: [] },
-          { zone_name: 'Fellowship Hall', image_urls: [] },
-          { zone_name: 'Office', image_urls: [] },
-          { zone_name: 'Entrance', image_urls: [] },
-        ],
-        // Default Sunday morning service hours
-        operating_hours: [
-          { day_of_week: 0, open_time: '09:00', close_time: '13:00', note: 'Sunday Service' },
-          { day_of_week: 3, open_time: '18:00', close_time: '20:00', note: 'Midweek Service' },
-        ],
-      });
-      created.push('Generic Place of Worship');
-      results.worship = { id: worship.id, created: true };
-    } else {
-      const found = existing.find(l => (l.name || '').toLowerCase().includes('generic place of worship') || (l.name || '').toLowerCase().includes('generic church'));
-      results.worship = { id: found?.id, created: false };
+      if (categoryLocs.length === 0) {
+        // Create the location
+        let newLoc;
+        if (catDef.category === 'outdoor') {
+          newLoc = await base44.asServiceRole.entities.LocationReference.create({
+            name: 'Generic Park',
+            location_type: 'global',
+            category: 'outdoor',
+            description: 'A public park used for walks, outdoor recreation, fresh air, socializing, and general outdoor activities.',
+            keywords: ['park', 'outside', 'outdoors', 'walk', 'fresh air', 'the park', 'hanging out outside', 'sitting outside', 'recreation', 'nature'],
+            is_default_generic: true,
+            owner_is_npc: true,
+            owner_npc_name: 'City',
+            owner_role: 'operator',
+            zones: [
+              { zone_name: 'Main Field', image_urls: [] },
+              { zone_name: 'Walking Path', image_urls: [] },
+              { zone_name: 'Benches / Seating Area', image_urls: [] },
+              { zone_name: 'Playground', image_urls: [] },
+              { zone_name: 'Entrance', image_urls: [] },
+            ],
+          });
+        } else if (catDef.category === 'medical') {
+          newLoc = await base44.asServiceRole.entities.LocationReference.create({
+            name: 'Generic Hospital',
+            location_type: 'global',
+            category: 'medical',
+            description: 'A general hospital used for appointments, treatment, patient visits, emergency visits, and medical work.',
+            keywords: ['hospital', 'emergency', 'ER', 'doctor appointment', 'appointment', 'patient', 'admitted', 'medical', 'clinic', 'checkup', 'surgery', 'treatment'],
+            is_default_generic: true,
+            owner_is_npc: true,
+            owner_npc_name: 'City Health System',
+            owner_role: 'operator',
+            zones: [
+              { zone_name: 'Waiting Area', image_urls: [] },
+              { zone_name: 'Front Desk', image_urls: [] },
+              { zone_name: 'Patient Room', image_urls: [] },
+              { zone_name: 'Emergency Room', image_urls: [] },
+              { zone_name: 'Hallway', image_urls: [] },
+              { zone_name: 'Pharmacy', image_urls: [] },
+            ],
+          });
+        } else if (catDef.category === 'grocery') {
+          newLoc = await base44.asServiceRole.entities.LocationReference.create({
+            name: 'Generic Grocery Store',
+            location_type: 'global',
+            category: 'grocery',
+            description: 'A general grocery store used for buying food, household shopping, and everyday errands like buying milk or groceries.',
+            keywords: ['grocery', 'groceries', 'store', 'supermarket', 'food shopping', 'buying food', 'market', 'milk', 'buying milk', 'shopping', 'errands', 'walmart', 'target run', 'food run'],
+            is_default_generic: true,
+            owner_is_npc: true,
+            owner_npc_name: 'Store Management',
+            owner_role: 'operator',
+            zones: [
+              { zone_name: 'Main Floor', image_urls: [] },
+              { zone_name: 'Produce Section', image_urls: [] },
+              { zone_name: 'Checkout', image_urls: [] },
+              { zone_name: 'Entrance', image_urls: [] },
+              { zone_name: 'Deli / Bakery', image_urls: [] },
+            ],
+          });
+        } else if (catDef.category === 'religion') {
+          newLoc = await base44.asServiceRole.entities.LocationReference.create({
+            name: 'Generic Place of Worship',
+            location_type: 'global',
+            category: 'religion',
+            description: 'A generic place of worship used as a fallback for religious attendance. Can represent a church, mosque, temple, synagogue, or any other house of worship.',
+            keywords: ['church', 'mosque', 'temple', 'synagogue', 'worship', 'service', 'prayer', 'fellowship', 'bible study', 'kingdom hall', 'prayer center', 'religious'],
+            is_default_generic: true,
+            owner_is_npc: true,
+            owner_npc_name: 'Congregation',
+            owner_role: 'operator',
+            zones: [
+              { zone_name: 'Main Sanctuary', image_urls: [] },
+              { zone_name: 'Prayer Room', image_urls: [] },
+              { zone_name: 'Fellowship Hall', image_urls: [] },
+              { zone_name: 'Office', image_urls: [] },
+              { zone_name: 'Entrance', image_urls: [] },
+            ],
+            operating_hours: [
+              { day_of_week: 0, open_time: '09:00', close_time: '13:00', note: 'Sunday Service' },
+              { day_of_week: 3, open_time: '18:00', close_time: '20:00', note: 'Midweek Service' },
+            ],
+          });
+        }
+        created.push(catDef.canonicalName);
+        results[catDef.category] = { id: newLoc.id, created: true, consolidated: false };
+      } else if (categoryLocs.length > 1) {
+        // Consolidate: keep first, delete the rest
+        const keeper = categoryLocs[0];
+        for (let i = 1; i < categoryLocs.length; i++) {
+          await base44.asServiceRole.entities.LocationReference.delete(categoryLocs[i].id);
+        }
+        results[catDef.category] = { id: keeper.id, created: false, consolidated: true, deleted: categoryLocs.length - 1 };
+      } else {
+        // Exactly one exists
+        results[catDef.category] = { id: categoryLocs[0].id, created: false, consolidated: false };
+      }
     }
 
     // ── 5. Upgrade NPC Hub to apartment-building structure ─────────────────
