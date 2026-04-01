@@ -35,28 +35,27 @@ const ZONE_PRESETS = {
 };
 
 const CATEGORIES = [
-  { value: "home", label: "Home", icon: Home },
-  { value: "workplace", label: "Workplace", icon: Briefcase },
-  { value: "gym", label: "Gym", icon: Dumbbell },
-  { value: "grocery", label: "Grocery Store", icon: Coffee },
-  { value: "religion", label: "Religion / Worship", icon: GraduationCap },
-  { value: "food_drink", label: "Food & Drink", icon: Coffee },
-  { value: "outdoor", label: "Outdoors", icon: Trees },
-  { value: "social", label: "Social / Nightlife", icon: Wine },
-  { value: "education", label: "Education", icon: GraduationCap },
-  { value: "medical", label: "Medical", icon: Heart },
-  { value: "business", label: "Business", icon: Briefcase },
-  { value: "school", label: "School", icon: GraduationCap },
-  { value: "government", label: "Government", icon: MapPin },
-  { value: "public", label: "Public", icon: MapPin },
-  { value: "generic", label: "Generic", icon: MapPin },
+  { value: "home", label: "Home", icon: Home, emoji: "🏠" },
+  { value: "workplace", label: "Workplace", icon: Briefcase, emoji: "💼" },
+  { value: "gym", label: "Gym", icon: Dumbbell, emoji: "🏋️" },
+  { value: "grocery", label: "Grocery Store", icon: Coffee, emoji: "🛒" },
+  { value: "religion", label: "Religion / Worship", icon: GraduationCap, emoji: "🛐" },
+  { value: "food_drink", label: "Food & Drink", icon: Coffee, emoji: "🍽️" },
+  { value: "outdoor", label: "Outdoors", icon: Trees, emoji: "🌳" },
+  { value: "social", label: "Social / Nightlife", icon: Wine, emoji: "🍸" },
+  { value: "education", label: "Education", icon: GraduationCap, emoji: "🎓" },
+  { value: "medical", label: "Medical", icon: Heart, emoji: "🏨" },
+  { value: "business", label: "Business", icon: Briefcase, emoji: "🏢" },
+  { value: "school", label: "School", icon: GraduationCap, emoji: "🏫" },
+  { value: "government", label: "Government", icon: MapPin, emoji: "🏛️" },
+  { value: "public", label: "Public", icon: MapPin, emoji: "🗺️" },
+  { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
 ];
 
 // ── LocationCard ─────────────────────────────────────────────────────────────
 function LocationCard({ location, onDelete, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
-  const CatIcon = catDef.icon;
   const zones = location.zones || [];
   const totalImages = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
   const isGenericHome = location.is_default_generic;
@@ -70,8 +69,8 @@ function LocationCard({ location, onDelete, onEdit }) {
       className="bg-card border border-border rounded-2xl overflow-hidden"
     >
       <div className="flex items-center gap-3 p-4">
-        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
-          <CatIcon className="w-5 h-5 text-primary" />
+        <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 text-lg">
+          {catDef.emoji}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-foreground truncate">{location.name}</p>
@@ -406,16 +405,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Category</label>
         <div className="grid grid-cols-3 gap-2">
-          {CATEGORIES.map(cat => {
-            const Icon = cat.icon;
-            return (
-              <button key={cat.value} onClick={() => update("category", cat.value)}
-                className={`flex flex-col items-center gap-1 p-2.5 rounded-xl border text-xs transition-colors ${form.category === cat.value ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-                <Icon className="w-4 h-4" />
-                <span>{cat.label}</span>
-              </button>
-            );
-          })}
+          {CATEGORIES.map(cat => (
+            <button key={cat.value} onClick={() => update("category", cat.value)}
+              className={`flex flex-col items-center gap-1 p-2.5 rounded-xl border text-xs transition-colors ${form.category === cat.value ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
+              <span className="text-base">{cat.emoji}</span>
+              <span>{cat.label}</span>
+            </button>
+          ))}
         </div>
       </div>
 
