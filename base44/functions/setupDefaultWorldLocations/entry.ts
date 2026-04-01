@@ -15,8 +15,9 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
+    // Check by is_default_generic globally (these are created by service role, not user)
     const existing = await base44.asServiceRole.entities.LocationReference.filter(
-      { created_by: user.email }
+      { is_default_generic: true }
     );
     const existingNames = existing.map(l => (l.name || '').toLowerCase());
 
@@ -151,7 +152,7 @@ Deno.serve(async (req) => {
 
     // ── 5. Upgrade NPC Hub to apartment-building structure ─────────────────
     const npcHubs = await base44.asServiceRole.entities.LocationReference.filter(
-      { created_by: user.email, name: 'NPC Hub' }
+      { name: 'NPC Hub', is_default_generic: true }
     );
     if (npcHubs.length > 0) {
       const hub = npcHubs[0];
