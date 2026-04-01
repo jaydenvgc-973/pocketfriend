@@ -11,12 +11,11 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Find Ethan
-    const characters = await base44.entities.Character.filter({ name: 'Ethan' });
-    if (characters.length === 0) {
+    // Get Ethan by ID
+    const ethan = await base44.asServiceRole.entities.Character.get('69c0d59d7e382cc866ded9c9');
+    if (!ethan) {
       return Response.json({ error: 'Ethan not found' }, { status: 404 });
     }
-    const ethan = characters[0];
 
     // Find or create direct conversation with Ethan
     const convos = await base44.entities.Conversation.filter({
