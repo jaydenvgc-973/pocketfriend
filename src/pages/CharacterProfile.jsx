@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -400,44 +400,64 @@ export default function CharacterProfile() {
         )}
 
         {/* Work */}
-        {character.work_details && (
+        {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0) && (
           <div className="bg-card border border-border rounded-2xl p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Occupation</p>
-            <div className="space-y-2">
-              {character.work_details.job_title && (
-                <p className="text-sm text-foreground"><span className="font-medium">Title:</span> {character.work_details.job_title}</p>
-              )}
-              {character.work_details.workplace_type && (
-                <p className="text-sm text-foreground"><span className="font-medium">Type:</span> {character.work_details.workplace_type}</p>
-              )}
-              {character.work_details.work_environment && (
-                <p className="text-sm text-foreground"><span className="font-medium">Environment:</span> {character.work_details.work_environment}</p>
-              )}
-              {character.occupation_location_name && (
-                <p className="text-sm text-foreground"><span className="font-medium">Location:</span> {character.occupation_location_name}</p>
-              )}
-              {character.additional_occupation_locations?.length > 0 && character.additional_occupation_locations.map((loc, idx) => (
-                <p key={idx} className="text-sm text-foreground">
-                  <span className="font-medium">{loc.job_title ? `${loc.job_title} at` : "Also at"}:</span> {loc.location_name}
-                </p>
+            <div className="space-y-3">
+              {/* Primary job */}
+              <div className="space-y-1">
+                {character.work_details?.job_title && (
+                  <p className="text-sm text-foreground font-medium">{character.work_details.job_title}</p>
+                )}
+                {character.occupation_location_name && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Briefcase className="w-3 h-3" /> {character.occupation_location_name}
+                  </p>
+                )}
+                {character.work_details?.workplace_type && !character.occupation_location_name && (
+                  <p className="text-sm text-muted-foreground">{character.work_details.workplace_type}</p>
+                )}
+              </div>
+              {/* Additional jobs */}
+              {character.additional_occupation_locations?.map((loc, idx) => (
+                <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
+                  {loc.job_title && <p className="text-sm text-foreground font-medium">{loc.job_title}</p>}
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Briefcase className="w-3 h-3" /> {loc.location_name}
+                  </p>
+                </div>
               ))}
             </div>
           </div>
         )}
 
         {/* Education */}
-        {(character.current_education_activity || character.completed_education?.length > 0) && (
+        {(character.current_education_activity || character.education_location_id || character.additional_education_locations?.length > 0 || character.completed_education?.length > 0) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
             <div className="flex items-center gap-2 mb-2">
-              <BookOpen className="w-4 h-4 text-primary" />
+              <GraduationCap className="w-4 h-4 text-primary" />
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Education</p>
             </div>
-            {character.current_education_activity && character.current_education_activity !== "none" && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-1">Currently Learning</p>
-                <p className="text-sm text-muted-foreground">{character.current_education_activity}</p>
+            {/* Primary education */}
+            {(character.current_education_activity && character.current_education_activity !== "none") && (
+              <div className="space-y-0.5">
+                <p className="text-sm text-foreground font-medium">{character.education_details?.course_name || character.current_education_activity}</p>
+                {character.education_location_name && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-1">
+                    <GraduationCap className="w-3 h-3" /> {character.education_location_name}
+                  </p>
+                )}
               </div>
             )}
+            {/* Additional education locations */}
+            {character.additional_education_locations?.map((loc, idx) => (
+              <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
+                {loc.program_name && <p className="text-sm text-foreground font-medium">{loc.program_name}</p>}
+                <p className="text-sm text-muted-foreground flex items-center gap-1">
+                  <GraduationCap className="w-3 h-3" /> {loc.location_name}
+                </p>
+              </div>
+            ))}
             {character.completed_education?.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-foreground mb-2">Completed</p>

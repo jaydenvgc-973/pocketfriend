@@ -63,6 +63,13 @@ function getCharacterShift(characterId, location) {
   return shift;
 }
 
+// Check if shift days match current day (defaults to Mon-Fri if no days set)
+function isShiftDay(shift, currentDay) {
+  const days = shift.days;
+  if (!days || days.length === 0) return [1, 2, 3, 4, 5].includes(currentDay);
+  return days.includes(currentDay);
+}
+
 /**
  * Determine what a character is actually doing right now
  * based on their schedule + location data.
@@ -110,7 +117,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
       if (workLoc) {
         // Layer 1: shift
         const shift = getCharacterShift(character.id, workLoc);
-        if (shift && isInWindow(currentMinutes, shift.start, shift.end)) {
+        if (shift && isShiftDay(shift, currentDay) && isInWindow(currentMinutes, shift.start, shift.end)) {
           const jobTitle = workLoc.worker_job_titles?.[character.id] || character.work_details?.job_title || 'work';
           return { activity: `at work — ${jobTitle} at ${workLoc.name}`, type: 'work', isBusy: true };
         }
@@ -133,7 +140,7 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
         const extraLoc = allLocations.find(l => l.id === extra.location_id);
         if (extraLoc) {
           const shift = getCharacterShift(character.id, extraLoc);
-          if (shift && isInWindow(currentMinutes, shift.start, shift.end)) {
+          if (shift && isShiftDay(shift, currentDay) && isInWindow(currentMinutes, shift.start, shift.end)) {
             const jobTitle = extra.job_title || 'work';
             return { activity: `at work — ${jobTitle} at ${extraLoc.name}`, type: 'work', isBusy: true };
           }

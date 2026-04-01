@@ -14,6 +14,7 @@ import BottomNav from "@/components/BottomNav";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
+import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import { Link } from "react-router-dom";
 
 // ── Zone presets per category ────────────────────────────────────────────────
@@ -55,7 +56,7 @@ const CATEGORIES = [
 ];
 
 // ── LocationCard ─────────────────────────────────────────────────────────────
-function LocationCard({ location, onDelete, onEdit }) {
+function LocationCard({ location, onDelete, onEdit, characters = [] }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
   const zones = location.zones || [];
@@ -138,27 +139,13 @@ function LocationCard({ location, onDelete, onEdit }) {
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border overflow-hidden"
           >
-            <div className="p-4 space-y-4">
+            {/* Category-aware detail panel */}
+            <LocationDetailPanel location={location} characters={characters} />
+
+            {/* Zones / images section */}
+            <div className="px-4 pb-4 space-y-3">
               {location.description && (
-                <p className="text-xs text-muted-foreground">{location.description}</p>
-              )}
-              {(location.resident_character_ids?.length > 0 || location.resident_family_members?.length > 0) && (
-                <div>
-                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-1">Residents</p>
-                  <div className="flex flex-wrap gap-1">
-                    {location.resident_character_names?.map(name => (
-                      <span key={name} className="text-xs bg-blue-500/10 text-blue-400 px-2 py-0.5 rounded-full">{name}</span>
-                    ))}
-                    {location.resident_family_members?.map(fam => (
-                      <span key={fam.name} className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full">{fam.name}</span>
-                    ))}
-                  </div>
-                  {(location.resident_character_ids?.length + (location.resident_family_members?.length || 0)) > 1 && (
-                    <p className="text-[10px] text-muted-foreground/70 mt-1">
-                      Split: {location.cost_split_method === "custom" ? "custom" : "evenly"}
-                    </p>
-                  )}
-                </div>
+                <p className="text-xs text-muted-foreground border-t border-border pt-3">{location.description}</p>
               )}
               {location.keywords?.length > 0 && (
                 <div>
@@ -170,23 +157,27 @@ function LocationCard({ location, onDelete, onEdit }) {
                   </div>
                 </div>
               )}
-              {zones.length === 0 && (
+              {zones.length === 0 ? (
                 <p className="text-xs text-muted-foreground italic">No zones added yet.</p>
-              )}
-              {zones.map((zone, zi) => (
-                <div key={zi} className="space-y-2">
-                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider">{zone.zone_name}</p>
-                  {zone.image_urls?.length > 0 ? (
-                    <div className="grid grid-cols-4 gap-2">
-                      {zone.image_urls.map((url, i) => (
-                        <img key={i} src={url} alt={`${zone.zone_name} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
-                      ))}
+              ) : (
+                <div className="space-y-3 border-t border-border pt-3">
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Zones & Images</p>
+                  {zones.map((zone, zi) => (
+                    <div key={zi} className="space-y-2">
+                      <p className="text-xs font-medium text-foreground">{zone.zone_name}</p>
+                      {zone.image_urls?.length > 0 ? (
+                        <div className="grid grid-cols-4 gap-2">
+                          {zone.image_urls.map((url, i) => (
+                            <img key={i} src={url} alt={`${zone.zone_name} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground italic">No images.</p>
+                      )}
                     </div>
-                  ) : (
-                    <p className="text-xs text-muted-foreground italic">No images for this zone.</p>
-                  )}
+                  ))}
                 </div>
-              ))}
+              )}
             </div>
           </motion.div>
         )}
@@ -765,6 +756,28 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                             />
                           </div>
                         </div>
+                        {/* Recurring days */}
+                        <div className="pt-1 border-t border-border">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
+                          <div className="flex gap-1 flex-wrap">
+                            {['Su','Mo','Tu','We','Th','Fr','Sa'].map((d, i) => {
+                              const shiftDays = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
+                              const active = shiftDays.includes(i);
+                              return (
+                                <button
+                                  key={i}
+                                  type="button"
+                                  onClick={() => {
+                                    const cur = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
+                                    const newDays = active ? cur.filter(x => x !== i) : [...cur, i].sort();
+                                    update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], days: newDays } });
+                                  }}
+                                  className={`w-7 h-7 rounded-full text-[10px] font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}
+                                >{d}</button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1043,14 +1056,30 @@ export default function Locations() {
   });
 
   const handleSave = async (formData) => {
+    let locationId;
     if (editingLocation) {
       await base44.entities.LocationReference.update(editingLocation.id, formData);
+      locationId = editingLocation.id;
       setNewlyCreatedLocation(null);
     } else {
       const created = await base44.entities.LocationReference.create(formData);
-      // Trigger location match check after new location is created
+      locationId = created.id;
       setNewlyCreatedLocation({ id: created.id, name: formData.name, category: formData.category });
     }
+
+    // Auto-sync job titles and education links from location → character profiles
+    const workerIds = formData.worker_character_ids || [];
+    const isEducation = formData.category === 'school' || formData.category === 'education';
+    for (const charId of workerIds) {
+      // Only sync active characters (not NPC ids)
+      if (charId.startsWith('npc__')) continue;
+      base44.functions.invoke('syncLocationJobToCharacter', {
+        locationId,
+        characterId: charId,
+        syncType: isEducation ? 'education' : 'work',
+      }).catch(() => {}); // fire-and-forget
+    }
+
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     setShowForm(false);
     setEditingLocation(null);
@@ -1130,6 +1159,7 @@ export default function Locations() {
                 location={loc}
                 onDelete={handleDelete}
                 onEdit={handleEdit}
+                characters={characters}
               />
             ))}
           </AnimatePresence>

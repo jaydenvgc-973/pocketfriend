@@ -76,6 +76,7 @@ export function getCharacterShiftAtLocation(characterId, location) {
 
 /**
  * Check if character is currently within their shift at a given location.
+ * Respects shift.days if present, defaults to Mon-Fri.
  */
 export function isCharacterOnShift(characterId, location) {
   const shift = getCharacterShiftAtLocation(characterId, location);
@@ -83,7 +84,10 @@ export function isCharacterOnShift(characterId, location) {
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
 
-  // Check work_days from character if needed — shifts are per-location
+  // Check shift days — default Mon-Fri
+  const shiftDays = shift.days?.length > 0 ? shift.days : [1, 2, 3, 4, 5];
+  if (!shiftDays.includes(currentDay)) return false;
+
   return isInWindow(currentMinutes, shift.start, shift.end);
 }
 
