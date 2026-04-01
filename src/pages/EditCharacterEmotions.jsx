@@ -117,17 +117,33 @@ Make it feel like a real person, not a description. No flowery language.`
     });
 
     merged.personality_summary = personality;
-    merged.system_prompt = buildSystemPrompt(merged);
+    const systemPrompt = buildSystemPrompt(merged);
+
+    // Upload system prompt if it's too large
+    let systemPromptUrl = null;
+    if (systemPrompt.length > 50000) {
+      const uploadRes = await base44.integrations.Core.UploadFile({
+        file: new Blob([systemPrompt], { type: "text/plain" })
+      });
+      systemPromptUrl = uploadRes.file_url;
+    }
 
     const { voice_enabled, voice_name, voice_style_note, ...formWithoutVoice } = form;
-    await base44.entities.Character.update(selectedChar.id, {
+    const updateData = {
       ...formWithoutVoice,
       voice_enabled,
       voice_name,
       voice_style_note,
       personality_summary: personality,
-      system_prompt: merged.system_prompt,
-    });
+    };
+
+    if (systemPromptUrl) {
+      updateData.system_prompt_url = systemPromptUrl;
+    } else {
+      updateData.system_prompt = systemPrompt;
+    }
+
+    await base44.entities.Character.update(selectedChar.id, updateData);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
