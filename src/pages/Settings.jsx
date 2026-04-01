@@ -320,6 +320,12 @@ export default function Settings() {
         <StorageBackup />
         <CommonQuestions />
 
+        {isAdmin && (
+          <div className="pt-4 border-t border-border space-y-1">
+            <AdminConsole />
+          </div>
+        )}
+
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
           <Link to="/edit-character-story">
@@ -400,12 +406,6 @@ export default function Settings() {
             </button>
           </Link>
         </div>
-
-        {isAdmin && (
-          <div className="pt-4 border-t border-border space-y-1">
-            <AdminConsole />
-          </div>
-        )}
 
         <div className="pt-4 pb-2 space-y-3">
           <button
