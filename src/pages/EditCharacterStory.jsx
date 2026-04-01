@@ -112,13 +112,21 @@ Make it feel like a real person, not a description. No flowery language.`
     }
 
     merged.personality_summary = personality;
-    merged.system_prompt = buildSystemPrompt(merged);
+    const systemPrompt = buildSystemPrompt(merged);
+
+    // Upload system prompt if it's too large
+    let systemPromptUrl = null;
+    if (systemPrompt.length > 50000) {
+      const uploadRes = await base44.integrations.Core.UploadFile({
+        file: new Blob([systemPrompt], { type: "text/plain" })
+      });
+      systemPromptUrl = uploadRes.file_url;
+    }
 
     const { personality_notes, ...formWithoutNotes } = form;
-    await base44.entities.Character.update(selectedChar.id, {
+    const updateData = {
       ...formWithoutNotes,
       personality_summary: personality,
-      system_prompt: merged.system_prompt,
       appearance_notes: form.appearance_notes,
       gender: form.gender,
       ethnicities: form.ethnicities,
@@ -127,7 +135,16 @@ Make it feel like a real person, not a description. No flowery language.`
       voice_enabled: form.voice_enabled,
       voice_name: form.voice_name,
       voice_style_note: form.voice_style_note,
-    });
+    };
+
+    // Only include system_prompt if it's under size limit
+    if (systemPromptUrl) {
+      updateData.system_prompt_url = systemPromptUrl;
+    } else {
+      updateData.system_prompt = systemPrompt;
+    }
+
+    await base44.entities.Character.update(selectedChar.id, updateData);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
