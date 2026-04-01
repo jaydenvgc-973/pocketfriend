@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Plus, Trash2, Camera, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -56,6 +56,13 @@ export default function FamilyEditor({ character, readOnly = false }) {
   const [members, setMembers] = useState(character.family_members || []);
   const [saving, setSaving] = useState(false);
   const [generatingIdx, setGeneratingIdx] = useState(null);
+
+  // Keep local state in sync if the character prop changes (e.g. after re-fetch)
+  useEffect(() => {
+    if (!saving) {
+      setMembers(character.family_members || []);
+    }
+  }, [character.id, JSON.stringify(character.family_members)]);
 
   const addMember = () => {
     setMembers(prev => [...prev, { name: "", relationship_type: "mother", photo_url: null }]);
