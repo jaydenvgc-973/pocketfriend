@@ -111,7 +111,13 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
         fictional_relationships: updatedRelationships,
       };
 
-      updateData.system_prompt = systemPrompt;
+      if (systemPrompt && systemPrompt.length > 5000) {
+        const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
+        const { file_url } = await base44.integrations.Core.UploadFile({ file });
+        updateData.system_prompt_url = file_url;
+      } else {
+        updateData.system_prompt = systemPrompt;
+      }
 
       await base44.entities.Character.update(character.id, updateData);
       queryClient.invalidateQueries({ queryKey: ["character", character.id] });
