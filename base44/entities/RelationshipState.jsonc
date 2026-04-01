@@ -1,0 +1,71 @@
+{
+  "name": "RelationshipState",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this relationship state belongs to"
+    },
+    "relationship_label": {
+      "type": "string",
+      "description": "What is this character to the user (e.g. 'friend', 'love interest', 'mentor')"
+    },
+    "friendship_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "How much does this character consider you a friend (0-100)"
+    },
+    "trust_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "How much does this character trust you (0-100)"
+    },
+    "respect_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "How much does this character respect you (0-100)"
+    },
+    "romantic_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Romantic interest level (0-100)"
+    },
+    "attraction_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Physical/emotional attraction (0-100)"
+    },
+    "family_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Family-like bonding level (0-100)"
+    },
+    "tension_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Current tension or conflict (0-100)"
+    },
+    "last_interaction_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When was the last meaningful interaction"
+    }
+  },
+  "required": [
+    "character_id"
+  ]
+}

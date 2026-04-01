@@ -1,0 +1,61 @@
+{
+  "name": "CharacterScheduleProfile",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this schedule belongs to"
+    },
+    "wake_time": {
+      "type": "string",
+      "description": "HH:MM format, e.g. 07:00"
+    },
+    "sleep_time": {
+      "type": "string",
+      "description": "HH:MM format, e.g. 23:00"
+    },
+    "work_start": {
+      "type": "string",
+      "description": "HH:MM format"
+    },
+    "work_end": {
+      "type": "string",
+      "description": "HH:MM format"
+    },
+    "lunch_window_start": {
+      "type": "string",
+      "description": "HH:MM format, e.g. 12:00"
+    },
+    "lunch_window_end": {
+      "type": "string",
+      "description": "HH:MM format, e.g. 13:30"
+    },
+    "routine_pattern": {
+      "type": "string",
+      "enum": [
+        "structured",
+        "mixed",
+        "unpredictable"
+      ],
+      "default": "mixed",
+      "description": "How predictable is this character's schedule"
+    },
+    "timezone": {
+      "type": "string",
+      "default": "America/New_York",
+      "description": "IANA timezone identifier"
+    },
+    "active_days": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 6
+      },
+      "description": "Days of week character is active (0=Sunday, 6=Saturday)"
+    }
+  },
+  "required": [
+    "character_id"
+  ]
+}

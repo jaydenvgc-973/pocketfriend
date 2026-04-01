@@ -1,0 +1,23 @@
+{
+  "name": "CharacterRenameAudit",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character that was renamed"
+    },
+    "old_display_name": {
+      "type": "string",
+      "description": "The previous display name"
+    },
+    "new_display_name": {
+      "type": "string",
+      "description": "The new display name"
+    }
+  },
+  "required": [
+    "character_id",
+    "old_display_name",
+    "new_display_name"
+  ]
+}

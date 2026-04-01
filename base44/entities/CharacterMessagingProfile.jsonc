@@ -1,0 +1,92 @@
+{
+  "name": "CharacterMessagingProfile",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this messaging profile belongs to"
+    },
+    "frequency_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "medium",
+      "description": "How often does this character initiate"
+    },
+    "initiation_probability_daily": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3,
+      "description": "Probability of initiating on any given day (0.0-1.0)"
+    },
+    "followup_probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.2,
+      "description": "Probability of following up if user doesn't respond"
+    },
+    "double_text_probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.1,
+      "description": "Probability of sending consecutive messages"
+    },
+    "photo_sequence_probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.15,
+      "description": "Probability of sending multiple images in sequence"
+    },
+    "good_morning_probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.4,
+      "description": "Probability of good morning message around wake time"
+    },
+    "good_night_probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.3,
+      "description": "Probability of good night message near sleep time"
+    },
+    "lunch_checkin_probability": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.25,
+      "description": "Probability of lunch break check-in"
+    },
+    "delay_style": {
+      "type": "string",
+      "enum": [
+        "fast",
+        "normal",
+        "hesitant",
+        "emotional"
+      ],
+      "default": "normal",
+      "description": "How long does this character typically wait before responding"
+    },
+    "tone_pattern": {
+      "type": "string",
+      "description": "Brief description of typical messaging tone"
+    },
+    "last_initiated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of last initiated message"
+    }
+  },
+  "required": [
+    "character_id"
+  ]
+}

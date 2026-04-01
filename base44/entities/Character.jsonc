@@ -140,7 +140,9 @@
       "enum": [
         "active",
         "moved_away",
-        "deleted"
+        "deleted",
+        "soft_deleted",
+        "merged"
       ],
       "default": "active"
     },
@@ -745,6 +747,45 @@
     "chosen_family_level": {
       "type": "number",
       "default": 0
+    },
+    "character_type": {
+      "type": "string",
+      "enum": [
+        "npc",
+        "active",
+        "default",
+        "protected",
+        "user_created",
+        "merged_alias"
+      ],
+      "default": "user_created",
+      "description": "Classification of character type"
+    },
+    "is_protected": {
+      "type": "boolean",
+      "default": false,
+      "description": "True for system-protected characters that cannot be deleted"
+    },
+    "is_active_character": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is one of the user's primary active characters"
+    },
+    "merged_into_character_id": {
+      "type": "string",
+      "description": "If merged, the ID of the character this was merged into"
+    },
+    "schedule_profile_id": {
+      "type": "string",
+      "description": "ID of linked CharacterScheduleProfile"
+    },
+    "messaging_profile_id": {
+      "type": "string",
+      "description": "ID of linked CharacterMessagingProfile"
+    },
+    "relationship_state_id": {
+      "type": "string",
+      "description": "ID of linked RelationshipState"
     }
   },
   "required": [

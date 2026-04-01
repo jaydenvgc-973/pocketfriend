@@ -1,0 +1,38 @@
+{
+  "name": "CharacterMergeAudit",
+  "type": "object",
+  "properties": {
+    "primary_character_id": {
+      "type": "string",
+      "description": "The canonical character that others were merged into"
+    },
+    "merged_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs of characters that were merged into the primary"
+    },
+    "old_names": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Display names of merged characters"
+    },
+    "final_display_name": {
+      "type": "string",
+      "description": "The chosen final display name for the merged record"
+    },
+    "conflict_resolution_snapshot": {
+      "type": "object",
+      "description": "Snapshot of conflict resolutions made during merge",
+      "additionalProperties": true
+    }
+  },
+  "required": [
+    "primary_character_id",
+    "merged_character_ids",
+    "final_display_name"
+  ]
+}

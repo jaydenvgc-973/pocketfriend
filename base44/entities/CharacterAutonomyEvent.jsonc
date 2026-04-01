@@ -1,0 +1,69 @@
+{
+  "name": "CharacterAutonomyEvent",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this autonomy event belongs to"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "initiate_message",
+        "follow_up_message",
+        "send_image_sequence",
+        "emotional_reachout",
+        "schedule_based_checkin",
+        "memory_callback",
+        "spontaneous_update",
+        "good_morning",
+        "good_night",
+        "lunch_checkin"
+      ],
+      "description": "Type of autonomous action to take"
+    },
+    "trigger_source": {
+      "type": "string",
+      "enum": [
+        "time_based",
+        "emotion_based",
+        "relationship_based",
+        "event_based",
+        "memory_based"
+      ],
+      "description": "What triggered this autonomy event"
+    },
+    "event_payload": {
+      "type": "object",
+      "description": "Context data for the event (message content, topic, etc.)",
+      "additionalProperties": true
+    },
+    "scheduled_for": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this event should execute"
+    },
+    "executed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this event actually executed"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "executing",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "default": "pending",
+      "description": "Current status of this event"
+    }
+  },
+  "required": [
+    "character_id",
+    "event_type",
+    "scheduled_for"
+  ]
+}

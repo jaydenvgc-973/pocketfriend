@@ -1,0 +1,32 @@
+{
+  "name": "CharacterAlias",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this alias belongs to"
+    },
+    "alias_name": {
+      "type": "string",
+      "description": "The alias name (prior name, merged name, manual alias)"
+    },
+    "source_type": {
+      "type": "string",
+      "enum": [
+        "rename",
+        "merge",
+        "manual"
+      ],
+      "description": "How this alias was created"
+    },
+    "prior_primary": {
+      "type": "boolean",
+      "default": false,
+      "description": "Was this the character's primary name before the change?"
+    }
+  },
+  "required": [
+    "character_id",
+    "alias_name"
+  ]
+}

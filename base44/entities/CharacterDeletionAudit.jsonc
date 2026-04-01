@@ -1,0 +1,21 @@
+{
+  "name": "CharacterDeletionAudit",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character that was deleted"
+    },
+    "deletion_type": {
+      "type": "string",
+      "enum": [
+        "soft_delete"
+      ],
+      "description": "Type of deletion (currently only soft delete is supported)"
+    }
+  },
+  "required": [
+    "character_id",
+    "deletion_type"
+  ]
+}
