@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import BottomNav from "@/components/BottomNav";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
+import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
 import { Link } from "react-router-dom";
 
 // ── Zone presets per category ────────────────────────────────────────────────
@@ -1021,6 +1022,7 @@ export default function Locations() {
   const [showForm, setShowForm] = useState(false);
   const [editingLocation, setEditingLocation] = useState(null);
   const [filter, setFilter] = useState("all");
+  const [newlyCreatedLocation, setNewlyCreatedLocation] = useState(null);
 
   const { data: currentUser } = useQuery({
     queryKey: ["user"],
@@ -1045,8 +1047,11 @@ export default function Locations() {
   const handleSave = async (formData) => {
     if (editingLocation) {
       await base44.entities.LocationReference.update(editingLocation.id, formData);
+      setNewlyCreatedLocation(null);
     } else {
-      await base44.entities.LocationReference.create(formData);
+      const created = await base44.entities.LocationReference.create(formData);
+      // Trigger location match check after new location is created
+      setNewlyCreatedLocation({ id: created.id, name: formData.name, category: formData.category });
     }
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     setShowForm(false);
@@ -1134,6 +1139,18 @@ export default function Locations() {
       </div>
 
       <BottomNav />
+
+      {/* Location match suggestions after new location creation */}
+      {newlyCreatedLocation && (
+        <LocationMatchSuggestion
+          locationId={newlyCreatedLocation.id}
+          locationName={newlyCreatedLocation.name}
+          locationCategory={newlyCreatedLocation.category}
+          characters={characters}
+          onClose={() => setNewlyCreatedLocation(null)}
+          onLinked={() => queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] })}
+        />
+      )}
     </div>
   );
 }

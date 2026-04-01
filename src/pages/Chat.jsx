@@ -22,6 +22,9 @@ import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
 import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import GameLauncher from "@/components/games/GameLauncher";
+import ApprovalPopup from "@/components/approvals/ApprovalPopup";
+import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
+import { useApprovalEvents } from "@/hooks/useApprovalEvents";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -58,6 +61,7 @@ export default function Chat() {
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
+  const { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval } = useApprovalEvents();
   const queryClient = useQueryClient();
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
@@ -1369,6 +1373,13 @@ Reply with ONLY the single emoji or the word "none".`,
       },
     }).catch(() => {});
 
+    // Check for life event approval pop-ups (move-in, marriage, birth) — non-blocking
+    if (responseText) {
+      base44.entities.Character.filter({ created_by: currentUser.email }).then(allCharsForApproval => {
+        checkForApprovalEvents(responseText, character, allCharsForApproval || [], text);
+      }).catch(() => {});
+    }
+
     // Classify life events from this conversation turn (fire-and-forget)
     // This fans out to memory, mood, relationship, and achievement systems
     base44.functions.invoke("classifyConversationEvent", {
@@ -1564,6 +1575,43 @@ Reply with ONLY the single emoji or the word "none".`,
       />
       <BottomNav />
 
+      {/* Approval pop-ups for life events */}
+      {pendingApproval?.type === 'move_in' && (
+        <ApprovalPopup
+          type="move_in"
+          title="Moving In Together?"
+          description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`}
+          details={pendingApproval.data}
+          onApprove={approveEvent}
+          onDeny={dismissApproval}
+        >
+          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
+          {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Moving in with:</span> {pendingApproval.data.otherCharName}</p>}
+        </ApprovalPopup>
+      )}
+
+      {pendingApproval?.type === 'marriage' && (
+        <ApprovalPopup
+          type="marriage"
+          title="Marriage Event Detected"
+          description={`It looks like ${pendingApproval.data.character?.name} may be getting married${pendingApproval.data.otherCharName ? ` to ${pendingApproval.data.otherCharName}` : ''}. Approve this?`}
+          details={pendingApproval.data}
+          onApprove={approveEvent}
+          onDeny={dismissApproval}
+        >
+          <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
+          {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Partner:</span> {pendingApproval.data.otherCharName}</p>}
+        </ApprovalPopup>
+      )}
+
+      {pendingApproval?.type === 'birth' && (
+        <BirthApprovalPopup
+          parentCharacter={pendingApproval.data.character}
+          otherParentName={pendingApproval.data.otherParentName}
+          onApprove={approveEvent}
+          onDeny={dismissApproval}
+        />
+      )}
     </div>
   );
 }

@@ -21,81 +21,65 @@
     },
     "is_photogenic": {
       "type": "boolean",
-      "default": false,
-      "description": "Bonus trait: Character loves being photographed, acts as selfie royalty, and sends more images."
+      "default": false
     },
     "trait_oversharer": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Oversharer \u2014 tells you more than you asked for, sends walls of text."
+      "default": false
     },
     "trait_dry_humor": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Dry humor \u2014 deadpan, rarely signals when they're joking."
+      "default": false
     },
     "trait_night_owl": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Night owl \u2014 most alive after midnight, best conversations late."
+      "default": false
     },
     "trait_hot_and_cold": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Hot and cold \u2014 warm one day, distant the next, not manipulative just internal."
+      "default": false
     },
     "trait_flirty": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Naturally flirty \u2014 can't turn it off, doesn't always mean anything."
+      "default": false
     },
     "trait_overcorrects": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Overcorrects after conflict \u2014 tries too hard to make things right."
+      "default": false
     },
     "trait_blunt": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Brutally honest \u2014 says exactly what they think even when unnecessary."
+      "default": false
     },
     "trait_easily_distracted": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Easily distracted \u2014 mid-conversation pivots, random tangents."
+      "default": false
     },
     "trait_romanticizes": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Romanticizes everything \u2014 finds meaning in small moments."
+      "default": false
     },
     "trait_hard_to_read": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Hard to read \u2014 you're never sure where you stand."
+      "default": false
     },
     "trait_competitive": {
       "type": "boolean",
-      "default": false,
-      "description": "Trait: Quietly competitive \u2014 keeps score, hates losing even at trivial things."
+      "default": false
     },
     "lives_alone": {
       "type": "boolean",
-      "description": "True if the character lives alone, influencing clothing choices at home.",
       "default": false
     },
     "birthday": {
       "type": "string",
-      "format": "date",
-      "description": "Character's birthday (YYYY-MM-DD)"
+      "format": "date"
     },
     "zodiac_sign": {
-      "type": "string",
-      "description": "Character's zodiac sign, derived from birthday"
+      "type": "string"
     },
     "religion": {
       "type": "string",
-      "description": "The character's religion or belief system.",
       "default": "None"
     },
     "belief_level": {
@@ -108,24 +92,19 @@
       "default": "moderate"
     },
     "religion_custom": {
-      "type": "string",
-      "description": "Custom religion name if religion='Other'"
+      "type": "string"
     },
     "sleep_start_time": {
-      "type": "string",
-      "description": "Time this character typically goes to sleep (HH:MM, 24h format)."
+      "type": "string"
     },
     "wake_up_time": {
-      "type": "string",
-      "description": "Time this character typically wakes up (HH:MM, 24h format)."
+      "type": "string"
     },
     "work_start_time": {
-      "type": "string",
-      "description": "Time this character starts work (HH:MM, 24h format). Defaults to '09:00' if not set."
+      "type": "string"
     },
     "work_end_time": {
-      "type": "string",
-      "description": "Time this character ends work (HH:MM, 24h format). Defaults to '17:00' if not set."
+      "type": "string"
     },
     "work_days": {
       "type": "array",
@@ -133,16 +112,13 @@
         "type": "integer",
         "minimum": 0,
         "maximum": 6
-      },
-      "description": "Days of the week character works (0=Sunday, 1=Monday, ..., 6=Saturday)."
+      }
     },
     "current_activity": {
-      "type": "string",
-      "description": "What the character is currently doing."
+      "type": "string"
     },
     "weather_summary": {
-      "type": "string",
-      "description": "Current day's weather for the character's location."
+      "type": "string"
     },
     "weather_last_updated": {
       "type": "string",
@@ -150,17 +126,14 @@
     },
     "voice_enabled": {
       "type": "boolean",
-      "default": true,
-      "description": "Whether this character can speak with voice"
+      "default": true
     },
     "voice_name": {
       "type": "string",
-      "default": "alloy",
-      "description": "OpenAI voice name: alloy, echo, fable, onyx, nova, shimmer"
+      "default": "alloy"
     },
     "voice_style_note": {
-      "type": "string",
-      "description": "Optional style notes for voice generation"
+      "type": "string"
     },
     "status": {
       "type": "string",
@@ -181,30 +154,25 @@
       }
     },
     "avatar_description_text": {
-      "type": "string",
-      "description": "User-written description used to influence avatar generation, weighted equally per reference image."
+      "type": "string"
     },
     "avatar_generation_prompt": {
-      "type": "string",
-      "description": "The final prompt used during the last avatar generation, displayed back to the user."
+      "type": "string"
     },
     "fictional_entity_images": {
       "type": "object",
-      "description": "Stores generated images for fictional entities.",
       "additionalProperties": {
         "type": "string"
       }
     },
     "scene_images": {
       "type": "object",
-      "description": "Stores reference images for recurring locations.",
       "additionalProperties": {
         "type": "string"
       }
     },
     "appearance_notes": {
-      "type": "string",
-      "description": "Current physical appearance details."
+      "type": "string"
     },
     "gender": {
       "type": "string",
@@ -216,8 +184,7 @@
       ]
     },
     "age_range": {
-      "type": "string",
-      "description": "Age range selected at creation."
+      "type": "string"
     },
     "ethnicities": {
       "type": "array",
@@ -398,8 +365,7 @@
       "type": "string"
     },
     "criminal_record": {
-      "type": "string",
-      "description": "Details about criminal history, if any."
+      "type": "string"
     },
     "system_prompt": {
       "type": "string"
@@ -419,6 +385,58 @@
         "coworker_names": {
           "type": "array",
           "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "occupation_location_id": {
+      "type": "string",
+      "description": "ID of the LocationReference linked as primary workplace"
+    },
+    "occupation_location_name": {
+      "type": "string",
+      "description": "Display name of the primary linked workplace location"
+    },
+    "additional_occupation_locations": {
+      "type": "array",
+      "description": "Additional linked job locations for multi-job support",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "job_title": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "education_location_id": {
+      "type": "string",
+      "description": "ID of the LocationReference linked as primary education site"
+    },
+    "education_location_name": {
+      "type": "string",
+      "description": "Display name of the primary linked education location"
+    },
+    "additional_education_locations": {
+      "type": "array",
+      "description": "Additional linked education locations for multi-school support",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "program_name": {
             "type": "string"
           }
         }
