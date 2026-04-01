@@ -264,6 +264,18 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
 function LocationForm({ editingLocation, characters, onSave, onCancel }) {
+  // Collect all unique NPCs from fictional_relationships across all characters
+  const allNPCs = [];
+  const seenNames = new Set();
+  characters.forEach(char => {
+    (char.fictional_relationships || []).forEach(rel => {
+      if (!rel.related_character_id && rel.person_name && !seenNames.has(rel.person_name)) {
+        seenNames.add(rel.person_name);
+        allNPCs.push({ id: `npc__${rel.person_name}`, name: rel.person_name, isNPC: true, relationship_type: rel.relationship_type });
+      }
+    });
+  });
+
   const [form, setForm] = useState({
     name: editingLocation?.name || "",
     location_type: editingLocation?.location_type || "global",
@@ -576,9 +588,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
             )}
           </div>
 
-          {/* Add resident: active characters + family members */}
-          <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card">
-            {/* Active characters */}
+          {/* Add resident: active characters + family members + NPCs */}
+          <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
+            {characters.length > 0 && (
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>
+            )}
             {characters.map(char => {
               const alreadyResident = form.resident_character_ids?.includes(char.id);
               return (
@@ -590,7 +604,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                     }
                   }}
                   disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
                 >
                   <CharacterAvatar character={char} size="sm" />
                   <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
@@ -613,7 +627,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                       }
                     }}
                     disabled={alreadyResident}
-                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}
                   >
                     <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">
                       {fam.name?.[0]?.toUpperCase() || "?"}
@@ -627,6 +641,35 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                 );
               })
             )}
+
+            {/* NPCs & Fictional Characters */}
+            {allNPCs.length > 0 && (
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>
+            )}
+            {allNPCs.map(npc => {
+              const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
+              return (
+                <button
+                  key={npc.id}
+                  onClick={() => {
+                    if (!alreadyResident) {
+                      update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]);
+                    }
+                  }}
+                  disabled={alreadyResident}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                >
+                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
+                    {npc.name[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-foreground font-medium">{npc.name}</p>
+                    {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                  </div>
+                  {alreadyResident ? <span className="text-xs text-primary font-medium">✓ Resident</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
@@ -647,16 +690,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
               <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
                 {form.worker_character_ids.map((workerId, idx) => {
                   const worker = characters.find(c => c.id === workerId);
+                  const npcWorker = !worker ? allNPCs.find(n => n.id === workerId) : null;
+                  const workerName = worker?.name || npcWorker?.name || workerId;
                   return (
                     <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
                       <div className="flex items-center gap-2 justify-between">
-                        <span className="text-sm font-medium text-foreground">{worker?.name || workerId}</span>
+                        <div className="flex items-center gap-2">
+                          {worker ? <CharacterAvatar character={worker} size="sm" /> : (
+                            <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center text-xs font-semibold text-muted-foreground flex-shrink-0">
+                              {workerName[0]?.toUpperCase()}
+                            </div>
+                          )}
+                          <span className="text-sm font-medium text-foreground">{workerName}</span>
+                          {npcWorker && <span className="text-xs text-muted-foreground/60 bg-secondary px-1.5 py-0.5 rounded">NPC</span>}
+                        </div>
                         <button
                           onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))}
                           className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        ><X className="w-3.5 h-3.5" /></button>
                       </div>
                       <div className="space-y-2">
                         <div className="grid grid-cols-3 gap-2">
@@ -725,8 +776,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
             )}
           </div>
 
-          {/* Add worker selector */}
-          <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card">
+          {/* Add worker selector — active characters + NPCs */}
+          <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
+            {characters.length > 0 && (
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>
+            )}
             {characters.map(char => {
               const alreadyWorker = form.worker_character_ids?.includes(char.id);
               return (
@@ -738,7 +792,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                     }
                   }}
                   disabled={alreadyWorker}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
                 >
                   <CharacterAvatar character={char} size="sm" />
                   <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
@@ -746,6 +800,36 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
                 </button>
               );
             })}
+            {allNPCs.length > 0 && (
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>
+            )}
+            {allNPCs.map(npc => {
+              const alreadyWorker = form.worker_character_ids?.includes(npc.id);
+              return (
+                <button
+                  key={npc.id}
+                  onClick={() => {
+                    if (!alreadyWorker) {
+                      update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]);
+                    }
+                  }}
+                  disabled={alreadyWorker}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                >
+                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
+                    {npc.name[0]?.toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-foreground font-medium block">{npc.name}</span>
+                    {npc.relationship_type && <span className="text-xs text-muted-foreground capitalize">{npc.relationship_type}</span>}
+                  </div>
+                  {alreadyWorker ? <span className="text-xs text-primary font-medium">✓ Working</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
+                </button>
+              );
+            })}
+            {characters.length === 0 && allNPCs.length === 0 && (
+              <p className="text-xs text-muted-foreground italic p-3">No characters available.</p>
+            )}
           </div>
         </div>
       )}
@@ -916,48 +1000,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
           onChange={(hours) => update("operating_hours", hours)}
         />
       </div>
-
-      {/* ── WORKER PAY SETTINGS ───────────────────────────────────── */}
-      {form.worker_character_ids && form.worker_character_ids.length > 0 && (
-        <div className="bg-secondary/30 border border-border rounded-xl p-4 space-y-3">
-          <h4 className="text-sm font-semibold text-foreground">Worker Pay</h4>
-          {form.worker_character_ids.map((workerId) => {
-            const worker = characters.find(c => c.id === workerId);
-            return (
-              <div key={workerId} className="space-y-2 bg-card p-3 rounded-lg">
-                <p className="text-xs font-medium text-foreground">{worker?.name || workerId}</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <select
-                    value={form.worker_pay_type[workerId] || 'hourly'}
-                    onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })}
-                    className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground"
-                  >
-                    <option value="hourly">Hourly</option>
-                    <option value="annual">Annual</option>
-                  </select>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs">$</span>
-                    <Input
-                      type="number"
-                      value={form.worker_pay_rates[workerId] || 0}
-                      onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })}
-                      className="h-8 text-xs flex-1"
-                      placeholder="15"
-                    />
-                  </div>
-                  <Input
-                    type="text"
-                    value={form.worker_job_titles[workerId] || ''}
-                    onChange={(e) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: e.target.value })}
-                    placeholder="Job title"
-                    className="h-8 text-xs"
-                  />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
 
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
