@@ -1105,14 +1105,16 @@ export default function Locations() {
     return null;
   };
 
-  // Helper: check if worker is too young
+  // Helper: check if worker is too young (only check if age is defined)
   const isWorkerTooYoung = (workerId, category) => {
     const char = characters.find(c => c.id === workerId);
+    // Only apply age restrictions if the character has a defined birthday
     if (char && char.birthday) {
       const age = new Date().getFullYear() - new Date(char.birthday).getFullYear();
       if (age < 16) return true; // too young for any work
       if ((category === 'social' || category === 'food_drink') && age < 21) return true; // bars/nightclubs
     }
+    // No birthday = no age restrictions (generic/fictional NPC)
     return false;
   };
 
