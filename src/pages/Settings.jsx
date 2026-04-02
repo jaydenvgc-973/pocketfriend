@@ -209,6 +209,18 @@ export default function Settings() {
           />
         </div>
         <div className="space-y-4">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Gender (optional)</p>
+          <Select value={settings.user_gender || ""} onValueChange={v => mutation.mutate({ user_gender: v })}>
+            <SelectTrigger className="rounded-xl"><SelectValue placeholder="Select gender" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="male">Male</SelectItem>
+              <SelectItem value="female">Female</SelectItem>
+              <SelectItem value="non-binary">Non-binary</SelectItem>
+              <SelectItem value="other">Other</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Schedule</p>
           <p className="text-xs text-muted-foreground">Let characters know when you're usually free so they reach out at the right times.</p>
           <textarea
