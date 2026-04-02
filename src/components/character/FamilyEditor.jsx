@@ -366,17 +366,19 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                         </div>
                       );
                     })()}
-                    <button
-                      onClick={() => generatePhoto(idx)}
-                      disabled={generatingIdx === idx || !member.name?.trim()}
-                      title="Generate photo"
-                      className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 hover:bg-primary/80 transition-colors"
-                    >
-                      {generatingIdx === idx
-                        ? <Loader2 className="w-3 h-3 text-primary-foreground animate-spin" />
-                        : <Camera className="w-2.5 h-2.5 text-primary-foreground" />
-                      }
-                    </button>
+                    {!getFamilyMemberAvatar(member.name) && (
+                      <button
+                        onClick={() => generatePhoto(idx)}
+                        disabled={generatingIdx === idx || !member.name?.trim()}
+                        title="Generate photo"
+                        className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-primary flex items-center justify-center disabled:opacity-40 hover:bg-primary/80 transition-colors"
+                      >
+                        {generatingIdx === idx
+                          ? <Loader2 className="w-3 h-3 text-primary-foreground animate-spin" />
+                          : <Camera className="w-2.5 h-2.5 text-primary-foreground" />
+                        }
+                      </button>
+                    )}
                   </div>
 
                   <input
