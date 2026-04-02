@@ -491,6 +491,9 @@
           "history_summary": {
             "type": "string"
           },
+          "avatar_url": {
+            "type": "string"
+          },
           "user_respect_level": {
             "type": "number",
             "default": 50
