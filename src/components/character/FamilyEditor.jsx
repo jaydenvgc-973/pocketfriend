@@ -185,6 +185,13 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
     try {
       const isParent = ["mother", "father"].includes(member.relationship_type);
       const isSibling = ["sister", "brother", "half-sister", "half-brother"].includes(member.relationship_type);
+      const isBlackOrAfricanAmerican = character.ethnicities?.some(e =>
+        e.toLowerCase().includes("african american") ||
+        e.toLowerCase().includes("black") ||
+        e.toLowerCase().includes("afro-caribbean") ||
+        e.toLowerCase().includes("african")
+      );
+      const ageNote = isBlackOrAfricanAmerican && currentAge ? `Note: This person is ${currentAge} years old but may appear younger due to natural aging patterns.` : "";
 
       let prompt;
       if (isBaby) {
@@ -200,7 +207,7 @@ Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon,
         prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}.
 ${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
 ${resemblanceNote}
-Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic.`;
+Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic. ${ageNote}`;
       }
 
       const result = await base44.integrations.Core.GenerateImage({
