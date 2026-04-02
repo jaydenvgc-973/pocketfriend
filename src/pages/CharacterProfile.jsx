@@ -801,13 +801,11 @@ export default function CharacterProfile() {
               }
               return r;
             });
+            // Save, invalidate, refetch, THEN close modal
             await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
+            queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+            await refetch();
             setEditingNPCPhoto(null);
-            // Invalidate and refetch after closing modal
-            setTimeout(() => {
-              queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-              refetch();
-            }, 100);
           } catch (error) {
             console.error('Failed to update NPC photo:', error);
           }
