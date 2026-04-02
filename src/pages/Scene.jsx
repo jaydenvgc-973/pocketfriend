@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import { filterDashes } from "@/lib/dashFilter";
+import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -109,7 +110,22 @@ export default function Scene() {
   });
 
   const location = locationsData.find(l => l.id === locationId);
-  const sceneCharacters = characters.filter(c => characterIds.includes(c.id));
+  const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
+
+  // Characters explicitly brought + any active characters who work here during their shift
+  const workerCharacters = location
+    ? characters.filter(c =>
+        !characterIds.includes(c.id) &&
+        (c.occupation_location_id === locationId ||
+          c.additional_occupation_locations?.some(j => j.location_id === locationId)) &&
+        isCharacterAtWork(c, location)
+      )
+    : [];
+
+  const sceneCharacters = [
+    ...characters.filter(c => characterIds.includes(c.id)),
+    ...workerCharacters,
+  ];
 
   const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
     || location?.image_urls?.[0]
@@ -127,13 +143,13 @@ export default function Scene() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages.length]);
 
-  // Rotate actions every 15s
+  // Rotate actions every 3 minutes
   useEffect(() => {
     if (!location) return;
     const interval = setInterval(() => {
       const recentText = messages.slice(-3).map(m => m.content).join(" ");
       setActions(getLocationActions(location.category, recentText));
-    }, 15000);
+    }, 180000);
     return () => clearInterval(interval);
   }, [location?.id, messages.length]);
 
@@ -185,10 +201,18 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
+      // When alone, only 1 NPC responds (a worker/staff at the location)
+      const isAlone = sceneCharacters.length === 0;
+      const npcInstruction = isAlone
+        ? `There are no friends present. A single staff member or worker at ${location.name} can briefly respond if relevant (e.g. a cashier, bartender, employee). Use their role as their name (e.g. "Cashier", "Bartender"). Only respond if it makes sense contextually — most of the time return an empty responses array.`
+        : `Write short, natural responses from EACH character present (${sceneCharacters.map(c => c.name).join(", ")}).
+Workers (${workerCharacters.map(c => c.name).join(", ") || "none"}) are staff here — they respond briefly and professionally unless approached directly.
+Characters should react to each other too, not just the user.`;
+
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a group scene at ${location.name} (${location.category}).
 
-People present: ${displayName} (the user), ${charSummaries || "no characters"}
+People present: ${displayName} (the user), ${charSummaries || "no one the user knows"}
 
 Recent conversation:
 ${conversationHistory}
@@ -196,9 +220,8 @@ ${conversationHistory}
 ${displayName} just said: "${text}"
 ${fromAction ? "(This was from a scene action, not typed directly)" : ""}
 
-Write short, natural responses from EACH character present (${sceneCharacters.map(c => c.name).join(", ") || "no characters"}).
-Characters should react to each other too, not just the user.
-Keep each response 1-2 sentences, texting style, natural and in-character.
+${npcInstruction}
+Keep each response 1-2 sentences, natural and in-character.
 
 Return JSON:
 {
@@ -384,11 +407,18 @@ Return JSON:
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {/* Arrival narrative */}
-        <div className="text-center">
+        <div className="text-center space-y-1">
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             You arrive at {location.name}
-            {sceneCharacters.length > 0 ? ` with ${sceneCharacters.map(c => c.name).join(", ")}` : ""}
+            {characterIds.length > 0 ? ` with ${characters.filter(c => characterIds.includes(c.id)).map(c => c.name).join(", ")}` : ""}
           </span>
+          {workerCharacters.length > 0 && (
+            <div>
+              <span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">
+                {workerCharacters.map(c => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working
+              </span>
+            </div>
+          )}
         </div>
 
         <AnimatePresence>

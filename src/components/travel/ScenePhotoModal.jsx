@@ -18,15 +18,22 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
 
   const generate = async () => {
     setIsGenerating(true);
-    const charNames = allCharacters.filter(c => participants.includes(c.id)).map(c => c.name).join(", ");
+    const selectedChars = allCharacters.filter(c => participants.includes(c.id));
+    const charNames = selectedChars.map(c => c.name).join(", ");
+    const allNames = [displayName, ...selectedChars.map(c => c.name)].join(", ");
     const autoPrompt = prompt.trim() || `Candid group photo at ${location.name}, natural lighting, realistic moment`;
-    const charRefs = allCharacters.filter(c => participants.includes(c.id)).flatMap(c => c.avatar_url ? [c.avatar_url] : []);
+
+    // Include user avatar + character avatars as reference images
+    const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+    const charRefs = selectedChars.flatMap(c => c.avatar_url ? [c.avatar_url] : []);
+    const allRefs = [userAvatar, ...charRefs].filter(Boolean);
     const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0] || null;
+    const refImages = [...allRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
 
     try {
       const result = await base44.integrations.Core.GenerateImage({
-        prompt: `${autoPrompt}. People: ${charNames || displayName}. Location: ${location.name}. Photorealistic, candid, authentic moment.`,
-        existing_image_urls: [...charRefs, ...(firstImage ? [firstImage] : [])].slice(0, 3),
+        prompt: `${autoPrompt}. People in the photo: ${allNames}. Location: ${location.name}. Include ALL people listed. Photorealistic, candid, authentic moment.`,
+        existing_image_urls: refImages.length > 0 ? refImages : undefined,
       });
       setGeneratedImage(result.url);
     } catch {
