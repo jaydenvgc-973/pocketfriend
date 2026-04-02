@@ -1162,7 +1162,12 @@ export default function Locations() {
   const filtered = filter === "all" 
     ? locations 
     : filter === "character_specific"
-    ? locations.filter(l => l.location_type === "character_specific" || characterIds.has(l.owner_character_id))
+    ? locations.filter(l => 
+        l.location_type === "character_specific" || 
+        characterIds.has(l.character_id) ||
+        characterIds.has(l.owner_character_id) ||
+        (l.resident_character_ids || []).some(id => characterIds.has(id))
+      )
     : locations.filter(l => l.location_type === filter);
 
   return (
