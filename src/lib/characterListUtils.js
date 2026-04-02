@@ -6,7 +6,7 @@
 /**
  * Fetch and sort characters for character pickers, including the user
  * Active characters appear first, then all others (excluding deleted)
- * User is included as a special profile entity
+ * User is included as a special profile entity with proper avatar loading
  * @param {Object} base44 - Base44 SDK client
  * @param {string} userEmail - Current user's email
  * @returns {Promise<Array>} Sorted character array with user as first item
@@ -14,8 +14,13 @@
 export async function fetchCharacterListForPicker(base44, userEmail) {
   if (!userEmail) return [];
   
-  // Get current user profile
-  const user = await base44.auth.me().catch(() => null);
+  // Get current user profile and settings (which may contain avatar data)
+  const [user, settingsList] = await Promise.all([
+    base44.auth.me().catch(() => null),
+    base44.entities.UserSettings.list().catch(() => []),
+  ]);
+  
+  const settings = settingsList?.[0] || {};
   
   // Fetch all non-deleted characters created by user
   const all = await base44.entities.Character.filter({ 
@@ -34,10 +39,20 @@ export async function fetchCharacterListForPicker(base44, userEmail) {
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   // Include user as special entity at the start
+  // Priority: user.avatar_url → generated avatar → reference image → fallback
+  let userAvatarUrl = null;
+  if (user?.avatar_url) {
+    userAvatarUrl = user.avatar_url;
+  } else if (settings?.generated_avatar_urls?.[0]) {
+    userAvatarUrl = settings.generated_avatar_urls[0];
+  } else if (user?.reference_image_urls?.[0]) {
+    userAvatarUrl = user.reference_image_urls[0];
+  }
+
   const userEntity = user ? {
     id: 'user',
     name: user.full_name || 'You',
-    avatar_url: user.avatar_url || null,
+    avatar_url: userAvatarUrl,
     reference_image_urls: user.reference_image_urls || [],
     generated_avatar_urls: user.generated_avatar_urls || [],
     appearance_notes: user.appearance_notes || '',

@@ -481,20 +481,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
                           {/* Character options (already includes user at start via fetchCharacterListForPicker) */}
                           {allCharacters.map(char => (
-                            <button
-                              key={char.id}
-                              onClick={() => toggleCharacter(char.id)}
-                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border last:border-b-0 ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
-                            >
-                              {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
-                              {char.avatar_url ? (
-                                <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover" />
-                              ) : (
-                                <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">{char.name?.[0]}</div>
-                              )}
-                              <span className="font-medium">{char.name}</span>
-                              {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
-                            </button>
+                           <button
+                             key={char.id}
+                             onClick={() => toggleCharacter(char.id)}
+                             className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border last:border-b-0 ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                           >
+                             {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
+                             {char.avatar_url && char.avatar_url.trim() ? (
+                               <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+                             ) : null}
+                             {!char.avatar_url || !char.avatar_url.trim() ? (
+                               <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{char.name?.[0]?.toUpperCase() || "?"}</div>
+                             ) : null}
+                             <span className="font-medium">{char.name}</span>
+                             {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
+                           </button>
                           ))}
                         </div>
                       )}
