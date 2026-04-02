@@ -297,7 +297,7 @@ export default function CharacterManager() {
                  } ${isUser ? 'ring-2 ring-primary/30' : ''}`}
                  onClick={() => mergeMode && toggleMergeSelection(itemId)}
                >
-                 <div className="flex items-start gap-3">
+                 <div className="flex items-center gap-3">
                   {mergeMode && (
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
                       isSelected ? 'bg-primary border-primary' : 'border-border'
