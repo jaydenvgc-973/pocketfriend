@@ -185,13 +185,34 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
     try {
       const isParent = ["mother", "father"].includes(member.relationship_type);
       const isSibling = ["sister", "brother", "half-sister", "half-brother"].includes(member.relationship_type);
-      const isBlackOrAfricanAmerican = character.ethnicities?.some(e =>
-        e.toLowerCase().includes("african american") ||
-        e.toLowerCase().includes("black") ||
-        e.toLowerCase().includes("afro-caribbean") ||
-        e.toLowerCase().includes("african")
-      );
-      const ageNote = isBlackOrAfricanAmerican && currentAge ? `Note: This person is ${currentAge} years old but may appear younger due to natural aging patterns.` : "";
+      
+      const isSlowAgingEthnicity = character.ethnicities?.some(e => {
+        const eth = e.toLowerCase();
+        return eth.includes("african american") ||
+               eth.includes("black") ||
+               eth.includes("afro-caribbean") ||
+               eth.includes("african") ||
+               eth.includes("latino") ||
+               eth.includes("latina") ||
+               eth.includes("hispanic") ||
+               eth.includes("asian") ||
+               eth.includes("east asian") ||
+               eth.includes("south asian") ||
+               eth.includes("southeast asian");
+      });
+
+      let ageNote = "";
+      if (isSlowAgingEthnicity && currentAge) {
+        if (currentAge <= 20) {
+          ageNote = `Note: This person is ${currentAge} years old and looks approximately their age.`;
+        } else if (currentAge <= 35) {
+          ageNote = `Note: This person is ${currentAge} years old but may appear to be in their early 20s.`;
+        } else if (currentAge <= 45) {
+          ageNote = `Note: This person is ${currentAge} years old but may appear to be in their mid-20s to early 30s.`;
+        } else {
+          ageNote = `Note: This person is ${currentAge} years old but may appear to be in their 30s or early 40s.`;
+        }
+      }
 
       let prompt;
       if (isBaby) {
