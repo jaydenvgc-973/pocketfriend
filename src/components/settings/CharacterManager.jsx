@@ -71,52 +71,57 @@ export default function CharacterManager() {
     setNewName(oldName);
   };
 
-  const submitRename = (charId, isNPC = false) => {
+  const submitRename = (itemId, isNPC = false) => {
     if (!newName.trim()) {
       setRenamingId(null);
       return;
     }
     if (isNPC) {
-      const npcToRename = npcs.find(n => n.source_character_id === charId);
-      if (npcToRename && npcToRename.person_name === newName) {
-        setRenamingId(null);
-        return;
-      }
-      const sourceChar = characters.find(c => c.id === charId);
-      if (sourceChar && npcToRename) {
-        const updated = (sourceChar.fictional_relationships || []).map(r =>
-          r.person_name === npcToRename.person_name ? { ...r, person_name: newName } : r
-        );
-        base44.entities.Character.update(charId, { fictional_relationships: updated })
-          .then(() => {
-            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-            setRenamingId(null);
-            setNewName('');
-          })
-          .catch(() => {});
+      // Parse itemId to get sourceCharId and old personName
+      const match = itemId.match(/^npc_(.+)_(.+)$/);
+      if (match) {
+        const [, sourceCharId, oldPersonName] = match;
+        if (oldPersonName === newName) {
+          setRenamingId(null);
+          return;
+        }
+        const sourceChar = characters.find(c => c.id === sourceCharId);
+        if (sourceChar) {
+          const updated = (sourceChar.fictional_relationships || []).map(r =>
+            r.person_name === oldPersonName ? { ...r, person_name: newName } : r
+          );
+          base44.entities.Character.update(sourceCharId, { fictional_relationships: updated })
+            .then(() => {
+              queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+              setRenamingId(null);
+              setNewName('');
+            })
+            .catch(() => {});
+        }
       }
     } else {
-      const char = characters.find(c => c.id === charId);
+      const char = characters.find(c => c.id === itemId);
       if (!newName.trim() || newName === char?.name) {
         setRenamingId(null);
         return;
       }
-      renameMutation.mutate({ characterId: charId, newDisplayName: newName });
+      renameMutation.mutate({ characterId: itemId, newDisplayName: newName });
     }
   };
 
-  const handleDelete = (charId, isNPC = false) => {
+  const handleDelete = (itemId, isNPC = false) => {
     if (isNPC) {
       if (window.confirm('Remove this NPC from the world?')) {
-        // Find the NPC in the characters' fictional_relationships and remove it
-        const npcToDelete = npcs.find(n => n.source_character_id === charId);
-        if (npcToDelete) {
-          const sourceChar = characters.find(c => c.id === charId);
+        // Parse itemId to get sourceCharId and personName
+        const match = itemId.match(/^npc_(.+)_(.+)$/);
+        if (match) {
+          const [, sourceCharId, personName] = match;
+          const sourceChar = characters.find(c => c.id === sourceCharId);
           if (sourceChar) {
             const updated = (sourceChar.fictional_relationships || []).filter(
-              r => r.person_name !== npcToDelete.person_name
+              r => r.person_name !== personName
             );
-            base44.entities.Character.update(charId, { fictional_relationships: updated })
+            base44.entities.Character.update(sourceCharId, { fictional_relationships: updated })
               .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
               .catch(() => {});
           }
@@ -124,7 +129,7 @@ export default function CharacterManager() {
       }
     } else {
       if (window.confirm('Soft delete this character? All history is preserved and recoverable.')) {
-        deleteMutation.mutate({ characterId: charId });
+        deleteMutation.mutate({ characterId: itemId });
       }
     }
   };
@@ -142,28 +147,34 @@ export default function CharacterManager() {
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
     const selected = Array.from(selectedForMerge);
-    const hasUser = allManageableItems.some(item => item.type === 'user' && selected.includes(item.data.id || 'user'));
+    const hasUser = selected.includes('user');
     
     if (hasUser) {
-      // Merging with user: delete NPC duplicates, preserve their relationships
-      const npcToDelete = npcs.find(npc => selected.includes(npc.source_character_id) && npc.source_character_id !== (currentUser?.id || 'user'));
-      if (npcToDelete) {
-        const sourceChar = characters.find(c => c.id === npcToDelete.source_character_id);
-        if (sourceChar) {
-          const updated = (sourceChar.fictional_relationships || []).filter(
-            r => r.person_name !== npcToDelete.person_name
-          );
-          base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated })
-            .then(() => {
-              queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-              setSelectedForMerge(new Set());
-              setMergeMode(false);
-            })
-            .catch(() => {});
+      // Merging with user: delete NPC duplicates
+      const npcIds = selected.filter(id => id.startsWith('npc_'));
+      npcIds.forEach(npcId => {
+        const match = npcId.match(/^npc_(.+)_(.+)$/);
+        if (match) {
+          const [, sourceCharId, personName] = match;
+          const sourceChar = characters.find(c => c.id === sourceCharId);
+          if (sourceChar) {
+            const updated = (sourceChar.fictional_relationships || []).filter(
+              r => r.person_name !== personName
+            );
+            base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated })
+              .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
+              .catch(() => {});
+          }
         }
-      }
+      });
+      setSelectedForMerge(new Set());
+      setMergeMode(false);
     } else {
-      mergeMutation.mutate({ characterIds: selected });
+      // Merge active characters only
+      const charIds = selected.filter(id => !id.startsWith('npc_'));
+      if (charIds.length >= 2) {
+        mergeMutation.mutate({ characterIds: charIds });
+      }
     }
   };
 
@@ -199,7 +210,8 @@ export default function CharacterManager() {
             const isNPC = item.type === 'npc';
             const isUser = item.type === 'user';
             const itemData = item.data;
-            const itemId = isUser ? (itemData.id || 'user') : (isNPC ? itemData.source_character_id : itemData.id);
+            // Create truly unique IDs: user prefix, character ID for active, or source_character_id::person_name for NPCs
+            const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}` : itemData.id);
             const itemName = isUser ? itemData.full_name : (isNPC ? itemData.person_name : itemData.name);
             
             return (
