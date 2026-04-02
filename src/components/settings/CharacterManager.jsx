@@ -27,10 +27,15 @@ export default function CharacterManager() {
     enabled: !!currentUser?.email,
   });
 
-  // All items from unified roster (characters + NPCs)
+  // All items from unified roster (user + characters + family + world people)
   const allManageableItems = roster
-    .filter(e => e.entity_type === 'character' || e.entity_type === 'user')
-    .map(c => ({ type: c.is_user ? 'user' : 'active', data: c }));
+    .filter(e => e.entity_type !== undefined)
+    .map(c => {
+      if (c.is_user) return { type: 'user', data: c };
+      if (c.is_family) return { type: 'family', data: c };
+      if (c.is_world_person) return { type: 'world_person', data: c };
+      return { type: 'character', data: c };
+    });
 
   const renameMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('renameCharacter', data),
@@ -275,7 +280,7 @@ export default function CharacterManager() {
           <p className="text-xs text-muted-foreground text-center py-6">No characters or NPCs</p>
         ) : (
           allManageableItems.map((item) => {
-            const isNPC = item.type === 'npc';
+            const isNPC = item.type === 'world_person' || item.type === 'family';
             const isUser = item.type === 'user';
             const itemData = item.data;
             // Create truly unique IDs: user prefix, character ID for active, or source_character_id::person_name for NPCs
