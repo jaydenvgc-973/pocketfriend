@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from "react";
+import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
@@ -95,6 +96,7 @@ export default function CharacterProfile() {
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [promotingNPC, setPromotingNPC] = useState(null); // { rel, sourceCharacter }
+  const [lightboxSrc, setLightboxSrc] = useState(null);
   
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
@@ -234,9 +236,13 @@ export default function CharacterProfile() {
       />
 
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
+        <ImageLightbox src={lightboxSrc} alt={character.name} onClose={() => setLightboxSrc(null)} />
+
         {/* Avatar and Basic Info */}
         <div className="flex flex-col items-center gap-4">
-          <CharacterAvatar character={character} size="xl" />
+          <button onClick={() => character.avatar_url && setLightboxSrc(character.avatar_url)} className={character.avatar_url ? "cursor-pointer" : "cursor-default"}>
+            <CharacterAvatar character={character} size="xl" />
+          </button>
           <div className="text-center">
             <h1 className="text-2xl font-semibold text-foreground">{character.name}</h1>
             <p className="text-sm text-muted-foreground mt-1">

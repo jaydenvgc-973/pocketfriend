@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn } from "lucide-react";
+import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
@@ -20,70 +21,84 @@ const CATEGORY_EMOJIS = {
 // Categories that serve food/drinks
 const FOOD_VENUE_CATEGORIES = ["food_drink", "social", "home"];
 
-function getLocationActions(category, recentChat = "") {
-  const chat = recentChat.toLowerCase();
-  const isFood = FOOD_VENUE_CATEGORIES.includes(category);
+// Actions where the image MUST update to reflect the action
+const ACTION_IMAGE_PROMPTS = {
+  sit:         (loc) => `People sitting comfortably on the couch or chairs in a ${loc} setting, relaxed posture, photorealistic`,
+  relax:       (loc) => `People relaxing casually in a ${loc}, laid-back atmosphere, photorealistic`,
+  eat:         (loc) => `Homemade meal on a table in a cozy home kitchen, food clearly visible, photorealistic`,
+  drink:       (loc) => `Person holding a refreshing drink in a glass in a home kitchen, close-up, photorealistic`,
+  order_takeout: () => `Takeout food containers being opened on a coffee table, cozy home setting, photorealistic`,
+  lay_down:    (loc) => `Person lying down relaxing on a couch or bed in a ${loc}, comfortable, photorealistic`,
+  dance:       ()    => `Two people dancing together on a nightclub dance floor, energetic, bokeh lights, photorealistic`,
+  buy_round:   ()    => `Glasses of beer and cocktails being held up for a toast at a bar counter, bokeh lights, photorealistic`,
+  flirt:       (loc) => `Two people laughing and leaning toward each other in a ${loc}, flirty chemistry, photorealistic`,
+  argue:       (loc) => `Tense confrontational body language between two people at a ${loc}, dramatic, photorealistic`,
+  workout:     ()    => `Two people working out together with gym equipment, athletic energy, photorealistic`,
+  spot:        ()    => `Person spotting someone on the bench press at the gym, gym setting, photorealistic`,
+  challenge:   ()    => `Friendly fitness challenge at the gym, competitive energy, photorealistic`,
+  order:       (loc) => `Beautifully plated restaurant meal arriving at a table, warm lighting, photorealistic`,
+  drinks:      (loc) => `Colorful cocktails or drinks on a restaurant table, ${loc} setting, photorealistic`,
+  check:       ()    => `Person paying the bill at a restaurant table, relaxed end-of-meal, photorealistic`,
+  walk:        ()    => `Two people walking together outdoors, relaxed stroll, natural surroundings, photorealistic`,
+  sit_outside: ()    => `Two people sitting outside together on a bench or steps, enjoying the fresh air, photorealistic`,
+  buy:         (loc) => `Person completing a purchase at a checkout counter, ${loc} setting, photorealistic`,
+  checkout:    ()    => `Person checking out at a grocery store register, photorealistic`,
+  study:       ()    => `Two people studying together at a desk with books and notes spread out, focused, photorealistic`,
+};
 
-  // Context-aware overrides — only for food venues
-  if (isFood && (chat.includes("hungry") || chat.includes("eat") || chat.includes("food"))) {
-    return [
-      { id: "order_food", label: "Order food", emoji: "🍔", cost: 15, type: "positive", imagePrompt: "close-up of delicious food on a plate, restaurant setting, photorealistic" },
-      { id: "buy_drink", label: "Buy a drink", emoji: "🥤", cost: 8, type: "positive", imagePrompt: "refreshing drink in a glass, ice, photorealistic close-up" },
-      { id: "talk", label: "Keep talking", emoji: "💬", cost: 0, type: "neutral" },
-      { id: "ask", label: "Ask something", emoji: "🤔", cost: 0, type: "neutral" },
-    ];
-  }
-
+function getLocationActions(category, isHome = false) {
   const base = {
     home: [
-      { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral", scenePrompt: "sitting comfortably on the couch" },
-      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "positive", imagePrompt: "homemade meal on a kitchen table, cozy, photorealistic" },
-      { id: "drink", label: "Get a drink", emoji: "🥤", cost: 0, type: "positive", imagePrompt: "refreshing drink in a glass, cozy home kitchen, photorealistic" },
-      { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive", scenePrompt: "relaxing casually, laid-back atmosphere" },
-      { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "having a conversation, sitting together" },
-      { id: "order_takeout", label: "Order takeout", emoji: "🥡", cost: 20, type: "positive", imagePrompt: "takeout food containers on a coffee table, cozy home setting, photorealistic" },
+      { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral" },
+      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "positive" },
+      { id: "drink", label: "Get a drink", emoji: "🥤", cost: 0, type: "positive" },
+      { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive" },
+      { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "order_takeout", label: "Order takeout", emoji: "🥡", cost: 20, type: "positive", payer: "user" },
     ],
     social: [
-      { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive", imagePrompt: "glasses of beer and cocktails on a bar counter, bokeh bar lights, photorealistic" },
-      { id: "flirt", label: "Flirt a little", emoji: "😏", cost: 0, type: "positive", scenePrompt: "laughing and having a flirty fun moment at the bar" },
-      { id: "dance", label: "Hit the floor", emoji: "🕺", cost: 0, type: "positive", scenePrompt: "dancing together on a crowded dance floor, nightlife energy" },
-      { id: "argue", label: "Start drama", emoji: "🔥", cost: 0, type: "negative", scenePrompt: "tense confrontational moment, dramatic body language" },
+      { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive", payer: "user" },
+      { id: "char_buy_round", label: "Let them buy", emoji: "🎁", cost: 25, type: "positive", payer: "character" },
+      { id: "flirt", label: "Flirt a little", emoji: "😏", cost: 0, type: "positive" },
+      { id: "dance", label: "Hit the floor", emoji: "🕺", cost: 0, type: "positive" },
+      { id: "argue", label: "Start drama", emoji: "🔥", cost: 0, type: "negative" },
     ],
     gym: [
-      { id: "workout", label: "Work out together", emoji: "💪", cost: 0, type: "positive", scenePrompt: "working out together, gym equipment, athletic energy" },
-      { id: "spot", label: "Spot them", emoji: "🏋️", cost: 0, type: "positive", scenePrompt: "spotting someone on the bench press at the gym" },
-      { id: "challenge", label: "Challenge them", emoji: "🏆", cost: 0, type: "positive", scenePrompt: "friendly fitness challenge at the gym, competitive energy" },
-      { id: "observe", label: "Watch quietly", emoji: "👀", cost: 0, type: "neutral", scenePrompt: "watching from the sidelines at the gym, observant" },
+      { id: "workout", label: "Work out together", emoji: "💪", cost: 0, type: "positive" },
+      { id: "spot", label: "Spot them", emoji: "🏋️", cost: 0, type: "positive" },
+      { id: "challenge", label: "Challenge them", emoji: "🏆", cost: 0, type: "positive" },
+      { id: "observe", label: "Watch quietly", emoji: "👀", cost: 0, type: "neutral" },
     ],
     food_drink: [
-      { id: "order", label: "Order food", emoji: "🍔", cost: 18, type: "positive", imagePrompt: "beautifully plated restaurant meal, warm lighting, photorealistic" },
-      { id: "drinks", label: "Get drinks", emoji: "🍹", cost: 12, type: "positive", imagePrompt: "colorful cocktails or drinks on a restaurant table, photorealistic" },
-      { id: "talk", label: "Good conversation", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "having a deep enjoyable conversation over a meal at a restaurant" },
-      { id: "check", label: "Pick up the check", emoji: "💳", cost: 40, type: "positive", scenePrompt: "paying the bill at a restaurant table, relaxed end-of-meal vibe" },
+      { id: "order", label: "Order food", emoji: "🍔", cost: 18, type: "positive", payer: "user" },
+      { id: "drinks", label: "Get drinks", emoji: "🍹", cost: 12, type: "positive", payer: "user" },
+      { id: "char_pays", label: "Let them cover it", emoji: "💳", cost: 30, type: "positive", payer: "character" },
+      { id: "talk", label: "Good conversation", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "check", label: "Pick up the check", emoji: "🧾", cost: 40, type: "positive", payer: "user" },
     ],
     outdoor: [
-      { id: "walk", label: "Go for a walk", emoji: "🚶", cost: 0, type: "positive", scenePrompt: "walking together outdoors, relaxed stroll, natural surroundings" },
-      { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "positive", scenePrompt: "sitting outside together, enjoying the fresh air and scenery" },
-      { id: "photo", label: "Take a picture", emoji: "📸", cost: 0, type: "positive", scenePrompt: "posing together for a casual outdoor photo, smiling" },
-      { id: "talk", label: "Talk it out", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "sitting together outside having a heartfelt conversation" },
+      { id: "walk", label: "Go for a walk", emoji: "🚶", cost: 0, type: "positive" },
+      { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "positive" },
+      { id: "photo", label: "Take a picture", emoji: "📸", cost: 0, type: "positive" },
+      { id: "talk", label: "Talk it out", emoji: "💬", cost: 0, type: "neutral" },
     ],
     business: [
-      { id: "browse", label: "Browse items", emoji: "🛍️", cost: 0, type: "neutral", scenePrompt: "browsing through items in a store together" },
-      { id: "try_on", label: "Try something on", emoji: "👗", cost: 0, type: "positive", scenePrompt: "trying on clothes in a fitting area, fun shopping moment" },
-      { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "neutral", scenePrompt: "asking a store associate for help" },
-      { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "positive", scenePrompt: "completing a purchase at the checkout counter" },
+      { id: "browse", label: "Browse items", emoji: "🛍️", cost: 0, type: "neutral" },
+      { id: "try_on", label: "Try something on", emoji: "👗", cost: 0, type: "positive" },
+      { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "neutral" },
+      { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "positive", payer: "user" },
     ],
     grocery: [
-      { id: "shop", label: "Grab items", emoji: "🛒", cost: 0, type: "neutral", scenePrompt: "pushing a cart through grocery store aisles together" },
-      { id: "checkout", label: "Check out", emoji: "💳", cost: 60, type: "positive", scenePrompt: "checking out at the grocery store register" },
-      { id: "ask_aisle", label: "Ask where something is", emoji: "🙋", cost: 0, type: "neutral", scenePrompt: "looking around the grocery store aisles" },
-      { id: "talk", label: "Small talk", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "chatting casually while shopping at the grocery store" },
+      { id: "shop", label: "Grab items", emoji: "🛒", cost: 0, type: "neutral" },
+      { id: "checkout", label: "Check out", emoji: "💳", cost: 60, type: "positive", payer: "user" },
+      { id: "ask_aisle", label: "Ask where something is", emoji: "🙋", cost: 0, type: "neutral" },
+      { id: "talk", label: "Small talk", emoji: "💬", cost: 0, type: "neutral" },
     ],
     school: [
-      { id: "study", label: "Study together", emoji: "📚", cost: 0, type: "positive", scenePrompt: "studying together at a desk with books and notes spread out" },
-      { id: "ask_question", label: "Ask a question", emoji: "✋", cost: 0, type: "neutral", scenePrompt: "raising a hand or leaning in to ask a question in class" },
-      { id: "pass_note", label: "Pass a note", emoji: "📝", cost: 0, type: "positive", scenePrompt: "passing a note secretly in class, sneaky and playful" },
-      { id: "chat", label: "Chat between class", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "chatting in the hallway or between classes at school" },
+      { id: "study", label: "Study together", emoji: "📚", cost: 0, type: "positive" },
+      { id: "ask_question", label: "Ask a question", emoji: "✋", cost: 0, type: "neutral" },
+      { id: "pass_note", label: "Pass a note", emoji: "📝", cost: 0, type: "positive" },
+      { id: "chat", label: "Chat between class", emoji: "💬", cost: 0, type: "neutral" },
     ],
   };
 
@@ -114,6 +129,7 @@ export default function Scene() {
   const [actionCooldown, setActionCooldown] = useState(false);
   const [selectedNpcIds, setSelectedNpcIds] = useState(null);
   const [showNpcDropdown, setShowNpcDropdown] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
 
@@ -329,7 +345,7 @@ export default function Scene() {
   // Initialize actions
   useEffect(() => {
     if (location) {
-      setActions(getLocationActions(location.category));
+      setActions(getLocationActions(location.category, isHomeLocation));
     }
   }, [location?.id]);
 
@@ -342,11 +358,10 @@ export default function Scene() {
   useEffect(() => {
     if (!location) return;
     const interval = setInterval(() => {
-      const recentText = messages.slice(-3).map(m => m.content).join(" ");
-      setActions(getLocationActions(location.category, recentText));
+      setActions(getLocationActions(location.category, isHomeLocation));
     }, 180000);
     return () => clearInterval(interval);
-  }, [location?.id, messages.length]);
+  }, [location?.id]);
 
   // Generate scene image on load or when zone changes (sceneImage set to null)
   useEffect(() => {
@@ -355,15 +370,27 @@ export default function Scene() {
     }
   }, [location?.id, sceneImage]);
 
-  const generateSceneImage = async () => {
+  const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
     setIsGeneratingImage(true);
     const hour = new Date().getHours();
     const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
 
+    // If an action triggered this, use the action's specific prompt
+    if (actionOverridePrompt) {
+      try {
+        const result = await base44.integrations.Core.GenerateImage({
+          prompt: `${actionOverridePrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
+          existing_image_urls: firstImage ? [firstImage] : undefined,
+        });
+        setSceneImage(result.url);
+      } catch { setSceneImage(firstImage); }
+      finally { setIsGeneratingImage(false); }
+      return;
+    }
+
     let prompt;
     if (isHomeLocation) {
-      // Only show: residents who are home + characters the user brought. If alone, show just the user/space.
       const homeKnownPeople = [
         ...broughtCharacters,
         ...homeResidentsPresent,
@@ -373,11 +400,26 @@ export default function Scene() {
       if (homeKnownPeople.length > 0) {
         peopleDesc = `Only these specific people are present: ${homeKnownPeople.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`;
       } else {
-        // User is alone — show just the space or the user in the space
         peopleDesc = `A person relaxing alone in the space. No other people visible — no strangers, no background figures.`;
       }
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
       prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. IMPORTANT: Do NOT generate any random or unrecognized people in this image.`;
+
+      // Gather reference images: location + resident avatars + family member photos for face grounding
+      const residentAvatars = homeKnownPeople.map(c => c.avatar_url).filter(Boolean);
+      const familyFaceRefs = homeKnownPeople.flatMap(c =>
+        (c.family_members || []).filter(fm => fm.photo_url).map(fm => fm.photo_url)
+      );
+      const refs = [...(firstImage ? [firstImage] : []), ...residentAvatars, ...familyFaceRefs].slice(0, 4);
+      try {
+        const result = await base44.integrations.Core.GenerateImage({
+          prompt,
+          existing_image_urls: refs.length > 0 ? refs : undefined,
+        });
+        setSceneImage(result.url);
+      } catch { setSceneImage(firstImage); }
+      finally { setIsGeneratingImage(false); }
+      return;
     } else {
       const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
       const charNames = sceneCharacters.map(c => c.name).join(", ");
@@ -565,20 +607,44 @@ Return JSON:
     setActionCooldown(true);
     setTimeout(() => setActionCooldown(false), 3000);
 
-    // Deduct cost from user balance
-    if (action.cost > 0) {
-      const newBalance = Math.max(0, (settings.user_balance ?? 6000) - action.cost);
-      if (settings.id) {
-        base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
-        queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+    const payer = action.payer || "user"; // "user" | "character"
+    const cost = action.cost || 0;
+
+    if (cost > 0) {
+      if (payer === "user") {
+        const newBalance = Math.max(0, (settings.user_balance ?? 6000) - cost);
+        if (settings.id) {
+          base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
+          queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+        }
+      } else if (payer === "character") {
+        // Deduct from first brought character's financial record
+        const payingChar = broughtCharacters[0];
+        if (payingChar) {
+          base44.functions.invoke("calculateCharacterExpenses", {
+            characterId: payingChar.id,
+            expenseAmount: cost,
+            expenseLabel: action.label,
+          }).catch(() => {});
+        }
       }
     }
 
-    await sendMessage(`[${action.emoji} ${action.label}${action.cost > 0 ? ` — $${action.cost}` : ""}]`, true, action.imagePrompt || null, action.scenePrompt || null);
+    // Determine if this action should trigger a scene image update
+    const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
+    const imagePrompt = actionImageFn ? actionImageFn(location?.name || location?.category) : null;
+    if (imagePrompt) {
+      generateSceneImage(imagePrompt);
+    }
 
-    // Update actions to reflect progression
+    const payerNote = payer === "character" && broughtCharacters[0] && cost > 0
+      ? ` (${broughtCharacters[0].name} pays)`
+      : cost > 0 ? ` — $${cost}` : "";
+
+    await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null);
+
     setTimeout(() => {
-      setActions(getLocationActions(location?.category, action.label));
+      setActions(getLocationActions(location?.category, isHomeLocation));
     }, 1000);
   };
 
@@ -703,6 +769,8 @@ Return JSON:
         </button>
       </div>
 
+      <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
+
       {/* Scene image */}
       <div className="relative h-40 flex-shrink-0 overflow-hidden" style={{ zIndex: 0 }}>
         {isGeneratingImage ? (
@@ -713,7 +781,12 @@ Return JSON:
             </div>
           </div>
         ) : sceneImage ? (
-          <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" />
+          <button onClick={() => setLightboxSrc(sceneImage)} className="w-full h-full block group relative">
+            <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+              <ZoomIn className="w-6 h-6 text-white drop-shadow" />
+            </div>
+          </button>
         ) : (
           <div className="w-full h-full bg-secondary flex items-center justify-center">
             <span className="text-5xl">{CATEGORY_EMOJIS[location.category]}</span>
@@ -760,7 +833,7 @@ Return JSON:
         )}
 
         <button
-          onClick={generateSceneImage}
+          onClick={() => generateSceneImage()}
           disabled={isGeneratingImage}
           className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 text-white hover:bg-black/60 transition-colors"
           title="Refresh scene image"
@@ -899,7 +972,11 @@ Return JSON:
             >
               <span className="text-base leading-none">{action.emoji}</span>
               <span className="text-[9px] text-foreground font-medium leading-tight">{action.label}</span>
-              {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}
+              {action.cost > 0 && (
+                <span className="text-[9px] text-green-500">
+                  {action.payer === "character" ? "they pay" : `$${action.cost}`}
+                </span>
+              )}
             </button>
           ))}
         </div>

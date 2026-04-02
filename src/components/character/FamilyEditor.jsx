@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Trash2, Camera, Loader2 } from "lucide-react";
+import { Plus, Trash2, Camera, Loader2, ZoomIn } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import ImageLightbox from "@/components/ui/ImageLightbox";
 
 /**
  * Calculate the current age of a family member.
@@ -89,6 +90,7 @@ export default function FamilyEditor({ character, readOnly = false }) {
   const [members, setMembers] = useState(character.family_members || []);
   const [saving, setSaving] = useState(false);
   const [generatingIdx, setGeneratingIdx] = useState(null);
+  const [lightboxSrc, setLightboxSrc] = useState(null);
 
   // Keep local state in sync if the character prop changes (e.g. after re-fetch)
   useEffect(() => {
@@ -114,18 +116,59 @@ export default function FamilyEditor({ character, readOnly = false }) {
     if (!member.name?.trim()) return;
     setGeneratingIdx(idx);
 
+    // Collect parent reference images for face blending
+    // Look for characters who are parents of THIS character
+    const parentRefs = [];
+    // Use the character's own avatar as a reference for family resemblance
+    if (character.avatar_url) parentRefs.push(character.avatar_url);
+    // Also use any reference images defined on the character
+    (character.reference_image_urls || []).slice(0, 2).forEach(u => {
+      if (!parentRefs.includes(u)) parentRefs.push(u);
+    });
+
     try {
-      const prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}. 
-${character.ethnicities?.length > 0 ? `Ethnic background similar to: ${character.ethnicities.join(", ")}.` : ""}
-${character.gender ? `${character.name} is ${character.gender}, so reflect natural family resemblance where appropriate.` : ""}
+      const isChild = ["daughter", "son"].includes(member.relationship_type);
+      const isParent = ["mother", "father"].includes(member.relationship_type);
+      const isSibling = ["sister", "brother", "half-sister", "half-brother"].includes(member.relationship_type);
+
+      let resemblanceNote = "";
+      if (isChild) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. Blend facial features to show clear family resemblance with the parent.`;
+      else if (isParent) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look like they could be the parent — similar bone structure, eyes, coloring.`;
+      else if (isSibling) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look clearly related — similar features, coloring, and bone structure.`;
+
+      const prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}.
+${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
+${resemblanceNote}
 Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic.`;
 
-      const result = await base44.integrations.Core.GenerateImage({ prompt });
+      const result = await base44.integrations.Core.GenerateImage({
+        prompt,
+        existing_image_urls: parentRefs.length > 0 ? parentRefs : undefined,
+      });
       if (result?.url) {
-        updateMember(idx, "photo_url", result.url);
+        // Update local state
+        const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: result.url } : m);
+        setMembers(updatedMembers);
+
+        // Auto-save immediately so the photo persists
+        const valid = updatedMembers.filter(m => m.name?.trim());
+        const updatedRelationships = await syncFamilyToRelationships(character, valid);
+        const updated = { ...character, family_members: valid };
+        const systemPrompt = buildSystemPrompt(updated);
+        let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
+        if (systemPrompt && systemPrompt.length > 5000) {
+          const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
+          const { file_url } = await base44.integrations.Core.UploadFile({ file });
+          updateData.system_prompt_url = file_url;
+        } else {
+          updateData.system_prompt = systemPrompt;
+        }
+        await base44.entities.Character.update(character.id, updateData);
+        queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+        queryClient.invalidateQueries({ queryKey: ["characters"] });
       }
     } catch {
-      // silently fail — photo generation is optional
+      // silently fail
     }
     setGeneratingIdx(null);
   };
@@ -164,6 +207,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+      <ImageLightbox src={lightboxSrc} alt="Family member" onClose={() => setLightboxSrc(null)} />
       <div className="flex items-center justify-between">
         <p className="text-xs text-muted-foreground uppercase tracking-wider">Family</p>
         {!readOnly && (
@@ -188,7 +232,12 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
               /* Read-only view with photo */
               <div className="flex items-center gap-3">
                 {member.photo_url ? (
-                  <img src={member.photo_url} alt={member.name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                  <button onClick={() => setLightboxSrc(member.photo_url)} className="relative flex-shrink-0 group">
+                    <img src={member.photo_url} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
+                    <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      <ZoomIn className="w-4 h-4 text-white" />
+                    </div>
+                  </button>
                 ) : (
                   <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
                     <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
@@ -212,7 +261,12 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   {/* Photo thumbnail + generate button */}
                   <div className="relative flex-shrink-0">
                     {member.photo_url ? (
-                      <img src={member.photo_url} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
+                      <button onClick={() => setLightboxSrc(member.photo_url)} className="block group">
+                        <img src={member.photo_url} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
+                        <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <ZoomIn className="w-3 h-3 text-white" />
+                        </div>
+                      </button>
                     ) : (
                       <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center">
                         <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
