@@ -283,8 +283,8 @@ export default function CharacterManager() {
             const isNPC = item.type === 'world_person' || item.type === 'family';
             const isUser = item.type === 'user';
             const itemData = item.data;
-            // Create truly unique IDs: user prefix, character ID for active, or source_character_id::person_name for NPCs
-            const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}` : itemData.id);
+            // Create truly unique IDs: user prefix, character ID for active, or source_character_id_person_name_index for NPCs
+            const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}_${Math.random()}` : itemData.id);
             const itemName = isUser ? itemData.full_name : itemData.name;
             const isSelected = selectedForMerge.has(itemId);
             
