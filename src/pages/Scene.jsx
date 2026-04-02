@@ -1,444 +1,503 @@
 import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowLeft, Send, RefreshCw, Sparkles, Camera, DollarSign, X, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
+import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import { filterDashes } from "@/lib/dashFilter";
 
-const ACTION_COSTS = {
-  "Buy a drink": 8,
-  "Order food": 15,
-  "Buy a round": 25,
-  "Pay entry fee": 20,
+const CATEGORY_EMOJIS = {
+  home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
+  food_drink: "🍽️", outdoor: "🌳", social: "🍸", medical: "🏨",
+  bar: "🍸", generic: "📍",
 };
+
+function getLocationActions(category, recentChat = "") {
+  const chat = recentChat.toLowerCase();
+
+  // Context-aware overrides
+  if (chat.includes("hungry") || chat.includes("eat") || chat.includes("food")) {
+    return [
+      { id: "order_food", label: "Order food", emoji: "🍔", cost: 15, type: "positive" },
+      { id: "buy_drink", label: "Buy a drink", emoji: "🥤", cost: 8, type: "positive" },
+      { id: "talk", label: "Keep talking", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "ask", label: "Ask something", emoji: "🤔", cost: 0, type: "neutral" },
+    ];
+  }
+
+  const base = {
+    home: [
+      { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral" },
+      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 10, type: "positive" },
+      { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive" },
+      { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral" },
+    ],
+    social: [
+      { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive" },
+      { id: "flirt", label: "Flirt a little", emoji: "😏", cost: 0, type: "positive" },
+      { id: "dance", label: "Hit the floor", emoji: "🕺", cost: 0, type: "positive" },
+      { id: "argue", label: "Start drama", emoji: "🔥", cost: 0, type: "negative" },
+    ],
+    gym: [
+      { id: "workout", label: "Work out together", emoji: "💪", cost: 0, type: "positive" },
+      { id: "spot", label: "Spot them", emoji: "🏋️", cost: 0, type: "positive" },
+      { id: "challenge", label: "Challenge them", emoji: "🏆", cost: 0, type: "positive" },
+      { id: "observe", label: "Watch quietly", emoji: "👀", cost: 0, type: "neutral" },
+    ],
+    food_drink: [
+      { id: "order", label: "Order food", emoji: "🍔", cost: 18, type: "positive" },
+      { id: "drinks", label: "Get drinks", emoji: "🍹", cost: 12, type: "positive" },
+      { id: "talk", label: "Good conversation", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "check", label: "Pick up the check", emoji: "💳", cost: 40, type: "positive" },
+    ],
+    outdoor: [
+      { id: "walk", label: "Go for a walk", emoji: "🚶", cost: 0, type: "positive" },
+      { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "positive" },
+      { id: "photo", label: "Take a picture", emoji: "📸", cost: 0, type: "positive" },
+      { id: "talk", label: "Talk it out", emoji: "💬", cost: 0, type: "neutral" },
+    ],
+  };
+
+  const defaults = [
+    { id: "talk", label: "Talk", emoji: "💬", cost: 0, type: "neutral" },
+    { id: "observe", label: "Look around", emoji: "👀", cost: 0, type: "neutral" },
+    { id: "joke", label: "Crack a joke", emoji: "😂", cost: 0, type: "positive" },
+    { id: "ask", label: "Ask something", emoji: "🤔", cost: 0, type: "neutral" },
+  ];
+
+  return base[category] || defaults;
+}
 
 export default function Scene() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const urlParams = new URLSearchParams(window.location.search);
   const locationId = urlParams.get("locationId");
-  const characterIdStr = urlParams.get("characterIds") || "";
-  const characterIds = characterIdStr ? characterIdStr.split(",").filter(id => id && id !== "__user__") : [];
+  const characterIds = (urlParams.get("characterIds") || "").split(",").filter(Boolean);
 
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState("");
-  const [isSending, setIsSending] = useState(false);
-  const [actions, setActions] = useState([]);
-  const [actionsLoading, setActionsLoading] = useState(false);
-  const [actionRotateTimer, setActionRotateTimer] = useState(null);
+  const [inputText, setInputText] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
   const [sceneImage, setSceneImage] = useState(null);
-  const [isGeneratingImage, setIsGeneratingImage] = useState(true);
-  const [balance, setBalance] = useState(null);
-  const [costPopup, setCostPopup] = useState(null); // { action, cost }
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+  const [actions, setActions] = useState([]);
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [actionCooldown, setActionCooldown] = useState(false);
   const bottomRef = useRef(null);
-  const inputRef = useRef(null);
 
-  const { data: currentUser } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
-  const { data: settings = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
-  const userSettings = settings[0] || {};
+  const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
+  const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
+  const settings = settingsList[0] || {};
+  const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
-  const { data: location } = useQuery({
-    queryKey: ["location", locationId],
+  const { data: locationsData = [] } = useQuery({
+    queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
-      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
-      return res?.data?.locations?.find(l => l.id === locationId) || null;
-    },
-    enabled: !!locationId,
-  });
-
-  const { data: characters = [] } = useQuery({
-    queryKey: ["sceneCharacters", characterIds.join(",")],
-    queryFn: async () => {
-      if (!characterIds.length) return [];
-      const all = await base44.entities.Character.filter({ created_by: currentUser.email, status: "active" });
-      return all.filter(c => characterIds.includes(c.id));
+      const res = await base44.functions.invoke("fetchAllLocationsForUser", {});
+      return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
   });
 
-  const userDisplayName = userSettings.fictional_world_name || currentUser?.full_name || "You";
-  const userAvatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
-  const includedUser = characterIdStr.includes("__user__");
+  const { data: characters = [] } = useQuery({
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }),
+    enabled: !!currentUser?.email,
+  });
 
-  // Load balance
+  const location = locationsData.find(l => l.id === locationId);
+  const sceneCharacters = characters.filter(c => characterIds.includes(c.id));
+
+  const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
+    || location?.image_urls?.[0]
+    || null;
+
+  // Initialize actions
   useEffect(() => {
-    if (userSettings.id) setBalance(userSettings.user_balance ?? 6000);
-  }, [userSettings.id, userSettings.user_balance]);
+    if (location) {
+      setActions(getLocationActions(location.category));
+    }
+  }, [location?.id]);
 
-  // Generate scene image on mount
+  // Auto-scroll
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  // Rotate actions every 15s
   useEffect(() => {
     if (!location) return;
-    const firstImage = location.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0] || null;
-    if (firstImage) {
-      setSceneImage(firstImage);
-      setIsGeneratingImage(false);
-    } else {
+    const interval = setInterval(() => {
+      const recentText = messages.slice(-3).map(m => m.content).join(" ");
+      setActions(getLocationActions(location.category, recentText));
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [location?.id, messages.length]);
+
+  // Generate scene image on load
+  useEffect(() => {
+    if (location && !sceneImage && !isGeneratingImage) {
       generateSceneImage();
     }
   }, [location?.id]);
 
   const generateSceneImage = async () => {
-    if (!location) return;
+    if (!location || isGeneratingImage) return;
     setIsGeneratingImage(true);
-    const charNames = characters.map(c => c.name).join(", ");
-    const prompt = `A realistic scene at ${location.name}. ${location.description || ""} ${charNames ? `Characters present: ${charNames}.` : ""} Cinematic, natural lighting, photorealistic.`;
-    const res = await base44.integrations.Core.GenerateImage({ prompt });
-    setSceneImage(res?.url || null);
-    setIsGeneratingImage(false);
-  };
-
-  // Generate contextual actions
-  const generateActions = async (recentMsg = "") => {
-    if (!location || characters.length === 0) {
-      setActions(getDefaultActions(location?.category));
-      return;
-    }
-    setActionsLoading(true);
-    const charNames = characters.map(c => c.name).join(", ");
-    const result = await base44.integrations.Core.InvokeLLM({
-      prompt: `You are generating in-scene action options for a social simulation.
-
-Location: ${location.name} (category: ${location.category})
-People present: ${userDisplayName}${charNames ? `, ${charNames}` : ""}
-Recent conversation: "${recentMsg || "just arrived"}"
-
-Generate EXACTLY 4 short, contextual action options the user could take right now.
-Rules:
-- Each action is 2-5 words max
-- Mix of positive, neutral, and optionally one negative/risky
-- Must fit the location and current context
-- If location has drinks/food, include one purchase option
-- Return ONLY a JSON array of 4 strings
-
-Example: ["Buy a drink", "Talk to ${charNames?.split(",")[0] || "them"}", "Look around", "Order food"]`,
-      response_json_schema: {
-        type: "object",
-        properties: { actions: { type: "array", items: { type: "string" } } }
-      }
-    }).catch(() => null);
-
-    const parsed = result?.actions || getDefaultActions(location?.category);
-    setActions(parsed.slice(0, 4));
-    setActionsLoading(false);
-  };
-
-  const getDefaultActions = (category) => {
-    const defaults = {
-      social: ["Buy a drink", "Start conversation", "Look around", "Find a seat"],
-      food_drink: ["Order food", "Ask for menu", "Look around", "Start conversation"],
-      outdoor: ["Explore the area", "Sit down", "Take photos", "Start conversation"],
-      gym: ["Start workout", "Ask about equipment", "Find a spot", "Stretch"],
-      home: ["Sit down", "Look around", "Start conversation", "Relax"],
-    };
-    return defaults[category] || ["Start conversation", "Look around", "Find a spot", "Explore"];
-  };
-
-  useEffect(() => {
-    if (location && characters.length >= 0) {
-      generateActions();
-    }
-  }, [location?.id, characters.length]);
-
-  // Auto-rotate actions every 15 seconds
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const lastMsg = messages[messages.length - 1]?.content || "";
-      generateActions(lastMsg);
-    }, 15000);
-    return () => clearInterval(timer);
-  }, [messages.length, location?.id]);
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages.length]);
-
-  const handleAction = (action) => {
-    const cost = ACTION_COSTS[action];
-    if (cost) {
-      setCostPopup({ action, cost });
-    } else {
-      sendMessage(action);
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
+    const charNames = sceneCharacters.map(c => c.name).join(", ");
+    const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
+    try {
+      const result = await base44.integrations.Core.GenerateImage({
+        prompt: `Realistic scene at ${location.name}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} present. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`,
+        existing_image_urls: firstImage ? [firstImage] : undefined,
+      });
+      setSceneImage(result.url);
+    } catch {
+      // fallback to location reference image
+      setSceneImage(firstImage);
+    } finally {
+      setIsGeneratingImage(false);
     }
   };
 
-  const confirmAction = async () => {
-    if (!costPopup) return;
-    const { action, cost } = costPopup;
-    setCostPopup(null);
+  const sendMessage = async (text, fromAction = false) => {
+    if (!text.trim() || !location) return;
+    setInputText("");
 
-    // Deduct balance
-    const newBalance = (balance || 0) - cost;
-    setBalance(newBalance);
-    if (userSettings.id) {
-      base44.entities.UserSettings.update(userSettings.id, { user_balance: newBalance }).catch(() => {});
-    }
-    sendMessage(action);
-  };
-
-  const sendMessage = async (text) => {
-    if (!text?.trim() || isSending) return;
-    setInput("");
-    setIsSending(true);
-
-    const userMsg = { id: Date.now() + "_u", role: "user", content: text, sender: userDisplayName };
+    const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
+    setIsTyping(true);
 
-    // Build group chat prompt
-    const charNames = characters.map(c => c.name).join(" and ");
-    const history = [...messages, userMsg].slice(-20).map(m => `${m.sender}: ${m.content}`).join("\n");
+    // Update actions based on new message context
+    setActions(getLocationActions(location.category, text));
 
-    const locationCtx = location?.description ? `You are at ${location.name}. ${location.description}` : `You are at ${location.name}.`;
-    const groupCtx = characters.length > 1
-      ? `There are multiple people here: ${charNames}. Characters can respond to each other, not just the user.`
-      : "";
+    try {
+      const charSummaries = sceneCharacters.map(c =>
+        `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
+      ).join("; ");
 
-    const systemContext = characters.map(c => {
-      const personality = c.personality_summary || "";
-      const mood = c.emotional_state || "calm";
-      return `${c.name}: ${personality} Current mood: ${mood}. Friendship with user: ${c.friendship_level ?? 75}/100.`;
-    }).join("\n");
+      const conversationHistory = messages.slice(-12).map(m =>
+        `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
+      ).join("\n");
 
-    const prompt = `${locationCtx} ${groupCtx}
+      const responses = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are managing a group scene at ${location.name} (${location.category}).
 
-CHARACTER PROFILES:
-${systemContext}
+People present: ${displayName} (the user), ${charSummaries || "no characters"}
 
-CONVERSATION SO FAR:
-${history}
+Recent conversation:
+${conversationHistory}
 
-Now write the next response. Rules:
-- Write from the perspective of ${characters.map(c => c.name).join(" or ")} — one or more can respond
-- Format: "CharacterName: [their reply]" — one line per character speaking
-- Characters can react to each other and the user
-- Keep it casual and realistic — this is a real shared moment
-- If money was spent ("buy a drink", "order food"), acknowledge it naturally
-- 1-3 lines total
-- Do NOT start with your name on a meta level, each line IS labeled
-- ONLY return the dialogue lines, nothing else`;
+${displayName} just said: "${text}"
+${fromAction ? "(This was from a scene action, not typed directly)" : ""}
 
-    const response = await base44.integrations.Core.InvokeLLM({ prompt });
-    const cleaned = typeof response === "string" ? filterDashes(response.trim()) : "";
+Write short, natural responses from EACH character present (${sceneCharacters.map(c => c.name).join(", ") || "no characters"}).
+Characters should react to each other too, not just the user.
+Keep each response 1-2 sentences, texting style, natural and in-character.
 
-    if (cleaned) {
-      // Parse multi-character responses
-      const lines = cleaned.split("\n").filter(l => l.trim());
-      for (const line of lines) {
-        const colonIdx = line.indexOf(":");
-        const sender = colonIdx > 0 ? line.substring(0, colonIdx).trim() : characters[0]?.name || "Character";
-        const content = colonIdx > 0 ? line.substring(colonIdx + 1).trim() : line;
-        if (content) {
-          setMessages(prev => [...prev, { id: Date.now() + "_c_" + Math.random(), role: "character", content, sender }]);
+Return JSON:
+{
+  "responses": [
+    { "character_name": "...", "content": "..." }
+  ]
+}`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            responses: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  character_name: { type: "string" },
+                  content: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+      });
+
+      setIsTyping(false);
+
+      const responseList = responses?.responses || [];
+      for (const resp of responseList) {
+        const char = sceneCharacters.find(c => c.name === resp.character_name);
+        const msg = {
+          id: Date.now().toString() + resp.character_name,
+          sender: "character",
+          senderName: resp.character_name,
+          characterId: char?.id,
+          avatarUrl: char?.avatar_url,
+          content: filterDashes(resp.content),
+          timestamp: new Date().toISOString(),
+        };
+        setMessages(prev => [...prev, msg]);
+
+        // Fire-and-forget: persist to group conversation if character exists
+        if (char) {
+          base44.functions.invoke("extractMemoriesFromTurn", {
+            characterId: char.id,
+            userMessage: text,
+            characterReply: resp.content,
+          }).catch(() => {});
         }
+
+        await new Promise(r => setTimeout(r, 400));
+      }
+
+      if (responseList.length === 0) {
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          sender: "narrative",
+          content: `The atmosphere at ${location.name} feels alive. No one responds right away.`,
+          timestamp: new Date().toISOString(),
+        }]);
+      }
+    } catch {
+      setIsTyping(false);
+    }
+  };
+
+  const handleAction = async (action) => {
+    if (actionCooldown) return;
+    setActionCooldown(true);
+    setTimeout(() => setActionCooldown(false), 3000);
+
+    // Deduct cost from user balance
+    if (action.cost > 0) {
+      const newBalance = Math.max(0, (settings.user_balance ?? 6000) - action.cost);
+      if (settings.id) {
+        base44.entities.UserSettings.update(settings.id, { user_balance: newBalance }).catch(() => {});
+        queryClient.invalidateQueries({ queryKey: ["userSettings"] });
       }
     }
 
-    // Refresh actions based on new context
-    generateActions(text);
+    await sendMessage(`[${action.emoji} ${action.label}${action.cost > 0 ? ` — $${action.cost}` : ""}]`, true);
 
-    // Update relationship levels for each character (fire-and-forget)
-    for (const char of characters) {
-      base44.functions.invoke("updateRelationshipLevels", {
-        characterId: char.id,
-        userMessage: text,
-        characterReply: cleaned || "",
-        recentMessages: messages.slice(-8),
-      }).catch(() => {});
-    }
-
-    setIsSending(false);
+    // Update actions to reflect progression
+    setTimeout(() => {
+      setActions(getLocationActions(location?.category, action.label));
+    }, 1000);
   };
+
+  if (!location) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center space-y-3">
+          <p className="text-sm text-muted-foreground">Location not found</p>
+          <Link to="/travel"><Button variant="outline" size="sm">Back to Travel</Button></Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-background pb-[60px]">
-      {/* HEADER */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl">
-        <button onClick={() => navigate(-1)} className="text-muted-foreground hover:text-foreground">
+    <div className="h-screen flex flex-col bg-background">
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0">
+        <Link to="/travel" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
-        </button>
+        </Link>
         <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-foreground truncate">{location?.name || "Scene"}</h2>
-          <p className="text-xs text-muted-foreground">
-            {[...(includedUser ? [userDisplayName] : []), ...characters.map(c => c.name)].join(", ")}
+          <h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2>
+          <p className="text-xs text-muted-foreground capitalize">
+            {CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} ·{" "}
+            {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
           </p>
         </div>
         <button
-          onClick={generateSceneImage}
-          disabled={isGeneratingImage}
+          onClick={() => setShowPhotoModal(true)}
           className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-          title="Refresh scene image"
+          title="Scene photo"
         >
-          <RefreshCw className={`w-4 h-4 ${isGeneratingImage ? "animate-spin" : ""}`} />
+          <Camera className="w-4 h-4" />
         </button>
-        {balance !== null && (
-          <div className="flex items-center gap-1 text-xs text-green-400 font-medium">
-            <DollarSign className="w-3.5 h-3.5" />
-            {balance.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-        )}
       </div>
 
-      {/* SCENE IMAGE */}
-      <div className="relative h-44 flex-shrink-0 bg-secondary">
+      {/* Scene image */}
+      <div className="relative h-40 flex-shrink-0 overflow-hidden">
         {isGeneratingImage ? (
-          <div className="w-full h-full flex items-center justify-center">
+          <div className="w-full h-full bg-secondary flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
               <Sparkles className="w-4 h-4 animate-pulse" />
               <span className="text-xs">Setting the scene...</span>
             </div>
           </div>
         ) : sceneImage ? (
-          <img src={sceneImage} alt={location?.name} className="w-full h-full object-cover" />
+          <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-4xl">
-            {location?.category === "social" ? "🍸" : location?.category === "outdoor" ? "🌳" : "📍"}
+          <div className="w-full h-full bg-secondary flex items-center justify-center">
+            <span className="text-5xl">{CATEGORY_EMOJIS[location.category]}</span>
           </div>
         )}
-        {/* PRESENCE STRIP overlay */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-4 py-3">
-          <div className="flex items-center gap-2">
-            {includedUser && (
-              <div className="w-8 h-8 rounded-full border-2 border-primary overflow-hidden bg-primary/20 flex items-center justify-center flex-shrink-0">
-                {userAvatarUrl
-                  ? <img src={userAvatarUrl} alt={userDisplayName} className="w-full h-full object-cover" />
-                  : <User className="w-4 h-4 text-primary" />
-                }
-              </div>
-            )}
-            {characters.map(char => (
-              <div key={char.id} className="w-8 h-8 rounded-full border-2 border-white/30 overflow-hidden bg-primary/20 flex items-center justify-center flex-shrink-0">
-                {char.avatar_url
-                  ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
-                  : <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
-                }
-              </div>
-            ))}
-            <span className="text-xs text-white/70 ml-1">at {location?.name}</span>
-          </div>
-        </div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
+        <button
+          onClick={generateSceneImage}
+          disabled={isGeneratingImage}
+          className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 text-white hover:bg-black/60 transition-colors"
+          title="Refresh scene image"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingImage ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
-      {/* CHAT THREAD */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-        {messages.length === 0 && (
-          <div className="text-center py-6">
-            <p className="text-xs text-muted-foreground">You arrived at {location?.name}. What happens next?</p>
+      {/* Character presence strip */}
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0">
+        {/* User */}
+        <div className="flex flex-col items-center gap-1">
+          <div className="w-8 h-8 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center overflow-hidden">
+            {currentUser?.generated_avatar_urls?.[0]
+              ? <img src={currentUser.generated_avatar_urls[0]} alt={displayName} className="w-full h-full object-cover" />
+              : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>
+            }
           </div>
-        )}
-        {messages.map(msg => (
-          <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} gap-2`}>
-            {msg.role !== "user" && (
-              <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-bold text-primary mt-0.5">
-                {msg.sender?.[0]?.toUpperCase() || "?"}
-              </div>
-            )}
-            <div className={`max-w-[80%] ${msg.role === "user" ? "" : ""}`}>
-              {msg.role !== "user" && (
-                <p className="text-[10px] text-muted-foreground mb-0.5 ml-1">{msg.sender}</p>
-              )}
-              <div className={`px-3 py-2 rounded-2xl text-sm ${
-                msg.role === "user"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-card border border-border text-foreground"
-              }`}>
-                {msg.content}
-              </div>
+          <span className="text-[9px] text-primary font-medium">You</span>
+        </div>
+        {sceneCharacters.map(char => (
+          <div key={char.id} className="flex flex-col items-center gap-1">
+            <div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">
+              {char.avatar_url
+                ? <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+                : <span className="text-xs font-bold text-foreground">{char.name?.[0]}</span>
+              }
             </div>
+            <span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span>
           </div>
         ))}
-        {isSending && (
-          <div className="flex justify-start gap-2">
-            <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-xs font-bold text-primary flex-shrink-0">
-              {characters[0]?.name?.[0] || "?"}
+        {sceneCharacters.length === 0 && (
+          <span className="text-xs text-muted-foreground ml-1">You're here alone</span>
+        )}
+        {settings.user_balance !== undefined && (
+          <div className="ml-auto flex items-center gap-1">
+            <DollarSign className="w-3 h-3 text-green-500" />
+            <span className="text-xs text-green-500 font-medium">${(settings.user_balance ?? 6000).toFixed(0)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Chat area */}
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        {/* Arrival narrative */}
+        <div className="text-center">
+          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
+            You arrive at {location.name}
+            {sceneCharacters.length > 0 ? ` with ${sceneCharacters.map(c => c.name).join(", ")}` : ""}
+          </span>
+        </div>
+
+        <AnimatePresence>
+          {messages.map(msg => (
+            <motion.div
+              key={msg.id}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" ? "justify-center" : "justify-start"}`}
+            >
+              {msg.sender === "narrative" ? (
+                <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span>
+              ) : msg.sender === "character" ? (
+                <>
+                  <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">
+                    {msg.avatarUrl
+                      ? <img src={msg.avatarUrl} alt={msg.senderName} className="w-full h-full object-cover" />
+                      : <span className="text-xs font-bold text-foreground">{msg.senderName?.[0]}</span>
+                    }
+                  </div>
+                  <div className="max-w-[75%]">
+                    <p className="text-[10px] text-muted-foreground mb-0.5">{msg.senderName}</p>
+                    <div className="bg-card border border-border rounded-2xl rounded-tl-sm px-3 py-2">
+                      <p className="text-sm text-foreground">{msg.content}</p>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="bg-primary rounded-2xl rounded-tr-sm px-3 py-2 max-w-[75%]">
+                  <p className="text-sm text-primary-foreground">{msg.content}</p>
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+
+        {isTyping && (
+          <div className="flex gap-2">
+            <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center">
+              <span className="text-xs">...</span>
             </div>
-            <div className="px-3 py-2 rounded-2xl bg-card border border-border">
+            <div className="bg-card border border-border rounded-2xl px-3 py-2">
               <div className="flex gap-1">
-                <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full typing-dot-1" />
-                <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full typing-dot-2" />
-                <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full typing-dot-3" />
+                <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-1" />
+                <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-2" />
+                <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground typing-dot-3" />
               </div>
             </div>
           </div>
         )}
+
         <div ref={bottomRef} />
       </div>
 
-      {/* CONTEXTUAL ACTIONS */}
-      {actions.length > 0 && (
-        <div className="px-4 py-2 flex gap-2 overflow-x-auto flex-shrink-0 scrollbar-hide">
-          {actions.map((action, i) => (
+      {/* Action buttons */}
+      <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0">
+        <div className="grid grid-cols-4 gap-1.5">
+          {actions.slice(0, 4).map(action => (
             <button
-              key={i}
+              key={action.id}
               onClick={() => handleAction(action)}
-              disabled={isSending}
-              className="flex-shrink-0 px-3 py-1.5 rounded-full bg-secondary border border-border text-xs font-medium text-foreground hover:border-primary/40 hover:bg-primary/5 transition-colors disabled:opacity-50 whitespace-nowrap"
+              disabled={actionCooldown}
+              className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center disabled:opacity-50 ${
+                action.type === "negative"
+                  ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20"
+                  : action.cost > 0
+                  ? "bg-green-500/10 border-green-500/30 hover:bg-green-500/20"
+                  : "bg-secondary border-border hover:border-primary/30"
+              }`}
             >
-              {ACTION_COSTS[action] ? `${action} ($${ACTION_COSTS[action]})` : action}
+              <span className="text-base leading-none">{action.emoji}</span>
+              <span className="text-[9px] text-foreground font-medium leading-tight">{action.label}</span>
+              {action.cost > 0 && <span className="text-[9px] text-green-500">${action.cost}</span>}
             </button>
           ))}
-          {actionsLoading && (
-            <div className="flex-shrink-0 px-3 py-1.5 text-xs text-muted-foreground">
-              <RefreshCw className="w-3 h-3 animate-spin" />
-            </div>
-          )}
         </div>
-      )}
+      </div>
 
-      {/* INPUT BAR */}
-      <div className="px-4 py-2 border-t border-border flex gap-2 flex-shrink-0">
+      {/* Input bar */}
+      <div className="px-3 py-2 border-t border-border flex gap-2 flex-shrink-0 pb-safe">
         <input
-          ref={inputRef}
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMessage(input)}
+          value={inputText}
+          onChange={e => setInputText(e.target.value)}
+          onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMessage(inputText)}
           placeholder="Say something..."
-          className="flex-1 h-10 px-3 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+          className="flex-1 h-10 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
         />
         <button
-          onClick={() => sendMessage(input)}
-          disabled={!input.trim() || isSending}
-          className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-50 transition-opacity"
+          onClick={() => sendMessage(inputText)}
+          disabled={!inputText.trim()}
+          className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40 transition-opacity"
         >
           <Send className="w-4 h-4" />
         </button>
       </div>
 
-      {/* COST CONFIRMATION POPUP */}
+      {/* Photo modal */}
       <AnimatePresence>
-        {costPopup && (
-          <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={() => setCostPopup(null)}>
-            <motion.div
-              initial={{ y: 80, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 80, opacity: 0 }}
-              onClick={e => e.stopPropagation()}
-              className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-5 space-y-4"
-            >
-              <p className="text-sm font-semibold text-foreground text-center">{costPopup.action}</p>
-              <p className="text-xs text-muted-foreground text-center">
-                This will cost <span className="text-foreground font-semibold">${costPopup.cost}</span>. Your balance: ${(balance || 0).toFixed(2)}
-              </p>
-              {(balance || 0) < costPopup.cost ? (
-                <p className="text-xs text-destructive text-center">Not enough balance.</p>
-              ) : null}
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setCostPopup(null)} className="flex-1 rounded-xl">Cancel</Button>
-                <Button
-                  onClick={confirmAction}
-                  disabled={(balance || 0) < costPopup.cost}
-                  className="flex-1 rounded-xl"
-                >
-                  Confirm (${costPopup.cost})
-                </Button>
-              </div>
-            </motion.div>
-          </div>
+        {showPhotoModal && (
+          <ScenePhotoModal
+            location={location}
+            characters={sceneCharacters}
+            currentUser={currentUser}
+            displayName={displayName}
+            onClose={() => setShowPhotoModal(false)}
+            allCharacters={characters}
+          />
         )}
       </AnimatePresence>
-
-      <BottomNav />
     </div>
   );
 }
