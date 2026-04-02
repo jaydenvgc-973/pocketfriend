@@ -441,7 +441,7 @@ Return JSON:
             title="NPCs nearby"
           >
             <Users className="w-3.5 h-3.5" />
-            <span>NPCs{selectedNpcs.length > 0 ? ` · ${selectedNpcs.length}` : ""}</span>
+            <span>Who's here{selectedNpcs.length > 0 ? ` · ${selectedNpcs.length}` : ""}</span>
             <ChevronDown className={`w-3 h-3 transition-transform ${showNpcDropdown ? "rotate-180" : ""}`} />
           </button>
 
