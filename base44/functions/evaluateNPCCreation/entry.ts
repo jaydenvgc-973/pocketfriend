@@ -111,11 +111,35 @@ Deno.serve(async (req) => {
     const charArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
     const character = charArr[0];
     const existingRels = character?.fictional_relationships || [];
+    
+    // Extract first and last names from the mentioned name
+    const mentionedParts = nameLower.split(/\s+/);
+    const mentionedFirst = mentionedParts[0];
+    const mentionedLast = mentionedParts[mentionedParts.length - 1];
+    
     const existingNPCMatch = existingRels.find(r => {
       const relName = (r.person_name || '').toLowerCase();
-      return relName === nameLower ||
-        relName.startsWith(nameLower.split(' ')[0]) ||
-        nameLower.startsWith(relName.split(' ')[0]);
+      const relParts = relName.split(/\s+/);
+      const relFirst = relParts[0];
+      const relLast = relParts[relParts.length - 1];
+      
+      // Exact match
+      if (relName === nameLower) return true;
+      
+      // First name only vs full name (e.g., "Carlos" vs "Carlos Mendez")
+      if (mentionedParts.length === 1 && relFirst === mentionedFirst && relName.length > mentionedFirst.length + 1) {
+        return true;
+      }
+      
+      // Last name only vs full name (e.g., "Mendez" vs "Carlos Mendez")
+      if (mentionedParts.length === 1 && relLast === mentionedLast && relName.length > mentionedLast.length + 1) {
+        return true;
+      }
+      
+      // One contains the other as a substring (prefix/suffix match)
+      if (relName.startsWith(nameLower + ' ') || nameLower.startsWith(relName + ' ')) return true;
+      
+      return false;
     });
 
     if (existingNPCMatch) {
