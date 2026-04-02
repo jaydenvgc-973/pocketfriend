@@ -28,11 +28,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showZonePicker, setShowZonePicker] = useState(false);
 
-  // Load locations when modal opens
+  // Load locations when modal opens — use fetchAllLocationsForUser to get only current, relevant locations
   useEffect(() => {
     if (!isOpen) return;
-    base44.entities.LocationReference.list('-created_date', 100)
-      .then(locs => setLocations(locs || []))
+    base44.functions.invoke('fetchAllLocationsForUser', {})
+      .then(res => setLocations(res?.data?.locations || []))
       .catch(() => {});
   }, [isOpen]);
 
