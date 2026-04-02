@@ -130,8 +130,11 @@ export default function Scene() {
   const [selectedNpcIds, setSelectedNpcIds] = useState(null);
   const [showNpcDropdown, setShowNpcDropdown] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [activeZone, setActiveZone] = useState(null);
+  const [showZonePicker, setShowZonePicker] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
+  const zonPickerRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
   const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
@@ -155,6 +158,7 @@ export default function Scene() {
 
   const location = locationsData.find(l => l.id === locationId);
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
+  const locationZones = location?.zones || [];
 
   // Characters explicitly brought + any active characters who work here during their shift
   const workerCharacters = location
