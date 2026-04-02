@@ -406,7 +406,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
               onClick={() => setIsOpen(false)}
             >
               <div
-                className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[95vh] flex flex-col gap-5"
+                className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[99vh] flex flex-col gap-5"
                 onClick={e => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between">
@@ -471,8 +471,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       {/* Character picker dropdown */}
                       {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {/* Character options (already includes user at start via fetchCharacterListForPicker) */}
-                          {allCharacters.map(char => (
+                          {/* Active characters first, then others */}
+                          {(() => {
+                            const activeChars = allCharacters.filter(c => c.is_active_character && !c.is_user);
+                            const otherChars = allCharacters.filter(c => !c.is_active_character && !c.is_user);
+                            const userChar = allCharacters.find(c => c.is_user);
+                            return [
+                              ...(userChar ? [userChar] : []),
+                              ...activeChars,
+                              ...otherChars
+                            ];
+                          })().map(char => (
                            <button
                              key={char.id}
                              onClick={() => toggleCharacter(char.id)}
