@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
@@ -36,54 +36,54 @@ function getLocationActions(category, recentChat = "") {
 
   const base = {
     home: [
-      { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral" },
+      { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral", scenePrompt: "sitting comfortably on the couch" },
       { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "positive", imagePrompt: "homemade meal on a kitchen table, cozy, photorealistic" },
       { id: "drink", label: "Get a drink", emoji: "🥤", cost: 0, type: "positive", imagePrompt: "refreshing drink in a glass, cozy home kitchen, photorealistic" },
-      { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive" },
-      { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive", scenePrompt: "relaxing casually, laid-back atmosphere" },
+      { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "having a conversation, sitting together" },
       { id: "order_takeout", label: "Order takeout", emoji: "🥡", cost: 20, type: "positive", imagePrompt: "takeout food containers on a coffee table, cozy home setting, photorealistic" },
     ],
     social: [
       { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive", imagePrompt: "glasses of beer and cocktails on a bar counter, bokeh bar lights, photorealistic" },
-      { id: "flirt", label: "Flirt a little", emoji: "😏", cost: 0, type: "positive" },
-      { id: "dance", label: "Hit the floor", emoji: "🕺", cost: 0, type: "positive" },
-      { id: "argue", label: "Start drama", emoji: "🔥", cost: 0, type: "negative" },
+      { id: "flirt", label: "Flirt a little", emoji: "😏", cost: 0, type: "positive", scenePrompt: "laughing and having a flirty fun moment at the bar" },
+      { id: "dance", label: "Hit the floor", emoji: "🕺", cost: 0, type: "positive", scenePrompt: "dancing together on a crowded dance floor, nightlife energy" },
+      { id: "argue", label: "Start drama", emoji: "🔥", cost: 0, type: "negative", scenePrompt: "tense confrontational moment, dramatic body language" },
     ],
     gym: [
-      { id: "workout", label: "Work out together", emoji: "💪", cost: 0, type: "positive" },
-      { id: "spot", label: "Spot them", emoji: "🏋️", cost: 0, type: "positive" },
-      { id: "challenge", label: "Challenge them", emoji: "🏆", cost: 0, type: "positive" },
-      { id: "observe", label: "Watch quietly", emoji: "👀", cost: 0, type: "neutral" },
+      { id: "workout", label: "Work out together", emoji: "💪", cost: 0, type: "positive", scenePrompt: "working out together, gym equipment, athletic energy" },
+      { id: "spot", label: "Spot them", emoji: "🏋️", cost: 0, type: "positive", scenePrompt: "spotting someone on the bench press at the gym" },
+      { id: "challenge", label: "Challenge them", emoji: "🏆", cost: 0, type: "positive", scenePrompt: "friendly fitness challenge at the gym, competitive energy" },
+      { id: "observe", label: "Watch quietly", emoji: "👀", cost: 0, type: "neutral", scenePrompt: "watching from the sidelines at the gym, observant" },
     ],
     food_drink: [
       { id: "order", label: "Order food", emoji: "🍔", cost: 18, type: "positive", imagePrompt: "beautifully plated restaurant meal, warm lighting, photorealistic" },
       { id: "drinks", label: "Get drinks", emoji: "🍹", cost: 12, type: "positive", imagePrompt: "colorful cocktails or drinks on a restaurant table, photorealistic" },
-      { id: "talk", label: "Good conversation", emoji: "💬", cost: 0, type: "neutral" },
-      { id: "check", label: "Pick up the check", emoji: "💳", cost: 40, type: "positive" },
+      { id: "talk", label: "Good conversation", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "having a deep enjoyable conversation over a meal at a restaurant" },
+      { id: "check", label: "Pick up the check", emoji: "💳", cost: 40, type: "positive", scenePrompt: "paying the bill at a restaurant table, relaxed end-of-meal vibe" },
     ],
     outdoor: [
-      { id: "walk", label: "Go for a walk", emoji: "🚶", cost: 0, type: "positive" },
-      { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "positive" },
-      { id: "photo", label: "Take a picture", emoji: "📸", cost: 0, type: "positive" },
-      { id: "talk", label: "Talk it out", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "walk", label: "Go for a walk", emoji: "🚶", cost: 0, type: "positive", scenePrompt: "walking together outdoors, relaxed stroll, natural surroundings" },
+      { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "positive", scenePrompt: "sitting outside together, enjoying the fresh air and scenery" },
+      { id: "photo", label: "Take a picture", emoji: "📸", cost: 0, type: "positive", scenePrompt: "posing together for a casual outdoor photo, smiling" },
+      { id: "talk", label: "Talk it out", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "sitting together outside having a heartfelt conversation" },
     ],
     business: [
-      { id: "browse", label: "Browse items", emoji: "🛍️", cost: 0, type: "neutral" },
-      { id: "try_on", label: "Try something on", emoji: "👗", cost: 0, type: "positive" },
-      { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "neutral" },
-      { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "positive" },
+      { id: "browse", label: "Browse items", emoji: "🛍️", cost: 0, type: "neutral", scenePrompt: "browsing through items in a store together" },
+      { id: "try_on", label: "Try something on", emoji: "👗", cost: 0, type: "positive", scenePrompt: "trying on clothes in a fitting area, fun shopping moment" },
+      { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "neutral", scenePrompt: "asking a store associate for help" },
+      { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "positive", scenePrompt: "completing a purchase at the checkout counter" },
     ],
     grocery: [
-      { id: "shop", label: "Grab items", emoji: "🛒", cost: 0, type: "neutral" },
-      { id: "checkout", label: "Check out", emoji: "💳", cost: 60, type: "positive" },
-      { id: "ask_aisle", label: "Ask where something is", emoji: "🙋", cost: 0, type: "neutral" },
-      { id: "talk", label: "Small talk", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "shop", label: "Grab items", emoji: "🛒", cost: 0, type: "neutral", scenePrompt: "pushing a cart through grocery store aisles together" },
+      { id: "checkout", label: "Check out", emoji: "💳", cost: 60, type: "positive", scenePrompt: "checking out at the grocery store register" },
+      { id: "ask_aisle", label: "Ask where something is", emoji: "🙋", cost: 0, type: "neutral", scenePrompt: "looking around the grocery store aisles" },
+      { id: "talk", label: "Small talk", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "chatting casually while shopping at the grocery store" },
     ],
     school: [
-      { id: "study", label: "Study together", emoji: "📚", cost: 0, type: "positive" },
-      { id: "ask_question", label: "Ask a question", emoji: "✋", cost: 0, type: "neutral" },
-      { id: "pass_note", label: "Pass a note", emoji: "📝", cost: 0, type: "positive" },
-      { id: "chat", label: "Chat between class", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "study", label: "Study together", emoji: "📚", cost: 0, type: "positive", scenePrompt: "studying together at a desk with books and notes spread out" },
+      { id: "ask_question", label: "Ask a question", emoji: "✋", cost: 0, type: "neutral", scenePrompt: "raising a hand or leaning in to ask a question in class" },
+      { id: "pass_note", label: "Pass a note", emoji: "📝", cost: 0, type: "positive", scenePrompt: "passing a note secretly in class, sneaky and playful" },
+      { id: "chat", label: "Chat between class", emoji: "💬", cost: 0, type: "neutral", scenePrompt: "chatting in the hallway or between classes at school" },
     ],
   };
 
@@ -306,6 +306,19 @@ export default function Scene() {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const handleZoneChange = (zoneName) => {
+    setActiveZone(zoneName);
+    setShowZonePicker(false);
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      sender: "narrative",
+      content: `You move to the ${zoneName}.`,
+      timestamp: new Date().toISOString(),
+    }]);
+    // Regenerate the scene image for the new zone
+    setTimeout(() => setSceneImage(null), 50);
+  };
+
   const toggleNpc = (npcId) => {
     const current = selectedNpcIds ?? [];
     setSelectedNpcIds(
@@ -335,12 +348,12 @@ export default function Scene() {
     return () => clearInterval(interval);
   }, [location?.id, messages.length]);
 
-  // Generate scene image on load
+  // Generate scene image on load or when zone changes (sceneImage set to null)
   useEffect(() => {
     if (location && !sceneImage && !isGeneratingImage) {
       generateSceneImage();
     }
-  }, [location?.id]);
+  }, [location?.id, sceneImage]);
 
   const generateSceneImage = async () => {
     if (!location || isGeneratingImage) return;
@@ -363,11 +376,13 @@ export default function Scene() {
         // User is alone — show just the space or the user in the space
         peopleDesc = `A person relaxing alone in the space. No other people visible — no strangers, no background figures.`;
       }
-      prompt = `Realistic interior scene inside ${location.name}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. IMPORTANT: Do NOT generate any random or unrecognized people in this image.`;
+      const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
+      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. IMPORTANT: Do NOT generate any random or unrecognized people in this image.`;
     } else {
+      const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
       const charNames = sceneCharacters.map(c => c.name).join(", ");
       const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
-      prompt = `Realistic scene at ${location.name}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} present. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
+      prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} present. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
     }
 
     try {
@@ -431,7 +446,7 @@ export default function Scene() {
     }
   };
 
-  const sendMessage = async (text, fromAction = false, actionImagePrompt = null) => {
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null) => {
     if (!text.trim() || !location) return;
     setInputText("");
 
@@ -440,7 +455,7 @@ export default function Scene() {
     setIsTyping(true);
 
     // Check if we should update the scene image
-    checkImageTrigger(text, actionImagePrompt);
+    checkImageTrigger(text, actionImagePrompt, actionScenePrompt);
 
     // Update actions based on new message context
     setActions(getLocationActions(location.category, text));
@@ -559,7 +574,7 @@ Return JSON:
       }
     }
 
-    await sendMessage(`[${action.emoji} ${action.label}${action.cost > 0 ? ` — $${action.cost}` : ""}]`, true, action.imagePrompt || null);
+    await sendMessage(`[${action.emoji} ${action.label}${action.cost > 0 ? ` — $${action.cost}` : ""}]`, true, action.imagePrompt || null, action.scenePrompt || null);
 
     // Update actions to reflect progression
     setTimeout(() => {
@@ -705,6 +720,45 @@ Return JSON:
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
+
+        {/* Zone picker */}
+        {locationZones.length > 1 && (
+          <div className="absolute top-2 left-2 z-10" ref={zonPickerRef}>
+            <button
+              onClick={() => setShowZonePicker(v => !v)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/50 text-white text-xs font-medium hover:bg-black/70 transition-colors"
+            >
+              <MapPin className="w-3 h-3" />
+              <span>{activeZone || locationZones[0]?.zone_name || "Zone"}</span>
+              <ChevronDown className={`w-3 h-3 transition-transform ${showZonePicker ? "rotate-180" : ""}`} />
+            </button>
+            <AnimatePresence>
+              {showZonePicker && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                  transition={{ duration: 0.12 }}
+                  className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden min-w-[140px]"
+                >
+                  {locationZones.map(zone => (
+                    <button
+                      key={zone.zone_name}
+                      onClick={() => handleZoneChange(zone.zone_name)}
+                      className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${
+                        activeZone === zone.zone_name ? "text-primary font-medium" : "text-foreground"
+                      }`}
+                    >
+                      {activeZone === zone.zone_name && <Check className="w-3 h-3 flex-shrink-0" />}
+                      <span className={activeZone === zone.zone_name ? "" : "ml-5"}>{zone.zone_name}</span>
+                    </button>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
+
         <button
           onClick={generateSceneImage}
           disabled={isGeneratingImage}
