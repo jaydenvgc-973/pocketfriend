@@ -27,14 +27,10 @@ export default function CharacterManager() {
     enabled: !!currentUser?.email,
   });
 
-  // All items from unified roster (characters + world people + user)
+  // All items from unified roster (characters + NPCs)
   const allManageableItems = roster
-    .filter(e => e.entity_type === 'character' || e.entity_type === 'user' || e.entity_type === 'world_person')
-    .map(c => {
-      if (c.is_user) return { type: 'user', data: c };
-      if (c.is_world_person) return { type: 'npc', data: c };
-      return { type: 'active', data: c };
-    });
+    .filter(e => e.entity_type === 'character' || e.entity_type === 'user')
+    .map(c => ({ type: c.is_user ? 'user' : 'active', data: c }));
 
   const renameMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('renameCharacter', data),
@@ -80,7 +76,7 @@ export default function CharacterManager() {
           setRenamingId(null);
           return;
         }
-        const sourceChar = roster.find(c => c.id === sourceCharId);
+        const sourceChar = characters.find(c => c.id === sourceCharId);
         if (sourceChar) {
           const updated = (sourceChar.fictional_relationships || []).map(r =>
             r.person_name === oldPersonName ? { ...r, person_name: newName } : r
@@ -199,8 +195,8 @@ export default function CharacterManager() {
 
       if (npcMatch) {
         const [, sourceCharId, personName] = npcMatch;
-        const sourceChar = roster.find(c => c.id === sourceCharId);
-        const activeChar = roster.find(c => c.id === activeCharId);
+        const sourceChar = characters.find(c => c.id === sourceCharId);
+        const activeChar = characters.find(c => c.id === activeCharId);
         const npcData = sourceChar?.fictional_relationships?.find(r => r.person_name === personName);
 
         if (sourceChar && activeChar && npcData) {
