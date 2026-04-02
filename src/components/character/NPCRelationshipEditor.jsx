@@ -20,11 +20,19 @@ export default function NPCRelationshipEditor({ character, relationship, onUpdat
     const file = e.target.files?.[0];
     if (!file) return;
     setUploading(true);
-    const res = await base44.integrations.Core.UploadFile({ file });
-    if (res?.file_url) {
-      setForm(p => ({ ...p, avatar_url: res.file_url }));
+    try {
+      const res = await base44.integrations.Core.UploadFile({ file });
+      const fileUrl = res?.file_url || res?.url;
+      if (fileUrl) {
+        setForm(p => ({ ...p, avatar_url: fileUrl }));
+      } else {
+        console.error('Upload failed: no URL returned', res);
+      }
+    } catch (err) {
+      console.error('Upload error:', err);
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
   };
 
   const handleGenerate = async () => {
@@ -38,13 +46,19 @@ export default function NPCRelationshipEditor({ character, relationship, onUpdat
     setGenerating(false);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!form.person_name.trim()) return;
-    const updated = character.fictional_relationships.map(r =>
-      r.person_name === relationship?.person_name ? { ...r, ...form } : r
+    const updated = (character.fictional_relationships || []).map(r =>
+      r.person_name?.toLowerCase() === relationship?.person_name?.toLowerCase() 
+        ? { ...r, ...form } 
+        : r
     );
-    base44.entities.Character.update(character.id, { fictional_relationships: updated })
-      .then(() => onClose?.());
+    try {
+      await base44.entities.Character.update(character.id, { fictional_relationships: updated });
+      onClose?.();
+    } catch (err) {
+      console.error('Failed to save NPC:', err);
+    }
   };
 
   return (
