@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Pencil, Trash2, GitMerge, ChevronDown, ChevronUp, Check, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { fetchCharacterListForPicker } from '@/lib/characterListUtils';
+import { fetchUnifiedRoster, getInitial } from '@/lib/unifiedRosterUtils';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
 export default function CharacterManager() {
@@ -21,11 +21,15 @@ export default function CharacterManager() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ['characters', currentUser?.email],
-    queryFn: () => fetchCharacterListForPicker(base44, currentUser?.email),
+  const { data: roster = [] } = useQuery({
+    queryKey: ['unifiedRoster', currentUser?.email],
+    queryFn: () => fetchUnifiedRoster(base44, currentUser?.email),
     enabled: !!currentUser?.email,
   });
+
+  // Separate roster into characters and world people for management
+  const characters = roster.filter(e => e.entity_type === 'character' || e.entity_type === 'user');
+  const worldPeople = roster.filter(e => e.entity_type === 'world_person');
 
   // Collect all NPCs/fictional characters from all active characters' fictional_relationships
   const npcs = characters
@@ -49,7 +53,7 @@ export default function CharacterManager() {
   const renameMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('renameCharacter', data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
       setRenamingId(null);
       setNewName('');
     },
@@ -58,14 +62,14 @@ export default function CharacterManager() {
   const deleteMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('deleteCharacter', data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
     },
   });
 
   const mergeMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('mergeCharacters', data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
       setMergeMode(false);
       setSelectedForMerge(new Set());
     },
@@ -96,11 +100,11 @@ export default function CharacterManager() {
             r.person_name === oldPersonName ? { ...r, person_name: newName } : r
           );
           base44.entities.Character.update(sourceCharId, { fictional_relationships: updated })
-            .then(() => {
-              queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-              setRenamingId(null);
-              setNewName('');
-            })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+            setRenamingId(null);
+            setNewName('');
+          })
             .catch(() => {});
         }
       }
@@ -127,7 +131,7 @@ export default function CharacterManager() {
               r => r.person_name !== personName
             );
             base44.entities.Character.update(sourceCharId, { fictional_relationships: updated })
-              .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
+              .then(() => queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] }))
               .catch(() => {});
           }
         }
@@ -248,7 +252,7 @@ export default function CharacterManager() {
             base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
             base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
           ]).then(() => {
-            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
             setSelectedForMerge(new Set());
             setMergeMode(false);
           }).catch(() => {});
@@ -319,13 +323,17 @@ export default function CharacterManager() {
                       <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
                     ) : (
                       <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-semibold text-primary-foreground">{itemName?.[0]?.toUpperCase() || "?"}</span>
+                        <span className="text-xs font-semibold text-primary-foreground">{getInitial(itemName)}</span>
                       </div>
                     )
                   ) : isNPC ? (
-                    <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-semibold text-primary">{itemName?.[0]?.toUpperCase() || "?"}</span>
-                    </div>
+                    itemData.avatar_url ? (
+                      <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-semibold text-white">{getInitial(itemName)}</span>
+                      </div>
+                    )
                   ) : (
                     <CharacterAvatar character={itemData} size="sm" />
                   )}
@@ -359,7 +367,8 @@ export default function CharacterManager() {
                          </p>
                          {isNPC && (
                            <>
-                             <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>
+                             {itemData.relationship_type && <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>}
+                             {itemData.source_character_name && <p className="text-xs text-muted-foreground/60">{itemData.source_character_name}'s world</p>}
                              {itemData.description && <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-2">{itemData.description}</p>}
                            </>
                          )}

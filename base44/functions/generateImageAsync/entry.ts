@@ -459,12 +459,20 @@ CRITICAL RULE: A person who knows this space in real life must look at the resul
 }
 
 // ── USER IDENTITY LOCK PROMPT ────────────────────────────────────────────────────
-function buildUserIdentityLockNote(userAppearanceData) {
+function buildUserIdentityLockNote(userAppearanceData, strictMode = false) {
   const parts = [];
   if (userAppearanceData?.age_range) parts.push(`Age: ${userAppearanceData.age_range}`);
   if (userAppearanceData?.gender) parts.push(`Gender: ${userAppearanceData.gender}`);
   if (userAppearanceData?.ethnicities?.length > 0) parts.push(`Ethnicity/Background: ${userAppearanceData.ethnicities.join(', ')}`);
   if (userAppearanceData?.appearance_notes) parts.push(`Details: ${userAppearanceData.appearance_notes}`);
+
+  const strictWarning = strictMode ? `
+⚠️ STRICT IDENTITY PRESERVATION MODE ⚠️
+This person's identity is NON-NEGOTIABLE. Any deviation from the reference images is a failure.
+You are not creating "inspired by" or "similar to" — you are reproducing the exact same person.
+Do NOT let the generator beautify, normalize, or substitute this person's appearance.
+Do NOT interpret vague guidance as permission to drift. The reference IS the target.
+` : '';
 
   return `
 ════════════════════════════════════════════════════════════
@@ -472,6 +480,8 @@ USER IDENTITY LOCK — STRONG FACE & FEATURE CONSISTENCY
 ════════════════════════════════════════════════════════════
 The user's face and body must remain CONSISTENT and RECOGNIZABLE.
 ${parts.length > 0 ? `${parts.join('\n')}` : 'Use reference images as the primary identity guide.'}
+
+${strictWarning}
 
 WHAT IS LOCKED:
 ✓ Face shape and bone structure
@@ -489,6 +499,7 @@ THIS IS NOT A GENERIC CHARACTER.
 This is a specific real person who must be recognizable across generations.
 Do NOT produce a random person. Do NOT swap faces with generic models.
 Do NOT allow face drift. Anchor identity to the provided reference images.
+Do NOT beautify away their unique characteristics in favor of a "model-like" version.
 
 PERMITTED CHANGES:
 ✓ Clothing, hairstyle, expression, pose, setting
@@ -501,13 +512,14 @@ PROHIBITED CHANGES:
 ✗ Core hair color or natural texture
 ✗ Body build or proportions
 ✗ Distinctive features that define their appearance
+✗ Substituting a "prettier" or "more model-like" version
 ════════════════════════════════════════════════════════════`;
 }
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userAppearanceData } = await req.json();
+    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode, userAppearanceData } = await req.json();
 
     if (!messageId || !prompt) {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
@@ -653,8 +665,9 @@ Deno.serve(async (req) => {
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       // User identity-lock mode: prioritize user refs, strong identity preservation
+      // Strict mode requires maximum facial consistency, no drift/beautification
       referenceImages = userReferenceImages.slice(0, 4);
-      const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(userAppearanceData) : '';
+      const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(userAppearanceData, userIdentityStrictMode) : '';
       enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.${identityLockNote}`;
 
     } else if (hasCharacterImages) {

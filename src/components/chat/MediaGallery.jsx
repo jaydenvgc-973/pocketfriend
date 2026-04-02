@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, ChevronDown, Users, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
-import { fetchCharacterListForPicker } from "@/lib/characterListUtils";
+import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated }) {
@@ -46,7 +46,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       .catch(() => {});
   }, []);
 
-  // Load locations, user settings, and characters when modal opens
+  // Load locations, user settings, and unified roster when modal opens
   useEffect(() => {
     if (!isOpen || !userEmail) return;
     Promise.all([
@@ -56,8 +56,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       base44.entities.UserSettings.list()
         .then(settings => setUserSettings(settings?.[0] || null))
         .catch(() => {}),
-      fetchCharacterListForPicker(base44, userEmail)
-        .then(chars => setAllCharacters(chars || []))
+      fetchUnifiedRoster(base44, userEmail)
+        .then(roster => setAllCharacters(roster || []))
         .catch(() => {}),
     ]);
   }, [isOpen, userEmail]);
@@ -183,20 +183,29 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const charName = character.name;
       const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender].filter(Boolean).join(', ');
       
-      // Use selected characters from dropdown, or extract from prompt
+      // Use selected entities (including world people) from dropdown, or extract from prompt
       let selectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user")
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
         : extractMentionedPeople(prompt).characters;
+      
+      let selectedWorldPeople = selectedCharacterIds.length > 0
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.is_world_person)
+        : [];
       
       const userIncluded = selectedCharacterIds.length > 0
         ? selectedCharacterIds.includes("user")
         : extractMentionedPeople(prompt).userIncluded;
       
-      // Build reference images from selected/mentioned people
+      // Build reference images from selected characters + world people
       let charReferenceImages = buildReferenceImagesFromMention(selectedChars, userIncluded);
       
+      // Add world people avatars if they exist
+      selectedWorldPeople.forEach(person => {
+        if (person.avatar_url) charReferenceImages.push(person.avatar_url);
+      });
+      
       // If no one selected/mentioned, fall back to character's own avatars
-      if (charReferenceImages.length === 0 && selectedChars.length === 0 && !userIncluded) {
+      if (charReferenceImages.length === 0 && selectedChars.length === 0 && selectedWorldPeople.length === 0 && !userIncluded) {
         if (character.avatar_url) charReferenceImages.push(character.avatar_url);
         if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 3));
       }
@@ -301,9 +310,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const userName = userSettings?.fictional_world_name || "the user";
       const promptText = prompt.trim() || "candid natural moment, everyday life";
 
-      // Use selected characters from dropdown, or extract from prompt
+      // Use selected entities from dropdown (excluding user and world people for user generation)
       const selectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user")
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
         : extractMentionedPeople(promptText).characters;
       
       const userIncludedInGen = selectedCharacterIds.length > 0
@@ -344,7 +353,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       // Build the prompt for generateImageAsync
       const fullPrompt = `[USER] ${promptText}`;
 
-      // Call generateImageAsync for user subject with identity-lock mode
+      // Call generateImageAsync for user subject with STRICT identity-lock mode
       const genRes = await base44.functions.invoke('generateImageAsync', {
         messageId: newMsg.id,
         prompt: fullPrompt,
@@ -356,6 +365,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         manualLocationId: selectedLocation?.id || null,
         manualZoneId: selectedZone || null,
         isUserIdentityLocked: true,
+        userIdentityStrictMode: true,
         userAppearanceData: userChar ? {
           appearance_notes: userChar.appearance_notes || '',
           age_range: userChar.age_range || '',
@@ -489,12 +499,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                              {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
                              {char.avatar_url && char.avatar_url.trim() ? (
                                <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
-                             ) : null}
-                             {!char.avatar_url || !char.avatar_url.trim() ? (
-                               <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary flex-shrink-0">{char.name?.[0]?.toUpperCase() || "?"}</div>
-                             ) : null}
+                             ) : (
+                               <div className={`w-6 h-6 rounded-full ${char.is_world_person ? 'bg-purple-500' : 'bg-primary/20'} flex items-center justify-center text-[10px] font-bold ${char.is_world_person ? 'text-white' : 'text-primary'} flex-shrink-0`}>{getInitial(char.name)}</div>
+                             )}
                              <span className="font-medium">{char.name}</span>
                              {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
+                             {char.is_world_person && <span className="text-[10px] text-muted-foreground/60 ml-auto">{char.source_character_name}</span>}
                            </button>
                           ))}
                         </div>
