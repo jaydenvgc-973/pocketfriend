@@ -36,9 +36,13 @@ export default function CharacterManager() {
     .filter((npc, idx, arr) => arr.findIndex(n => n.person_name?.toLowerCase() === npc.person_name?.toLowerCase()) === idx); // dedupe by name
 
   // Combine user + active characters + NPCs
+  // Note: user is already in characters array via fetchCharacterListForPicker
+  // but we still include currentUser data for direct profile access
+  const userInCharacterList = characters.find(c => c.is_user);
+  const nonUserCharacters = characters.filter(c => !c.is_user);
   const allManageableItems = [
-    ...(currentUser ? [{ type: 'user', data: currentUser }] : []),
-    ...characters.map(c => ({ type: 'active', data: c })),
+    ...(userInCharacterList ? [{ type: 'user', data: userInCharacterList }] : []),
+    ...nonUserCharacters.map(c => ({ type: 'active', data: c })),
     ...npcs.map(npc => ({ type: 'npc', data: npc })),
   ];
 
@@ -311,9 +315,13 @@ export default function CharacterManager() {
                     </div>
                   )}
                   {isUser ? (
-                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-semibold text-primary-foreground">{itemName?.[0]?.toUpperCase() || "?"}</span>
-                    </div>
+                    itemData.avatar_url ? (
+                      <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                        <span className="text-xs font-semibold text-primary-foreground">{itemName?.[0]?.toUpperCase() || "?"}</span>
+                      </div>
+                    )
                   ) : isNPC ? (
                     <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
                       <span className="text-xs font-semibold text-primary">{itemName?.[0]?.toUpperCase() || "?"}</span>

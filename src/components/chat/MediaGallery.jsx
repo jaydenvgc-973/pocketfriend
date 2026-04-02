@@ -202,6 +202,24 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
       
       if (referenceImageUrl) charReferenceImages.push(referenceImageUrl);
+      
+      // Build user reference images with strong identity preservation
+      const userChar = allCharacters.find(c => c.is_user);
+      let userReferenceImages = [];
+      if (userChar) {
+        // Prioritize uploaded reference images for user identity
+        if (userChar.reference_image_urls?.length > 0) {
+          userReferenceImages.push(...userChar.reference_image_urls.slice(0, 3));
+        }
+        // Then add generated avatars
+        if (userChar.generated_avatar_urls?.length > 0) {
+          userReferenceImages.push(...userChar.generated_avatar_urls.slice(0, 2));
+        }
+        // Finally add primary avatar as fallback
+        if (userChar.avatar_url && !userReferenceImages.includes(userChar.avatar_url)) {
+          userReferenceImages.push(userChar.avatar_url);
+        }
+      }
 
       const promptText = prompt.trim() || "candid natural moment, everyday life";
 
@@ -226,12 +244,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         messageId: newMsg.id,
         prompt: fullPrompt,
         characterReferenceImages: charReferenceImages,
-        userReferenceImages: [],
+        userReferenceImages: userReferenceImages,
         characterName: charName,
         subjectType: "character",
         characterId: character.id,
         manualLocationId: selectedLocation?.id || null,
         manualZoneId: selectedZone || null,
+        includesUser: userIncluded,
+        userAppearanceData: userIncluded ? {
+          appearance_notes: userChar?.appearance_notes || '',
+          age_range: userChar?.age_range || '',
+          gender: userChar?.gender || '',
+          ethnicities: userChar?.ethnicities || [],
+        } : null,
       });
 
       if (genRes?.data?.filtered) {
@@ -288,8 +313,23 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       // Build reference images with selected/mentioned characters
       const charReferences = buildReferenceImagesFromMention(selectedChars, userIncludedInGen);
       
-      // Add user's avatar if available
-      const userReferences = userSettings?.generated_avatar_urls?.[0] ? [userSettings.generated_avatar_urls[0]] : [];
+      // Build user reference images with strong identity preservation
+      const userChar = allCharacters.find(c => c.is_user);
+      let userReferences = [];
+      if (userChar) {
+        // Prioritize uploaded reference images for user identity
+        if (userChar.reference_image_urls?.length > 0) {
+          userReferences.push(...userChar.reference_image_urls.slice(0, 3));
+        }
+        // Then add generated avatars
+        if (userChar.generated_avatar_urls?.length > 0) {
+          userReferences.push(...userChar.generated_avatar_urls.slice(0, 2));
+        }
+        // Finally add primary avatar as fallback
+        if (userChar.avatar_url && !userReferences.includes(userChar.avatar_url)) {
+          userReferences.push(userChar.avatar_url);
+        }
+      }
 
       // Create a placeholder message for user
       const newMsg = await base44.entities.Message.create({
@@ -304,7 +344,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       // Build the prompt for generateImageAsync
       const fullPrompt = `[USER] ${promptText}`;
 
-      // Call generateImageAsync for user subject
+      // Call generateImageAsync for user subject with identity-lock mode
       const genRes = await base44.functions.invoke('generateImageAsync', {
         messageId: newMsg.id,
         prompt: fullPrompt,
@@ -315,6 +355,13 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         characterId: character.id,
         manualLocationId: selectedLocation?.id || null,
         manualZoneId: selectedZone || null,
+        isUserIdentityLocked: true,
+        userAppearanceData: userChar ? {
+          appearance_notes: userChar.appearance_notes || '',
+          age_range: userChar.age_range || '',
+          gender: userChar.gender || '',
+          ethnicities: userChar.ethnicities || [],
+        } : null,
       });
 
       if (genRes?.data?.filtered) {
@@ -430,26 +477,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       </div>
 
                       {/* Character picker dropdown */}
-                      {showCharacterPicker && (allCharacters.length > 0 || userSettings?.fictional_world_name) && (
+                      {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {/* User option */}
-                          {userSettings?.fictional_world_name && (
-                            <button
-                              onClick={() => toggleCharacter("user")}
-                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border ${selectedCharacterIds.includes("user") ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
-                            >
-                              {selectedCharacterIds.includes("user") && <Check className="w-3.5 h-3.5 text-primary" />}
-                              <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">You</div>
-                              <span className="font-medium">{userSettings.fictional_world_name}</span>
-                            </button>
-                          )}
-                          
-                          {/* Character options */}
+                          {/* Character options (already includes user at start via fetchCharacterListForPicker) */}
                           {allCharacters.map(char => (
                             <button
                               key={char.id}
                               onClick={() => toggleCharacter(char.id)}
-                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border last:border-b-0 ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
                             >
                               {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
                               {char.avatar_url ? (
@@ -458,6 +493,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                                 <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">{char.name?.[0]}</div>
                               )}
                               <span className="font-medium">{char.name}</span>
+                              {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
                             </button>
                           ))}
                         </div>

@@ -458,10 +458,56 @@ CRITICAL RULE: A person who knows this space in real life must look at the resul
 ════════════════════════════════════════════════════════════`;
 }
 
+// ── USER IDENTITY LOCK PROMPT ────────────────────────────────────────────────────
+function buildUserIdentityLockNote(userAppearanceData) {
+  const parts = [];
+  if (userAppearanceData?.age_range) parts.push(`Age: ${userAppearanceData.age_range}`);
+  if (userAppearanceData?.gender) parts.push(`Gender: ${userAppearanceData.gender}`);
+  if (userAppearanceData?.ethnicities?.length > 0) parts.push(`Ethnicity/Background: ${userAppearanceData.ethnicities.join(', ')}`);
+  if (userAppearanceData?.appearance_notes) parts.push(`Details: ${userAppearanceData.appearance_notes}`);
+
+  return `
+════════════════════════════════════════════════════════════
+USER IDENTITY LOCK — STRONG FACE & FEATURE CONSISTENCY
+════════════════════════════════════════════════════════════
+The user's face and body must remain CONSISTENT and RECOGNIZABLE.
+${parts.length > 0 ? `${parts.join('\n')}` : 'Use reference images as the primary identity guide.'}
+
+WHAT IS LOCKED:
+✓ Face shape and bone structure
+✓ Skin tone and texture
+✓ Hair color, texture, length, and style
+✓ Eyes (color, shape, distance)
+✓ Nose (shape, size, profile)
+✓ Mouth and lips
+✓ Distinctive facial features or marks
+✓ Body build and proportions
+✓ Age presentation
+✓ Overall likeness consistency
+
+THIS IS NOT A GENERIC CHARACTER.
+This is a specific real person who must be recognizable across generations.
+Do NOT produce a random person. Do NOT swap faces with generic models.
+Do NOT allow face drift. Anchor identity to the provided reference images.
+
+PERMITTED CHANGES:
+✓ Clothing, hairstyle, expression, pose, setting
+✓ Age appearance within their general age range (if applicable)
+✓ Styling details per the prompt
+
+PROHIBITED CHANGES:
+✗ Face shape or bone structure
+✗ Skin tone or ethnicity
+✗ Core hair color or natural texture
+✗ Body build or proportions
+✗ Distinctive features that define their appearance
+════════════════════════════════════════════════════════════`;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId, manualLocationId, manualZoneId } = await req.json();
+    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userAppearanceData } = await req.json();
 
     if (!messageId || !prompt) {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
@@ -606,8 +652,10 @@ Deno.serve(async (req) => {
       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
+      // User identity-lock mode: prioritize user refs, strong identity preservation
       referenceImages = userReferenceImages.slice(0, 4);
-      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.`;
+      const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(userAppearanceData) : '';
+      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.${identityLockNote}`;
 
     } else if (hasCharacterImages) {
       // Character refs come AFTER location refs but get more slots (4 vs 3) for face priority
@@ -616,10 +664,15 @@ Deno.serve(async (req) => {
         ...resolvedCharacterRefs.slice(0, 4),
       ].filter(Boolean);
 
+      // If user is included in the scene, add their identity lock
+      const userIdentityNote = (isUserIdentityLocked && hasUserImages && userAppearanceData) 
+        ? `\n\nUSER ALSO PRESENT: The user must be recognizable and consistent with their reference images. ${buildUserIdentityLockNote(userAppearanceData)}`
+        : '';
+
       const roomInstruction = hasLocationImages
         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} — the person who must appear in the scene. Replicate ${characterName}'s exact face, skin tone, hair, and body with maximum fidelity. Do NOT include any other person. Do NOT redesign the room.`
         : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance. Do NOT include any other person.`;
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomInstruction}`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}`;
 
     } else if (hasLocationImages) {
       // No character refs at all — use location refs + strong appearance text
@@ -650,6 +703,9 @@ Deno.serve(async (req) => {
         location_name: resolvedLocationName || null,
         location_reference_images: locationImages.slice(0, 3),
         subject_type: resolvedSubjectType,
+        user_reference_images: userReferenceImages?.slice(0, 4) || [],
+        user_appearance_data: userAppearanceData || null,
+        is_user_identity_locked: isUserIdentityLocked || false,
       };
       await base44.entities.Message.update(messageId, {
         image_url: response.url,
