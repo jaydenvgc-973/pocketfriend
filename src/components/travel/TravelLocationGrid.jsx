@@ -1,4 +1,5 @@
 import { MapPin } from "lucide-react";
+import { isLocationActiveNow } from "@/lib/workScheduleUtils";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -18,13 +19,15 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
           || null;
         const emoji = CATEGORY_EMOJIS[loc.category] || "📍";
         const occupants = loc.resident_character_names || [];
+        const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
+        const isClosed = openStatus === false;
 
         return (
           <button
             key={loc.id}
             onClick={() => onSelect(isSelected ? null : loc)}
             className={`relative rounded-2xl overflow-hidden aspect-square border-2 transition-all ${
-              isSelected ? "border-primary shadow-lg shadow-primary/20" : "border-transparent"
+              isSelected ? "border-primary shadow-lg shadow-primary/20" : isClosed ? "border-transparent opacity-60" : "border-transparent"
             }`}
           >
             {/* Background image or fallback */}
@@ -46,6 +49,13 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
                 <p className="text-[10px] text-white/70 truncate">{occupants.slice(0, 2).join(", ")}</p>
               )}
             </div>
+
+            {/* Closed badge */}
+            {isClosed && (
+              <div className="absolute top-2 left-2 px-2 py-0.5 bg-black/60 rounded-full">
+                <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">Closed</span>
+              </div>
+            )}
 
             {/* Selected checkmark */}
             {isSelected && (

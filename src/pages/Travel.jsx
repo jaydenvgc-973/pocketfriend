@@ -10,6 +10,7 @@ import TravelLocationGrid from "@/components/travel/TravelLocationGrid";
 import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector";
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
+import { isLocationActiveNow } from "@/lib/workScheduleUtils";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -46,6 +47,28 @@ export default function Travel() {
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const settings = settingsList[0] || {};
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
+
+  /**
+   * Format operating hours for a location into a human-readable string.
+   */
+  const formatOperatingHours = (location) => {
+    const hours = location?.operating_hours;
+    if (!hours || hours.length === 0) return null;
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const fmt = (t) => {
+      if (!t) return "";
+      const [h, m] = t.split(":").map(Number);
+      const suffix = h >= 12 ? "PM" : "AM";
+      const hour = h % 12 || 12;
+      return m ? `${hour}:${String(m).padStart(2, "0")} ${suffix}` : `${hour} ${suffix}`;
+    };
+    // Group days with same hours
+    const unique = hours.map(w => `${fmt(w.open_time)} – ${fmt(w.close_time)}`);
+    const first = unique[0];
+    const allSame = unique.every(u => u === first);
+    if (allSame) return first;
+    return hours.map(w => `${w.day_of_week != null ? dayNames[w.day_of_week] + " " : ""}${fmt(w.open_time)} – ${fmt(w.close_time)}`).join(", ");
+  };
 
   /**
    * For a given location, check if we're allowed to visit it.
@@ -92,6 +115,22 @@ export default function Travel() {
 
   const handleTravel = async () => {
     if (!selectedLocation) return;
+
+    // Check if the venue is currently closed (only for locations with defined hours)
+    const isOpen = isLocationActiveNow(selectedLocation);
+    if (isOpen === false) {
+      const hoursStr = formatOperatingHours(selectedLocation);
+      setUnavailablePopup([{
+        character: { id: "closed", name: selectedLocation.name, avatar_url: null },
+        reason: {
+          iconType: "out",
+          message: `${selectedLocation.name} is closed right now.`,
+          color: "text-amber-400",
+        },
+        availableAt: hoursStr ? `Hours: ${hoursStr}` : "Check back later",
+      }]);
+      return;
+    }
 
     // Check home access
     const homeAccess = checkHomeAccess(selectedLocation);
