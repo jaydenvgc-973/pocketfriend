@@ -18,8 +18,6 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       setPreview(file_url);
-      await onPhotoUpdate(file_url);
-      onClose();
     } catch {
       // ignore
     } finally {
@@ -44,7 +42,6 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
       
       if (result?.url) {
         setPreview(result.url);
-        onPhotoUpdate(result.url);
       }
     } catch {
       // ignore
@@ -134,8 +131,10 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
 
         {preview && (
           <Button
-            onClick={onClose}
-            variant="outline"
+            onClick={async () => {
+              await onPhotoUpdate(preview);
+              onClose();
+            }}
             className="w-full rounded-xl"
             size="sm"
           >
