@@ -1,17 +1,34 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
-import { X, Sparkles, Send, Check } from "lucide-react";
+import { X, Sparkles, Send, Check, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function ScenePhotoModal({ location, characters, currentUser, displayName, onClose, allCharacters }) {
   const [participants, setParticipants] = useState(characters.map(c => c.id));
-  const [recipients, setRecipients] = useState(characters.map(c => c.id));
+  const [recipients, setRecipients] = useState([]);
   const [prompt, setPrompt] = useState("");
+  const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
   const [generatedImage, setGeneratedImage] = useState(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [sent, setSent] = useState(false);
+
+  const generatePrompt = async () => {
+    setIsGeneratingPrompt(true);
+    const selectedChars = allCharacters.filter(c => participants.includes(c.id));
+    const allNames = [displayName, ...selectedChars.map(c => c.name)].join(", ");
+    try {
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: `Write a short, creative photo caption/description (1 sentence) for a candid photo taken at ${location.name} featuring ${allNames}. Make it feel natural and spontaneous, like what you'd write as a photo prompt. No hashtags.`,
+      });
+      setPrompt(typeof result === "string" ? result : result?.text || "");
+    } catch {
+      // ignore
+    } finally {
+      setIsGeneratingPrompt(false);
+    }
+  };
 
   const toggleParticipant = (id) => setParticipants(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
   const toggleRecipient = (id) => setRecipients(p => p.includes(id) ? p.filter(x => x !== id) : [...p, id]);
@@ -131,12 +148,23 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
         {/* Prompt */}
         <div>
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Describe the moment (optional)</p>
-          <input
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder={`Candid shot at ${location.name}...`}
-            className="w-full h-10 px-3 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground"
-          />
+          <div className="flex gap-2">
+            <input
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder={`Candid shot at ${location.name}...`}
+              className="flex-1 h-10 px-3 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground"
+            />
+            <button
+              onClick={generatePrompt}
+              disabled={isGeneratingPrompt}
+              className="h-10 px-3 rounded-xl bg-secondary border border-border text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 flex items-center gap-1.5 text-xs"
+              title="Generate prompt with AI"
+            >
+              <Wand2 className={`w-3.5 h-3.5 ${isGeneratingPrompt ? "animate-spin" : ""}`} />
+              {isGeneratingPrompt ? "..." : "AI"}
+            </button>
+          </div>
         </div>
 
         {/* Generate */}
@@ -157,7 +185,7 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Send to</p>
             <div className="flex flex-wrap gap-2">
-              {characters.map(char => (
+              {allCharacters.filter(c => !c.isNpc).map(char => (
                 <button
                   key={char.id}
                   onClick={() => toggleRecipient(char.id)}
