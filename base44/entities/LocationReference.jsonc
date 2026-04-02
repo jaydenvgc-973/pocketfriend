@@ -4,7 +4,7 @@
   "properties": {
     "name": {
       "type": "string",
-      "description": "The display name of the location (e.g. 'Jayden's Apartment', 'Downtown Coffee Shop')"
+      "description": "The display name of the location (e.g. 'Jayden's Apartment', 'The Coffee House')"
     },
     "location_type": {
       "type": "string",
@@ -14,6 +14,156 @@
       ],
       "default": "global",
       "description": "Whether this location is shared across all characters or specific to one"
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "home",
+        "workplace",
+        "gym",
+        "social",
+        "outdoor",
+        "food_drink",
+        "medical",
+        "education",
+        "grocery",
+        "religion",
+        "government",
+        "public",
+        "business",
+        "school",
+        "generic"
+      ],
+      "default": "generic",
+      "description": "Broad category for grouping"
+    },
+    "subtype": {
+      "type": "string",
+      "enum": [
+        "apartment",
+        "house",
+        "condo",
+        "studio",
+        "coffee_shop",
+        "cafe",
+        "diner",
+        "lunch_spot",
+        "breakfast_spot",
+        "fine_dining_restaurant",
+        "casual_restaurant",
+        "fast_casual",
+        "food_truck",
+        "pizza_place",
+        "sushi_restaurant",
+        "steakhouse",
+        "taco_stand",
+        "burger_joint",
+        "bbq_place",
+        "ramen_shop",
+        "thai_restaurant",
+        "mexican_restaurant",
+        "italian_restaurant",
+        "asian_fusion",
+        "vegan_restaurant",
+        "gastropub",
+        "cocktail_bar",
+        "dive_bar",
+        "sports_bar",
+        "beer_hall",
+        "gay_bar",
+        "lesbian_bar",
+        "queer_bar",
+        "upscale_lounge",
+        "neighborhood_bar",
+        "wine_bar",
+        "tiki_bar",
+        "house_music_club",
+        "hip_hop_club",
+        "electronic_club",
+        "punk_venue",
+        "rock_venue",
+        "latin_dance_club",
+        "country_bar",
+        "jazz_club",
+        "karaoke_bar",
+        "nightclub",
+        "dance_club",
+        "rave_venue",
+        "rooftop_bar",
+        "lounge_club",
+        "gym",
+        "yoga_studio",
+        "pilates_studio",
+        "crossfit_box",
+        "swimming_pool",
+        "park",
+        "hiking_trail",
+        "beach",
+        "lake",
+        "river",
+        "botanical_garden",
+        "urban_plaza",
+        "grocery_store",
+        "supermarket",
+        "farmers_market",
+        "convenience_store",
+        "pharmacy",
+        "clothing_store",
+        "bookstore",
+        "record_store",
+        "electronics_store",
+        "home_goods_store",
+        "thrift_store",
+        "mall",
+        "shopping_district",
+        "office",
+        "corporate_office",
+        "startup_office",
+        "factory",
+        "warehouse",
+        "retail_store",
+        "salon",
+        "barbershop",
+        "hospital",
+        "clinic",
+        "urgent_care",
+        "dentist_office",
+        "therapist_office",
+        "university",
+        "college",
+        "high_school",
+        "elementary_school",
+        "library",
+        "classroom",
+        "church",
+        "temple",
+        "mosque",
+        "synagogue",
+        "meditation_center",
+        "community_center",
+        "museum",
+        "art_gallery",
+        "theater",
+        "cinema",
+        "concert_venue",
+        "sports_arena",
+        "stadium",
+        "government_office",
+        "police_station",
+        "courthouse",
+        "city_hall",
+        "park_ranger_station"
+      ],
+      "description": "Specific venue subtype that controls menu, actions, NPCs, and tone",
+      "default": ""
+    },
+    "features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Location features that affect actions and capabilities. Examples: ['VIP', 'dance floor', 'DJ', 'dine-in', 'takeout', 'alcohol', 'dress code']",
+      "default": []
     },
     "character_id": {
       "type": "string",
@@ -43,28 +193,6 @@
     "owner_role": {
       "type": "string",
       "description": "The owner's role at this location, e.g. 'landlord', 'manager', 'owner', 'operator'"
-    },
-    "category": {
-      "type": "string",
-      "enum": [
-        "home",
-        "workplace",
-        "gym",
-        "social",
-        "outdoor",
-        "food_drink",
-        "medical",
-        "education",
-        "grocery",
-        "religion",
-        "government",
-        "public",
-        "business",
-        "school",
-        "generic"
-      ],
-      "default": "generic",
-      "description": "Category for grouping and matching"
     },
     "religion_denomination": {
       "type": "string",
@@ -98,12 +226,16 @@
     },
     "zones": {
       "type": "array",
-      "description": "Room/zone breakdown \u2014 each zone has its own reference images",
+      "description": "Room/zone breakdown \u2014 each zone has its own reference images and action context",
       "items": {
         "type": "object",
         "properties": {
           "zone_name": {
             "type": "string"
+          },
+          "zone_description": {
+            "type": "string",
+            "description": "What this zone is like, affects actions and NPC behavior"
           },
           "image_urls": {
             "type": "array",
@@ -211,6 +343,84 @@
         ]
       }
     },
+    "vip_access": {
+      "type": "object",
+      "description": "VIP system configuration",
+      "properties": {
+        "has_vip": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this location has a VIP area"
+        },
+        "vip_access_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "How to gain VIP access: 'pay', 'invite', 'sneak', 'connection', 'status'",
+          "default": []
+        },
+        "vip_cost": {
+          "type": "number",
+          "description": "Cost to access VIP if applicable"
+        }
+      }
+    },
+    "club_theme": {
+      "type": "string",
+      "enum": [
+        "House",
+        "90s R&B",
+        "Hip Hop",
+        "Punk",
+        "Rock",
+        "Latin",
+        "EDM",
+        "Afrobeats",
+        "Trap",
+        "Throwback",
+        "Alternative",
+        "Techno",
+        "Disco",
+        "Country",
+        "Jazz",
+        "Reggae",
+        "K-pop",
+        "Indie",
+        "Metal",
+        "Pop",
+        "R&B",
+        "Soul",
+        "Funk",
+        "Dub",
+        "Drum and Bass",
+        "Dubstep",
+        "Garage",
+        "Grime",
+        "Trance",
+        "Deep House",
+        "Minimal",
+        "Experimental",
+        ""
+      ],
+      "description": "Music/theme for clubs and bars"
+    },
+    "venue_identity": {
+      "type": "string",
+      "enum": [
+        "gay bar",
+        "lesbian bar",
+        "queer bar",
+        "inclusive nightlife",
+        "straight bar",
+        "dive bar",
+        "sports bar",
+        "upscale lounge",
+        "neighborhood bar",
+        ""
+      ],
+      "description": "Social identity/vibe of bar/club venues"
+    },
     "utility_costs": {
       "type": "object",
       "properties": {
@@ -290,7 +500,7 @@
         "grocery",
         "worship"
       ],
-      "description": "Identifies which generic location type this is (if any). Remains constant even if user renames the location."
+      "description": "Identifies which generic location type this is (if any)"
     },
     "generic_type_label": {
       "type": "string",
@@ -300,11 +510,11 @@
         "grocery",
         "worship"
       ],
-      "description": "Display label for the generic type (e.g., 'Generic Park', 'Generic Hospital')"
+      "description": "Display label for the generic type"
     },
     "canonical_location_key": {
       "type": "string",
-      "description": "Stable canonical identity key for generic locations (e.g. generic_grocery_store, generic_park). Remains unchanged even if display name is edited."
+      "description": "Stable canonical identity key for generic locations (e.g. generic_grocery_store, generic_park)"
     },
     "is_generic_shared": {
       "type": "boolean",
