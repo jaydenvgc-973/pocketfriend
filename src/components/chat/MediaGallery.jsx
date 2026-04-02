@@ -409,7 +409,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
               onClick={() => setIsOpen(false)}
             >
               <div
-                className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[99vh] flex flex-col gap-5"
+                className="bg-card rounded-2xl p-6 max-w-5xl w-full max-h-[99vh] flex flex-col gap-5"
                 onClick={e => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between">
