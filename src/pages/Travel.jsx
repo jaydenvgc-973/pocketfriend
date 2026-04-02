@@ -190,39 +190,31 @@ export default function Travel() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6">
-        {/* Location grid */}
-        <div>
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Where are you going?</p>
-          <TravelLocationGrid
-            locations={locationsData}
-            selectedLocation={selectedLocation}
-            onSelect={setSelectedLocation}
-          />
-        </div>
+         {/* Character selection */}
+         <div>
+           <div className="flex items-center gap-2 mb-3">
+             <Users className="w-4 h-4 text-muted-foreground" />
+             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
+           </div>
+           <TravelCharacterSelector
+             characters={characters}
+             currentUser={currentUser}
+             displayName={displayName}
+             selectedIds={selectedCharacterIds}
+             locationMap={locationMap}
+             onToggle={toggleCharacter}
+           />
+         </div>
 
-        {/* Character selection — only after location chosen */}
-        <AnimatePresence>
-          {selectedLocation && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-            >
-              <div className="flex items-center gap-2 mb-3">
-                <Users className="w-4 h-4 text-muted-foreground" />
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
-              </div>
-              <TravelCharacterSelector
-                characters={characters}
-                currentUser={currentUser}
-                displayName={displayName}
-                selectedIds={selectedCharacterIds}
-                locationMap={locationMap}
-                onToggle={toggleCharacter}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
+         {/* Location grid */}
+         <div>
+           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Where are you going?</p>
+           <TravelLocationGrid
+             locations={locationsData}
+             selectedLocation={selectedLocation}
+             onSelect={setSelectedLocation}
+           />
+         </div>
 
         {/* Travel button */}
         <AnimatePresence>
