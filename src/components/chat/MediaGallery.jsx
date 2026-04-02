@@ -10,6 +10,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [selectedImage, setSelectedImage] = useState(null);
   const [regenTarget, setRegenTarget] = useState(null); // { id, url } of image to regenerate
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [generationTab, setGenerationTab] = useState("character"); // "character" | "user"
 
   // Prompt generator state
   const [prompt, setPrompt] = useState("");
@@ -28,12 +29,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showZonePicker, setShowZonePicker] = useState(false);
 
-  // Load locations when modal opens — use fetchAllLocationsForUser to get only current, relevant locations
+  // User settings for world name
+  const [userSettings, setUserSettings] = useState(null);
+
+  // Load locations and user settings when modal opens
   useEffect(() => {
     if (!isOpen) return;
-    base44.functions.invoke('fetchAllLocationsForUser', {})
-      .then(res => setLocations(res?.data?.locations || []))
-      .catch(() => {});
+    Promise.all([
+      base44.functions.invoke('fetchAllLocationsForUser', {})
+        .then(res => setLocations(res?.data?.locations || []))
+        .catch(() => {}),
+      base44.entities.UserSettings.list()
+        .then(settings => setUserSettings(settings?.[0] || null))
+        .catch(() => {}),
+    ]);
   }, [isOpen]);
 
   const availableZones = selectedLocation?.zones?.filter(z => z.image_urls?.length > 0) || [];
@@ -106,7 +115,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
   };
 
-  const handleGenerate = async () => {
+  const handleGenerateCharacter = async () => {
     if ((!prompt.trim() && !referenceImageUrl && !selectedLocation) || !character || !conversationId) return;
     setIsGenerating(true);
     setGenerateError(null);
@@ -159,10 +168,6 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         throw new Error('No image URL returned');
       }
 
-      // genRes already has the message updated with image_url via generateImageAsync
-      const genRes2 = genRes; // kept for memory store below
-      const genResUrl = genRes.data.imageUrl;
-
       // Store memory so character remembers sending this
       const envNote = selectedLocation ? ` at ${selectedLocation.name}${selectedZone ? ` (${selectedZone})` : ''}` : '';
       base44.entities.Memory.create({
@@ -177,6 +182,62 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setPrompt("");
       setReferenceImageUrl(null);
       setReferenceImageSource(null);
+      setShowGridPicker(false);
+      setIsOpen(false);
+      if (onImageGenerated) onImageGenerated(newMsg);
+    } catch (err) {
+      setGenerateError(err.message || "Failed to generate image");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleGenerateUser = async () => {
+    if ((!prompt.trim() && !selectedLocation) || !character || !conversationId) return;
+    setIsGenerating(true);
+    setGenerateError(null);
+    try {
+      const userName = userSettings?.fictional_world_name || "the user";
+      const promptText = prompt.trim() || "candid natural moment, everyday life";
+
+      // Create a placeholder message for user
+      const newMsg = await base44.entities.Message.create({
+        conversation_id: conversationId,
+        sender_type: "user",
+        content: "",
+        timestamp: new Date().toISOString(),
+      });
+
+      if (!newMsg?.id) throw new Error('Failed to create message');
+
+      // Build the prompt for generateImageAsync
+      const fullPrompt = `[USER] ${promptText}`;
+
+      // Call generateImageAsync for user subject
+      const genRes = await base44.functions.invoke('generateImageAsync', {
+        messageId: newMsg.id,
+        prompt: fullPrompt,
+        characterReferenceImages: [],
+        userReferenceImages: [],
+        characterName: userName,
+        subjectType: "user",
+        characterId: character.id,
+        manualLocationId: selectedLocation?.id || null,
+        manualZoneId: selectedZone || null,
+      });
+
+      if (genRes?.data?.filtered) {
+        await base44.entities.Message.delete(newMsg.id).catch(() => {});
+        throw new Error('Image blocked by content filter. Try a different description.');
+      }
+
+      if (!genRes?.data?.imageUrl) {
+        await base44.entities.Message.delete(newMsg.id).catch(() => {});
+        throw new Error('No image URL returned');
+      }
+
+      setPrompt("");
+      setReferenceImageUrl(null);
       setShowGridPicker(false);
       setIsOpen(false);
       if (onImageGenerated) onImageGenerated(newMsg);
@@ -230,11 +291,31 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                 {/* Generate image panel */}
                 {character && conversationId && (
                   <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+                    {/* Tab switcher */}
+                    <div className="flex items-center gap-2 mb-2">
+                      <button
+                        onClick={() => setGenerationTab("character")}
+                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "character" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+                      >
+                        {character.name}
+                      </button>
+                      <button
+                        onClick={() => setGenerationTab("user")}
+                        className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "user" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+                      >
+                        {userSettings?.fictional_world_name || "You"}
+                      </button>
+                    </div>
+
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-primary" />
-                      <p className="text-sm font-medium text-foreground">Generate a photo from {character.name}</p>
+                      <p className="text-sm font-medium text-foreground">
+                        {generationTab === "character" ? `Generate a photo from ${character.name}` : `Generate a photo of ${userSettings?.fictional_world_name || "you"}`}
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">{character.name} will "send" it in the chat and remember it.</p>
+                    <p className="text-xs text-muted-foreground">
+                      {generationTab === "character" ? `${character.name} will "send" it in the chat and remember it.` : "Generate and send a photo of yourself in the chat."}
+                    </p>
 
                     {/* Environment selector */}
                     <div className="space-y-2">
@@ -395,7 +476,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
-                      onClick={handleGenerate}
+                      onClick={generationTab === "character" ? handleGenerateCharacter : handleGenerateUser}
                       disabled={(!prompt.trim() && !referenceImageUrl && !selectedLocation) || isGenerating}
                       className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
                     >
