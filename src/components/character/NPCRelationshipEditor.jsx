@@ -46,17 +46,26 @@ export default function NPCRelationshipEditor({ character, relationship, onUpdat
     setGenerating(false);
   };
 
+  const normalizeRelationType = (type) => {
+    const normalized = type?.toLowerCase().trim();
+    if (normalized === 'mom') return 'mother';
+    if (normalized === 'dad') return 'father';
+    return normalized;
+  };
+
   const handleSave = async () => {
     if (!form.person_name.trim()) return;
     const originalName = relationship?.person_name?.toLowerCase();
-    const originalType = relationship?.relationship_type?.toLowerCase();
+    const originalType = normalizeRelationType(relationship?.relationship_type);
+    const newName = form.person_name?.toLowerCase();
+    const newType = normalizeRelationType(form.relationship_type);
     
     // Replace the matching NPC, filter out any other entries with the same name+type combo
     const updated = (character.fictional_relationships || []).reduce((acc, r) => {
       const rName = r.person_name?.toLowerCase();
-      const rType = r.relationship_type?.toLowerCase();
+      const rType = normalizeRelationType(r.relationship_type);
       const isOriginal = rName === originalName && rType === originalType;
-      const isDuplicate = rName === form.person_name?.toLowerCase() && rType === form.relationship_type?.toLowerCase() && !isOriginal;
+      const isDuplicate = rName === newName && rType === newType && !isOriginal;
       
       if (isOriginal) {
         acc.push({ ...r, ...form });
