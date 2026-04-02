@@ -430,7 +430,7 @@ Return JSON:
         </div>
 
         {/* NPC Dropdown */}
-        <div className="relative" ref={npcDropdownRef}>
+        <div className="relative z-20" ref={npcDropdownRef}>
           <button
             onClick={() => setShowNpcDropdown(v => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
@@ -494,7 +494,7 @@ Return JSON:
       </div>
 
       {/* Scene image */}
-      <div className="relative h-40 flex-shrink-0 overflow-hidden">
+      <div className="relative h-40 flex-shrink-0 overflow-hidden z-0">
         {isGeneratingImage ? (
           <div className="w-full h-full bg-secondary flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
