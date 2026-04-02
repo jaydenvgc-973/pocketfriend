@@ -423,7 +423,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
                 {/* Generate image panel */}
                 {character && conversationId && (
-                  <div className="rounded-2xl border border-primary/20 bg-primary/5 max-h-[70vh] overflow-y-auto flex flex-col p-4 space-y-3">
+                  <div className="rounded-2xl border border-primary/20 bg-primary/5 flex-1 overflow-y-auto flex flex-col p-4 space-y-3">
                     {/* Tab switcher */}
                     <div className="flex items-center gap-2 mb-2">
                       <button
