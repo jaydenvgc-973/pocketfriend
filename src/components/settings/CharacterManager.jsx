@@ -91,7 +91,7 @@ export default function CharacterManager() {
         }
       }
     } else {
-      const char = characters.find(c => c.id === itemId);
+      const char = roster.find(c => c.id === itemId);
       if (!newName.trim() || newName === char?.name) {
         setRenamingId(null);
         return;
@@ -107,7 +107,7 @@ export default function CharacterManager() {
         const match = itemId.match(/^npc_(.+)_(.+)$/);
         if (match) {
           const [, sourceCharId, personName] = match;
-          const sourceChar = characters.find(c => c.id === sourceCharId);
+          const sourceChar = roster.find(c => c.id === sourceCharId);
           if (sourceChar) {
             const updated = (sourceChar.fictional_relationships || []).filter(
               r => r.person_name !== personName
@@ -148,7 +148,7 @@ export default function CharacterManager() {
         const match = npcId.match(/^npc_(.+)_(.+)$/);
         if (match) {
           const [, sourceCharId, personName] = match;
-          const sourceChar = characters.find(c => c.id === sourceCharId);
+          const sourceChar = roster.find(c => c.id === sourceCharId);
           if (sourceChar) {
             const updated = (sourceChar.fictional_relationships || []).filter(
               r => r.person_name !== personName
@@ -173,7 +173,7 @@ export default function CharacterManager() {
           const match = otherId.match(/^npc_(.+)_(.+)$/);
           if (match) {
             const [, sourceCharId, personName] = match;
-            const sourceChar = characters.find(c => c.id === sourceCharId);
+            const sourceChar = roster.find(c => c.id === sourceCharId);
             if (sourceChar) {
               const updated = (sourceChar.fictional_relationships || []).filter(
                 r => r.person_name !== personName
@@ -246,7 +246,7 @@ export default function CharacterManager() {
     }
   };
 
-  const editable = characters.filter(c => !c.is_protected && !c.is_default);
+  const editable = roster.filter(c => !c.is_protected && !c.is_default && !c.is_user);
 
   return (
     <div className="space-y-4">
