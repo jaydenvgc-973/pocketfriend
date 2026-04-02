@@ -37,9 +37,10 @@ function getLocationActions(category, recentChat = "") {
   const base = {
     home: [
       { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral" },
-      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 10, type: "positive", imagePrompt: "homemade meal on a kitchen table, cozy, photorealistic" },
+      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "positive", imagePrompt: "homemade meal on a kitchen table, cozy, photorealistic" },
       { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive" },
       { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral" },
+      { id: "order_takeout", label: "Order takeout", emoji: "🥡", cost: 20, type: "positive", imagePrompt: "takeout food containers on a coffee table, cozy home setting, photorealistic" },
     ],
     social: [
       { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive", imagePrompt: "glasses of beer and cocktails on a bar counter, bokeh bar lights, photorealistic" },
@@ -345,16 +346,31 @@ export default function Scene() {
     setIsGeneratingImage(true);
     const hour = new Date().getHours();
     const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
-    const charNames = sceneCharacters.map(c => c.name).join(", ");
-    const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
+
+    let prompt;
+    if (isHomeLocation) {
+      // Only include people who actually belong here: residents present + characters the user brought
+      const homeKnownPeople = [
+        ...broughtCharacters,
+        ...homeResidentsPresent,
+      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+      const peopleDesc = homeKnownPeople.length > 0
+        ? `${homeKnownPeople.map(c => c.name).join(" and ")} is/are present`
+        : "empty, no people visible";
+      prompt = `Realistic interior scene inside ${location.name}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc}. Do NOT include any random strangers or unrecognized people. Photorealistic, warm, authentic atmosphere.`;
+    } else {
+      const charNames = sceneCharacters.map(c => c.name).join(", ");
+      const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
+      prompt = `Realistic scene at ${location.name}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} present. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
+    }
+
     try {
       const result = await base44.integrations.Core.GenerateImage({
-        prompt: `Realistic scene at ${location.name}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} present. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`,
+        prompt,
         existing_image_urls: firstImage ? [firstImage] : undefined,
       });
       setSceneImage(result.url);
     } catch {
-      // fallback to location reference image
       setSceneImage(firstImage);
     } finally {
       setIsGeneratingImage(false);
@@ -396,11 +412,14 @@ export default function Scene() {
     const drinkKeywords = ["drink", "beer", "wine", "cocktail", "shot", "whiskey", "vodka", "juice", "soda", "coffee", "latte", "water"];
     const hasFoodOrder = foodKeywords.some(k => t.includes(k));
     const hasDrinkOrder = drinkKeywords.some(k => t.includes(k));
-    if (hasFoodOrder && FOOD_VENUE_CATEGORIES.includes(location.category)) {
-      // Extract what they ordered for a better prompt
+    // At home, only trigger food images for explicit takeout — not generic eating
+    const isTakeoutContext = t.includes("takeout") || t.includes("take out") || t.includes("delivery") || t.includes("order takeout");
+    const nonHomeFood = FOOD_VENUE_CATEGORIES.includes(location.category) && !isHomeLocation;
+    if (hasFoodOrder && (nonHomeFood || isTakeoutContext)) {
       const item = showMatch?.[1] || text.replace(/[[\]]/g, "").trim();
-      generateFocusedImage(`${item}, served on a plate, restaurant setting, close-up,`);
-    } else if (hasDrinkOrder && FOOD_VENUE_CATEGORIES.includes(location.category)) {
+      const setting = isTakeoutContext ? "takeout containers on a coffee table, home setting" : "restaurant setting";
+      generateFocusedImage(`${item}, served on a plate, ${setting}, close-up,`);
+    } else if (hasDrinkOrder && nonHomeFood) {
       const item = text.replace(/[[\]]/g, "").trim();
       generateFocusedImage(`${item}, drink in a glass, bar or restaurant setting, close-up,`);
     }
