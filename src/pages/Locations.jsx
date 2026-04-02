@@ -299,7 +299,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
     location_type: editingLocation?.location_type || "global",
     character_id: editingLocation?.character_id || "",
     category: editingLocation?.category || "home",
-    subtype: editingLocation?.subtype || "",
+    subtype: Array.isArray(editingLocation?.subtype) ? editingLocation.subtype : (editingLocation?.subtype ? [editingLocation.subtype] : []),
     description: editingLocation?.description || "",
     keywords: editingLocation?.keywords?.join(", ") || "",
     zones: editingLocation?.zones || [],
@@ -443,8 +443,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
             {SUBTYPE_OPTIONS[form.category].map(subtype => (
               <button
                 key={subtype}
-                onClick={() => update("subtype", form.subtype === subtype ? "" : subtype)}
-                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype === subtype ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                onClick={() => update("subtype", form.subtype.includes(subtype) ? form.subtype.filter(s => s !== subtype) : [...form.subtype, subtype])}
+                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype.includes(subtype) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
               >
                 {subtype.replace(/_/g, ' ')}
               </button>
