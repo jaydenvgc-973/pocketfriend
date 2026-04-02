@@ -642,11 +642,16 @@ export default function CharacterProfile() {
                             onClick={() => rel.photo_url && setLightboxSrc(rel.photo_url)}
                             className={rel.photo_url ? "cursor-pointer" : "cursor-default"}
                           >
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-3">
                               {rel.photo_url ? (
-                                <img src={rel.photo_url} alt={rel.person_name} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+                                <div className="relative group">
+                                  <img src={rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                                  <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    <ZoomIn className="w-4 h-4 text-white" />
+                                  </div>
+                                </div>
                               ) : (
-                                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                                <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
                                   <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
                                 </div>
                               )}

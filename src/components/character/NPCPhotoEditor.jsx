@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Camera, Upload, Loader2, X, ZoomIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import NPCPhotoCropper from './NPCPhotoCropper';
 
 export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, onClose }) {
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState(npc?.photo_url || null);
+  const [cropping, setCropping] = useState(false);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -70,12 +72,22 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
         {preview && (
           <div className="relative rounded-xl overflow-hidden bg-secondary h-40">
             <img src={preview} alt={npc.person_name} className="w-full h-full object-cover" />
-            <button
-              onClick={() => window.open(preview, '_blank')}
-              className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
-            >
-              <ZoomIn className="w-6 h-6 text-white" />
-            </button>
+            <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
+              <button
+                onClick={() => setCropping(true)}
+                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                title="Reposition photo"
+              >
+                <ZoomIn className="w-5 h-5 text-white" />
+              </button>
+              <button
+                onClick={() => window.open(preview, '_blank')}
+                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
+                title="Open full size"
+              >
+                <ZoomIn className="w-5 h-5 text-white" />
+              </button>
+            </div>
           </div>
         )}
 
@@ -139,6 +151,16 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
           </Button>
         )}
       </div>
+
+      {/* Photo Cropper */}
+      {cropping && preview && (
+        <NPCPhotoCropper
+          photoUrl={preview}
+          npcName={npc.person_name}
+          onSave={() => setCropping(false)}
+          onClose={() => setCropping(false)}
+        />
+      )}
     </div>
   );
 }
