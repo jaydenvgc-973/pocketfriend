@@ -820,24 +820,27 @@ function LocationForm({ editingLocation, characters, onSave, onCancel }) {
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>
             )}
             {characters.map(char => {
-              const alreadyWorker = form.worker_character_ids?.includes(char.id);
-              return (
-                <button
-                  key={char.id}
-                  onClick={() => {
-                    if (!alreadyWorker) {
-                      update("worker_character_ids", [...(form.worker_character_ids || []), char.id]);
-                    }
-                  }}
-                  disabled={alreadyWorker}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
-                >
-                  <CharacterAvatar character={char} size="sm" />
-                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                  {alreadyWorker && <span className="text-xs text-primary font-medium">✓ Working</span>}
-                </button>
-              );
-            })}
+               const alreadyWorker = form.worker_character_ids?.includes(char.id);
+               const tooYoung = isWorkerTooYoung(char.id, form.category);
+               return (
+                 <button
+                   key={char.id}
+                   onClick={() => {
+                     if (!alreadyWorker && !tooYoung) {
+                       update("worker_character_ids", [...(form.worker_character_ids || []), char.id]);
+                     }
+                   }}
+                   disabled={alreadyWorker || tooYoung}
+                   title={tooYoung ? form.category === 'social' || form.category === 'food_drink' ? "Must be 21+ for bars/nightclubs" : "Must be 16+ to work" : ""}
+                   className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
+                 >
+                   <CharacterAvatar character={char} size="sm" />
+                   <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                   {alreadyWorker && <span className="text-xs text-primary font-medium">✓ Working</span>}
+                   {tooYoung && <span className="text-xs text-destructive font-medium">Too young</span>}
+                 </button>
+               );
+             })}
             {allNPCs.length > 0 && (
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>
             )}
@@ -1080,6 +1083,38 @@ export default function Locations() {
     queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }),
     enabled: !!currentUser?.email,
   });
+
+  // Helper: calculate NPC/family member age
+  const getNPCAge = (name) => {
+    for (const char of characters) {
+      const familyMember = (char.family_members || []).find(fm => fm.name?.toLowerCase() === name.toLowerCase());
+      if (familyMember && familyMember.age_at_creation != null) {
+        const savedDate = familyMember.age_set_date || char.created_date;
+        const base = new Date(savedDate);
+        const birthdayMonth = (base.getMonth() + 0) % 12; // simplified: assume index 0
+        const birthdayDay = base.getDate();
+        const today = new Date();
+        const thisYear = today.getFullYear();
+        const baseYear = base.getFullYear();
+        let birthday = new Date(thisYear, birthdayMonth, birthdayDay);
+        if (birthday > today) birthday.setFullYear(thisYear - 1);
+        const yearsPassed = birthday.getFullYear() - baseYear;
+        return familyMember.age_at_creation + yearsPassed;
+      }
+    }
+    return null;
+  };
+
+  // Helper: check if worker is too young
+  const isWorkerTooYoung = (workerId, category) => {
+    const char = characters.find(c => c.id === workerId);
+    if (char && char.birthday) {
+      const age = new Date().getFullYear() - new Date(char.birthday).getFullYear();
+      if (age < 16) return true; // too young for any work
+      if ((category === 'social' || category === 'food_drink') && age < 21) return true; // bars/nightclubs
+    }
+    return false;
+  };
 
   const handleSave = async (formData) => {
     let locationId;
