@@ -150,7 +150,7 @@ export default function CharacterManager() {
     const hasUser = selected.includes('user');
     const npcIds = selected.filter(id => id.startsWith('npc_'));
     const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
-    
+
     if (hasUser) {
       // Merging with user: delete NPC duplicates
       npcIds.forEach(npcId => {
@@ -174,10 +174,10 @@ export default function CharacterManager() {
       // Merging NPCs: keep the first one, delete others
       const [primary, ...others] = npcIds;
       const primaryMatch = primary.match(/^npc_(.+)_(.+)$/);
-      
+
       if (primaryMatch) {
         const [, primarySourceCharId, primaryPersonName] = primaryMatch;
-        
+
         others.forEach(otherId => {
           const match = otherId.match(/^npc_(.+)_(.+)$/);
           if (match) {
@@ -196,6 +196,59 @@ export default function CharacterManager() {
       }
       setSelectedForMerge(new Set());
       setMergeMode(false);
+    } else if (charIds.length === 1 && npcIds.length === 1) {
+      // Merge active character with NPC: consolidate NPC data into active character, remove NPC
+      const activeCharId = charIds[0];
+      const npcId = npcIds[0];
+      const npcMatch = npcId.match(/^npc_(.+)_(.+)$/);
+
+      if (npcMatch) {
+        const [, sourceCharId, personName] = npcMatch;
+        const sourceChar = characters.find(c => c.id === sourceCharId);
+        const activeChar = characters.find(c => c.id === activeCharId);
+        const npcData = sourceChar?.fictional_relationships?.find(r => r.person_name === personName);
+
+        if (sourceChar && activeChar && npcData) {
+          // Merge NPC data into active character: take max relationship scores and richer descriptions
+          const mergedRelationship = {
+            ...npcData,
+            related_character_id: activeCharId,
+            person_name: activeChar.name,
+            friendship_level: Math.max(npcData.friendship_level ?? 50, activeChar.friendship_level ?? 50),
+            user_respect_level: Math.max(npcData.user_respect_level ?? 50, activeChar.user_respect_level ?? 50),
+            romantic_level: Math.max(npcData.romantic_level ?? 0, activeChar.romantic_level ?? 0),
+            attraction_level: Math.max(npcData.attraction_level ?? 0, activeChar.attraction_level ?? 0),
+            chosen_family_level: Math.max(npcData.chosen_family_level ?? 0, activeChar.chosen_family_level ?? 0),
+          };
+
+          // Remove NPC from fictional_relationships of source character
+          const updatedSourceRels = (sourceChar.fictional_relationships || []).filter(
+            r => r.person_name !== personName
+          );
+
+          // Add merged relationship to active character if it doesn't already have this person
+          const activeHasRelationship = (activeChar.fictional_relationships || []).some(
+            r => r.person_name?.toLowerCase() === activeChar.name.toLowerCase()
+          );
+          const updatedActiveRels = activeHasRelationship
+            ? (activeChar.fictional_relationships || []).map(r =>
+                r.person_name?.toLowerCase() === activeChar.name.toLowerCase()
+                  ? mergedRelationship
+                  : r
+              )
+            : [...(activeChar.fictional_relationships || []), mergedRelationship];
+
+          // Update both characters
+          Promise.all([
+            base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
+            base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
+          ]).then(() => {
+            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+            setSelectedForMerge(new Set());
+            setMergeMode(false);
+          }).catch(() => {});
+        }
+      }
     } else if (charIds.length >= 2) {
       // Merge active characters only
       mergeMutation.mutate({ characterIds: charIds });
