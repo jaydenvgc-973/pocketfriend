@@ -85,7 +85,7 @@ async function syncFamilyToRelationships(character, familyMembers) {
   return [...nonFamily, ...familyEntries];
 }
 
-export default function FamilyEditor({ character, readOnly = false }) {
+export default function FamilyEditor({ character, readOnly = false, allCharacters = [] }) {
   const queryClient = useQueryClient();
   const [members, setMembers] = useState(character.family_members || []);
   const [saving, setSaving] = useState(false);
@@ -116,45 +116,97 @@ export default function FamilyEditor({ character, readOnly = false }) {
     if (!member.name?.trim()) return;
     setGeneratingIdx(idx);
 
+    const isChild = ["daughter", "son"].includes(member.relationship_type);
+    const currentAge = member.age_at_creation != null ? calcFamilyMemberAge(member, character.created_date, idx) : null;
+    const isBaby = currentAge !== null && currentAge < 1;
+
+    // Check if another active character already has a photo for this same child — reuse it
+    if (isChild && allCharacters.length > 0) {
+      for (const otherChar of allCharacters) {
+        if (otherChar.id === character.id) continue;
+        const match = (otherChar.family_members || []).find(
+          fm => fm.name?.trim().toLowerCase() === member.name.trim().toLowerCase() &&
+               ["daughter", "son"].includes(fm.relationship_type) &&
+               fm.photo_url
+        );
+        if (match?.photo_url) {
+          // Reuse existing photo from the other parent
+          const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: match.photo_url } : m);
+          setMembers(updatedMembers);
+          const valid = updatedMembers.filter(m => m.name?.trim());
+          const updatedRelationships = await syncFamilyToRelationships(character, valid);
+          const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
+          let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
+          if (systemPrompt && systemPrompt.length > 5000) {
+            const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
+            const { file_url } = await base44.integrations.Core.UploadFile({ file });
+            updateData.system_prompt_url = file_url;
+          } else {
+            updateData.system_prompt = systemPrompt;
+          }
+          await base44.entities.Character.update(character.id, updateData);
+          queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+          queryClient.invalidateQueries({ queryKey: ["characters"] });
+          setGeneratingIdx(null);
+          return;
+        }
+      }
+    }
+
     // Collect parent reference images for face blending
-    // Look for characters who are parents of THIS character
     const parentRefs = [];
-    // Use the character's own avatar as a reference for family resemblance
     if (character.avatar_url) parentRefs.push(character.avatar_url);
-    // Also use any reference images defined on the character
     (character.reference_image_urls || []).slice(0, 2).forEach(u => {
       if (!parentRefs.includes(u)) parentRefs.push(u);
     });
+    // Also include the other parent's avatar if available
+    if (isChild && allCharacters.length > 0) {
+      for (const otherChar of allCharacters) {
+        if (otherChar.id === character.id) continue;
+        const hasChild = (otherChar.family_members || []).some(
+          fm => fm.name?.trim().toLowerCase() === member.name.trim().toLowerCase() &&
+               ["daughter", "son"].includes(fm.relationship_type)
+        );
+        if (hasChild && otherChar.avatar_url && !parentRefs.includes(otherChar.avatar_url)) {
+          parentRefs.push(otherChar.avatar_url);
+          break;
+        }
+      }
+    }
 
     try {
-      const isChild = ["daughter", "son"].includes(member.relationship_type);
       const isParent = ["mother", "father"].includes(member.relationship_type);
       const isSibling = ["sister", "brother", "half-sister", "half-brother"].includes(member.relationship_type);
 
-      let resemblanceNote = "";
-      if (isChild) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. Blend facial features to show clear family resemblance with the parent.`;
-      else if (isParent) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look like they could be the parent — similar bone structure, eyes, coloring.`;
-      else if (isSibling) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look clearly related — similar features, coloring, and bone structure.`;
+      let prompt;
+      if (isBaby) {
+        prompt = `A realistic, candid photo of ${member.name}, a newborn baby (under 1 year old), who is ${character.name}'s ${member.relationship_type}.
+${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
+Adorable infant, soft natural lighting, like a real family photo. NOT a cartoon, NOT illustrated. Photorealistic. Baby features — round face, chubby cheeks. Show family resemblance to the parents.`;
+      } else {
+        let resemblanceNote = "";
+        if (isChild) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. Blend facial features to show clear family resemblance with the parent.`;
+        else if (isParent) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look like they could be the parent — similar bone structure, eyes, coloring.`;
+        else if (isSibling) resemblanceNote = `This person is ${character.name}'s ${member.relationship_type}. They should look clearly related — similar features, coloring, and bone structure.`;
 
-      const prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}.
+        prompt = `A realistic, candid-style portrait photo of ${member.name}, who is ${character.name}'s ${member.relationship_type || "family member"}.
 ${character.ethnicities?.length > 0 ? `Ethnic background: ${character.ethnicities.join(", ")}.` : ""}
 ${resemblanceNote}
 Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic.`;
+      }
 
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
         existing_image_urls: parentRefs.length > 0 ? parentRefs : undefined,
       });
       if (result?.url) {
-        // Update local state
         const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: result.url } : m);
         setMembers(updatedMembers);
 
-        // Auto-save immediately so the photo persists
+        // Auto-save to this character
         const valid = updatedMembers.filter(m => m.name?.trim());
         const updatedRelationships = await syncFamilyToRelationships(character, valid);
-        const updated = { ...character, family_members: valid };
-        const systemPrompt = buildSystemPrompt(updated);
+        const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
         let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
         if (systemPrompt && systemPrompt.length > 5000) {
           const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
@@ -164,6 +216,28 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
           updateData.system_prompt = systemPrompt;
         }
         await base44.entities.Character.update(character.id, updateData);
+
+        // Propagate to other active characters who share this child
+        if (isChild && allCharacters.length > 0) {
+          for (const otherChar of allCharacters) {
+            if (otherChar.id === character.id) continue;
+            const otherIdx = (otherChar.family_members || []).findIndex(
+              fm => fm.name?.trim().toLowerCase() === member.name.trim().toLowerCase() &&
+                   ["daughter", "son"].includes(fm.relationship_type)
+            );
+            if (otherIdx !== -1) {
+              const otherUpdated = otherChar.family_members.map((fm, i) =>
+                i === otherIdx ? { ...fm, photo_url: result.url } : fm
+              );
+              const otherRelationships = await syncFamilyToRelationships(otherChar, otherUpdated.filter(m => m.name?.trim()));
+              await base44.entities.Character.update(otherChar.id, {
+                family_members: otherUpdated,
+                fictional_relationships: otherRelationships,
+              });
+            }
+          }
+        }
+
         queryClient.invalidateQueries({ queryKey: ["character", character.id] });
         queryClient.invalidateQueries({ queryKey: ["characters"] });
       }

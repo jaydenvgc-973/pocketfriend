@@ -507,7 +507,7 @@ export default function CharacterProfile() {
         )}
 
         {/* Family Members — read-only for default, editable for custom */}
-        <FamilyEditor character={character} readOnly={character.is_default} />
+        <FamilyEditor character={character} readOnly={character.is_default} allCharacters={allCharacters} />
 
         {/* Family History — below family list */}
         {character.family_history && (
