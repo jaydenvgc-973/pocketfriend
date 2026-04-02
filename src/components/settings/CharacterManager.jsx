@@ -30,6 +30,7 @@ export default function CharacterManager() {
   // Separate roster into characters and world people for management
   const characters = roster.filter(e => e.entity_type === 'character' || e.entity_type === 'user');
   const worldPeople = roster.filter(e => e.entity_type === 'world_person');
+  const seenCharIds = new Set(characters.map(c => c.id));
 
   // Collect all NPCs/fictional characters from all active characters' fictional_relationships
   const npcs = characters
