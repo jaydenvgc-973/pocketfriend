@@ -1158,7 +1158,12 @@ export default function Locations() {
     setShowForm(true);
   };
 
-  const filtered = filter === "all" ? locations : locations.filter(l => l.location_type === filter);
+  const characterIds = new Set(characters.map(c => c.id));
+  const filtered = filter === "all" 
+    ? locations 
+    : filter === "character_specific"
+    ? locations.filter(l => l.location_type === "character_specific" || characterIds.has(l.owner_character_id))
+    : locations.filter(l => l.location_type === filter);
 
   return (
     <div className="min-h-screen bg-background pb-24">
