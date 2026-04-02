@@ -264,8 +264,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                     value={member.age_at_creation ?? ""}
                     onChange={e => {
                       const val = e.target.value === "" ? null : parseInt(e.target.value, 10);
-                      updateMember(idx, "age_at_creation", val);
-                      updateMember(idx, "age_set_date", new Date().toISOString());
+                      setMembers(prev => prev.map((m, i) => i === idx ? { ...m, age_at_creation: val, age_set_date: new Date().toISOString() } : m));
                     }}
                     placeholder="Age"
                     className="w-20 bg-secondary text-foreground text-sm rounded-xl px-3 py-1.5 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground"
