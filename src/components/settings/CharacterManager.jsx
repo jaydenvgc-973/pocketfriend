@@ -347,20 +347,22 @@ export default function CharacterManager() {
                       </div>
                     ) : (
                        <div className="flex-1 min-w-0">
-                         <div className="flex items-baseline gap-1.5 flex-wrap">
-                           <p className="text-sm font-semibold text-foreground">
-                             {itemName}
-                             {isUser && <span className="text-xs text-primary">(You)</span>}
-                             {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1 inline-flex"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                           </p>
-                           {isNPC && itemData.appearance_notes && (
-                             <p className="text-xs text-muted-foreground flex-1 min-w-0">
-                               — {itemData.appearance_notes}
-                             </p>
-                           )}
-                         </div>
-                       </div>
-                      )}
+                          <div className="flex flex-col gap-0.5">
+                            <div className="flex items-baseline gap-1.5">
+                              <p className="text-sm font-semibold text-foreground">
+                                {itemName}
+                                {isUser && <span className="text-xs text-primary">(You)</span>}
+                                {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1 inline-flex"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                              </p>
+                            </div>
+                            {isNPC && itemData.appearance_notes && (
+                              <p className="text-xs text-muted-foreground">
+                                {itemData.appearance_notes}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                       )}
                   </div>
                   {!mergeMode && !isUser && (
                     <div className="flex items-center gap-1">
