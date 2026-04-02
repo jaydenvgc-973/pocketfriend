@@ -1,6 +1,6 @@
 /**
  * Unified roster system for all visual identities in the app
- * Includes: user, active characters, and People In Their World as first-class visual entities
+ * Includes: user, active characters, family members, and People In Their World as first-class visual entities
  */
 
 /**
@@ -18,30 +18,31 @@ export function getInitial(name) {
 }
 
 /**
- * Create a visual entity object for any person (user, character, or world person)
+ * Create a visual entity object for any person (user, character, family member, or world person)
  */
 export function createVisualEntity(data, entityType) {
   return {
     id: data.id || `${entityType}_${Math.random()}`,
     name: data.name || data.person_name || 'Unknown',
     avatar_url: data.avatar_url || null,
-    entity_type: entityType, // 'user' | 'character' | 'world_person'
+    entity_type: entityType, // 'user' | 'character' | 'family' | 'world_person'
     is_user: entityType === 'user',
     is_character: entityType === 'character',
+    is_family: entityType === 'family',
     is_world_person: entityType === 'world_person',
     // Appearance data for generation reference
     appearance_notes: data.appearance_notes || '',
     age_range: data.age_range || '',
     gender: data.gender || '',
     ethnicities: data.ethnicities || [],
-    // For world people, store parent character info
+    // For world people and family, store parent character info
     source_character_id: data.source_character_id || null,
     source_character_name: data.source_character_name || null,
   };
 }
 
 /**
- * Fetch unified roster: user + active characters + People In Their World
+ * Fetch unified roster: user + all characters + family members + People In Their World
  * Each person is a first-class visual entity with avatar handling
  */
 export async function fetchUnifiedRoster(base44, userEmail) {
@@ -78,12 +79,44 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     generated_avatar_urls: user.generated_avatar_urls || [],
   }, 'user') : null;
 
-  // ── ACTIVE CHARACTERS ────────────────────────────────────────────────────
+  // ── ALL CHARACTERS ──────────────────────────────────────────────────
   const allChars = activeCharacters
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))
     .map(c => createVisualEntity(c, 'character'));
 
-  // ── PEOPLE IN THEIR WORLD ────────────────────────────────────────────────
+  // ── FAMILY MEMBERS ──────────────────────────────────────────────────────
+  // Collect family members from all active characters
+  const familyMembersMap = new Map(); // Deduplicate by name + source character
+
+  activeCharacters.forEach(char => {
+    (char.family_members || []).forEach(fm => {
+      if (fm.name) {
+        const key = `${fm.name.toLowerCase()}_${char.id}`;
+        if (!familyMembersMap.has(key)) {
+          familyMembersMap.set(key, {
+            name: fm.name,
+            relationship_type: fm.relationship_type || 'Family',
+            avatar_url: fm.photo_url || null,
+            source_character_id: char.id,
+            source_character_name: char.name,
+          });
+        }
+      }
+    });
+  });
+
+  const familyMembers = Array.from(familyMembersMap.values()).map(member =>
+    createVisualEntity({
+      id: `family_${member.source_character_id}_${member.name.replace(/\s+/g, '_')}`,
+      name: member.name,
+      avatar_url: member.avatar_url,
+      appearance_notes: member.relationship_type,
+      source_character_id: member.source_character_id,
+      source_character_name: member.source_character_name,
+    }, 'family')
+  );
+
+  // ── PEOPLE IN THEIR WORLD ────────────────────────────────────────────
   // Collect all world people from all active characters' fictional_relationships
   const worldPeopleMap = new Map(); // Deduplicate by person_name
 
@@ -108,7 +141,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
 
   const worldPeople = Array.from(worldPeopleMap.values()).map(person =>
     createVisualEntity({
-      id: `world_${person.source_character_id}_${person.person_name}`,
+      id: `world_${person.source_character_id}_${person.person_name.replace(/\s+/g, '_')}`,
       name: person.person_name,
       avatar_url: person.avatar_url,
       appearance_notes: `${person.relationship_type}${person.description ? ': ' + person.description : ''}`,
@@ -118,10 +151,11 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  // Order: user first, then all characters, then world people
+  // Order: user first, then all characters, then family members, then world people
   const roster = [
     ...(userEntity ? [userEntity] : []),
     ...allChars,
+    ...familyMembers,
     ...worldPeople,
   ];
 
@@ -134,6 +168,6 @@ export async function fetchUnifiedRoster(base44, userEmail) {
  */
 export async function fetchCharacterListForPicker(base44, userEmail) {
   const roster = await fetchUnifiedRoster(base44, userEmail);
-  // Filter to just user and characters (not world people) for places that don't need world people
+  // Filter to just user and characters (not world people or family) for places that don't need them
   return roster.filter(e => e.entity_type === 'user' || e.entity_type === 'character');
 }
