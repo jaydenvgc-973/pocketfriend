@@ -474,16 +474,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       {/* Character picker dropdown */}
                       {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {/* User first, then all active characters, then others */}
+                          {/* User first, then all active characters (including current character), then others */}
                           {(() => {
                             const userChar = allCharacters.find(c => c.is_user);
-                            const activeChars = allCharacters.filter(c => c.is_active_character && !c.is_user);
-                            const otherChars = allCharacters.filter(c => !c.is_active_character && !c.is_user);
-                            return [
+                            // Include active characters AND the current character being viewed
+                            const activeChars = allCharacters.filter(c => (c.is_active_character || c.id === character?.id) && !c.is_user);
+                            const otherChars = allCharacters.filter(c => !c.is_active_character && c.id !== character?.id && !c.is_user);
+                            // Dedupe by ID in case character appears in both active and other
+                            const seenIds = new Set([userChar?.id]);
+                            const deduped = [
                               ...(userChar ? [userChar] : []),
-                              ...activeChars,
-                              ...otherChars
+                              ...activeChars.filter(c => !seenIds.has(c.id) && seenIds.add(c.id)),
+                              ...otherChars.filter(c => !seenIds.has(c.id) && seenIds.add(c.id))
                             ];
+                            return deduped;
                           })().map(char => (
                             <button
                               key={char.id}
