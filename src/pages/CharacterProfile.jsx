@@ -127,6 +127,7 @@ export default function CharacterProfile() {
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
+    staleTime: 0,
   });
 
   const getReciprocal = (rel) => {
