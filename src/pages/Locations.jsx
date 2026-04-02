@@ -846,16 +846,23 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
             )}
             {allNPCs.map(npc => {
               const alreadyWorker = form.worker_character_ids?.includes(npc.id);
+              const npcAge = getNPCAge(npc.name);
+              let tooYoung = false;
+              if (npcAge !== null) {
+                if (npcAge < 16) tooYoung = true;
+                if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
+              }
               return (
                 <button
                   key={npc.id}
                   onClick={() => {
-                    if (!alreadyWorker) {
+                    if (!alreadyWorker && !tooYoung) {
                       update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]);
                     }
                   }}
-                  disabled={alreadyWorker}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                  disabled={alreadyWorker || tooYoung}
+                  title={tooYoung ? form.category === 'social' || form.category === 'food_drink' ? "Must be 21+ for bars/nightclubs" : "Must be 16+ to work" : ""}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
                 >
                   <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
                     {npc.name[0]?.toUpperCase()}
@@ -864,7 +871,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
                     <span className="text-sm text-foreground font-medium block">{npc.name}</span>
                     {npc.relationship_type && <span className="text-xs text-muted-foreground capitalize">{npc.relationship_type}</span>}
                   </div>
-                  {alreadyWorker ? <span className="text-xs text-primary font-medium">✓ Working</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
+                  {alreadyWorker ? <span className="text-xs text-primary font-medium">✓ Working</span> : tooYoung ? <span className="text-xs text-destructive font-medium">Too young</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
                 </button>
               );
             })}
