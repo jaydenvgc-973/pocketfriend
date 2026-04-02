@@ -346,30 +346,32 @@ export default function CharacterManager() {
                         </Button>
                       </div>
                     ) : (
-                       <div className="min-w-0 flex-1">
-                         <p className="text-sm font-medium text-foreground">
+                       <div className="min-w-0 flex-1 space-y-0.5">
+                         <p className="text-sm font-semibold text-foreground flex items-center gap-2">
                            {itemName}
-                           {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
-                           {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary ml-2 flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                           {item.type === 'family' && <span className="text-xs text-muted-foreground ml-2">— {itemData.source_character_name}'s {itemData.appearance_notes}</span>}
-                           {item.type === 'world_person' && itemData.appearance_notes && <span className="text-xs text-muted-foreground ml-2">— {itemData.appearance_notes}</span>}
-                           {!isUser && !isNPC && itemData.appearance_notes && <span className="text-xs text-muted-foreground ml-2">— {itemData.appearance_notes}</span>}
+                           {isUser && <span className="text-xs text-primary">(You)</span>}
+                           {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                         </p>
+                         <p className="text-xs text-muted-foreground line-clamp-2">
+                           {item.type === 'family' && `${itemData.source_character_name}'s ${itemData.appearance_notes}`}
+                           {item.type === 'world_person' && itemData.appearance_notes}
+                           {!isUser && !isNPC && itemData.appearance_notes}
                          </p>
                        </div>
                      )}
                   </div>
                   {!mergeMode && !isUser && (
-                    <div className="flex gap-1">
+                    <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleRename(itemId, itemName, isNPC)}
-                        className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                        className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors flex-shrink-0"
                         title="Rename"
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDelete(itemId, isNPC)}
-                        className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors"
+                        className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors flex-shrink-0"
                         title="Delete"
                       >
                         <Trash2 className="w-4 h-4" />
