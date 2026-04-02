@@ -181,10 +181,36 @@ export default function Scene() {
 
     // Any venue: NPC owner/operator
     if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) {
-      npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, avatar_url: null });
+      npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
     }
 
-    // Generic venue NPCs — staff + customers/regulars, tagged with npcType
+    // Real named workers from the location record (worker_character_ids + worker_job_titles)
+    // These are actual characters linked on the Locations page as employees
+    const locationWorkerIds = location?.worker_character_ids || [];
+    locationWorkerIds.forEach(wid => {
+      // Skip characters already auto-shown as "on shift" workers
+      if (workerCharacters.find(w => w.id === wid)) return;
+      // Skip characters brought by user
+      if (characterIds.includes(wid)) return;
+      const workerChar = characters.find(c => c.id === wid);
+      if (workerChar) {
+        const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
+        npcs.push({
+          id: workerChar.id,
+          name: workerChar.name,
+          role: jobTitle,
+          isNpc: false, // real character
+          npcType: "staff",
+          avatar_url: workerChar.avatar_url,
+          // carry full character data so LLM gets personality context
+          personality_summary: workerChar.personality_summary,
+          archetype: workerChar.archetype,
+          emotional_state: workerChar.emotional_state,
+        });
+      }
+    });
+
+    // Generic venue NPCs — fill in any staff roles not covered by real workers, plus customers
     const venueNpcs = {
       food_drink: [
         { id: "npc_waiter", name: "Waiter", role: "Server", npcType: "staff" },
@@ -404,18 +430,14 @@ export default function Scene() {
       ).join("\n");
 
       const knownChars = sceneCharacters.filter(c => !c.isNpc);
-      const npcContext = selectedNpcs.length > 0
-        ? `NPCs present (the user chose to talk to them): ${selectedNpcs.map(n => `${n.name} (${n.role || "NPC"})`).join(", ")}. They respond naturally in-character for their role at ${location.name}.`
-        : "";
+      // Only selected NPCs should ever respond — never ambient/unselected ones
+      const selectedNpcList = selectedNpcs.map(n => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
 
-      const isAlone = knownChars.length === 0 && selectedNpcs.length === 0;
-      const npcInstruction = isAlone
-        ? `No one in particular is being addressed. You may have a single ambient staff person at ${location.name} respond very briefly if it makes sense (e.g. "Cashier", "Bartender"). Usually return an empty responses array.`
-        : `Write short, natural responses from the relevant people.
-Known characters: ${knownChars.map(c => c.name).join(", ") || "none"}.
-${npcContext}
-Workers on shift (${workerCharacters.map(c => c.name).join(", ") || "none"}) respond briefly and professionally unless directly addressed.
-Everyone reacts naturally to each other and the user.`;
+      const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:
+- Known characters present: ${knownChars.map(c => c.name).join(", ") || "none"}
+- Selected NPCs the user is talking to: ${selectedNpcList || "none"}
+Workers on shift (${workerCharacters.map(c => c.name).join(", ") || "none"}) respond only if they are also listed above.
+If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers or unselected staff.`;
 
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a group scene at ${location.name} (${location.category}).
@@ -483,10 +505,13 @@ Return JSON:
       }
 
       if (responseList.length === 0) {
+        const hasAnyone = knownChars.length > 0 || selectedNpcs.length > 0;
         setMessages(prev => [...prev, {
           id: Date.now().toString(),
           sender: "narrative",
-          content: `The atmosphere at ${location.name} feels alive. No one responds right away.`,
+          content: hasAnyone
+            ? `The atmosphere at ${location.name} hums quietly. No one responds right away.`
+            : `You take in the surroundings at ${location.name}. Use the "Who's here" button to start talking to someone.`,
           timestamp: new Date().toISOString(),
         }]);
       }
