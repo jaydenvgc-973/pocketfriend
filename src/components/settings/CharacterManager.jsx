@@ -290,14 +290,14 @@ export default function CharacterManager() {
             
             return (
               <motion.div
-                key={`${item.type}-${itemId}`}
-                layout
-                className={`border rounded-lg p-3 transition-colors cursor-pointer ${
-                  isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/50'
-                } ${isNPC ? 'opacity-75' : ''} ${isUser ? 'ring-1 ring-primary/30' : ''}`}
-                onClick={() => mergeMode && toggleMergeSelection(itemId)}
-              >
-                <div className="flex items-center gap-3">
+                 key={`${item.type}-${itemId}`}
+                 layout
+                 className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
+                   isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/40'
+                 } ${isUser ? 'ring-2 ring-primary/30' : ''}`}
+                 onClick={() => mergeMode && toggleMergeSelection(itemId)}
+               >
+                 <div className="flex items-start gap-3">
                   {mergeMode && (
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
                       isSelected ? 'bg-primary border-primary' : 'border-border'
@@ -307,22 +307,24 @@ export default function CharacterManager() {
                   )}
                   {isUser ? (
                     itemData.avatar_url ? (
-                      <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                      <img src={itemData.avatar_url} alt={itemName} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-semibold text-primary-foreground">{getInitial(itemName)}</span>
+                      <div className="w-12 h-12 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-semibold text-primary-foreground">{getInitial(itemName)}</span>
                       </div>
                     )
                   ) : isNPC ? (
                     itemData.avatar_url ? (
-                      <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                      <img src={itemData.avatar_url} alt={itemName} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-purple-500 flex items-center justify-center flex-shrink-0">
-                        <span className="text-xs font-semibold text-white">{getInitial(itemName)}</span>
+                      <div className="w-12 h-12 rounded-lg bg-purple-500 flex items-center justify-center flex-shrink-0">
+                        <span className="text-sm font-semibold text-white">{getInitial(itemName)}</span>
                       </div>
                     )
                   ) : (
-                    <CharacterAvatar character={itemData} size="sm" />
+                    <div className="flex-shrink-0">
+                      <CharacterAvatar character={itemData} size="md" />
+                    </div>
                   )}
                   <div className="flex-1 min-w-0">
                     {renamingId === itemId ? (
@@ -346,17 +348,22 @@ export default function CharacterManager() {
                         </Button>
                       </div>
                     ) : (
-                       <div className="flex-1 min-w-0">
-                          <div className="flex flex-col gap-0.5">
-                            <p className="text-sm font-semibold text-foreground">
-                              {itemName}
-                              {isUser && <span className="text-xs text-primary">(You)</span>}
-                              {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1 inline-flex"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                              {isNPC && itemData.appearance_notes && <span className="text-xs text-muted-foreground ml-1.5">— {itemData.appearance_notes}</span>}
-                            </p>
-                          </div>
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <p className="text-base font-semibold text-foreground">
+                            {itemName}
+                          </p>
+                          {isUser && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">You</span>}
+                          {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
                         </div>
-                       )}
+                        {isNPC && itemData.appearance_notes && (
+                          <p className="text-sm text-muted-foreground">{itemData.appearance_notes}</p>
+                        )}
+                        {!isUser && !isNPC && itemData.personality_summary && (
+                          <p className="text-xs text-muted-foreground line-clamp-1">{itemData.personality_summary}</p>
+                        )}
+                      </div>
+                    )}
                   </div>
                   {!mergeMode && !isUser && (
                     <div className="flex items-center gap-1">
