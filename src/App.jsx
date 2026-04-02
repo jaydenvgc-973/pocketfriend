@@ -29,6 +29,7 @@ import Travel from './pages/Travel';
 import Scene from './pages/Scene';
 import Moments from './pages/Moments';
 import Locations from './pages/Locations';
+import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 
@@ -76,6 +77,7 @@ const AuthenticatedApp = () => {
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
       <Route path="/my-profile" element={<MyProfile />} />
+      <Route path="/finance" element={<Finance />} />
       <Route path="/travel" element={<Travel />} />
       <Route path="/scene" element={<Scene />} />
       <Route path="*" element={<PageNotFound />} />
