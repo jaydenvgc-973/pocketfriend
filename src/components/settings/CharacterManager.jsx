@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Pencil, Trash2, GitMerge, ChevronDown, ChevronUp } from 'lucide-react';
+import { Pencil, Trash2, GitMerge, ChevronDown, ChevronUp, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
@@ -213,23 +213,24 @@ export default function CharacterManager() {
             // Create truly unique IDs: user prefix, character ID for active, or source_character_id::person_name for NPCs
             const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}` : itemData.id);
             const itemName = isUser ? itemData.full_name : (isNPC ? itemData.person_name : itemData.name);
+            const isSelected = selectedForMerge.has(itemId);
             
             return (
               <motion.div
                 key={`${item.type}-${itemId}`}
                 layout
-                className={`border rounded-lg p-3 transition-colors ${
-                  selectedForMerge.has(itemId) ? 'bg-primary/10 border-primary' : 'bg-card border-border'
+                className={`border rounded-lg p-3 transition-colors cursor-pointer ${
+                  isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/50'
                 } ${isNPC ? 'opacity-75' : ''} ${isUser ? 'ring-1 ring-primary/30' : ''}`}
+                onClick={() => mergeMode && toggleMergeSelection(itemId)}
               >
                 <div className="flex items-center gap-3">
                   {mergeMode && (
-                    <input
-                      type="checkbox"
-                      checked={selectedForMerge.has(itemId)}
-                      onChange={() => toggleMergeSelection(itemId)}
-                      className="w-4 h-4 rounded cursor-pointer"
-                    />
+                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                      isSelected ? 'bg-primary border-primary' : 'border-border'
+                    }`}>
+                      {isSelected && <Check className="w-3 h-3 text-white" />}
+                    </div>
                   )}
                   {isUser ? (
                     <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
