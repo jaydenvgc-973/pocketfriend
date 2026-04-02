@@ -734,7 +734,7 @@ export default function CharacterProfile() {
                     const desc = (enc.description || '').toLowerCase();
                     const ctx = (enc.context || '').toLowerCase();
                     return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
-                  });
+                  }).slice(0, 3);
                 })().map((enc, idx) => (
                   <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
                     <p className="text-xs text-foreground">{enc.description}</p>
