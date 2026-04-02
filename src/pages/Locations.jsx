@@ -193,6 +193,24 @@ function LocationCard({ location, onDelete, onEdit, characters = [] }) {
   );
 }
 
+// ── SUBTYPE OPTIONS MAPPING ───────────────────────────────────────────────────
+const SUBTYPE_OPTIONS = {
+  home: ["apartment", "house", "condo", "studio"],
+  food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub"],
+  social: ["cocktail_bar", "dive_bar", "sports_bar", "beer_hall", "gay_bar", "lesbian_bar", "queer_bar", "upscale_lounge", "neighborhood_bar", "wine_bar", "tiki_bar", "house_music_club", "hip_hop_club", "electronic_club", "punk_venue", "rock_venue", "latin_dance_club", "country_bar", "jazz_club", "karaoke_bar", "nightclub", "dance_club", "rave_venue", "rooftop_bar", "lounge_club"],
+  gym: ["gym", "yoga_studio", "pilates_studio", "crossfit_box", "swimming_pool"],
+  outdoor: ["park", "hiking_trail", "beach", "lake", "river", "botanical_garden", "urban_plaza"],
+  grocery: ["grocery_store", "supermarket", "farmers_market", "convenience_store"],
+  business: ["clothing_store", "bookstore", "record_store", "electronics_store", "home_goods_store", "thrift_store", "mall", "shopping_district", "salon", "barbershop"],
+  workplace: ["office", "corporate_office", "startup_office", "factory", "warehouse", "retail_store"],
+  medical: ["hospital", "clinic", "urgent_care", "dentist_office", "therapist_office"],
+  education: ["university", "college", "high_school", "elementary_school", "library", "classroom"],
+  school: ["university", "college", "high_school", "elementary_school"],
+  religion: ["church", "temple", "mosque", "synagogue", "meditation_center"],
+  public: ["museum", "art_gallery", "theater", "cinema", "concert_venue", "sports_arena", "stadium", "community_center"],
+  government: ["government_office", "police_station", "courthouse", "city_hall", "park_ranger_station"],
+};
+
 // ── ZoneEditor — manages images for a single zone ────────────────────────────
 function ZoneEditor({ zone, onUpdateImages, onDelete }) {
   const [uploading, setUploading] = useState(false);
@@ -281,6 +299,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
     location_type: editingLocation?.location_type || "global",
     character_id: editingLocation?.character_id || "",
     category: editingLocation?.category || "home",
+    subtype: editingLocation?.subtype || "",
     description: editingLocation?.description || "",
     keywords: editingLocation?.keywords?.join(", ") || "",
     zones: editingLocation?.zones || [],
