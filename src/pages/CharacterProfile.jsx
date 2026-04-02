@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -15,6 +15,7 @@ import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
 import NPCPromotionModal from "@/components/character/NPCPromotionModal";
+import NPCPhotoEditor from "@/components/character/NPCPhotoEditor";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -96,6 +97,7 @@ export default function CharacterProfile() {
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [promotingNPC, setPromotingNPC] = useState(null); // { rel, sourceCharacter }
+  const [editingNPCPhoto, setEditingNPCPhoto] = useState(null); // { npc, sourceCharacter }
   const [lightboxSrc, setLightboxSrc] = useState(null);
   
   const { data: character, isLoading, refetch } = useQuery({
@@ -133,11 +135,13 @@ export default function CharacterProfile() {
   const handleNPCPromotionComplete = useCallback((avatarUrl) => {
     if (!promotingNPC) return;
     const { rel } = promotingNPC;
+    // Use photo from the relationship (uploaded/generated via NPCPhotoEditor) OR the passed avatarUrl from NPCPromotionModal
+    const finalAvatarUrl = rel.photo_url || avatarUrl || null;
     // Preload NPC data into Create Character draft — preserve ALL relationship data
     const draft = {
       step: 0,
-      avatarUrl: avatarUrl || null,
-      referenceUrls: avatarUrl ? [avatarUrl] : [],
+      avatarUrl: finalAvatarUrl,
+      referenceUrls: finalAvatarUrl ? [finalAvatarUrl] : [],
       data: {
         first_name: rel.person_name?.split(" ")[0] || rel.person_name || "",
         middle_name: "",
@@ -603,28 +607,42 @@ export default function CharacterProfile() {
                 .map((rel, idx) => (
                   <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
                     <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        {rel.photo_url ? (
-                          <img src={rel.photo_url} alt={rel.person_name} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
-                        ) : (
-                          <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
-                          </div>
-                        )}
-                        <div>
-                          <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
-                          <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
-                        </div>
-                      </div>
-                      {!rel._from_family && (
-                        <button
-                          onClick={() => handleConvertNPC(rel)}
-                          title="Convert to active character"
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors flex-shrink-0"
-                        >
-                          <Zap className="w-3 h-3" /> Activate
-                        </button>
-                      )}
+                      <button
+                            onClick={() => rel.photo_url && setLightboxSrc(rel.photo_url)}
+                            className={rel.photo_url ? "cursor-pointer" : "cursor-default"}
+                          >
+                            <div className="flex items-center gap-2">
+                              {rel.photo_url ? (
+                                <img src={rel.photo_url} alt={rel.person_name} className="w-9 h-9 rounded-full object-cover flex-shrink-0" />
+                              ) : (
+                                <div className="w-9 h-9 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                                  <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
+                                </div>
+                              )}
+                              <div>
+                                <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
+                                <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
+                              </div>
+                            </div>
+                          </button>
+                          {!rel._from_family && (
+                            <div className="flex gap-1 flex-shrink-0">
+                              <button
+                                onClick={() => setEditingNPCPhoto({ npc: rel, sourceCharacter: character })}
+                                title="Upload or generate photo"
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground text-xs font-medium transition-colors"
+                              >
+                                <Camera className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={() => handleConvertNPC(rel)}
+                                title="Convert to active character"
+                                className="flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                              >
+                                <Zap className="w-3 h-3" /> Activate
+                              </button>
+                            </div>
+                          )}
                     </div>
                     {rel.description && (
                       <div>
@@ -710,6 +728,27 @@ export default function CharacterProfile() {
 
       </div>
       <BottomNav />
+
+      {/* NPC Photo Editor */}
+      {editingNPCPhoto && (
+        <NPCPhotoEditor
+          npc={editingNPCPhoto.npc}
+          sourceCharacter={editingNPCPhoto.sourceCharacter}
+          onPhotoUpdate={(photoUrl) => {
+            // Update the NPC's photo in their source character
+            const sourceChar = editingNPCPhoto.sourceCharacter;
+            const updatedRels = (sourceChar.fictional_relationships || []).map(r =>
+              r.person_name === editingNPCPhoto.npc.person_name
+                ? { ...r, photo_url: photoUrl }
+                : r
+            );
+            base44.entities.Character.update(sourceChar.id, { fictional_relationships: updatedRels })
+              .then(() => refetch())
+              .catch(() => {});
+          }}
+          onClose={() => setEditingNPCPhoto(null)}
+        />
+      )}
 
       {/* NPC Promotion Modal — avatar step before create flow */}
       {promotingNPC && (
