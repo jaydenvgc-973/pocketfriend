@@ -32,16 +32,27 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, message: 'Financial record already exists' });
     }
 
-    // CRITICAL: No auto-creation of home locations
-    // Users must explicitly create locations via the Locations page
-    // This function no longer generates generic homes
-    
+    // Create financial record with no home location assigned
+    // User must explicitly assign a home via the Locations page
+    const financialRecord = await base44.asServiceRole.entities.CharacterFinancial.create({
+      character_id: characterId,
+      character_name: characterName,
+      home_location_id: null,
+      home_location_name: null,
+      is_homeless: true,
+      total_income: 0,
+      total_expenses: 0,
+      current_balance: 6000,
+      income_sources: [],
+      recurring_expenses: [],
+      last_updated: new Date().toISOString(),
+    });
+
     return Response.json({
-      success: false,
-      error: 'No home location assigned. User must create a location explicitly via the Locations page.',
-      characterId,
-      characterName,
-    }, { status: 400 });
+      success: true,
+      financial_record_id: financialRecord.id,
+      message: 'Financial record created. User must assign a home location via Locations page.',
+    });
   } catch (error) {
     console.error('[setupCharacterHome]', error);
     return Response.json({ success: false, error: error.message }, { status: 500 });
