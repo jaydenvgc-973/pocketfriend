@@ -92,6 +92,14 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const [generatingIdx, setGeneratingIdx] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
 
+  // Helper: get avatar URL for a family member if they're an active character
+  const getFamilyMemberAvatar = (memberName) => {
+    const activeChar = allCharacters.find(c =>
+      c.name?.trim().toLowerCase() === memberName?.trim().toLowerCase()
+    );
+    return activeChar?.avatar_url || null;
+  };
+
   // Keep local state in sync if the character prop changes (e.g. after re-fetch)
   useEffect(() => {
     if (!saving) {
@@ -305,18 +313,24 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
             {readOnly ? (
               /* Read-only view with photo */
               <div className="flex items-center gap-3">
-                {member.photo_url ? (
-                  <button onClick={() => setLightboxSrc(member.photo_url)} className="relative flex-shrink-0 group">
-                    <img src={member.photo_url} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
-                    <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                      <ZoomIn className="w-4 h-4 text-white" />
+                {(() => {
+                  const activeCharAvatar = getFamilyMemberAvatar(member.name);
+                  const displayUrl = activeCharAvatar || member.photo_url;
+                  const isActiveChar = !!activeCharAvatar;
+                  return displayUrl ? (
+                    <button onClick={() => setLightboxSrc(displayUrl)} className="relative flex-shrink-0 group">
+                      <img src={displayUrl} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
+                      {isActiveChar && <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border border-card" title="Active character" />}
+                      <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <ZoomIn className="w-4 h-4 text-white" />
+                      </div>
+                    </button>
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                      <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
                     </div>
-                  </button>
-                ) : (
-                  <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                    <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
-                  </div>
-                )}
+                  );
+                })()}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground font-medium">{member.name}</p>
                   <p className="text-xs text-muted-foreground capitalize">
@@ -334,18 +348,24 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                 <div className="flex items-center gap-2">
                   {/* Photo thumbnail + generate button */}
                   <div className="relative flex-shrink-0">
-                    {member.photo_url ? (
-                      <button onClick={() => setLightboxSrc(member.photo_url)} className="block group">
-                        <img src={member.photo_url} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
-                        <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                          <ZoomIn className="w-3 h-3 text-white" />
+                    {(() => {
+                      const activeCharAvatar = getFamilyMemberAvatar(member.name);
+                      const displayUrl = activeCharAvatar || member.photo_url;
+                      const isActiveChar = !!activeCharAvatar;
+                      return displayUrl ? (
+                        <button onClick={() => setLightboxSrc(displayUrl)} className="block group">
+                          <img src={displayUrl} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
+                          {isActiveChar && <div className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border border-card" title="Active character" />}
+                          <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <ZoomIn className="w-3 h-3 text-white" />
+                          </div>
+                        </button>
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center">
+                          <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
                         </div>
-                      </button>
-                    ) : (
-                      <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center">
-                        <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
-                      </div>
-                    )}
+                      );
+                    })()}
                     <button
                       onClick={() => generatePhoto(idx)}
                       disabled={generatingIdx === idx || !member.name?.trim()}

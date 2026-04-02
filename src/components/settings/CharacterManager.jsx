@@ -26,6 +26,20 @@ export default function CharacterManager() {
     enabled: !!currentUser?.email,
   });
 
+  // Collect all NPCs/fictional characters from all active characters' fictional_relationships
+  const npcs = characters
+    .flatMap(c => (c.fictional_relationships || [])
+      .filter(r => !r.related_character_id && r._from_family !== true) // only NPCs, exclude family-synced ones
+      .map(r => ({ ...r, source_character_id: c.id }))
+    )
+    .filter((npc, idx, arr) => arr.findIndex(n => n.person_name?.toLowerCase() === npc.person_name?.toLowerCase()) === idx); // dedupe by name
+
+  // Combine active characters + NPCs
+  const allManageableItems = [
+    ...characters.map(c => ({ type: 'active', data: c })),
+    ...npcs.map(npc => ({ type: 'npc', data: npc })),
+  ];
+
   const renameMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('renameCharacter', data),
     onSuccess: () => {
@@ -111,73 +125,89 @@ export default function CharacterManager() {
       </div>
 
       <div className="space-y-2 max-h-96 overflow-y-auto">
-        {editable.length === 0 ? (
-          <p className="text-xs text-muted-foreground text-center py-6">No editable characters</p>
+        {allManageableItems.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-6">No characters or NPCs</p>
         ) : (
-          editable.map(char => (
-            <motion.div
-              key={char.id}
-              layout
-              className={`border rounded-lg p-3 transition-colors ${
-                selectedForMerge.has(char.id) ? 'bg-primary/10 border-primary' : 'bg-card border-border'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                {mergeMode && (
-                  <input
-                    type="checkbox"
-                    checked={selectedForMerge.has(char.id)}
-                    onChange={() => toggleMergeSelection(char.id)}
-                    className="w-4 h-4 rounded cursor-pointer"
-                  />
-                )}
-                <CharacterAvatar character={char} size="sm" />
-                <div className="flex-1 min-w-0">
-                  {renamingId === char.id ? (
-                    <div className="flex gap-1">
-                      <Input
-                        value={newName}
-                        onChange={e => setNewName(e.target.value)}
-                        className="h-8 text-sm flex-1"
-                        autoFocus
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') submitRename(char.id);
-                          if (e.key === 'Escape') setRenamingId(null);
-                        }}
-                      />
-                      <Button
-                        size="sm"
-                        onClick={() => submitRename(char.id)}
-                        className="h-8 px-2 rounded-lg"
-                      >
-                        Save
-                      </Button>
+          allManageableItems.map((item) => {
+            const isNPC = item.type === 'npc';
+            const itemData = item.data;
+            const itemId = isNPC ? itemData.source_character_id : itemData.id;
+            const itemName = isNPC ? itemData.person_name : itemData.name;
+            
+            return (
+              <motion.div
+                key={`${item.type}-${itemId}`}
+                layout
+                className={`border rounded-lg p-3 transition-colors ${
+                  selectedForMerge.has(itemId) ? 'bg-primary/10 border-primary' : 'bg-card border-border'
+                } ${isNPC ? 'opacity-75' : ''}`}
+              >
+                <div className="flex items-center gap-3">
+                  {!isNPC && mergeMode && (
+                    <input
+                      type="checkbox"
+                      checked={selectedForMerge.has(itemId)}
+                      onChange={() => toggleMergeSelection(itemId)}
+                      className="w-4 h-4 rounded cursor-pointer"
+                    />
+                  )}
+                  {isNPC ? (
+                    <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs font-semibold text-primary">{itemName?.[0]?.toUpperCase() || "?"}</span>
                     </div>
                   ) : (
-                    <p className="text-sm font-medium text-foreground">{char.name}</p>
+                    <CharacterAvatar character={itemData} size="sm" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    {renamingId === itemId && !isNPC ? (
+                      <div className="flex gap-1">
+                        <Input
+                          value={newName}
+                          onChange={e => setNewName(e.target.value)}
+                          className="h-8 text-sm flex-1"
+                          autoFocus
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') submitRename(itemId);
+                            if (e.key === 'Escape') setRenamingId(null);
+                          }}
+                        />
+                        <Button
+                          size="sm"
+                          onClick={() => submitRename(itemId)}
+                          className="h-8 px-2 rounded-lg"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium text-foreground">{itemName}</p>
+                        {isNPC && <p className="text-xs text-muted-foreground">NPC</p>}
+                      </>
+                    )}
+                  </div>
+                  {!mergeMode && !isNPC && (
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => handleRename(itemId, itemName)}
+                        className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
+                        title="Rename"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(itemId)}
+                        className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   )}
                 </div>
-                {!mergeMode && (
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => handleRename(char.id, char.name)}
-                      className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
-                      title="Rename"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(char.id)}
-                      className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          ))
+              </motion.div>
+            );
+          })
         )}
       </div>
 
