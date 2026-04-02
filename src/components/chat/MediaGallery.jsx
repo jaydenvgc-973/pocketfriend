@@ -31,8 +31,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
   // User settings for world name
   const [userSettings, setUserSettings] = useState(null);
+  const [allCharacters, setAllCharacters] = useState([]);
 
-  // Load locations and user settings when modal opens
+  // Load locations, user settings, and characters when modal opens
   useEffect(() => {
     if (!isOpen) return;
     Promise.all([
@@ -41,6 +42,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         .catch(() => {}),
       base44.entities.UserSettings.list()
         .then(settings => setUserSettings(settings?.[0] || null))
+        .catch(() => {}),
+      base44.entities.Character.list()
+        .then(chars => setAllCharacters(chars || []))
         .catch(() => {}),
     ]);
   }, [isOpen]);
@@ -115,6 +119,39 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
   };
 
+  const extractMentionedPeople = (text) => {
+    if (!text.trim()) return { characters: [], userIncluded: false };
+    
+    const textLower = text.toLowerCase();
+    const mentionedCharacters = allCharacters.filter(c => 
+      textLower.includes(c.name.toLowerCase())
+    );
+    
+    const userIncluded = userSettings?.fictional_world_name && 
+      textLower.includes(userSettings.fictional_world_name.toLowerCase());
+    
+    return { characters: mentionedCharacters, userIncluded };
+  };
+
+  const buildReferenceImagesFromMention = (mentionedCharacters, userIncluded) => {
+    const refs = [];
+    
+    // Add character avatars
+    mentionedCharacters.forEach(char => {
+      if (char.avatar_url) refs.push(char.avatar_url);
+      if (char.reference_image_urls?.length > 0) {
+        refs.push(...char.reference_image_urls.slice(0, 1));
+      }
+    });
+    
+    // Add user avatar if included (placeholder since we don't have user avatar)
+    if (userIncluded && userSettings?.generated_avatar_urls?.[0]) {
+      refs.push(userSettings.generated_avatar_urls[0]);
+    }
+    
+    return refs;
+  };
+
   const handleGenerateCharacter = async () => {
     if ((!prompt.trim() && !referenceImageUrl && !selectedLocation) || !character || !conversationId) return;
     setIsGenerating(true);
@@ -122,9 +159,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     try {
       const charName = character.name;
       const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender].filter(Boolean).join(', ');
-      const charReferenceImages = [];
-      if (character.avatar_url) charReferenceImages.push(character.avatar_url);
-      if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 3));
+      
+      // Extract mentioned people from prompt
+      const { characters: mentionedCharacters, userIncluded } = extractMentionedPeople(prompt);
+      
+      // Build reference images from mentioned people
+      let charReferenceImages = buildReferenceImagesFromMention(mentionedCharacters, userIncluded);
+      
+      // If no one mentioned, fall back to character's own avatars
+      if (charReferenceImages.length === 0 && mentionedCharacters.length === 0 && !userIncluded) {
+        if (character.avatar_url) charReferenceImages.push(character.avatar_url);
+        if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 3));
+      }
+      
       if (referenceImageUrl) charReferenceImages.push(referenceImageUrl);
 
       const promptText = prompt.trim() || "candid natural moment, everyday life";
@@ -200,6 +247,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const userName = userSettings?.fictional_world_name || "the user";
       const promptText = prompt.trim() || "candid natural moment, everyday life";
 
+      // Extract mentioned people from prompt (user is always included in user generation)
+      const { characters: mentionedCharacters } = extractMentionedPeople(promptText);
+      
+      // Build reference images with mentioned characters
+      const charReferences = buildReferenceImagesFromMention(mentionedCharacters, false);
+      
+      // Add user's avatar if available
+      const userReferences = userSettings?.generated_avatar_urls?.[0] ? [userSettings.generated_avatar_urls[0]] : [];
+
       // Create a placeholder message for user
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
@@ -217,8 +273,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const genRes = await base44.functions.invoke('generateImageAsync', {
         messageId: newMsg.id,
         prompt: fullPrompt,
-        characterReferenceImages: [],
-        userReferenceImages: [],
+        characterReferenceImages: charReferences,
+        userReferenceImages: userReferences,
         characterName: userName,
         subjectType: "user",
         characterId: character.id,
