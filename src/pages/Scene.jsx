@@ -417,7 +417,7 @@ Return JSON:
   return (
     <div className="h-screen flex flex-col bg-background">
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0">
+      <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
         <Link to="/travel" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
@@ -430,7 +430,7 @@ Return JSON:
         </div>
 
         {/* NPC Dropdown */}
-        <div className="relative z-20" ref={npcDropdownRef}>
+        <div className="relative z-50" ref={npcDropdownRef}>
           <button
             onClick={() => setShowNpcDropdown(v => !v)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
@@ -494,7 +494,7 @@ Return JSON:
       </div>
 
       {/* Scene image */}
-      <div className="relative h-40 flex-shrink-0 overflow-hidden z-0">
+      <div className="relative h-40 flex-shrink-0 overflow-hidden" style={{ zIndex: 0 }}>
         {isGeneratingImage ? (
           <div className="w-full h-full bg-secondary flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
