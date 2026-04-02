@@ -9,8 +9,10 @@ import BottomNav from "@/components/BottomNav";
 import TravelLocationGrid from "@/components/travel/TravelLocationGrid";
 import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector";
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
+import WakeUpModal from "@/components/travel/WakeUpModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow } from "@/lib/workScheduleUtils";
+import { isCharacterAsleep } from "@/lib/sleepUtils";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -18,6 +20,8 @@ export default function Travel() {
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
   const [unavailablePopup, setUnavailablePopup] = useState(null); // array of { character, reason, availableAt }
   const [isTraveling, setIsTraveling] = useState(false);
+  const [wakeUpModal, setWakeUpModal] = useState(null); // { character, pendingCharacterId }
+  const [isWakingUp, setIsWakingUp] = useState(false);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -101,6 +105,12 @@ export default function Travel() {
     const char = characters.find(c => c.id === charId);
     if (!char) return;
 
+    // Check if character is asleep — offer wake-up option instead of blocking
+    if (isCharacterAsleep(char)) {
+      setWakeUpModal({ character: char, pendingCharacterId: charId });
+      return;
+    }
+
     const availability = getCharacterTravelAvailability(char, locationMap);
     if (!availability.available) {
       // Show individual popup immediately on selection attempt
@@ -111,6 +121,74 @@ export default function Travel() {
     setSelectedCharacterIds(prev =>
       prev.includes(charId) ? prev.filter(id => id !== charId) : [...prev, charId]
     );
+  };
+
+  const handleWakeUp = async () => {
+    if (!wakeUpModal?.pendingCharacterId) return;
+    setIsWakingUp(true);
+
+    try {
+      const char = characters.find(c => c.id === wakeUpModal.pendingCharacterId);
+      if (!char) return;
+
+      // Generate personality-based wake response
+      const wakeRes = await base44.functions.invoke('generateWakeUpResponse', {
+        characterId: char.id,
+        characterData: char,
+      });
+
+      if (!wakeRes?.data?.success) {
+        throw new Error('Failed to generate wake response');
+      }
+
+      const { outcome, moodModifier, prepTimeMs } = wakeRes.data;
+      const wakeResponse = wakeRes.data.wakeResponse;
+
+      // Store wake context temporarily for venue interaction
+      sessionStorage.setItem(`char_wake_${char.id}`, JSON.stringify({
+        woken: true,
+        moodModifier,
+        timestamp: Date.now(),
+      }));
+
+      // Show the wake response
+      setUnavailablePopup([{
+        character: char,
+        reason: {
+          iconType: 'info',
+          message: wakeResponse,
+          color: outcome === 'refused' ? 'text-amber-400' : 'text-foreground',
+        },
+        availableAt: outcome === 'refused' ? 'They declined' : `Getting ready... (${Math.ceil(prepTimeMs / 1000)}s)`,
+      }]);
+
+      // If they agreed or are negotiating, add them after prep time
+      if (outcome !== 'refused') {
+        await new Promise(r => setTimeout(r, prepTimeMs));
+        setSelectedCharacterIds(prev =>
+          prev.includes(char.id) ? prev : [...prev, char.id]
+        );
+        setUnavailablePopup(null);
+      }
+    } catch (err) {
+      console.error('Wake-up failed:', err);
+      setUnavailablePopup([{
+        character: wakeUpModal.character,
+        reason: {
+          iconType: 'error',
+          message: 'Failed to wake them up',
+          color: 'text-destructive',
+        },
+        availableAt: 'Try again',
+      }]);
+    } finally {
+      setIsWakingUp(false);
+      setWakeUpModal(null);
+    }
+  };
+
+  const handleLeaveAsleep = () => {
+    setWakeUpModal(null);
   };
 
   const handleTravel = async () => {
@@ -294,6 +372,16 @@ export default function Travel() {
           />
         )}
       </AnimatePresence>
+
+      <WakeUpModal
+        isOpen={!!wakeUpModal}
+        onClose={handleLeaveAsleep}
+        character={wakeUpModal?.character}
+        wakeTime={wakeUpModal?.character?.wake_up_time}
+        onLeaveAsleep={handleLeaveAsleep}
+        onWakeUp={handleWakeUp}
+        isProcessing={isWakingUp}
+      />
 
       <BottomNav />
     </div>
