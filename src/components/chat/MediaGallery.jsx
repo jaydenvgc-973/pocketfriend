@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, ChevronDown, Users, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
+import { fetchCharacterListForPicker } from "@/lib/characterListUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated }) {
@@ -37,9 +38,17 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [userSettings, setUserSettings] = useState(null);
   const [allCharacters, setAllCharacters] = useState([]);
 
+  // Get current user's email for character fetching
+  const [userEmail, setUserEmail] = useState(null);
+  useEffect(() => {
+    base44.auth.me()
+      .then(user => setUserEmail(user?.email))
+      .catch(() => {});
+  }, []);
+
   // Load locations, user settings, and characters when modal opens
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !userEmail) return;
     Promise.all([
       base44.functions.invoke('fetchAllLocationsForUser', {})
         .then(res => setLocations(res?.data?.locations || []))
@@ -47,11 +56,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       base44.entities.UserSettings.list()
         .then(settings => setUserSettings(settings?.[0] || null))
         .catch(() => {}),
-      base44.entities.Character.list()
+      fetchCharacterListForPicker(base44, userEmail)
         .then(chars => setAllCharacters(chars || []))
         .catch(() => {}),
     ]);
-  }, [isOpen]);
+  }, [isOpen, userEmail]);
 
   const availableZones = selectedLocation?.zones?.filter(z => z.image_urls?.length > 0) || [];
 

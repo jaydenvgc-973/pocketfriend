@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Pencil, Trash2, GitMerge, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { Pencil, Trash2, GitMerge, ChevronDown, ChevronUp, Check, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { fetchCharacterListForPicker } from '@/lib/characterListUtils';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
 export default function CharacterManager() {
@@ -22,10 +23,7 @@ export default function CharacterManager() {
 
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
-    queryFn: async () => {
-      const all = await base44.entities.Character.filter({ created_by: currentUser.email });
-      return all.filter(c => c.status !== 'deleted');
-    },
+    queryFn: () => fetchCharacterListForPicker(base44, currentUser?.email),
     enabled: !!currentUser?.email,
   });
 
@@ -345,19 +343,20 @@ export default function CharacterManager() {
                         </Button>
                       </div>
                     ) : (
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground">
-                          {itemName}
-                          {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
-                        </p>
-                        {isNPC && (
-                          <>
-                            <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>
-                            {itemData.description && <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-2">{itemData.description}</p>}
-                          </>
-                        )}
-                      </div>
-                    )}
+                       <div className="min-w-0 flex-1">
+                         <p className="text-sm font-medium text-foreground">
+                           {itemName}
+                           {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
+                           {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary ml-2 flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                         </p>
+                         {isNPC && (
+                           <>
+                             <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>
+                             {itemData.description && <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-2">{itemData.description}</p>}
+                           </>
+                         )}
+                       </div>
+                     )}
                   </div>
                   {!mergeMode && !isUser && (
                     <div className="flex gap-1">
