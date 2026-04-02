@@ -260,12 +260,22 @@
     "generic_type": {
       "type": "string",
       "enum": [
-        "apartment",
-        "house",
-        "studio",
-        "shared_house",
-        "dorm"
-      ]
+        "park",
+        "hospital",
+        "grocery",
+        "worship"
+      ],
+      "description": "Identifies which generic location type this is (if any). Remains constant even if user renames the location."
+    },
+    "generic_type_label": {
+      "type": "string",
+      "enum": [
+        "park",
+        "hospital",
+        "grocery",
+        "worship"
+      ],
+      "description": "Display label for the generic type (e.g., 'Generic Park', 'Generic Hospital')"
     }
   },
   "required": [
