@@ -11,6 +11,7 @@ import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterHome } from "@/lib/travelAvailability";
+import { isCharacterAsleep } from "@/lib/sleepUtils";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -161,13 +162,25 @@ export default function Scene() {
   const locationZones = location?.zones || [];
 
   // Characters explicitly brought + any active characters who work here during their shift
+  // INCLUDES: explicitly linked workers + any character assigned as worker on the location
   const workerCharacters = location
-    ? characters.filter(c =>
-        !characterIds.includes(c.id) &&
-        (c.occupation_location_id === locationId ||
-          c.additional_occupation_locations?.some(j => j.location_id === locationId)) &&
-        isCharacterAtWork(c, location)
-      )
+    ? characters.filter(c => {
+        // Skip if user brought them
+        if (characterIds.includes(c.id)) return false;
+        // Skip if asleep
+        if (isCharacterAsleep(c)) return false;
+        // Include if occupation location matches and they're on shift
+        if ((c.occupation_location_id === locationId ||
+             c.additional_occupation_locations?.some(j => j.location_id === locationId)) &&
+            isCharacterAtWork(c, location)) {
+          return true;
+        }
+        // Include if listed in location's worker_character_ids and on shift
+        if (location.worker_character_ids?.includes(c.id) && isCharacterAtWork(c, location)) {
+          return true;
+        }
+        return false;
+      })
     : [];
 
   // At a home location: separate home residents into "home" vs "away"

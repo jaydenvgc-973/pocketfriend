@@ -4,6 +4,7 @@ import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, Chevron
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
+import { generateImageWithUserIdentity, buildUserAppearanceData, buildUserReferenceImages } from "@/lib/userImageGeneration";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated }) {
@@ -315,30 +316,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
         : extractMentionedPeople(promptText).characters;
       
-      const userIncludedInGen = selectedCharacterIds.length > 0
-        ? selectedCharacterIds.includes("user")
-        : false;
-      
       // Build reference images with selected/mentioned characters
-      const charReferences = buildReferenceImagesFromMention(selectedChars, userIncludedInGen);
+      const charReferences = buildReferenceImagesFromMention(selectedChars, false);
       
-      // Build user reference images with strong identity preservation
+      // Get user profile for identity-locked generation
       const userChar = allCharacters.find(c => c.is_user);
-      let userReferences = [];
-      if (userChar) {
-        // Prioritize uploaded reference images for user identity
-        if (userChar.reference_image_urls?.length > 0) {
-          userReferences.push(...userChar.reference_image_urls.slice(0, 3));
-        }
-        // Then add generated avatars
-        if (userChar.generated_avatar_urls?.length > 0) {
-          userReferences.push(...userChar.generated_avatar_urls.slice(0, 2));
-        }
-        // Finally add primary avatar as fallback
-        if (userChar.avatar_url && !userReferences.includes(userChar.avatar_url)) {
-          userReferences.push(userChar.avatar_url);
-        }
-      }
+      const userAppearanceData = buildUserAppearanceData(userChar);
 
       // Create a placeholder message for user
       const newMsg = await base44.entities.Message.create({
@@ -350,45 +333,44 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       if (!newMsg?.id) throw new Error('Failed to create message');
 
-      // Build the prompt for generateImageAsync
-      const fullPrompt = `[USER] ${promptText}`;
+      try {
+        // Use shared user identity-preserving generation (same as Travel page)
+        const imageUrl = await generateImageWithUserIdentity(
+          promptText,
+          charReferences,
+          selectedLocation ? locationImages : [],
+          userChar,
+          userAppearanceData,
+          true // strictMode: enforce maximum identity preservation
+        );
 
-      // Call generateImageAsync for user subject with STRICT identity-lock mode
-      const genRes = await base44.functions.invoke('generateImageAsync', {
-        messageId: newMsg.id,
-        prompt: fullPrompt,
-        characterReferenceImages: charReferences,
-        userReferenceImages: userReferences,
-        characterName: userName,
-        subjectType: "user",
-        characterId: character.id,
-        manualLocationId: selectedLocation?.id || null,
-        manualZoneId: selectedZone || null,
-        isUserIdentityLocked: true,
-        userIdentityStrictMode: true,
-        userAppearanceData: userChar ? {
-          appearance_notes: userChar.appearance_notes || '',
-          age_range: userChar.age_range || '',
-          gender: userChar.gender || '',
-          ethnicities: userChar.ethnicities || [],
-        } : null,
-      });
+        // Update message with generated image
+        await base44.entities.Message.update(newMsg.id, {
+          image_url: imageUrl,
+          generation_context: {
+            prompt: promptText,
+            subject_type: "user",
+            character_id: character.id,
+            character_reference_images: charReferences,
+            location_id: selectedLocation?.id || null,
+            zone_name: selectedZone || null,
+            location_name: selectedLocation?.name || null,
+            location_reference_images: selectedLocation ? locationImages : [],
+            user_reference_images: userChar ? buildUserReferenceImages(userChar) : [],
+            user_appearance_data: userAppearanceData,
+            is_user_identity_locked: true,
+          },
+        });
 
-      if (genRes?.data?.filtered) {
+        setPrompt("");
+        setReferenceImageUrl(null);
+        setShowGridPicker(false);
+        setIsOpen(false);
+        if (onImageGenerated) onImageGenerated(newMsg);
+      } catch (genErr) {
         await base44.entities.Message.delete(newMsg.id).catch(() => {});
-        throw new Error('Image blocked by content filter. Try a different description.');
+        throw genErr;
       }
-
-      if (!genRes?.data?.imageUrl) {
-        await base44.entities.Message.delete(newMsg.id).catch(() => {});
-        throw new Error('No image URL returned');
-      }
-
-      setPrompt("");
-      setReferenceImageUrl(null);
-      setShowGridPicker(false);
-      setIsOpen(false);
-      if (onImageGenerated) onImageGenerated(newMsg);
     } catch (err) {
       setGenerateError(err.message || "Failed to generate image");
     } finally {
@@ -438,7 +420,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
                 {/* Generate image panel */}
                 {character && conversationId && (
-                  <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+                  <div className="rounded-2xl border border-primary/20 bg-primary/5 max-h-[70vh] overflow-y-auto flex flex-col p-4 space-y-3">
                     {/* Tab switcher */}
                     <div className="flex items-center gap-2 mb-2">
                       <button
@@ -672,7 +654,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     <button
                       onClick={generationTab === "character" ? handleGenerateCharacter : handleGenerateUser}
                       disabled={(!prompt.trim() && !referenceImageUrl && !selectedLocation) || isGenerating}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                      className="sticky bottom-0 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 mt-auto"
                     >
                       {isGenerating ? (
                         <><Loader2 className="w-4 h-4 animate-spin" /> Generating...</>
