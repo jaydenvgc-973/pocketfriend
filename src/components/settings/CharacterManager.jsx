@@ -200,8 +200,8 @@ export default function CharacterManager() {
 
       if (npcMatch) {
         const [, sourceCharId, personName] = npcMatch;
-        const sourceChar = characters.find(c => c.id === sourceCharId);
-        const activeChar = characters.find(c => c.id === activeCharId);
+        const sourceChar = roster.find(c => c.id === sourceCharId && c.is_character);
+        const activeChar = roster.find(c => c.id === activeCharId && c.is_character);
         const npcData = sourceChar?.fictional_relationships?.find(r => r.person_name === personName);
 
         if (sourceChar && activeChar && npcData) {
@@ -346,19 +346,21 @@ export default function CharacterManager() {
                         </Button>
                       </div>
                     ) : (
-                       <div className="min-w-0 flex-1 space-y-0.5">
-                         <p className="text-sm font-semibold text-foreground flex items-center gap-2">
-                           {itemName}
-                           {isUser && <span className="text-xs text-primary">(You)</span>}
-                           {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                         </p>
-                         <p className="text-xs text-muted-foreground line-clamp-2">
-                           {item.type === 'family' && `${itemData.source_character_name}'s ${itemData.appearance_notes}`}
-                           {item.type === 'world_person' && itemData.appearance_notes}
-                           {!isUser && !isNPC && itemData.appearance_notes}
-                         </p>
+                       <div className="flex-1 min-w-0">
+                         <div className="flex items-baseline gap-1.5 flex-wrap">
+                           <p className="text-sm font-semibold text-foreground">
+                             {itemName}
+                             {isUser && <span className="text-xs text-primary">(You)</span>}
+                             {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1 inline-flex"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                           </p>
+                           {itemData.appearance_notes && (
+                             <p className="text-xs text-muted-foreground flex-1 min-w-0">
+                               — {itemData.appearance_notes}
+                             </p>
+                           )}
+                         </div>
                        </div>
-                     )}
+                      )}
                   </div>
                   {!mergeMode && !isUser && (
                     <div className="flex items-center gap-1">
