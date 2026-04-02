@@ -358,11 +358,6 @@ export default function CharacterManager() {
                                — {itemData.appearance_notes}
                              </p>
                            )}
-                           {!isNPC && !isUser && itemData.appearance_notes && (
-                             <p className="text-xs text-muted-foreground flex-1 min-w-0">
-                               — {itemData.appearance_notes}
-                             </p>
-                           )}
                          </div>
                        </div>
                       )}
