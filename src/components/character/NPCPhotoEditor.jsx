@@ -30,10 +30,10 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
     
     setGenerating(true);
     try {
-      const prompt = `A realistic portrait photo of ${npc.person_name}, who is ${sourceCharacter.name}'s ${npc.relationship_type}.
+      const prompt = `A realistic solo portrait photo of ${npc.person_name}, who is ${sourceCharacter.name}'s ${npc.relationship_type}.
 ${sourceCharacter.ethnicities?.length > 0 ? `Ethnic background: ${sourceCharacter.ethnicities.join(", ")}.` : ""}
 ${npc.description ? `Description: ${npc.description.substring(0, 100)}` : ""}
-Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated. Photorealistic.`;
+Solo headshot or upper body portrait. Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illustrated, NOT a group photo. Photorealistic. Only one person in the frame.`;
 
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
@@ -42,8 +42,8 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
       if (result?.url) {
         setPreview(result.url);
       }
-    } catch {
-      // ignore
+    } catch (error) {
+      console.error('NPC photo generation failed:', error);
     } finally {
       setGenerating(false);
     }
