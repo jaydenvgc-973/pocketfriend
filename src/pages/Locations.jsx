@@ -416,6 +416,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
         </div>
       </div>
 
+      {/* ── SUBTYPE / VENUE TYPE ─ specific location subtype ─────────── */}
+      {SUBTYPE_OPTIONS[form.category] && (
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Venue Type</label>
+          <div className="grid grid-cols-2 gap-2">
+            {SUBTYPE_OPTIONS[form.category].map(subtype => (
+              <button
+                key={subtype}
+                onClick={() => update("subtype", form.subtype === subtype ? "" : subtype)}
+                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype === subtype ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+              >
+                {subtype.replace(/_/g, ' ')}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── RELIGION DENOMINATION — only for religion category ─────────── */}
       {form.category === 'religion' && (
         <div>
