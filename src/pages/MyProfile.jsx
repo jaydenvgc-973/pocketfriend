@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Sparkles, RefreshCw, DollarSign } from "lucide-react";
+import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 
@@ -10,6 +10,7 @@ export default function MyProfile() {
   const queryClient = useQueryClient();
   const [narrative, setNarrative] = useState("");
   const [isGeneratingNarrative, setIsGeneratingNarrative] = useState(false);
+  const [relativeRelationships, setRelativeRelationships] = useState({});
 
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
@@ -31,6 +32,13 @@ export default function MyProfile() {
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
   const balance = settings.user_balance ?? 6000;
+
+  // Load user's relative relationships from their metadata
+  useEffect(() => {
+    if (settings.id && settings.user_relatives) {
+      setRelativeRelationships(settings.user_relatives);
+    }
+  }, [settings.id, settings.user_relatives]);
 
   // Initialize balance if not set
   useEffect(() => {
@@ -70,6 +78,21 @@ export default function MyProfile() {
       generateNarrative();
     }
   }, [characters.length]);
+
+  const handleAssignRelative = async (charId, relationship) => {
+    const updated = { ...relativeRelationships };
+    if (relationship) {
+      updated[charId] = relationship;
+    } else {
+      delete updated[charId];
+    }
+    setRelativeRelationships(updated);
+    
+    if (settings.id) {
+      await base44.entities.UserSettings.update(settings.id, { user_relatives: updated }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background pb-28">
@@ -186,23 +209,72 @@ export default function MyProfile() {
           <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
             <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Characters in your world ({characters.length})</p>
             <div className="space-y-2">
-              {characters.map(char => (
-                <Link key={char.id} to={`/profile/${char.id}`}>
-                  <div className="flex items-center gap-3 py-1.5 hover:opacity-80 transition-opacity">
-                    <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
-                      {char.avatar_url ? (
-                        <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
-                      ) : (
-                        <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
+              {characters.map(char => {
+                const currentRelative = relativeRelationships[char.id];
+                return (
+                  <div key={char.id}>
+                    <Link to={`/profile/${char.id}`}>
+                      <div className="flex items-center gap-3 py-1.5 hover:opacity-80 transition-opacity">
+                        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
+                          {char.avatar_url ? (
+                            <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+                          ) : (
+                            <span className="text-xs font-bold text-primary">{char.name?.[0]}</span>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-foreground">{char.name}</p>
+                          {char.archetype && <p className="text-xs text-muted-foreground">{char.archetype}</p>}
+                        </div>
+                        {currentRelative && (
+                          <div className="flex items-center gap-1 text-xs text-pink-400">
+                            <Heart className="w-3 h-3 fill-current" />
+                            {currentRelative}
+                          </div>
+                        )}
+                      </div>
+                    </Link>
+                    <div className="ml-11 flex gap-1 mt-1 flex-wrap">
+                      {!currentRelative && (
+                        <>
+                          <button
+                            onClick={() => handleAssignRelative(char.id, "mother")}
+                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Mother
+                          </button>
+                          <button
+                            onClick={() => handleAssignRelative(char.id, "father")}
+                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Father
+                          </button>
+                          <button
+                            onClick={() => handleAssignRelative(char.id, "sibling")}
+                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Sibling
+                          </button>
+                          <button
+                            onClick={() => handleAssignRelative(char.id, "child")}
+                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                          >
+                            Child
+                          </button>
+                        </>
+                      )}
+                      {currentRelative && (
+                        <button
+                          onClick={() => handleAssignRelative(char.id, null)}
+                          className="text-xs px-2 py-1 rounded bg-destructive/10 hover:bg-destructive/20 text-destructive hover:text-destructive transition-colors"
+                        >
+                          Remove
+                        </button>
                       )}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">{char.name}</p>
-                      {char.archetype && <p className="text-xs text-muted-foreground">{char.archetype}</p>}
-                    </div>
                   </div>
-                </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
