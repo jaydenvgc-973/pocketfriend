@@ -34,7 +34,12 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
 
       {/* Character cards */}
       {characters.map(char => {
-        const availability = getCharacterTravelAvailability(char, locationMap);
+        let availability = { available: true, reason: null, availableAt: null };
+        try {
+          availability = getCharacterTravelAvailability(char, locationMap);
+        } catch (e) {
+          // fallback: treat as available
+        }
         const isSelected = selectedIds.includes(char.id);
         const isAvailable = availability.available;
         const StatusIcon = STATUS_ICONS[availability.reason?.iconType];

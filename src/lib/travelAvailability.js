@@ -25,6 +25,9 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   }
 
   if (iconType === 'work') {
+    // Only block if the character actually has a defined job
+    const hasJob = character?.work_details?.job_title || character?.occupation_location_id;
+    if (!hasJob) return { available: true, reason: null, availableAt: null };
     const workEnd = character.work_end_time || null;
     return {
       available: false,
