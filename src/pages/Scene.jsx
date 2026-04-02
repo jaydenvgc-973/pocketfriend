@@ -9,6 +9,7 @@ import BottomNav from "@/components/BottomNav";
 import ScenePhotoModal from "@/components/travel/ScenePhotoModal";
 import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
+import { isCharacterHome } from "@/lib/travelAvailability";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -87,6 +88,7 @@ export default function Scene() {
   const [actions, setActions] = useState([]);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [actionCooldown, setActionCooldown] = useState(false);
+  const [selectedNpcIds, setSelectedNpcIds] = useState(null); // null = not yet shown selector
   const bottomRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
@@ -122,10 +124,49 @@ export default function Scene() {
       )
     : [];
 
+  // At a home location: separate home residents into "home" vs "away"
+  const isHomeLocation = location?.category === "home";
+  const homeResidents = isHomeLocation
+    ? characters.filter(c => location.resident_character_ids?.includes(c.id))
+    : [];
+  const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
+  const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
+
+  // NPC family members from residents who are away (use family_members field)
+  const npcFamilyMembers = isHomeLocation
+    ? homeResidentsAway.flatMap(c =>
+        (c.family_members || []).map(fm => ({
+          id: `npc_${fm.name?.replace(/\s+/g, "_")}`,
+          name: fm.name,
+          relationship: fm.relationship_type,
+          isNpc: true,
+          avatar_url: null,
+        }))
+      ).filter((fm, i, arr) => arr.findIndex(x => x.id === fm.id) === i) // dedupe
+    : [];
+
+  // Also include NPC owner if present and no residents are home
+  const npcOwner = (isHomeLocation && location.owner_is_npc && location.owner_npc_name && homeResidentsPresent.length === 0)
+    ? [{ id: `npc_owner_${location.id}`, name: location.owner_npc_name, relationship: location.owner_role || "resident", isNpc: true, avatar_url: null }]
+    : [];
+
+  const allNpcResidents = [...npcFamilyMembers, ...npcOwner];
+
+  // Active characters explicitly brought (from URL params)
+  const broughtCharacters = characters.filter(c => characterIds.includes(c.id));
+
+  // Scene characters = brought + home residents who are home + workers on shift
+  // At a home: also include selected NPCs from allNpcResidents
+  const selectedNpcs = selectedNpcIds !== null
+    ? allNpcResidents.filter(n => selectedNpcIds.includes(n.id))
+    : allNpcResidents; // default: all NPCs present
+
   const sceneCharacters = [
-    ...characters.filter(c => characterIds.includes(c.id)),
+    ...broughtCharacters,
+    ...(isHomeLocation ? homeResidentsPresent : []),
     ...workerCharacters,
-  ];
+    ...(isHomeLocation ? selectedNpcs : []),
+  ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
 
   const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
     || location?.image_urls?.[0]
@@ -201,13 +242,21 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
-      // When alone, only 1 NPC responds (a worker/staff at the location)
-      const isAlone = sceneCharacters.length === 0;
+      // Build NPC context
+      const npcNames = selectedNpcs.map(n => n.name);
+      const npcContext = npcNames.length > 0
+        ? `NPC family/residents present: ${npcNames.join(", ")}. They live here and respond naturally as family members or housemates would.`
+        : "";
+
+      const knownChars = sceneCharacters.filter(c => !c.isNpc);
+      const isAlone = knownChars.length === 0 && selectedNpcs.length === 0;
       const npcInstruction = isAlone
         ? `There are no friends present. A single staff member or worker at ${location.name} can briefly respond if relevant (e.g. a cashier, bartender, employee). Use their role as their name (e.g. "Cashier", "Bartender"). Only respond if it makes sense contextually — most of the time return an empty responses array.`
-        : `Write short, natural responses from EACH character present (${sceneCharacters.map(c => c.name).join(", ")}).
-Workers (${workerCharacters.map(c => c.name).join(", ") || "none"}) are staff here — they respond briefly and professionally unless approached directly.
-Characters should react to each other too, not just the user.`;
+        : `Write short, natural responses from the relevant characters.
+Known characters: ${knownChars.map(c => c.name).join(", ") || "none"}.
+${npcContext}
+Workers (${workerCharacters.map(c => c.name).join(", ") || "none"}) are staff — they respond briefly and professionally unless directly addressed.
+Characters should react naturally to each other and the user.`;
 
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a group scene at ${location.name} (${location.category}).
@@ -407,16 +456,54 @@ Return JSON:
       {/* Chat area */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {/* Arrival narrative */}
-        <div className="text-center space-y-1">
+        <div className="text-center space-y-2">
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             You arrive at {location.name}
-            {characterIds.length > 0 ? ` with ${characters.filter(c => characterIds.includes(c.id)).map(c => c.name).join(", ")}` : ""}
+            {broughtCharacters.length > 0 ? ` with ${broughtCharacters.map(c => c.name).join(", ")}` : ""}
           </span>
+          {homeResidentsPresent.length > 0 && (
+            <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">
+              {homeResidentsPresent.map(c => c.name).join(", ")} {homeResidentsPresent.length === 1 ? "is" : "are"} home
+            </span></div>
+          )}
+          {homeResidentsAway.length > 0 && (
+            <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">
+              {homeResidentsAway.map(c => c.name).join(", ")} {homeResidentsAway.length === 1 ? "is" : "are"} away
+            </span></div>
+          )}
           {workerCharacters.length > 0 && (
-            <div>
-              <span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">
-                {workerCharacters.map(c => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working
-              </span>
+            <div><span className="text-xs text-muted-foreground/70 bg-secondary/50 px-3 py-1 rounded-full">
+              {workerCharacters.map(c => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working
+            </span></div>
+          )}
+          {/* NPC resident selector */}
+          {allNpcResidents.length > 0 && (
+            <div className="mt-2 bg-card border border-border rounded-xl p-3 text-left space-y-2">
+              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Who's around to talk to?</p>
+              <div className="flex flex-wrap gap-1.5">
+                {allNpcResidents.map(npc => {
+                  const isSelected = selectedNpcIds === null || selectedNpcIds.includes(npc.id);
+                  return (
+                    <button
+                      key={npc.id}
+                      onClick={() => {
+                        const current = selectedNpcIds ?? allNpcResidents.map(n => n.id);
+                        setSelectedNpcIds(
+                          current.includes(npc.id)
+                            ? current.filter(id => id !== npc.id)
+                            : [...current, npc.id]
+                        );
+                      }}
+                      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${
+                        isSelected ? "bg-primary/10 border-primary text-primary" : "bg-card border-border text-muted-foreground"
+                      }`}
+                    >
+                      {npc.name}
+                      {npc.relationship && <span className="opacity-60">· {npc.relationship}</span>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

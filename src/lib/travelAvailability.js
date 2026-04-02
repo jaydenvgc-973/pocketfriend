@@ -62,3 +62,12 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
 
   return { available: true, reason: null, availableAt: null };
 }
+
+/**
+ * Returns true if a character is currently at home (not at work, school, etc.)
+ */
+export function isCharacterHome(character, locationMap = {}) {
+  const avail = getCharacterTravelAvailability(character, locationMap);
+  // If they're available (not blocked by work/school/sleep/etc.), they're home
+  return avail.available;
+}

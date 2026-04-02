@@ -9,7 +9,7 @@ import BottomNav from "@/components/BottomNav";
 import TravelLocationGrid from "@/components/travel/TravelLocationGrid";
 import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector";
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
-import { getCharacterTravelAvailability } from "@/lib/travelAvailability";
+import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -47,6 +47,33 @@ export default function Travel() {
   const settings = settingsList[0] || {};
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
+  /**
+   * For a given location, check if we're allowed to visit it.
+   * If it's someone's home and that character is away, only allow entry
+   * if there are NPC family members listed there.
+   * Returns: { canVisit: boolean, blockedBy: Character|null, hasNpcResidents: boolean }
+   */
+  const checkHomeAccess = (location) => {
+    if (!location || location.category !== "home") return { canVisit: true, blockedBy: null, hasNpcResidents: false };
+
+    // Find active characters who live here
+    const residents = characters.filter(c => location.resident_character_ids?.includes(c.id));
+    if (residents.length === 0) return { canVisit: true, blockedBy: null, hasNpcResidents: false };
+
+    // Check if any resident is home
+    const anyoneHome = residents.some(c => isCharacterHome(c, locationMap));
+    if (anyoneHome) return { canVisit: true, blockedBy: null, hasNpcResidents: false };
+
+    // No active character is home — check for NPC family members
+    const hasNpcResidents = residents.some(c => c.family_members?.length > 0) ||
+      (location.owner_is_npc && location.owner_npc_name);
+
+    if (hasNpcResidents) return { canVisit: true, blockedBy: null, hasNpcResidents: true };
+
+    // Blocked — everyone is away
+    return { canVisit: false, blockedBy: residents[0], hasNpcResidents: false };
+  };
+
   const toggleCharacter = (charId) => {
     const char = characters.find(c => c.id === charId);
     if (!char) return;
@@ -65,6 +92,18 @@ export default function Travel() {
 
   const handleTravel = async () => {
     if (!selectedLocation) return;
+
+    // Check home access
+    const homeAccess = checkHomeAccess(selectedLocation);
+    if (!homeAccess.canVisit) {
+      const char = homeAccess.blockedBy;
+      setUnavailablePopup([{
+        character: char,
+        reason: { iconType: "home", message: `${char?.name} isn't home right now. You can't visit.`, color: "text-amber-400" },
+        availableAt: "Come back when they're home",
+      }]);
+      return;
+    }
 
     // Validate all selected characters before traveling
     const unavailable = selectedCharacterIds
@@ -167,17 +206,38 @@ export default function Travel() {
                     </p>
                   </div>
                 </div>
-                <Button
-                  onClick={handleTravel}
-                  disabled={isTraveling}
-                  className="w-full h-12 rounded-xl gap-2"
-                >
-                  <Navigation className="w-4 h-4" />
-                  {isTraveling ? "Traveling..." : travelLabel}
-                </Button>
-                {isTraveling && (
-                  <p className="text-xs text-muted-foreground text-center animate-pulse">On your way to {selectedLocation.name}...</p>
-                )}
+                {(() => {
+                  const homeAccess = checkHomeAccess(selectedLocation);
+                  if (!homeAccess.canVisit) {
+                    return (
+                      <div className="text-center py-2 space-y-1">
+                        <p className="text-sm text-amber-400 font-medium">Nobody's home</p>
+                        <p className="text-xs text-muted-foreground">{homeAccess.blockedBy?.name} is away right now. Come back when they're home.</p>
+                      </div>
+                    );
+                  }
+                  if (homeAccess.hasNpcResidents) {
+                    return (
+                      <>
+                        <p className="text-xs text-muted-foreground text-center">The active residents are away, but family members are home.</p>
+                        <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
+                          <Navigation className="w-4 h-4" />
+                          {isTraveling ? "Traveling..." : "Visit anyway"}
+                        </Button>
+                        {isTraveling && <p className="text-xs text-muted-foreground text-center animate-pulse">On your way to {selectedLocation.name}...</p>}
+                      </>
+                    );
+                  }
+                  return (
+                    <>
+                      <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
+                        <Navigation className="w-4 h-4" />
+                        {isTraveling ? "Traveling..." : travelLabel}
+                      </Button>
+                      {isTraveling && <p className="text-xs text-muted-foreground text-center animate-pulse">On your way to {selectedLocation.name}...</p>}
+                    </>
+                  );
+                })()}
               </div>
             </motion.div>
           )}
