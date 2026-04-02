@@ -65,22 +65,66 @@ export default function CharacterManager() {
     },
   });
 
-  const handleRename = (charId, oldName) => {
+  const handleRename = (charId, oldName, isNPC = false) => {
     setRenamingId(charId);
     setNewName(oldName);
   };
 
-  const submitRename = (charId) => {
-    if (!newName.trim() || newName === characters.find(c => c.id === charId).name) {
+  const submitRename = (charId, isNPC = false) => {
+    if (!newName.trim()) {
       setRenamingId(null);
       return;
     }
-    renameMutation.mutate({ characterId: charId, newDisplayName: newName });
+    if (isNPC) {
+      const npcToRename = npcs.find(n => n.source_character_id === charId);
+      if (npcToRename && npcToRename.person_name === newName) {
+        setRenamingId(null);
+        return;
+      }
+      const sourceChar = characters.find(c => c.id === charId);
+      if (sourceChar && npcToRename) {
+        const updated = (sourceChar.fictional_relationships || []).map(r =>
+          r.person_name === npcToRename.person_name ? { ...r, person_name: newName } : r
+        );
+        base44.entities.Character.update(charId, { fictional_relationships: updated })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+            setRenamingId(null);
+            setNewName('');
+          })
+          .catch(() => {});
+      }
+    } else {
+      const char = characters.find(c => c.id === charId);
+      if (!newName.trim() || newName === char?.name) {
+        setRenamingId(null);
+        return;
+      }
+      renameMutation.mutate({ characterId: charId, newDisplayName: newName });
+    }
   };
 
-  const handleDelete = (charId) => {
-    if (window.confirm('Soft delete this character? All history is preserved and recoverable.')) {
-      deleteMutation.mutate({ characterId: charId });
+  const handleDelete = (charId, isNPC = false) => {
+    if (isNPC) {
+      if (window.confirm('Remove this NPC from the world?')) {
+        // Find the NPC in the characters' fictional_relationships and remove it
+        const npcToDelete = npcs.find(n => n.source_character_id === charId);
+        if (npcToDelete) {
+          const sourceChar = characters.find(c => c.id === charId);
+          if (sourceChar) {
+            const updated = (sourceChar.fictional_relationships || []).filter(
+              r => r.person_name !== npcToDelete.person_name
+            );
+            base44.entities.Character.update(charId, { fictional_relationships: updated })
+              .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
+              .catch(() => {});
+          }
+        }
+      }
+    } else {
+      if (window.confirm('Soft delete this character? All history is preserved and recoverable.')) {
+        deleteMutation.mutate({ characterId: charId });
+      }
     }
   };
 
@@ -143,7 +187,7 @@ export default function CharacterManager() {
                 } ${isNPC ? 'opacity-75' : ''}`}
               >
                 <div className="flex items-center gap-3">
-                  {!isNPC && mergeMode && (
+                  {mergeMode && (
                     <input
                       type="checkbox"
                       checked={selectedForMerge.has(itemId)}
@@ -159,7 +203,7 @@ export default function CharacterManager() {
                     <CharacterAvatar character={itemData} size="sm" />
                   )}
                   <div className="flex-1 min-w-0">
-                    {renamingId === itemId && !isNPC ? (
+                    {renamingId === itemId ? (
                       <div className="flex gap-1">
                         <Input
                           value={newName}
@@ -167,36 +211,41 @@ export default function CharacterManager() {
                           className="h-8 text-sm flex-1"
                           autoFocus
                           onKeyDown={e => {
-                            if (e.key === 'Enter') submitRename(itemId);
+                            if (e.key === 'Enter') submitRename(itemId, isNPC);
                             if (e.key === 'Escape') setRenamingId(null);
                           }}
                         />
                         <Button
                           size="sm"
-                          onClick={() => submitRename(itemId)}
+                          onClick={() => submitRename(itemId, isNPC)}
                           className="h-8 px-2 rounded-lg"
                         >
                           Save
                         </Button>
                       </div>
                     ) : (
-                      <>
+                      <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-foreground">{itemName}</p>
-                        {isNPC && <p className="text-xs text-muted-foreground">NPC</p>}
-                      </>
+                        {isNPC && (
+                          <>
+                            <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>
+                            {itemData.description && <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-2">{itemData.description}</p>}
+                          </>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {!mergeMode && !isNPC && (
+                  {!mergeMode && (
                     <div className="flex gap-1">
                       <button
-                        onClick={() => handleRename(itemId, itemName)}
+                        onClick={() => handleRename(itemId, itemName, isNPC)}
                         className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
                         title="Rename"
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => handleDelete(itemId)}
+                        onClick={() => handleDelete(itemId, isNPC)}
                         className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors"
                         title="Delete"
                       >
