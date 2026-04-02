@@ -406,6 +406,7 @@ export default function Scene() {
       } else {
         peopleDesc = `A person relaxing alone in the space. No other people visible — no strangers, no background figures.`;
       }
+      const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
       prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. IMPORTANT: Do NOT generate any random or unrecognized people in this image.`;
 
@@ -425,6 +426,7 @@ export default function Scene() {
       finally { setIsGeneratingImage(false); }
       return;
     } else {
+      const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
       const charNames = sceneCharacters.map(c => c.name).join(", ");
       const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
