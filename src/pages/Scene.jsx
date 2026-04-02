@@ -17,14 +17,18 @@ const CATEGORY_EMOJIS = {
   bar: "🍸", generic: "📍",
 };
 
+// Categories that serve food/drinks
+const FOOD_VENUE_CATEGORIES = ["food_drink", "social", "home"];
+
 function getLocationActions(category, recentChat = "") {
   const chat = recentChat.toLowerCase();
+  const isFood = FOOD_VENUE_CATEGORIES.includes(category);
 
-  // Context-aware overrides
-  if (chat.includes("hungry") || chat.includes("eat") || chat.includes("food")) {
+  // Context-aware overrides — only for food venues
+  if (isFood && (chat.includes("hungry") || chat.includes("eat") || chat.includes("food"))) {
     return [
-      { id: "order_food", label: "Order food", emoji: "🍔", cost: 15, type: "positive" },
-      { id: "buy_drink", label: "Buy a drink", emoji: "🥤", cost: 8, type: "positive" },
+      { id: "order_food", label: "Order food", emoji: "🍔", cost: 15, type: "positive", imagePrompt: "close-up of delicious food on a plate, restaurant setting, photorealistic" },
+      { id: "buy_drink", label: "Buy a drink", emoji: "🥤", cost: 8, type: "positive", imagePrompt: "refreshing drink in a glass, ice, photorealistic close-up" },
       { id: "talk", label: "Keep talking", emoji: "💬", cost: 0, type: "neutral" },
       { id: "ask", label: "Ask something", emoji: "🤔", cost: 0, type: "neutral" },
     ];
@@ -33,12 +37,12 @@ function getLocationActions(category, recentChat = "") {
   const base = {
     home: [
       { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral" },
-      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 10, type: "positive" },
+      { id: "eat", label: "Eat something", emoji: "🍽️", cost: 10, type: "positive", imagePrompt: "homemade meal on a kitchen table, cozy, photorealistic" },
       { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive" },
       { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral" },
     ],
     social: [
-      { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive" },
+      { id: "buy_round", label: "Buy a round", emoji: "🥂", cost: 25, type: "positive", imagePrompt: "glasses of beer and cocktails on a bar counter, bokeh bar lights, photorealistic" },
       { id: "flirt", label: "Flirt a little", emoji: "😏", cost: 0, type: "positive" },
       { id: "dance", label: "Hit the floor", emoji: "🕺", cost: 0, type: "positive" },
       { id: "argue", label: "Start drama", emoji: "🔥", cost: 0, type: "negative" },
@@ -50,8 +54,8 @@ function getLocationActions(category, recentChat = "") {
       { id: "observe", label: "Watch quietly", emoji: "👀", cost: 0, type: "neutral" },
     ],
     food_drink: [
-      { id: "order", label: "Order food", emoji: "🍔", cost: 18, type: "positive" },
-      { id: "drinks", label: "Get drinks", emoji: "🍹", cost: 12, type: "positive" },
+      { id: "order", label: "Order food", emoji: "🍔", cost: 18, type: "positive", imagePrompt: "beautifully plated restaurant meal, warm lighting, photorealistic" },
+      { id: "drinks", label: "Get drinks", emoji: "🍹", cost: 12, type: "positive", imagePrompt: "colorful cocktails or drinks on a restaurant table, photorealistic" },
       { id: "talk", label: "Good conversation", emoji: "💬", cost: 0, type: "neutral" },
       { id: "check", label: "Pick up the check", emoji: "💳", cost: 40, type: "positive" },
     ],
@@ -60,6 +64,24 @@ function getLocationActions(category, recentChat = "") {
       { id: "sit_outside", label: "Sit outside", emoji: "🌤️", cost: 0, type: "positive" },
       { id: "photo", label: "Take a picture", emoji: "📸", cost: 0, type: "positive" },
       { id: "talk", label: "Talk it out", emoji: "💬", cost: 0, type: "neutral" },
+    ],
+    business: [
+      { id: "browse", label: "Browse items", emoji: "🛍️", cost: 0, type: "neutral" },
+      { id: "try_on", label: "Try something on", emoji: "👗", cost: 0, type: "positive" },
+      { id: "ask_help", label: "Ask for help", emoji: "🙋", cost: 0, type: "neutral" },
+      { id: "buy", label: "Buy something", emoji: "💳", cost: 35, type: "positive" },
+    ],
+    grocery: [
+      { id: "shop", label: "Grab items", emoji: "🛒", cost: 0, type: "neutral" },
+      { id: "checkout", label: "Check out", emoji: "💳", cost: 60, type: "positive" },
+      { id: "ask_aisle", label: "Ask where something is", emoji: "🙋", cost: 0, type: "neutral" },
+      { id: "talk", label: "Small talk", emoji: "💬", cost: 0, type: "neutral" },
+    ],
+    school: [
+      { id: "study", label: "Study together", emoji: "📚", cost: 0, type: "positive" },
+      { id: "ask_question", label: "Ask a question", emoji: "✋", cost: 0, type: "neutral" },
+      { id: "pass_note", label: "Pass a note", emoji: "📝", cost: 0, type: "positive" },
+      { id: "chat", label: "Chat between class", emoji: "💬", cost: 0, type: "neutral" },
     ],
   };
 
@@ -162,18 +184,62 @@ export default function Scene() {
       npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, avatar_url: null });
     }
 
-    // Generic venue NPCs based on category
+    // Generic venue NPCs — staff + customers/regulars, tagged with npcType
     const venueNpcs = {
-      food_drink: [{ id: "npc_waiter", name: "Waiter", role: "Staff" }, { id: "npc_bartender", name: "Bartender", role: "Staff" }],
-      social: [{ id: "npc_bartender", name: "Bartender", role: "Staff" }, { id: "npc_bouncer", name: "Bouncer", role: "Staff" }],
-      gym: [{ id: "npc_trainer", name: "Personal Trainer", role: "Staff" }],
-      grocery: [{ id: "npc_cashier", name: "Cashier", role: "Staff" }],
-      medical: [{ id: "npc_nurse", name: "Nurse", role: "Staff" }],
-      outdoor: [{ id: "npc_stranger", name: "Stranger", role: "Passerby" }],
-      workplace: [{ id: "npc_coworker", name: "Coworker", role: "Colleague" }],
-      school: [{ id: "npc_classmate", name: "Classmate", role: "Student" }],
+      food_drink: [
+        { id: "npc_waiter", name: "Waiter", role: "Server", npcType: "staff" },
+        { id: "npc_bartender", name: "Bartender", role: "Bartender", npcType: "staff" },
+        { id: "npc_diner_1", name: "Diner", role: "Customer", npcType: "customer" },
+        { id: "npc_diner_2", name: "Couple nearby", role: "Customers", npcType: "customer" },
+      ],
+      social: [
+        { id: "npc_bartender", name: "Bartender", role: "Bartender", npcType: "staff" },
+        { id: "npc_bouncer", name: "Bouncer", role: "Security", npcType: "staff" },
+        { id: "npc_bar_patron_1", name: "Guy at the bar", role: "Patron", npcType: "customer" },
+        { id: "npc_bar_patron_2", name: "Woman nearby", role: "Patron", npcType: "customer" },
+        { id: "npc_group", name: "Group of friends", role: "Patrons", npcType: "customer" },
+      ],
+      gym: [
+        { id: "npc_trainer", name: "Personal Trainer", role: "Trainer", npcType: "staff" },
+        { id: "npc_gym_front_desk", name: "Front Desk", role: "Staff", npcType: "staff" },
+        { id: "npc_gym_goer_1", name: "Guy lifting weights", role: "Member", npcType: "customer" },
+        { id: "npc_gym_goer_2", name: "Woman on treadmill", role: "Member", npcType: "customer" },
+      ],
+      grocery: [
+        { id: "npc_cashier", name: "Cashier", role: "Cashier", npcType: "staff" },
+        { id: "npc_stock_worker", name: "Stock Worker", role: "Staff", npcType: "staff" },
+        { id: "npc_shopper_1", name: "Shopper", role: "Customer", npcType: "customer" },
+        { id: "npc_shopper_2", name: "Mom with cart", role: "Customer", npcType: "customer" },
+      ],
+      business: [
+        { id: "npc_store_clerk", name: "Store Clerk", role: "Sales Associate", npcType: "staff" },
+        { id: "npc_store_manager", name: "Manager", role: "Manager", npcType: "staff" },
+        { id: "npc_shopper_clothing_1", name: "Shopper", role: "Customer", npcType: "customer" },
+        { id: "npc_shopper_clothing_2", name: "Woman browsing", role: "Customer", npcType: "customer" },
+      ],
+      medical: [
+        { id: "npc_nurse", name: "Nurse", role: "Nurse", npcType: "staff" },
+        { id: "npc_receptionist", name: "Receptionist", role: "Staff", npcType: "staff" },
+        { id: "npc_patient", name: "Patient in waiting room", role: "Patient", npcType: "customer" },
+      ],
+      outdoor: [
+        { id: "npc_jogger", name: "Jogger", role: "Passerby", npcType: "customer" },
+        { id: "npc_dog_walker", name: "Dog walker", role: "Passerby", npcType: "customer" },
+        { id: "npc_stranger", name: "Stranger on bench", role: "Passerby", npcType: "customer" },
+      ],
+      workplace: [
+        { id: "npc_coworker", name: "Coworker", role: "Colleague", npcType: "staff" },
+        { id: "npc_manager_work", name: "Manager", role: "Manager", npcType: "staff" },
+      ],
+      school: [
+        { id: "npc_teacher", name: "Teacher", role: "Teacher", npcType: "staff" },
+        { id: "npc_classmate", name: "Classmate", role: "Student", npcType: "customer" },
+        { id: "npc_classmate_2", name: "Student nearby", role: "Student", npcType: "customer" },
+      ],
     };
-    const venueDefaults = venueNpcs[location?.category] || [{ id: "npc_local", name: "Local", role: "Nearby person" }];
+    const venueDefaults = venueNpcs[location?.category] || [
+      { id: "npc_local", name: "Local", role: "Nearby person", npcType: "customer" },
+    ];
     venueDefaults.forEach(n => {
       if (!npcs.find(x => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
     });
@@ -269,13 +335,61 @@ export default function Scene() {
     }
   };
 
-  const sendMessage = async (text, fromAction = false) => {
+  // Generate a focused image for food, drinks, or "show me X"
+  const generateFocusedImage = async (prompt) => {
+    if (isGeneratingImage) return;
+    setIsGeneratingImage(true);
+    try {
+      const result = await base44.integrations.Core.GenerateImage({
+        prompt: `${prompt} Photorealistic, high quality, close-up detail.`,
+        existing_image_urls: firstImage ? [firstImage] : undefined,
+      });
+      setSceneImage(result.url);
+    } catch {
+      // ignore
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  // Detect if a message/action should trigger an image update
+  const checkImageTrigger = (text, actionImagePrompt = null) => {
+    if (actionImagePrompt) {
+      generateFocusedImage(actionImagePrompt);
+      return;
+    }
+    const t = text.toLowerCase();
+    // "show me X" or "look at X" or "what does X look like"
+    const showMatch = t.match(/(?:show me|look at|what does|can i see|i want to see)\s+(.+)/);
+    if (showMatch) {
+      generateFocusedImage(`${showMatch[1]} at ${location.name},`);
+      return;
+    }
+    // Food order detection
+    const foodKeywords = ["order", "ordered", "i'll have", "i'll get", "can i get", "give me", "burger", "pizza", "pasta", "salad", "sandwich", "steak", "sushi", "tacos", "wings"];
+    const drinkKeywords = ["drink", "beer", "wine", "cocktail", "shot", "whiskey", "vodka", "juice", "soda", "coffee", "latte", "water"];
+    const hasFoodOrder = foodKeywords.some(k => t.includes(k));
+    const hasDrinkOrder = drinkKeywords.some(k => t.includes(k));
+    if (hasFoodOrder && FOOD_VENUE_CATEGORIES.includes(location.category)) {
+      // Extract what they ordered for a better prompt
+      const item = showMatch?.[1] || text.replace(/[[\]]/g, "").trim();
+      generateFocusedImage(`${item}, served on a plate, restaurant setting, close-up,`);
+    } else if (hasDrinkOrder && FOOD_VENUE_CATEGORIES.includes(location.category)) {
+      const item = text.replace(/[[\]]/g, "").trim();
+      generateFocusedImage(`${item}, drink in a glass, bar or restaurant setting, close-up,`);
+    }
+  };
+
+  const sendMessage = async (text, fromAction = false, actionImagePrompt = null) => {
     if (!text.trim() || !location) return;
     setInputText("");
 
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
     setIsTyping(true);
+
+    // Check if we should update the scene image
+    checkImageTrigger(text, actionImagePrompt);
 
     // Update actions based on new message context
     setActions(getLocationActions(location.category, text));
@@ -395,7 +509,7 @@ Return JSON:
       }
     }
 
-    await sendMessage(`[${action.emoji} ${action.label}${action.cost > 0 ? ` — $${action.cost}` : ""}]`, true);
+    await sendMessage(`[${action.emoji} ${action.label}${action.cost > 0 ? ` — $${action.cost}` : ""}]`, true, action.imagePrompt || null);
 
     // Update actions to reflect progression
     setTimeout(() => {
