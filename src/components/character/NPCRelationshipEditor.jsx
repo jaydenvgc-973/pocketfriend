@@ -48,11 +48,15 @@ export default function NPCRelationshipEditor({ character, relationship, onUpdat
 
   const handleSave = async () => {
     if (!form.person_name.trim()) return;
-    const updated = (character.fictional_relationships || []).map(r =>
-      r.person_name?.toLowerCase() === relationship?.person_name?.toLowerCase() 
-        ? { ...r, ...form } 
-        : r
-    );
+    const originalName = relationship?.person_name?.toLowerCase();
+    const updated = (character.fictional_relationships || []).reduce((acc, r) => {
+      if (r.person_name?.toLowerCase() === originalName) {
+        acc.push({ ...r, ...form });
+      } else if (r.person_name?.toLowerCase() !== form.person_name?.toLowerCase()) {
+        acc.push(r);
+      }
+      return acc;
+    }, []);
     try {
       await base44.entities.Character.update(character.id, { fictional_relationships: updated });
       onClose?.();
