@@ -365,7 +365,7 @@ export default function CharacterManager() {
                      </>
                    )}
                   </div>
-                  {!mergeMode && !isUser && (
+                  {!mergeMode && (
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleRename(itemId, itemName, isNPC)}
@@ -374,13 +374,15 @@ export default function CharacterManager() {
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
-                      <button
-                        onClick={() => handleDelete(itemId, isNPC)}
-                        className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors flex-shrink-0"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {!isUser && (
+                        <button
+                          onClick={() => handleDelete(itemId, isNPC)}
+                          className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors flex-shrink-0"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
