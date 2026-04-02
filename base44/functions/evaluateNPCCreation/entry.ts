@@ -88,12 +88,35 @@ Deno.serve(async (req) => {
 
     // Check existing characters by name similarity
     const nameLower = mentionedName.toLowerCase().trim();
+    
+    // Extract first and last names from the mentioned name
+    const mentionedParts = nameLower.split(/\s+/);
+    const mentionedFirst = mentionedParts[0];
+    const mentionedLast = mentionedParts[mentionedParts.length - 1];
+    
     const existingMatch = allChars.find(c => {
       const charName = (c.name || '').toLowerCase();
-      return charName === nameLower ||
-        charName.startsWith(nameLower) ||
-        nameLower.startsWith(charName) ||
-        (charName.split(' ')[0] === nameLower.split(' ')[0] && charName.length > 3);
+      const charParts = charName.split(/\s+/);
+      const charFirst = charParts[0];
+      const charLast = charParts[charParts.length - 1];
+      
+      // Exact match
+      if (charName === nameLower) return true;
+      
+      // First name only vs full name (e.g., "Carlos" vs "Carlos Mendez")
+      if (mentionedParts.length === 1 && charFirst === mentionedFirst && charName.length > mentionedFirst.length + 1) {
+        return true;
+      }
+      
+      // Last name only vs full name (e.g., "Mendez" vs "Carlos Mendez")
+      if (mentionedParts.length === 1 && charLast === mentionedLast && charName.length > mentionedLast.length + 1) {
+        return true;
+      }
+      
+      // One contains the other as a substring (prefix/suffix match)
+      if (charName.startsWith(nameLower + ' ') || nameLower.startsWith(charName + ' ')) return true;
+      
+      return false;
     });
 
     if (existingMatch) {
@@ -111,11 +134,6 @@ Deno.serve(async (req) => {
     const charArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
     const character = charArr[0];
     const existingRels = character?.fictional_relationships || [];
-    
-    // Extract first and last names from the mentioned name
-    const mentionedParts = nameLower.split(/\s+/);
-    const mentionedFirst = mentionedParts[0];
-    const mentionedLast = mentionedParts[mentionedParts.length - 1];
     
     const existingNPCMatch = existingRels.find(r => {
       const relName = (r.person_name || '').toLowerCase();
