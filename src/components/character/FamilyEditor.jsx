@@ -314,9 +314,11 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
               /* Read-only view with photo */
               <div className="flex items-center gap-3">
                 {(() => {
-                  const activeCharAvatar = getFamilyMemberAvatar(member.name);
-                  const displayUrl = activeCharAvatar || member.photo_url;
-                  const isActiveChar = !!activeCharAvatar;
+                  const activeChar = allCharacters.find(c =>
+                    c.name?.trim().toLowerCase() === member.name?.trim().toLowerCase()
+                  );
+                  const displayUrl = activeChar?.avatar_url || member.photo_url;
+                  const isActiveChar = !!activeChar;
                   return displayUrl ? (
                     <button onClick={() => setLightboxSrc(displayUrl)} className="relative flex-shrink-0 group">
                       <img src={displayUrl} alt={member.name} className="w-10 h-10 rounded-full object-cover" />
@@ -336,6 +338,13 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   <p className="text-xs text-muted-foreground capitalize">
                     {member.relationship_type}
                     {(() => {
+                      const activeChar = allCharacters.find(c =>
+                        c.name?.trim().toLowerCase() === member.name?.trim().toLowerCase()
+                      );
+                      if (activeChar?.birthday) {
+                        const age = new Date().getFullYear() - new Date(activeChar.birthday).getFullYear();
+                        return ` · ${age} yrs`;
+                      }
                       const age = calcFamilyMemberAge(member, character.created_date, idx);
                       return age != null ? ` · ${age} yrs` : "";
                     })()}
@@ -407,26 +416,43 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                 {/* Age input */}
                 <div className="flex items-center gap-2 mt-1">
                   <label className="text-xs text-muted-foreground w-8 flex-shrink-0">Age</label>
-                  <input
-                    type="number"
-                    min="0"
-                    max="120"
-                    value={member.age_at_creation ?? ""}
-                    onChange={e => {
-                      const val = e.target.value === "" ? null : parseInt(e.target.value, 10);
-                      setMembers(prev => prev.map((m, i) => i === idx ? { ...m, age_at_creation: val, age_set_date: new Date().toISOString() } : m));
-                    }}
-                    placeholder="Age"
-                    className="w-20 bg-secondary text-foreground text-sm rounded-xl px-3 py-1.5 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground"
-                  />
-                  {member.age_at_creation != null && (
-                    <span className="text-xs text-muted-foreground">
-                      → currently{" "}
-                      <span className="text-foreground font-medium">
-                        {calcFamilyMemberAge(member, character.created_date, idx)} yrs
-                      </span>
-                    </span>
-                  )}
+                  {(() => {
+                    const activeChar = allCharacters.find(c =>
+                      c.name?.trim().toLowerCase() === member.name?.trim().toLowerCase()
+                    );
+                    if (activeChar?.birthday) {
+                      const age = new Date().getFullYear() - new Date(activeChar.birthday).getFullYear();
+                      return (
+                        <span className="text-xs text-muted-foreground">
+                          <span className="text-foreground font-medium">{age} yrs</span> (from active character)
+                        </span>
+                      );
+                    }
+                    return (
+                      <>
+                        <input
+                          type="number"
+                          min="0"
+                          max="120"
+                          value={member.age_at_creation ?? ""}
+                          onChange={e => {
+                            const val = e.target.value === "" ? null : parseInt(e.target.value, 10);
+                            setMembers(prev => prev.map((m, i) => i === idx ? { ...m, age_at_creation: val, age_set_date: new Date().toISOString() } : m));
+                          }}
+                          placeholder="Age"
+                          className="w-20 bg-secondary text-foreground text-sm rounded-xl px-3 py-1.5 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground"
+                        />
+                        {member.age_at_creation != null && (
+                          <span className="text-xs text-muted-foreground">
+                            → currently{" "}
+                            <span className="text-foreground font-medium">
+                              {calcFamilyMemberAge(member, character.created_date, idx)} yrs
+                            </span>
+                          </span>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
                 {generatingIdx === idx && (
                   <p className="text-xs text-muted-foreground">Generating photo for {member.name}...</p>
