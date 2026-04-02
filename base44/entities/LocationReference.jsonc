@@ -163,6 +163,30 @@
         "type": "string"
       }
     },
+    "worker_shifts": {
+      "type": "object",
+      "description": "Shift times and days for each worker by worker ID",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "start": {
+            "type": "string",
+            "description": "Shift start time (HH:MM format)"
+          },
+          "end": {
+            "type": "string",
+            "description": "Shift end time (HH:MM format)"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Days of week worked (0=Sunday, 6=Saturday)"
+          }
+        }
+      }
+    },
     "operating_hours": {
       "type": "array",
       "items": {
