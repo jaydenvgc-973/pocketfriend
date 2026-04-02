@@ -353,11 +353,21 @@ export default function CharacterManager() {
                              {isUser && <span className="text-xs text-primary">(You)</span>}
                              {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary flex items-center gap-1 inline-flex"><Star className="w-3 h-3 fill-primary" /> Active</span>}
                            </p>
-                           {itemData.appearance_notes && (
-                             <p className="text-xs text-muted-foreground flex-1 min-w-0">
-                               — {itemData.appearance_notes}
-                             </p>
-                           )}
+                           {(() => {
+                             let desc = '';
+                             if (item.type === 'family') {
+                               desc = `${itemData.source_character_name}'s ${itemData.appearance_notes || 'family member'}`;
+                             } else if (item.type === 'world_person') {
+                               desc = itemData.appearance_notes || itemData.description || '';
+                             } else if (!isUser && !isNPC) {
+                               desc = itemData.appearance_notes || '';
+                             }
+                             return desc ? (
+                               <p className="text-xs text-muted-foreground flex-1 min-w-0">
+                                 — {desc}
+                               </p>
+                             ) : null;
+                           })()}
                          </div>
                        </div>
                       )}
