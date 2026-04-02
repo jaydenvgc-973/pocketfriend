@@ -40,133 +40,86 @@
     "subtype": {
       "type": "array",
       "items": {
-        "type": "string",
-        "enum": [
-          "apartment",
-          "house",
-          "condo",
-          "studio",
-          "coffee_shop",
-          "cafe",
-          "diner",
-          "lunch_spot",
-          "breakfast_spot",
-          "fine_dining_restaurant",
-          "casual_restaurant",
-          "fast_casual",
-          "food_truck",
-          "pizza_place",
-          "sushi_restaurant",
-          "steakhouse",
-          "taco_stand",
-          "burger_joint",
-          "bbq_place",
-          "ramen_shop",
-          "thai_restaurant",
-          "mexican_restaurant",
-          "italian_restaurant",
-          "asian_fusion",
-          "vegan_restaurant",
-          "gastropub",
-          "cocktail_bar",
-          "dive_bar",
-          "sports_bar",
-          "beer_hall",
-          "gay_bar",
-          "lesbian_bar",
-          "queer_bar",
-          "upscale_lounge",
-          "neighborhood_bar",
-          "wine_bar",
-          "tiki_bar",
-          "house_music_club",
-          "hip_hop_club",
-          "electronic_club",
-          "punk_venue",
-          "rock_venue",
-          "latin_dance_club",
-          "country_bar",
-          "jazz_club",
-          "karaoke_bar",
-          "nightclub",
-          "dance_club",
-          "rave_venue",
-          "rooftop_bar",
-          "lounge_club",
-          "gym",
-          "yoga_studio",
-          "pilates_studio",
-          "crossfit_box",
-          "swimming_pool",
-          "park",
-          "hiking_trail",
-          "beach",
-          "lake",
-          "river",
-          "botanical_garden",
-          "urban_plaza",
-          "grocery_store",
-          "supermarket",
-          "farmers_market",
-          "convenience_store",
-          "pharmacy",
-          "clothing_store",
-          "bookstore",
-          "record_store",
-          "electronics_store",
-          "home_goods_store",
-          "thrift_store",
-          "mall",
-          "shopping_district",
-          "office",
-          "corporate_office",
-          "startup_office",
-          "factory",
-          "warehouse",
-          "retail_store",
-          "salon",
-          "barbershop",
-          "hospital",
-          "clinic",
-          "urgent_care",
-          "dentist_office",
-          "therapist_office",
-          "university",
-          "college",
-          "high_school",
-          "elementary_school",
-          "library",
-          "classroom",
-          "church",
-          "temple",
-          "mosque",
-          "synagogue",
-          "meditation_center",
-          "community_center",
-          "museum",
-          "art_gallery",
-          "theater",
-          "cinema",
-          "concert_venue",
-          "sports_arena",
-          "stadium",
-          "government_office",
-          "police_station",
-          "courthouse",
-          "city_hall",
-          "park_ranger_station"
-        ]
+        "type": "string"
       },
       "default": [],
-      "description": "Specific venue subtypes that control menu, actions, NPCs, and tone"
+      "description": "Specific venue subtypes"
     },
     "features": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "Location features that affect actions and capabilities. Examples: ['VIP', 'dance floor', 'DJ', 'dine-in', 'takeout', 'alcohol', 'dress code']",
+      "description": "Location features that affect actions and capabilities",
       "default": []
+    },
+    "school_type": {
+      "type": "string",
+      "enum": [
+        "high_school",
+        "college",
+        "university",
+        "trade_school",
+        "private_school",
+        "language_school",
+        "music_school",
+        "online_school",
+        "other"
+      ],
+      "description": "Type of school (if category=school or education)"
+    },
+    "tuition_cost": {
+      "type": "number",
+      "description": "Annual or per-semester tuition cost in USD",
+      "default": 0
+    },
+    "tuition_frequency": {
+      "type": "string",
+      "enum": [
+        "annual",
+        "semester",
+        "monthly",
+        "per_course"
+      ],
+      "default": "annual",
+      "description": "How often tuition is charged"
+    },
+    "enrolled_students": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "tuition_amount": {
+            "type": "number"
+          },
+          "scholarship_enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "enroll_date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended",
+              "graduated",
+              "dropped"
+            ],
+            "default": "active"
+          }
+        }
+      },
+      "default": [],
+      "description": "List of enrolled students at this school"
     },
     "character_id": {
       "type": "string",
@@ -199,22 +152,7 @@
     },
     "religion_denomination": {
       "type": "string",
-      "enum": [
-        "Christianity",
-        "Catholicism",
-        "Islam",
-        "Judaism",
-        "Hinduism",
-        "Buddhism",
-        "Sikhism",
-        "Jehovah's Witnesses",
-        "Seventh-day Adventist",
-        "Baptist",
-        "Pentecostal",
-        "Non-denominational",
-        "Other"
-      ],
-      "description": "The religion or denomination associated with this place of worship (for category=religion only)"
+      "description": "The religion or denomination if applicable"
     },
     "description": {
       "type": "string",
@@ -229,7 +167,6 @@
     },
     "zones": {
       "type": "array",
-      "description": "Room/zone breakdown \u2014 each zone has its own reference images and action context",
       "items": {
         "type": "object",
         "properties": {
@@ -237,8 +174,7 @@
             "type": "string"
           },
           "zone_description": {
-            "type": "string",
-            "description": "What this zone is like, affects actions and NPC behavior"
+            "type": "string"
           },
           "image_urls": {
             "type": "array",
@@ -257,28 +193,25 @@
       "items": {
         "type": "string"
       },
-      "description": "Legacy flat image list \u2014 kept for backwards compatibility only. Prefer zones."
+      "description": "Legacy flat image list \u2014 kept for backwards compatibility only"
     },
     "resident_character_ids": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "IDs of characters who live at this location"
+      }
     },
     "resident_character_names": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "Display names of residents for quick reference"
+      }
     },
     "worker_character_ids": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "IDs of characters who work at this location"
+      }
     },
     "worker_pay_rates": {
       "type": "object",
@@ -300,24 +233,20 @@
     },
     "worker_shifts": {
       "type": "object",
-      "description": "Shift times and days for each worker by worker ID",
       "additionalProperties": {
         "type": "object",
         "properties": {
           "start": {
-            "type": "string",
-            "description": "Shift start time (HH:MM format)"
+            "type": "string"
           },
           "end": {
-            "type": "string",
-            "description": "Shift end time (HH:MM format)"
+            "type": "string"
           },
           "days": {
             "type": "array",
             "items": {
               "type": "integer"
-            },
-            "description": "Days of week worked (0=Sunday, 6=Saturday)"
+            }
           }
         }
       }
@@ -348,80 +277,29 @@
     },
     "vip_access": {
       "type": "object",
-      "description": "VIP system configuration",
       "properties": {
         "has_vip": {
           "type": "boolean",
-          "default": false,
-          "description": "Whether this location has a VIP area"
+          "default": false
         },
         "vip_access_rules": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "How to gain VIP access: 'pay', 'invite', 'sneak', 'connection', 'status'",
           "default": []
         },
         "vip_cost": {
-          "type": "number",
-          "description": "Cost to access VIP if applicable"
+          "type": "number"
         }
       }
     },
     "club_theme": {
       "type": "string",
-      "enum": [
-        "House",
-        "90s R&B",
-        "Hip Hop",
-        "Punk",
-        "Rock",
-        "Latin",
-        "EDM",
-        "Afrobeats",
-        "Trap",
-        "Throwback",
-        "Alternative",
-        "Techno",
-        "Disco",
-        "Country",
-        "Jazz",
-        "Reggae",
-        "K-pop",
-        "Indie",
-        "Metal",
-        "Pop",
-        "R&B",
-        "Soul",
-        "Funk",
-        "Dub",
-        "Drum and Bass",
-        "Dubstep",
-        "Garage",
-        "Grime",
-        "Trance",
-        "Deep House",
-        "Minimal",
-        "Experimental",
-        ""
-      ],
       "description": "Music/theme for clubs and bars"
     },
     "venue_identity": {
       "type": "string",
-      "enum": [
-        "gay bar",
-        "lesbian bar",
-        "queer bar",
-        "inclusive nightlife",
-        "straight bar",
-        "dive bar",
-        "sports bar",
-        "upscale lounge",
-        "neighborhood bar",
-        ""
-      ],
       "description": "Social identity/vibe of bar/club venues"
     },
     "utility_costs": {
@@ -502,8 +380,7 @@
         "hospital",
         "grocery",
         "worship"
-      ],
-      "description": "Identifies which generic location type this is (if any)"
+      ]
     },
     "generic_type_label": {
       "type": "string",
@@ -512,22 +389,19 @@
         "hospital",
         "grocery",
         "worship"
-      ],
-      "description": "Display label for the generic type"
+      ]
     },
     "canonical_location_key": {
       "type": "string",
-      "description": "Stable canonical identity key for generic locations (e.g. generic_grocery_store, generic_park)"
+      "description": "Stable canonical identity key for generic locations"
     },
     "is_generic_shared": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this is a shared generic world location that should never be duplicated"
+      "default": false
     },
     "is_user_created": {
       "type": "boolean",
-      "default": true,
-      "description": "True if this location was explicitly created by the user, false if system-assigned"
+      "default": true
     }
   },
   "required": [

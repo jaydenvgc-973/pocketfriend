@@ -146,6 +146,18 @@
       ],
       "default": "active"
     },
+    "student_status": {
+      "type": "string",
+      "enum": [
+        "not_student",
+        "enrolled",
+        "on_break",
+        "graduated",
+        "dropped"
+      ],
+      "default": "not_student",
+      "description": "Whether this character is currently a student"
+    },
     "avatar_url": {
       "type": "string"
     },
@@ -257,7 +269,6 @@
     },
     "family_members": {
       "type": "array",
-      "description": "List of family members",
       "items": {
         "type": "object",
         "properties": {
@@ -271,13 +282,11 @@
             "type": "string"
           },
           "age_at_creation": {
-            "type": "number",
-            "description": "Age of this family member when first set"
+            "type": "number"
           },
           "age_set_date": {
             "type": "string",
-            "format": "date-time",
-            "description": "When age_at_creation was recorded \u2014 used to calculate current age"
+            "format": "date-time"
           }
         }
       }
@@ -414,7 +423,6 @@
     },
     "additional_occupation_locations": {
       "type": "array",
-      "description": "Additional linked job locations for multi-job support",
       "items": {
         "type": "object",
         "properties": {
@@ -440,7 +448,6 @@
     },
     "additional_education_locations": {
       "type": "array",
-      "description": "Additional linked education locations for multi-school support",
       "items": {
         "type": "object",
         "properties": {
@@ -455,6 +462,43 @@
           }
         }
       }
+    },
+    "education_enrollments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "tuition_amount": {
+            "type": "number"
+          },
+          "scholarship_enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "enroll_date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "suspended",
+              "graduated",
+              "dropped"
+            ],
+            "default": "active"
+          }
+        }
+      },
+      "default": [],
+      "description": "All school enrollments for this character"
     },
     "frequented_places": {
       "type": "array",
