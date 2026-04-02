@@ -209,9 +209,9 @@ export default function Settings() {
           />
         </div>
         <div className="space-y-4">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Gender (optional)</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Gender</p>
           <Select value={settings.user_gender || ""} onValueChange={v => mutation.mutate({ user_gender: v })}>
-            <SelectTrigger className="rounded-xl"><SelectValue placeholder="Select gender" /></SelectTrigger>
+            <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Select your gender" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="male">Male</SelectItem>
               <SelectItem value="female">Female</SelectItem>
