@@ -27,29 +27,10 @@ export default function CharacterManager() {
     enabled: !!currentUser?.email,
   });
 
-  // Separate roster into characters and world people for management
-  const characters = roster.filter(e => e.entity_type === 'character' || e.entity_type === 'user');
-  const worldPeople = roster.filter(e => e.entity_type === 'world_person');
-  const seenCharIds = new Set(characters.map(c => c.id));
-
-  // Collect all NPCs/fictional characters from all active characters' fictional_relationships
-  const npcs = characters
-    .flatMap(c => (c.fictional_relationships || [])
-      .filter(r => !r.related_character_id && r._from_family !== true) // only NPCs, exclude family-synced ones
-      .map(r => ({ ...r, source_character_id: c.id }))
-    )
-    .filter((npc, idx, arr) => arr.findIndex(n => n.person_name?.toLowerCase() === npc.person_name?.toLowerCase()) === idx); // dedupe by name
-
-  // Combine user + active characters + NPCs
-  // Note: user is already in characters array via fetchCharacterListForPicker
-  // but we still include currentUser data for direct profile access
-  const userInCharacterList = characters.find(c => c.is_user);
-  const nonUserCharacters = characters.filter(c => !c.is_user);
-  const allManageableItems = [
-    ...(userInCharacterList ? [{ type: 'user', data: userInCharacterList }] : []),
-    ...nonUserCharacters.map(c => ({ type: 'active', data: c })),
-    ...npcs.map(npc => ({ type: 'npc', data: npc })),
-  ];
+  // All items from unified roster (characters + NPCs)
+  const allManageableItems = roster
+    .filter(e => e.entity_type === 'character' || e.entity_type === 'user')
+    .map(c => ({ type: c.is_user ? 'user' : 'active', data: c }));
 
   const renameMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('renameCharacter', data),
