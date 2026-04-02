@@ -12,6 +12,7 @@ const ISSUE_LIST = [
   { id: 'profile_save', label: 'Character details not saving', description: 'Check if profile field saves are being overwritten or rejected' },
   { id: 'status_location', label: 'Missing or incorrect status/location', description: 'Find the correct active source for current location/status and sync card display' },
   { id: 'character_identity', label: 'Profile data cross-contamination', description: 'Detect if data from another character is mixing into this profile' },
+  { id: 'duplicate_relationships', label: 'Duplicate people in relationships', description: 'Find and remove duplicate entries for the same person' },
   { id: 'duplicate_records', label: 'Duplicate or recovered character records', description: 'Find hidden duplicate character entries from recovery and isolate the correct one' },
 ];
 
