@@ -1159,16 +1159,17 @@ export default function Locations() {
   };
 
   const characterIds = new Set(characters.map(c => c.id));
+  const isCharacterHome = (l) => 
+    l.location_type === "character_specific" || 
+    characterIds.has(l.character_id) ||
+    characterIds.has(l.owner_character_id) ||
+    (l.resident_character_ids || []).some(id => characterIds.has(id));
+  
   const filtered = filter === "all" 
     ? locations 
     : filter === "character_specific"
-    ? locations.filter(l => 
-        l.location_type === "character_specific" || 
-        characterIds.has(l.character_id) ||
-        characterIds.has(l.owner_character_id) ||
-        (l.resident_character_ids || []).some(id => characterIds.has(id))
-      )
-    : locations.filter(l => l.location_type === filter);
+    ? locations.filter(isCharacterHome)
+    : locations.filter(l => l.location_type === filter && !isCharacterHome(l));
 
   return (
     <div className="min-h-screen bg-background pb-24">
