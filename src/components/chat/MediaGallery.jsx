@@ -480,12 +480,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                             // Include active characters AND the current character being viewed
                             const activeChars = allCharacters.filter(c => (c.is_active_character || c.id === character?.id) && !c.is_user);
                             const otherChars = allCharacters.filter(c => !c.is_active_character && c.id !== character?.id && !c.is_user);
-                            // Dedupe by ID in case character appears in both active and other
-                            const seenIds = new Set([userChar?.id]);
+                            // Dedupe by ID
+                            const seenIds = new Set();
+                            if (userChar?.id) seenIds.add(userChar.id);
                             const deduped = [
                               ...(userChar ? [userChar] : []),
-                              ...activeChars.filter(c => !seenIds.has(c.id) && seenIds.add(c.id)),
-                              ...otherChars.filter(c => !seenIds.has(c.id) && seenIds.add(c.id))
+                              ...activeChars.filter(c => {
+                                if (seenIds.has(c.id)) return false;
+                                seenIds.add(c.id);
+                                return true;
+                              }),
+                              ...otherChars.filter(c => {
+                                if (seenIds.has(c.id)) return false;
+                                seenIds.add(c.id);
+                                return true;
+                              })
                             ];
                             return deduped;
                           })().map(char => (
