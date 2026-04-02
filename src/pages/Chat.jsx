@@ -679,23 +679,53 @@ export default function Chat() {
     if (isPhone) {
       const sysMsg = getTextSystemMessage(character);
       if (sysMsg) {
-        const systemNotice = {
-          id: `sys_status_${Date.now()}`,
+        // PERSIST the status message to DB so it survives navigation
+        const persistedSysMsg = await base44.entities.Message.create({
           conversation_id: convoId,
           sender_type: 'character',
           character_id: characterId,
           character_name: character.name,
           content: sysMsg,
           is_narrative: true,
+          is_read: true,
           timestamp: new Date().toISOString(),
-        };
-        setMessages(prev => [...prev, systemNotice]);
-        console.log(`[SYSTEM-MSG] Text mode status message: "${sysMsg}"`);
+        });
+        setMessages(prev => prev.some(m => m.id === persistedSysMsg.id) ? prev : [...prev, persistedSysMsg]);
+        console.log(`[SYSTEM-MSG] Text mode status message persisted: "${sysMsg}" | id=${persistedSysMsg.id}`);
       }
 
-      // If asleep in text mode — stop here, no typing indicator or response
+      // If asleep in text mode — schedule wake-up reply and stop here
       if (getCharacterStatus(character) === 'asleep') {
-        console.log(`[TIMING] TEXT blocked — character is asleep. Showing system message only.`);
+        console.log(`[TIMING] TEXT blocked — character is asleep. Scheduling wake-up reply.`);
+        
+        // Schedule a wake-up follow-up autonomy event
+        const wakeTime = character.wake_up_time || '07:00';
+        const now = new Date();
+        const [wakeHour, wakeMin] = wakeTime.split(':').map(Number);
+        const wakeDate = new Date(now);
+        wakeDate.setHours(wakeHour, wakeMin, 0, 0);
+        // If wake time is in the past (e.g. it's 10am and wake is 7am), schedule for tomorrow
+        if (wakeDate <= now) wakeDate.setDate(wakeDate.getDate() + 1);
+
+        base44.entities.CharacterAutonomyEvent.create({
+          character_id: characterId,
+          event_type: 'follow_up_message',
+          trigger_source: 'time_based',
+          scheduled_for: wakeDate.toISOString(),
+          status: 'pending',
+          event_payload: {
+            trigger_reason: 'user_message_while_asleep',
+            conversation_id: convoId,
+            original_user_message: text,
+            wake_reply_style: 'just_woke_up',
+            user_message_id: userMsg.id,
+          },
+        }).then(ev => {
+          console.log(`[WAKE-REPLY] Scheduled wake-up reply event id=${ev.id} for ${wakeDate.toISOString()}`);
+        }).catch(err => {
+          console.error('[WAKE-REPLY] Failed to schedule wake-up event:', err.message);
+        });
+
         return;
       }
     }
