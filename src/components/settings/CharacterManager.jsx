@@ -347,18 +347,19 @@ export default function CharacterManager() {
                       </div>
                     ) : (
                        <div className="min-w-0 flex-1">
-                         <p className="text-sm font-medium text-foreground">
-                           {itemName}
-                           {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
-                           {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary ml-2 flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                         </p>
-                         {isNPC && (
-                           <>
-                             {itemData.relationship_type && <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>}
-                             {itemData.source_character_name && <p className="text-xs text-muted-foreground/60">{itemData.source_character_name}'s world</p>}
-                             {itemData.description && <p className="text-xs text-muted-foreground/70 mt-0.5 line-clamp-2">{itemData.description}</p>}
-                           </>
-                         )}
+                        <p className="text-sm font-medium text-foreground">
+                          {itemName}
+                          {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
+                          {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary ml-2 flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                        </p>
+                        {isNPC && (
+                          <>
+                            {itemData.appearance_notes && <p className="text-xs text-muted-foreground">{itemData.appearance_notes}</p>}
+                          </>
+                        )}
+                        {!isUser && !isNPC && itemData.appearance_notes && (
+                          <p className="text-xs text-muted-foreground line-clamp-2">{itemData.appearance_notes}</p>
+                        )}
                        </div>
                      )}
                   </div>
