@@ -266,6 +266,18 @@
           },
           "relationship_type": {
             "type": "string"
+          },
+          "photo_url": {
+            "type": "string"
+          },
+          "age_at_creation": {
+            "type": "number",
+            "description": "Age of this family member when first set"
+          },
+          "age_set_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When age_at_creation was recorded \u2014 used to calculate current age"
           }
         }
       }
