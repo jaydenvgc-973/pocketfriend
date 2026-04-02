@@ -34,8 +34,9 @@ export default function CharacterManager() {
     )
     .filter((npc, idx, arr) => arr.findIndex(n => n.person_name?.toLowerCase() === npc.person_name?.toLowerCase()) === idx); // dedupe by name
 
-  // Combine active characters + NPCs
+  // Combine user + active characters + NPCs
   const allManageableItems = [
+    ...(currentUser ? [{ type: 'user', data: currentUser }] : []),
     ...characters.map(c => ({ type: 'active', data: c })),
     ...npcs.map(npc => ({ type: 'npc', data: npc })),
   ];
@@ -140,8 +141,30 @@ export default function CharacterManager() {
 
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
-    const ids = Array.from(selectedForMerge);
-    mergeMutation.mutate({ characterIds: ids });
+    const selected = Array.from(selectedForMerge);
+    const hasUser = allManageableItems.some(item => item.type === 'user' && selected.includes(item.data.id || 'user'));
+    
+    if (hasUser) {
+      // Merging with user: delete NPC duplicates, preserve their relationships
+      const npcToDelete = npcs.find(npc => selected.includes(npc.source_character_id) && npc.source_character_id !== (currentUser?.id || 'user'));
+      if (npcToDelete) {
+        const sourceChar = characters.find(c => c.id === npcToDelete.source_character_id);
+        if (sourceChar) {
+          const updated = (sourceChar.fictional_relationships || []).filter(
+            r => r.person_name !== npcToDelete.person_name
+          );
+          base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated })
+            .then(() => {
+              queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+              setSelectedForMerge(new Set());
+              setMergeMode(false);
+            })
+            .catch(() => {});
+        }
+      }
+    } else {
+      mergeMutation.mutate({ characterIds: selected });
+    }
   };
 
   const editable = characters.filter(c => !c.is_protected && !c.is_default);
@@ -174,9 +197,10 @@ export default function CharacterManager() {
         ) : (
           allManageableItems.map((item) => {
             const isNPC = item.type === 'npc';
+            const isUser = item.type === 'user';
             const itemData = item.data;
-            const itemId = isNPC ? itemData.source_character_id : itemData.id;
-            const itemName = isNPC ? itemData.person_name : itemData.name;
+            const itemId = isUser ? (itemData.id || 'user') : (isNPC ? itemData.source_character_id : itemData.id);
+            const itemName = isUser ? itemData.full_name : (isNPC ? itemData.person_name : itemData.name);
             
             return (
               <motion.div
@@ -184,7 +208,7 @@ export default function CharacterManager() {
                 layout
                 className={`border rounded-lg p-3 transition-colors ${
                   selectedForMerge.has(itemId) ? 'bg-primary/10 border-primary' : 'bg-card border-border'
-                } ${isNPC ? 'opacity-75' : ''}`}
+                } ${isNPC ? 'opacity-75' : ''} ${isUser ? 'ring-1 ring-primary/30' : ''}`}
               >
                 <div className="flex items-center gap-3">
                   {mergeMode && (
@@ -195,7 +219,11 @@ export default function CharacterManager() {
                       className="w-4 h-4 rounded cursor-pointer"
                     />
                   )}
-                  {isNPC ? (
+                  {isUser ? (
+                    <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs font-semibold text-primary-foreground">{itemName?.[0]?.toUpperCase() || "?"}</span>
+                    </div>
+                  ) : isNPC ? (
                     <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
                       <span className="text-xs font-semibold text-primary">{itemName?.[0]?.toUpperCase() || "?"}</span>
                     </div>
@@ -225,7 +253,10 @@ export default function CharacterManager() {
                       </div>
                     ) : (
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground">{itemName}</p>
+                        <p className="text-sm font-medium text-foreground">
+                          {itemName}
+                          {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
+                        </p>
                         {isNPC && (
                           <>
                             <p className="text-xs text-muted-foreground">{itemData.relationship_type}</p>
@@ -235,7 +266,7 @@ export default function CharacterManager() {
                       </div>
                     )}
                   </div>
-                  {!mergeMode && (
+                  {!mergeMode && !isUser && (
                     <div className="flex gap-1">
                       <button
                         onClick={() => handleRename(itemId, itemName, isNPC)}
