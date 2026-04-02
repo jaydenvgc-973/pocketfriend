@@ -23,6 +23,8 @@ import EditCharacterEmotions from './pages/EditCharacterEmotions';
 import EditCharacterRelationships from './pages/EditCharacterRelationships';
 import EditCharacterProfile from './pages/EditCharacterProfile';
 import MyProfile from './pages/MyProfile';
+import Travel from './pages/Travel';
+import Scene from './pages/Scene';
 import Moments from './pages/Moments';
 import Locations from './pages/Locations';
 import EditCharacterTraits from './pages/EditCharacterTraits';
@@ -68,6 +70,8 @@ const AuthenticatedApp = () => {
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
       <Route path="/my-profile" element={<MyProfile />} />
+      <Route path="/travel" element={<Travel />} />
+      <Route path="/scene" element={<Scene />} />
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
