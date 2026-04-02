@@ -326,44 +326,44 @@ export default function CharacterManager() {
                       <CharacterAvatar character={itemData} size="md" />
                     </div>
                   )}
-                  <div className="flex-1 min-w-0">
-                    {renamingId === itemId ? (
-                      <div className="flex gap-1">
-                        <Input
-                          value={newName}
-                          onChange={e => setNewName(e.target.value)}
-                          className="h-8 text-sm flex-1"
-                          autoFocus
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') submitRename(itemId, isNPC);
-                            if (e.key === 'Escape') setRenamingId(null);
-                          }}
-                        />
-                        <Button
-                          size="sm"
-                          onClick={() => submitRename(itemId, isNPC)}
-                          className="h-8 px-2 rounded-lg"
-                        >
-                          Save
-                        </Button>
-                      </div>
-                    ) : (
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <p className="text-base font-semibold text-foreground">
-                            {itemName}
-                          </p>
-                          {isUser && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">You</span>}
-                          {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                        </div>
-                        {isNPC && itemData.appearance_notes && (
-                          <p className="text-sm text-muted-foreground">{itemData.appearance_notes}</p>
-                        )}
-                        {!isUser && !isNPC && itemData.personality_summary && (
-                          <p className="text-xs text-muted-foreground line-clamp-1">{itemData.personality_summary}</p>
-                        )}
-                      </div>
-                    )}
+                  <div className="flex-1 min-w-0 flex flex-col gap-1">
+                   {renamingId === itemId ? (
+                     <div className="flex gap-1">
+                       <Input
+                         value={newName}
+                         onChange={e => setNewName(e.target.value)}
+                         className="h-8 text-sm flex-1"
+                         autoFocus
+                         onKeyDown={e => {
+                           if (e.key === 'Enter') submitRename(itemId, isNPC);
+                           if (e.key === 'Escape') setRenamingId(null);
+                         }}
+                       />
+                       <Button
+                         size="sm"
+                         onClick={() => submitRename(itemId, isNPC)}
+                         className="h-8 px-2 rounded-lg"
+                       >
+                         Save
+                       </Button>
+                     </div>
+                   ) : (
+                     <>
+                       <div className="flex items-center gap-2">
+                         <p className="text-base font-semibold text-foreground">
+                           {itemName}
+                         </p>
+                         {isUser && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">You</span>}
+                         {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                       </div>
+                       {isNPC && itemData.appearance_notes && (
+                         <p className="text-sm text-muted-foreground">{itemData.appearance_notes}</p>
+                       )}
+                       {!isUser && !isNPC && itemData.personality_summary && (
+                         <p className="text-xs text-muted-foreground line-clamp-1">{itemData.personality_summary}</p>
+                       )}
+                     </>
+                   )}
                   </div>
                   {!mergeMode && !isUser && (
                     <div className="flex items-center gap-1">
