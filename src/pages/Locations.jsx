@@ -263,7 +263,7 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
 }
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
-function LocationForm({ editingLocation, characters, onSave, onCancel }) {
+function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerTooYoung }) {
   // Collect all unique NPCs from fictional_relationships across all characters
   const allNPCs = [];
   const seenNames = new Set();
@@ -1221,6 +1221,7 @@ export default function Locations() {
               characters={characters}
               onSave={handleSave}
               onCancel={() => { setShowForm(false); setEditingLocation(null); }}
+              isWorkerTooYoung={isWorkerTooYoung}
             />
           )}
         </AnimatePresence>
