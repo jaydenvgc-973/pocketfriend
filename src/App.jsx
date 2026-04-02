@@ -1,12 +1,14 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { ActiveCharacterProvider } from '@/lib/ActiveCharacterContext';
 import PlayAsCharacterBanner from '@/components/chat/PlayAsCharacterBanner';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
+import { useRoutePreservation } from '@/lib/useRoutePreservation';
 
 import Onboarding from './pages/Onboarding';
 import Home from './pages/Home';
@@ -32,6 +34,10 @@ import AchievementUnlockModal from './components/achievements/AchievementUnlockM
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
+  const location = useLocation();
+  
+  // Preserve current route across orientation changes and remounts
+  useRoutePreservation();
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
@@ -78,6 +84,18 @@ const AuthenticatedApp = () => {
 };
 
 function App() {
+  // Prevent unintended navigation on orientation change
+  useEffect(() => {
+    const handleOrientationChange = () => {
+      // Orientation changed, but do NOT navigate
+      // Current route will be preserved by useRoutePreservation hook in AuthenticatedApp
+      console.log('Orientation changed — route preserved');
+    };
+
+    window.addEventListener('orientationchange', handleOrientationChange);
+    return () => window.removeEventListener('orientationchange', handleOrientationChange);
+  }, []);
+
   return (
     <AuthProvider>
       <ActiveCharacterProvider>
