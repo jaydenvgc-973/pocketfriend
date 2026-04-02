@@ -285,7 +285,7 @@ export default function CharacterManager() {
             const itemData = item.data;
             // Create truly unique IDs: user prefix, character ID for active, or source_character_id::person_name for NPCs
             const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}` : itemData.id);
-            const itemName = isUser ? itemData.full_name : (isNPC ? itemData.person_name : itemData.name);
+            const itemName = isUser ? itemData.full_name : itemData.name;
             const isSelected = selectedForMerge.has(itemId);
             
             return (
