@@ -18,7 +18,8 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       setPreview(file_url);
-      onPhotoUpdate(file_url);
+      await onPhotoUpdate(file_url);
+      onClose();
     } catch {
       // ignore
     } finally {
@@ -72,22 +73,13 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
         {preview && (
           <div className="relative rounded-xl overflow-hidden bg-secondary h-40">
             <img src={preview} alt={npc.person_name} className="w-full h-full object-cover" />
-            <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 hover:opacity-100 transition-opacity">
-              <button
-                onClick={() => setCropping(true)}
-                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
-                title="Reposition photo"
-              >
-                <ZoomIn className="w-5 h-5 text-white" />
-              </button>
-              <button
-                onClick={() => window.open(preview, '_blank')}
-                className="p-2 rounded-full bg-white/20 hover:bg-white/30 transition-colors"
-                title="Open full size"
-              >
-                <ZoomIn className="w-5 h-5 text-white" />
-              </button>
-            </div>
+            <button
+              onClick={() => setCropping(true)}
+              className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
+              title="Reposition photo"
+            >
+              <ZoomIn className="w-6 h-6 text-white" />
+            </button>
           </div>
         )}
 
