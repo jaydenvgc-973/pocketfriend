@@ -279,7 +279,8 @@
     },
     "is_default_generic": {
       "type": "boolean",
-      "default": false
+      "default": false,
+      "description": "True if this is one of the canonical shared generic locations"
     },
     "generic_type": {
       "type": "string",
@@ -300,6 +301,20 @@
         "worship"
       ],
       "description": "Display label for the generic type (e.g., 'Generic Park', 'Generic Hospital')"
+    },
+    "canonical_location_key": {
+      "type": "string",
+      "description": "Stable canonical identity key for generic locations (e.g. generic_grocery_store, generic_park). Remains unchanged even if display name is edited."
+    },
+    "is_generic_shared": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is a shared generic world location that should never be duplicated"
+    },
+    "is_user_created": {
+      "type": "boolean",
+      "default": true,
+      "description": "True if this location was explicitly created by the user, false if system-assigned"
     }
   },
   "required": [
