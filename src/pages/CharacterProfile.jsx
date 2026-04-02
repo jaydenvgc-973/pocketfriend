@@ -133,10 +133,9 @@ export default function CharacterProfile() {
     if (!rel || !userSettings[0]?.user_relatives) return null;
     const userRelatives = userSettings[0].user_relatives;
     const currentUserIsChild = (userRelatives[character?.id]);
-    if (currentUserIsChild === "mother" && character?.gender === "female") return "son";
-    if (currentUserIsChild === "mother" && character?.gender === "male") return "daughter";
-    if (currentUserIsChild === "father" && character?.gender === "female") return "son";
-    if (currentUserIsChild === "father" && character?.gender === "male") return "daughter";
+    const userGender = userSettings[0]?.user_gender;
+    if (currentUserIsChild === "mother") return userGender === "male" ? "son" : "daughter";
+    if (currentUserIsChild === "father") return userGender === "male" ? "son" : "daughter";
     if (currentUserIsChild === "sibling") return "sibling";
     if (currentUserIsChild === "child") return character?.gender === "female" ? "mother" : "father";
     return null;
