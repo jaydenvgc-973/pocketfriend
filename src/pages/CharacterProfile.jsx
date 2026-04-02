@@ -787,12 +787,18 @@ export default function CharacterProfile() {
         npc={editingNPCPhoto.npc}
         sourceCharacter={character}
         onPhotoUpdate={async (photoUrl) => {
-          // Update the NPC's photo using current character data
-          const updatedRels = (character.fictional_relationships || []).map(r =>
-            r.person_name === editingNPCPhoto.npc.person_name
-              ? { ...r, photo_url: photoUrl }
-              : r
-          );
+          // Update the NPC's photo and store as reference image
+          const updatedRels = (character.fictional_relationships || []).map(r => {
+            if (r.person_name === editingNPCPhoto.npc.person_name) {
+              const existingRefs = r.reference_image_urls || [];
+              return {
+                ...r,
+                photo_url: photoUrl,
+                reference_image_urls: existingRefs.includes(photoUrl) ? existingRefs : [...existingRefs, photoUrl]
+              };
+            }
+            return r;
+          });
           await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
           await refetch();
           setEditingNPCPhoto(null);

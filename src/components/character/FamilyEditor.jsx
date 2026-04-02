@@ -138,7 +138,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
                fm.photo_url
         );
         if (match?.photo_url) {
-          // Reuse existing photo from the other parent
+          // Reuse existing photo from the other parent and store as reference
           const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: match.photo_url } : m);
           setMembers(updatedMembers);
           const valid = updatedMembers.filter(m => m.name?.trim());
@@ -152,6 +152,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
           } else {
             updateData.system_prompt = systemPrompt;
           }
+          
+          // Store photo as reference image
+          const existingRefs = character.reference_image_urls || [];
+          updateData.reference_image_urls = existingRefs.includes(match.photo_url) ? existingRefs : [...existingRefs, match.photo_url];
+          
           await base44.entities.Character.update(character.id, updateData);
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
           queryClient.invalidateQueries({ queryKey: ["characters"] });
@@ -252,6 +257,22 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
           updateData.system_prompt = systemPrompt;
         }
         await base44.entities.Character.update(character.id, updateData);
+
+        // Store family member photo as reference image for other characters who share this child
+        if (isChild && allCharacters.length > 0) {
+          for (const otherChar of allCharacters) {
+            if (otherChar.id === character.id) continue;
+            const otherIdx = (otherChar.family_members || []).findIndex(
+              fm => fm.name?.trim().toLowerCase() === members[idx].name.trim().toLowerCase() &&
+                   ["daughter", "son"].includes(fm.relationship_type)
+            );
+            if (otherIdx !== -1) {
+              const existingRefs = otherChar.reference_image_urls || [];
+              const updatedRefs = existingRefs.includes(result.url) ? existingRefs : [...existingRefs, result.url];
+              await base44.entities.Character.update(otherChar.id, { reference_image_urls: updatedRefs });
+            }
+          }
+        }
 
         // Propagate to other active characters who share this child
         if (isChild && allCharacters.length > 0) {
