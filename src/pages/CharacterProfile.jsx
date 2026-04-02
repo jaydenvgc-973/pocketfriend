@@ -782,24 +782,23 @@ export default function CharacterProfile() {
       <BottomNav />
 
       {/* NPC Photo Editor */}
-      {editingNPCPhoto && (
-        <NPCPhotoEditor
-          npc={editingNPCPhoto.npc}
-          sourceCharacter={editingNPCPhoto.sourceCharacter}
-          onPhotoUpdate={(photoUrl) => {
-            // Update the NPC's photo in their source character
-            const sourceChar = editingNPCPhoto.sourceCharacter;
-            const updatedRels = (sourceChar.fictional_relationships || []).map(r =>
-              r.person_name === editingNPCPhoto.npc.person_name
-                ? { ...r, photo_url: photoUrl }
-                : r
-            );
-            base44.entities.Character.update(sourceChar.id, { fictional_relationships: updatedRels })
-              .then(() => refetch())
-              .catch(() => {});
-          }}
-          onClose={() => setEditingNPCPhoto(null)}
-        />
+      {editingNPCPhoto && character && (
+      <NPCPhotoEditor
+        npc={editingNPCPhoto.npc}
+        sourceCharacter={character}
+        onPhotoUpdate={(photoUrl) => {
+          // Update the NPC's photo using current character data
+          const updatedRels = (character.fictional_relationships || []).map(r =>
+            r.person_name === editingNPCPhoto.npc.person_name
+              ? { ...r, photo_url: photoUrl }
+              : r
+          );
+          base44.entities.Character.update(character.id, { fictional_relationships: updatedRels })
+            .then(() => refetch())
+            .catch(() => {});
+        }}
+        onClose={() => setEditingNPCPhoto(null)}
+      />
       )}
 
       {/* NPC Promotion Modal — avatar step before create flow */}
