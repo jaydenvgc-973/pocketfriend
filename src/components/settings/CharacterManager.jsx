@@ -148,10 +148,11 @@ export default function CharacterManager() {
     if (selectedForMerge.size < 2) return;
     const selected = Array.from(selectedForMerge);
     const hasUser = selected.includes('user');
+    const npcIds = selected.filter(id => id.startsWith('npc_'));
+    const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
     
     if (hasUser) {
       // Merging with user: delete NPC duplicates
-      const npcIds = selected.filter(id => id.startsWith('npc_'));
       npcIds.forEach(npcId => {
         const match = npcId.match(/^npc_(.+)_(.+)$/);
         if (match) {
@@ -169,12 +170,35 @@ export default function CharacterManager() {
       });
       setSelectedForMerge(new Set());
       setMergeMode(false);
-    } else {
-      // Merge active characters only
-      const charIds = selected.filter(id => !id.startsWith('npc_'));
-      if (charIds.length >= 2) {
-        mergeMutation.mutate({ characterIds: charIds });
+    } else if (npcIds.length >= 2 && charIds.length === 0) {
+      // Merging NPCs: keep the first one, delete others
+      const [primary, ...others] = npcIds;
+      const primaryMatch = primary.match(/^npc_(.+)_(.+)$/);
+      
+      if (primaryMatch) {
+        const [, primarySourceCharId, primaryPersonName] = primaryMatch;
+        
+        others.forEach(otherId => {
+          const match = otherId.match(/^npc_(.+)_(.+)$/);
+          if (match) {
+            const [, sourceCharId, personName] = match;
+            const sourceChar = characters.find(c => c.id === sourceCharId);
+            if (sourceChar) {
+              const updated = (sourceChar.fictional_relationships || []).filter(
+                r => r.person_name !== personName
+              );
+              base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated })
+                .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
+                .catch(() => {});
+            }
+          }
+        });
       }
+      setSelectedForMerge(new Set());
+      setMergeMode(false);
+    } else if (charIds.length >= 2) {
+      // Merge active characters only
+      mergeMutation.mutate({ characterIds: charIds });
     }
   };
 
