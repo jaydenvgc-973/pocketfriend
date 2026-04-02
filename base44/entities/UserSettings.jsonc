@@ -45,6 +45,16 @@
       "format": "date",
       "description": "User's birthday (YYYY-MM-DD)"
     },
+    "user_gender": {
+      "type": "string",
+      "enum": [
+        "male",
+        "female",
+        "non-binary",
+        "other"
+      ],
+      "description": "User's gender"
+    },
     "fictional_world_name": {
       "type": "string",
       "description": "The name the user goes by in the fictional world."
@@ -72,6 +82,13 @@
       "type": "number",
       "default": 6000,
       "description": "User's in-world financial balance (USD). Starting balance is $6,000."
+    },
+    "user_relatives": {
+      "type": "object",
+      "description": "Map of character IDs to their relationship to the user",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
   "required": []

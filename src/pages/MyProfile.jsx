@@ -190,6 +190,12 @@ export default function MyProfile() {
                 <span className="text-xs text-foreground font-medium">{settings.user_birthday}</span>
               </div>
             )}
+            {settings.user_gender && (
+              <div className="flex justify-between">
+                <span className="text-xs text-muted-foreground">Gender</span>
+                <span className="text-xs text-foreground font-medium capitalize">{settings.user_gender}</span>
+              </div>
+            )}
             {settings.user_schedule_notes && (
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">Schedule</span>
