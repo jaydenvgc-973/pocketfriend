@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -123,6 +123,24 @@ export default function CharacterProfile() {
       : [],
     enabled: !!currentUser?.email,
   });
+
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
+  const getReciprocal = (rel) => {
+    if (!rel || !userSettings[0]?.user_relatives) return null;
+    const userRelatives = userSettings[0].user_relatives;
+    const currentUserIsChild = (userRelatives[character?.id]);
+    if (currentUserIsChild === "mother" && character?.gender === "female") return "son";
+    if (currentUserIsChild === "mother" && character?.gender === "male") return "daughter";
+    if (currentUserIsChild === "father" && character?.gender === "female") return "son";
+    if (currentUserIsChild === "father" && character?.gender === "male") return "daughter";
+    if (currentUserIsChild === "sibling") return "sibling";
+    if (currentUserIsChild === "child") return character?.gender === "female" ? "mother" : "father";
+    return null;
+  };
 
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
   const zodiacData = zodiacSign ? ZODIAC_SIGNS[zodiacSign] : null;
@@ -265,7 +283,15 @@ export default function CharacterProfile() {
 
         {/* Your Connection */}
         <div className="bg-card border border-border rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-4">Your Connection</p>
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
+            {getReciprocal() && (
+              <div className="flex items-center gap-1 text-xs text-pink-400">
+                <Heart className="w-3 h-3 fill-current" />
+                <span className="capitalize">{getReciprocal()}</span>
+              </div>
+            )}
+          </div>
           <div className="space-y-3">
             {[
               { label: "Respect", value: character.user_respect_level ?? 50 },
