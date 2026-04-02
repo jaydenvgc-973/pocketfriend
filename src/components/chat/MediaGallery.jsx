@@ -474,29 +474,44 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       {/* Character picker dropdown */}
                       {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {/* User first, then all active characters (including current character), then others */}
+                          {/* User first, then all characters (sorted by active) */}
                           {(() => {
-                            const userChar = allCharacters.find(c => c.is_user);
-                            // Include active characters AND the current character being viewed
-                            const activeChars = allCharacters.filter(c => (c.is_active_character || c.id === character?.id) && !c.is_user);
-                            const otherChars = allCharacters.filter(c => !c.is_active_character && c.id !== character?.id && !c.is_user);
-                            // Dedupe by ID
                             const seenIds = new Set();
-                            if (userChar?.id) seenIds.add(userChar.id);
-                            const deduped = [
-                              ...(userChar ? [userChar] : []),
-                              ...activeChars.filter(c => {
-                                if (seenIds.has(c.id)) return false;
+                            const sorted = [];
+                            
+                            // 1. Add user first
+                            const userChar = allCharacters.find(c => c.is_user);
+                            if (userChar) {
+                              sorted.push(userChar);
+                              seenIds.add(userChar.id);
+                            }
+                            
+                            // 2. Add current character if not already added
+                            if (character?.id && !seenIds.has(character.id)) {
+                              const curr = allCharacters.find(c => c.id === character.id);
+                              if (curr) {
+                                sorted.push(curr);
+                                seenIds.add(character.id);
+                              }
+                            }
+                            
+                            // 3. Add all remaining active characters
+                            allCharacters.forEach(c => {
+                              if (!seenIds.has(c.id) && c.is_active_character && !c.is_user) {
+                                sorted.push(c);
                                 seenIds.add(c.id);
-                                return true;
-                              }),
-                              ...otherChars.filter(c => {
-                                if (seenIds.has(c.id)) return false;
+                              }
+                            });
+                            
+                            // 4. Add all remaining characters
+                            allCharacters.forEach(c => {
+                              if (!seenIds.has(c.id)) {
+                                sorted.push(c);
                                 seenIds.add(c.id);
-                                return true;
-                              })
-                            ];
-                            return deduped;
+                              }
+                            });
+                            
+                            return sorted;
                           })().map(char => (
                             <button
                               key={char.id}
