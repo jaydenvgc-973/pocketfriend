@@ -4,6 +4,39 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 
+/**
+ * Calculate the current age of a family member.
+ * age_at_creation: the age set when the member was added
+ * created_date: ISO string of when the family member was added/saved
+ * index: position in list — used to stagger each member's "birthday" by 1 month
+ *
+ * Each member ages up on their annual "birthday" which is:
+ *   (created_date month + index months), same day each year
+ */
+export function calcFamilyMemberAge(member, characterCreatedDate, index = 0) {
+  const ageAtCreation = member.age_at_creation;
+  const savedDate = member.age_set_date || characterCreatedDate;
+  if (ageAtCreation == null || !savedDate) return null;
+
+  const base = new Date(savedDate);
+  // Stagger: each member's birthday is (index) months after the base date
+  const birthdayMonth = (base.getMonth() + index) % 12;
+  const birthdayDay = base.getDate();
+  // Determine if the year rolled over due to month addition
+  const extraYears = Math.floor((base.getMonth() + index) / 12);
+
+  const today = new Date();
+  const thisYear = today.getFullYear();
+  const baseYear = base.getFullYear() + extraYears;
+
+  // Find the most recent birthday in the past
+  let birthday = new Date(thisYear, birthdayMonth, birthdayDay);
+  if (birthday > today) birthday.setFullYear(thisYear - 1);
+
+  const yearsPassed = birthday.getFullYear() - baseYear;
+  return ageAtCreation + yearsPassed;
+}
+
 const RELATIONSHIP_TYPES = [
   "mother", "father", "grandmother", "grandfather",
   "great-grandmother", "great-grandfather", "aunt", "uncle",
@@ -65,7 +98,7 @@ export default function FamilyEditor({ character, readOnly = false }) {
   }, [character.id, JSON.stringify(character.family_members)]);
 
   const addMember = () => {
-    setMembers(prev => [...prev, { name: "", relationship_type: "mother", photo_url: null }]);
+    setMembers(prev => [...prev, { name: "", relationship_type: "mother", photo_url: null, age_at_creation: null, age_set_date: null }]);
   };
 
   const updateMember = (idx, field, value) => {
@@ -163,7 +196,13 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                 )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground font-medium">{member.name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{member.relationship_type}</p>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    {member.relationship_type}
+                    {(() => {
+                      const age = calcFamilyMemberAge(member, character.created_date, idx);
+                      return age != null ? ` · ${age} yrs` : "";
+                    })()}
+                  </p>
                 </div>
               </div>
             ) : (
@@ -214,6 +253,31 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
+                </div>
+                {/* Age input */}
+                <div className="flex items-center gap-2 mt-1">
+                  <label className="text-xs text-muted-foreground w-8 flex-shrink-0">Age</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="120"
+                    value={member.age_at_creation ?? ""}
+                    onChange={e => {
+                      const val = e.target.value === "" ? null : parseInt(e.target.value, 10);
+                      updateMember(idx, "age_at_creation", val);
+                      updateMember(idx, "age_set_date", new Date().toISOString());
+                    }}
+                    placeholder="Age"
+                    className="w-20 bg-secondary text-foreground text-sm rounded-xl px-3 py-1.5 outline-none border border-transparent focus:border-primary/50 placeholder:text-muted-foreground"
+                  />
+                  {member.age_at_creation != null && (
+                    <span className="text-xs text-muted-foreground">
+                      → currently{" "}
+                      <span className="text-foreground font-medium">
+                        {calcFamilyMemberAge(member, character.created_date, idx)} yrs
+                      </span>
+                    </span>
+                  )}
                 </div>
                 {generatingIdx === idx && (
                   <p className="text-xs text-muted-foreground">Generating photo for {member.name}...</p>
