@@ -47,7 +47,7 @@
     },
     "fictional_world_name": {
       "type": "string",
-      "description": "The name the user goes by in the fictional world. Used by all characters unless they have a specific nickname_for_user set."
+      "description": "The name the user goes by in the fictional world."
     },
     "response_lag_enabled": {
       "type": "boolean",
@@ -66,7 +66,12 @@
     },
     "user_schedule_notes": {
       "type": "string",
-      "description": "User's general availability or schedule in natural language (e.g. 'I work 9-5 weekdays', 'I'm usually free evenings and weekends', 'I'm a night owl'). Used to help characters know when to reach out."
+      "description": "User's general availability or schedule in natural language."
+    },
+    "user_balance": {
+      "type": "number",
+      "default": 6000,
+      "description": "User's in-world financial balance (USD). Starting balance is $6,000."
     }
   },
   "required": []

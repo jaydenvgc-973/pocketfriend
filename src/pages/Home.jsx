@@ -6,6 +6,7 @@ import { Plus, Users, Settings, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
+import UserCard from "@/components/home/UserCard";
 import DeleteCharacterDialog from "@/components/home/DeleteCharacterDialog";
 import CharacterInteractionSimulator from "@/components/home/CharacterInteractionSimulator";
 import BottomNav from "@/components/BottomNav";
@@ -200,6 +201,10 @@ export default function Home() {
       <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
         {showThomasAndersonFix && (
           <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
+        )}
+        {/* User card — user as a first-class world entity */}
+        {currentUser && (
+          <UserCard user={currentUser} settings={settings[0] || {}} />
         )}
         {defaultChar && (
           <div>

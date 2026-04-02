@@ -18,6 +18,7 @@ import CommonQuestions from "@/components/settings/CommonQuestions";
 import StorageBackup from "@/components/settings/StorageBackup";
 import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 import VoiceSettings from "@/components/character/VoiceSettings";
+import CharacterManager from "@/components/settings/CharacterManager";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -328,6 +329,9 @@ export default function Settings() {
 
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
+          <div className="mb-6 bg-card border border-border rounded-2xl p-4">
+            <CharacterManager />
+          </div>
           <Link to="/edit-character-story">
             <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
               <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
