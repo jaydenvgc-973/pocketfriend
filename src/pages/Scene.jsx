@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
@@ -88,8 +88,10 @@ export default function Scene() {
   const [actions, setActions] = useState([]);
   const [showPhotoModal, setShowPhotoModal] = useState(false);
   const [actionCooldown, setActionCooldown] = useState(false);
-  const [selectedNpcIds, setSelectedNpcIds] = useState(null); // null = not yet shown selector
+  const [selectedNpcIds, setSelectedNpcIds] = useState(null);
+  const [showNpcDropdown, setShowNpcDropdown] = useState(false);
   const bottomRef = useRef(null);
+  const npcDropdownRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
   const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
@@ -132,45 +134,90 @@ export default function Scene() {
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
 
-  // NPC family members from residents who are away (use family_members field)
-  const npcFamilyMembers = isHomeLocation
-    ? homeResidentsAway.flatMap(c =>
-        (c.family_members || []).map(fm => ({
-          id: `npc_${fm.name?.replace(/\s+/g, "_")}`,
-          name: fm.name,
-          relationship: fm.relationship_type,
-          isNpc: true,
-          avatar_url: null,
-        }))
-      ).filter((fm, i, arr) => arr.findIndex(x => x.id === fm.id) === i) // dedupe
-    : [];
+  // Build the full pool of possible NPCs for ANY venue
+  const allPossibleNpcs = (() => {
+    const npcs = [];
 
-  // Also include NPC owner if present and no residents are home
-  const npcOwner = (isHomeLocation && location.owner_is_npc && location.owner_npc_name && homeResidentsPresent.length === 0)
-    ? [{ id: `npc_owner_${location.id}`, name: location.owner_npc_name, relationship: location.owner_role || "resident", isNpc: true, avatar_url: null }]
-    : [];
+    // Home: family members of away residents
+    if (isHomeLocation) {
+      homeResidentsAway.forEach(c => {
+        (c.family_members || []).forEach(fm => {
+          if (fm.name) npcs.push({
+            id: `npc_${fm.name.replace(/\s+/g, "_")}`,
+            name: fm.name,
+            role: fm.relationship_type || "Family",
+            isNpc: true,
+            avatar_url: null,
+          });
+        });
+      });
+      // NPC owner when no one is home
+      if (location.owner_is_npc && location.owner_npc_name && homeResidentsPresent.length === 0) {
+        npcs.push({ id: `npc_owner_${location.id}`, name: location.owner_npc_name, role: location.owner_role || "Resident", isNpc: true, avatar_url: null });
+      }
+    }
 
-  const allNpcResidents = [...npcFamilyMembers, ...npcOwner];
+    // Any venue: NPC owner/operator
+    if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) {
+      npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, avatar_url: null });
+    }
+
+    // Generic venue NPCs based on category
+    const venueNpcs = {
+      food_drink: [{ id: "npc_waiter", name: "Waiter", role: "Staff" }, { id: "npc_bartender", name: "Bartender", role: "Staff" }],
+      social: [{ id: "npc_bartender", name: "Bartender", role: "Staff" }, { id: "npc_bouncer", name: "Bouncer", role: "Staff" }],
+      gym: [{ id: "npc_trainer", name: "Personal Trainer", role: "Staff" }],
+      grocery: [{ id: "npc_cashier", name: "Cashier", role: "Staff" }],
+      medical: [{ id: "npc_nurse", name: "Nurse", role: "Staff" }],
+      outdoor: [{ id: "npc_stranger", name: "Stranger", role: "Passerby" }],
+      workplace: [{ id: "npc_coworker", name: "Coworker", role: "Colleague" }],
+      school: [{ id: "npc_classmate", name: "Classmate", role: "Student" }],
+    };
+    const venueDefaults = venueNpcs[location?.category] || [{ id: "npc_local", name: "Local", role: "Nearby person" }];
+    venueDefaults.forEach(n => {
+      if (!npcs.find(x => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
+    });
+
+    // Dedupe by id
+    return npcs.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
+  })();
 
   // Active characters explicitly brought (from URL params)
   const broughtCharacters = characters.filter(c => characterIds.includes(c.id));
 
-  // Scene characters = brought + home residents who are home + workers on shift
-  // At a home: also include selected NPCs from allNpcResidents
+  // Selected NPCs — default: none selected until user picks
   const selectedNpcs = selectedNpcIds !== null
-    ? allNpcResidents.filter(n => selectedNpcIds.includes(n.id))
-    : allNpcResidents; // default: all NPCs present
+    ? allPossibleNpcs.filter(n => selectedNpcIds.includes(n.id))
+    : [];
 
   const sceneCharacters = [
     ...broughtCharacters,
     ...(isHomeLocation ? homeResidentsPresent : []),
     ...workerCharacters,
-    ...(isHomeLocation ? selectedNpcs : []),
+    ...selectedNpcs,
   ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
 
   const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
     || location?.image_urls?.[0]
     || null;
+
+  // Close NPC dropdown on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (npcDropdownRef.current && !npcDropdownRef.current.contains(e.target)) {
+        setShowNpcDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const toggleNpc = (npcId) => {
+    const current = selectedNpcIds ?? [];
+    setSelectedNpcIds(
+      current.includes(npcId) ? current.filter(id => id !== npcId) : [...current, npcId]
+    );
+  };
 
   // Initialize actions
   useEffect(() => {
@@ -242,21 +289,19 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
-      // Build NPC context
-      const npcNames = selectedNpcs.map(n => n.name);
-      const npcContext = npcNames.length > 0
-        ? `NPC family/residents present: ${npcNames.join(", ")}. They live here and respond naturally as family members or housemates would.`
+      const knownChars = sceneCharacters.filter(c => !c.isNpc);
+      const npcContext = selectedNpcs.length > 0
+        ? `NPCs present (the user chose to talk to them): ${selectedNpcs.map(n => `${n.name} (${n.role || "NPC"})`).join(", ")}. They respond naturally in-character for their role at ${location.name}.`
         : "";
 
-      const knownChars = sceneCharacters.filter(c => !c.isNpc);
       const isAlone = knownChars.length === 0 && selectedNpcs.length === 0;
       const npcInstruction = isAlone
-        ? `There are no friends present. A single staff member or worker at ${location.name} can briefly respond if relevant (e.g. a cashier, bartender, employee). Use their role as their name (e.g. "Cashier", "Bartender"). Only respond if it makes sense contextually — most of the time return an empty responses array.`
-        : `Write short, natural responses from the relevant characters.
+        ? `No one in particular is being addressed. You may have a single ambient staff person at ${location.name} respond very briefly if it makes sense (e.g. "Cashier", "Bartender"). Usually return an empty responses array.`
+        : `Write short, natural responses from the relevant people.
 Known characters: ${knownChars.map(c => c.name).join(", ") || "none"}.
 ${npcContext}
-Workers (${workerCharacters.map(c => c.name).join(", ") || "none"}) are staff — they respond briefly and professionally unless directly addressed.
-Characters should react naturally to each other and the user.`;
+Workers on shift (${workerCharacters.map(c => c.name).join(", ") || "none"}) respond briefly and professionally unless directly addressed.
+Everyone reacts naturally to each other and the user.`;
 
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a group scene at ${location.name} (${location.category}).
@@ -383,6 +428,62 @@ Return JSON:
             {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
           </p>
         </div>
+
+        {/* NPC Dropdown */}
+        <div className="relative" ref={npcDropdownRef}>
+          <button
+            onClick={() => setShowNpcDropdown(v => !v)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
+              selectedNpcs.length > 0
+                ? "bg-primary/10 border-primary/40 text-primary"
+                : "bg-secondary border-border text-muted-foreground hover:text-foreground"
+            }`}
+            title="NPCs nearby"
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>NPCs{selectedNpcs.length > 0 ? ` · ${selectedNpcs.length}` : ""}</span>
+            <ChevronDown className={`w-3 h-3 transition-transform ${showNpcDropdown ? "rotate-180" : ""}`} />
+          </button>
+
+          <AnimatePresence>
+            {showNpcDropdown && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 top-full mt-1.5 w-52 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden"
+              >
+                <div className="px-3 py-2 border-b border-border">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
+                </div>
+                <div className="max-h-64 overflow-y-auto py-1">
+                  {allPossibleNpcs.map(npc => {
+                    const isSelected = selectedNpcIds?.includes(npc.id) ?? false;
+                    return (
+                      <button
+                        key={npc.id}
+                        onClick={() => toggleNpc(npc.id)}
+                        className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
+                      >
+                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                          isSelected ? "bg-primary border-primary" : "border-border"
+                        }`}>
+                          {isSelected && <Check className="w-3 h-3 text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{npc.name}</p>
+                          {npc.role && <p className="text-[10px] text-muted-foreground">{npc.role}</p>}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         <button
           onClick={() => setShowPhotoModal(true)}
           className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
@@ -476,36 +577,7 @@ Return JSON:
               {workerCharacters.map(c => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working
             </span></div>
           )}
-          {/* NPC resident selector */}
-          {allNpcResidents.length > 0 && (
-            <div className="mt-2 bg-card border border-border rounded-xl p-3 text-left space-y-2">
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Who's around to talk to?</p>
-              <div className="flex flex-wrap gap-1.5">
-                {allNpcResidents.map(npc => {
-                  const isSelected = selectedNpcIds === null || selectedNpcIds.includes(npc.id);
-                  return (
-                    <button
-                      key={npc.id}
-                      onClick={() => {
-                        const current = selectedNpcIds ?? allNpcResidents.map(n => n.id);
-                        setSelectedNpcIds(
-                          current.includes(npc.id)
-                            ? current.filter(id => id !== npc.id)
-                            : [...current, npc.id]
-                        );
-                      }}
-                      className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-xs border transition-colors ${
-                        isSelected ? "bg-primary/10 border-primary text-primary" : "bg-card border-border text-muted-foreground"
-                      }`}
-                    >
-                      {npc.name}
-                      {npc.relationship && <span className="opacity-60">· {npc.relationship}</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+
         </div>
 
         <AnimatePresence>
