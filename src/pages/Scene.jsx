@@ -571,27 +571,58 @@ Return JSON:
                 <div className="px-3 py-2 border-b border-border">
                   <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
                 </div>
-                <div className="max-h-64 overflow-y-auto py-1">
-                  {allPossibleNpcs.map(npc => {
-                    const isSelected = selectedNpcIds?.includes(npc.id) ?? false;
+                <div className="max-h-72 overflow-y-auto py-1">
+                  {(() => {
+                    const staffNpcs = allPossibleNpcs.filter(n => n.npcType === "staff" || (!n.npcType && n.role));
+                    const customerNpcs = allPossibleNpcs.filter(n => n.npcType === "customer");
+                    const ungrouped = allPossibleNpcs.filter(n => !n.npcType);
+
+                    const renderNpc = (npc) => {
+                      const isSelected = selectedNpcIds?.includes(npc.id) ?? false;
+                      return (
+                        <button
+                          key={npc.id}
+                          onClick={() => toggleNpc(npc.id)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
+                        >
+                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                            isSelected ? "bg-primary border-primary" : "border-border"
+                          }`}>
+                            {isSelected && <Check className="w-3 h-3 text-white" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-xs font-medium text-foreground truncate">{npc.name}</p>
+                            {npc.role && <p className="text-[10px] text-muted-foreground">{npc.role}</p>}
+                          </div>
+                          {npc.npcType === "staff" && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-medium flex-shrink-0">Staff</span>
+                          )}
+                        </button>
+                      );
+                    };
+
                     return (
-                      <button
-                        key={npc.id}
-                        onClick={() => toggleNpc(npc.id)}
-                        className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
-                      >
-                        <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                          isSelected ? "bg-primary border-primary" : "border-border"
-                        }`}>
-                          {isSelected && <Check className="w-3 h-3 text-white" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs font-medium text-foreground truncate">{npc.name}</p>
-                          {npc.role && <p className="text-[10px] text-muted-foreground">{npc.role}</p>}
-                        </div>
-                      </button>
+                      <>
+                        {staffNpcs.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 border-b border-border/50">
+                              <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Employees</p>
+                            </div>
+                            {staffNpcs.map(renderNpc)}
+                          </>
+                        )}
+                        {customerNpcs.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 border-b border-border/50 mt-1">
+                              <p className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">People here</p>
+                            </div>
+                            {customerNpcs.map(renderNpc)}
+                          </>
+                        )}
+                        {ungrouped.map(renderNpc)}
+                      </>
                     );
-                  })}
+                  })()}
                 </div>
               </motion.div>
             )}
