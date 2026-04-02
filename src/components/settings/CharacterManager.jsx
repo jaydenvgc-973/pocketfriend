@@ -347,22 +347,14 @@ export default function CharacterManager() {
                       </div>
                     ) : (
                        <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-foreground">
-                          {itemName}
-                          {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
-                          {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary ml-2 flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
-                        </p>
-                        {item.type === 'family' && (
-                          <p className="text-xs text-muted-foreground">{itemData.source_character_name}'s {itemData.appearance_notes}</p>
-                        )}
-                        {item.type === 'world_person' && (
-                          <>
-                            {itemData.appearance_notes && <p className="text-xs text-muted-foreground">{itemData.appearance_notes}</p>}
-                          </>
-                        )}
-                        {!isUser && !isNPC && itemData.appearance_notes && (
-                          <p className="text-xs text-muted-foreground line-clamp-2">{itemData.appearance_notes}</p>
-                        )}
+                         <p className="text-sm font-medium text-foreground">
+                           {itemName}
+                           {isUser && <span className="text-xs text-primary ml-2">(You)</span>}
+                           {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs text-primary ml-2 flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
+                           {item.type === 'family' && <span className="text-xs text-muted-foreground ml-2">— {itemData.source_character_name}'s {itemData.appearance_notes}</span>}
+                           {item.type === 'world_person' && itemData.appearance_notes && <span className="text-xs text-muted-foreground ml-2">— {itemData.appearance_notes}</span>}
+                           {!isUser && !isNPC && itemData.appearance_notes && <span className="text-xs text-muted-foreground ml-2">— {itemData.appearance_notes}</span>}
+                         </p>
                        </div>
                      )}
                   </div>
