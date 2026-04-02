@@ -409,10 +409,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
               onClick={() => setIsOpen(false)}
             >
               <div
-                className="bg-card rounded-2xl p-6 max-w-5xl w-full max-h-[99vh] flex flex-col gap-5"
+                className="bg-card rounded-2xl max-w-5xl w-full max-h-[99vh] flex flex-col overflow-hidden"
                 onClick={e => e.stopPropagation()}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
                   <h3 className="text-lg font-semibold text-foreground">
                     Media {images.length > 0 ? `(${images.length})` : ""}
                   </h3>
@@ -421,9 +421,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                   </button>
                 </div>
 
-                {/* Generate image panel */}
-                {character && conversationId && (
-                  <div className="rounded-2xl border border-primary/20 bg-primary/5 flex-1 overflow-y-auto flex flex-col p-4 space-y-3">
+                <div className="flex-1 overflow-hidden flex flex-col gap-0">
+                  {/* Generate image panel */}
+                  {character && conversationId && (
+                    <div className="flex-shrink-0 overflow-y-auto border-b border-border bg-primary/5 rounded-2xl m-4 p-4 space-y-3" style={{ maxHeight: '50vh' }}>
                     {/* Tab switcher */}
                     <div className="flex items-center gap-2 mb-2">
                       <button
@@ -677,9 +678,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     </button>
                   </div>
                 )}
+                </div>
 
                 {/* Image grid */}
-                <div className="flex-1 overflow-y-auto">
+                <div className="flex-1 overflow-y-auto px-6 pb-6">
                   {images.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-8">No images shared yet.</p>
                   ) : (
