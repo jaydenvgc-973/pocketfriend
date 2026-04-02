@@ -22,7 +22,10 @@ export default function CharacterManager() {
 
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email }),
+    queryFn: async () => {
+      const all = await base44.entities.Character.filter({ created_by: currentUser.email });
+      return all.filter(c => c.status !== 'deleted');
+    },
     enabled: !!currentUser?.email,
   });
 
