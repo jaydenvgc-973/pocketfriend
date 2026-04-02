@@ -79,8 +79,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   }, 'user') : null;
 
   // ── ACTIVE CHARACTERS ────────────────────────────────────────────────────
-  const activeChars = activeCharacters
-    .filter(c => c.is_active_character)
+  const allChars = activeCharacters
     .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))
     .map(c => createVisualEntity(c, 'character'));
 
@@ -119,10 +118,10 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  // Order: user first, then active characters, then world people
+  // Order: user first, then all characters, then world people
   const roster = [
     ...(userEntity ? [userEntity] : []),
-    ...activeChars,
+    ...allChars,
     ...worldPeople,
   ];
 
