@@ -60,20 +60,23 @@ export default function NPCRelationshipEditor({ character, relationship, onUpdat
     const newName = form.person_name?.toLowerCase();
     const newType = normalizeRelationType(form.relationship_type);
     
-    // Replace the matching NPC, filter out any other entries with the same name+type combo
-    const updated = (character.fictional_relationships || []).reduce((acc, r) => {
-      const rName = r.person_name?.toLowerCase();
-      const rType = normalizeRelationType(r.relationship_type);
-      const isOriginal = rName === originalName && rType === originalType;
-      const isDuplicate = rName === newName && rType === newType && !isOriginal;
-      
-      if (isOriginal) {
-        acc.push({ ...r, ...form });
-      } else if (!isDuplicate) {
-        acc.push(r);
-      }
-      return acc;
-    }, []);
+    // If editing existing NPC: replace the match, filter duplicates
+    // If new NPC: just append to list
+    const updated = relationship
+      ? (character.fictional_relationships || []).reduce((acc, r) => {
+          const rName = r.person_name?.toLowerCase();
+          const rType = normalizeRelationType(r.relationship_type);
+          const isOriginal = rName === originalName && rType === originalType;
+          const isDuplicate = rName === newName && rType === newType && !isOriginal;
+          
+          if (isOriginal) {
+            acc.push({ ...r, ...form });
+          } else if (!isDuplicate) {
+            acc.push(r);
+          }
+          return acc;
+        }, [])
+      : [...(character.fictional_relationships || []), form];
     
     try {
       await base44.entities.Character.update(character.id, { fictional_relationships: updated });
