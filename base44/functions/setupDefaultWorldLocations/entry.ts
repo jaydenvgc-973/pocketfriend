@@ -27,13 +27,26 @@ Deno.serve(async (req) => {
     const created = [];
 
     // For each generic category, find/consolidate to ONE location
+    // Use a broader filter to catch duplicates by category alone (not just is_default_generic)
     for (const catDef of defaultCategories) {
-      const categoryLocs = await base44.asServiceRole.entities.LocationReference.filter(
+      let categoryLocs = await base44.asServiceRole.entities.LocationReference.filter(
         { category: catDef.category, is_default_generic: true }
       );
 
-      if (categoryLocs.length === 0) {
-        // Create the location
+      // If we found duplicates, consolidate first
+      if (categoryLocs.length > 1) {
+        console.log(`[setupDefaultWorldLocations] Found ${categoryLocs.length} generic ${catDef.category} locations. Consolidating...`);
+        const keeper = categoryLocs[0];
+        for (let i = 1; i < categoryLocs.length; i++) {
+          console.log(`[setupDefaultWorldLocations] Deleting duplicate: ${categoryLocs[i].id}`);
+          await base44.asServiceRole.entities.LocationReference.delete(categoryLocs[i].id);
+        }
+        results[catDef.category] = { id: keeper.id, created: false, consolidated: true, deleted: categoryLocs.length - 1 };
+      } else if (categoryLocs.length === 1) {
+        // Exactly one exists — all good
+        results[catDef.category] = { id: categoryLocs[0].id, created: false, consolidated: false };
+      } else {
+        // None exist — create one
         let newLoc;
         if (catDef.category === 'outdoor') {
           newLoc = await base44.asServiceRole.entities.LocationReference.create({
@@ -119,16 +132,6 @@ Deno.serve(async (req) => {
         }
         created.push(catDef.canonicalName);
         results[catDef.category] = { id: newLoc.id, created: true, consolidated: false };
-      } else if (categoryLocs.length > 1) {
-        // Consolidate: keep first, delete the rest
-        const keeper = categoryLocs[0];
-        for (let i = 1; i < categoryLocs.length; i++) {
-          await base44.asServiceRole.entities.LocationReference.delete(categoryLocs[i].id);
-        }
-        results[catDef.category] = { id: keeper.id, created: false, consolidated: true, deleted: categoryLocs.length - 1 };
-      } else {
-        // Exactly one exists
-        results[catDef.category] = { id: categoryLocs[0].id, created: false, consolidated: false };
       }
     }
 
