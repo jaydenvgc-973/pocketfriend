@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, ChevronDown } from "lucide-react";
+import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, ChevronDown, Users, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -28,6 +28,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [selectedZone, setSelectedZone] = useState(null);         // zone_name string
   const [showLocationPicker, setShowLocationPicker] = useState(false);
   const [showZonePicker, setShowZonePicker] = useState(false);
+  
+  // Character selector state
+  const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
+  const [showCharacterPicker, setShowCharacterPicker] = useState(false);
 
   // User settings for world name
   const [userSettings, setUserSettings] = useState(null);
@@ -54,6 +58,16 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const clearEnvironment = () => {
     setSelectedLocation(null);
     setSelectedZone(null);
+  };
+
+  const toggleCharacter = (charId) => {
+    setSelectedCharacterIds(prev =>
+      prev.includes(charId) ? prev.filter(id => id !== charId) : [...prev, charId]
+    );
+  };
+
+  const clearSelectedCharacters = () => {
+    setSelectedCharacterIds([]);
   };
 
   const handleRefUpload = async (e) => {
@@ -160,14 +174,20 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const charName = character.name;
       const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender].filter(Boolean).join(', ');
       
-      // Extract mentioned people from prompt
-      const { characters: mentionedCharacters, userIncluded } = extractMentionedPeople(prompt);
+      // Use selected characters from dropdown, or extract from prompt
+      let selectedChars = selectedCharacterIds.length > 0
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id))
+        : extractMentionedPeople(prompt).characters;
       
-      // Build reference images from mentioned people
-      let charReferenceImages = buildReferenceImagesFromMention(mentionedCharacters, userIncluded);
+      const userIncluded = selectedCharacterIds.length > 0
+        ? false
+        : extractMentionedPeople(prompt).userIncluded;
       
-      // If no one mentioned, fall back to character's own avatars
-      if (charReferenceImages.length === 0 && mentionedCharacters.length === 0 && !userIncluded) {
+      // Build reference images from selected/mentioned people
+      let charReferenceImages = buildReferenceImagesFromMention(selectedChars, userIncluded);
+      
+      // If no one selected/mentioned, fall back to character's own avatars
+      if (charReferenceImages.length === 0 && selectedChars.length === 0 && !userIncluded) {
         if (character.avatar_url) charReferenceImages.push(character.avatar_url);
         if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 3));
       }
@@ -247,11 +267,13 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const userName = userSettings?.fictional_world_name || "the user";
       const promptText = prompt.trim() || "candid natural moment, everyday life";
 
-      // Extract mentioned people from prompt (user is always included in user generation)
-      const { characters: mentionedCharacters } = extractMentionedPeople(promptText);
+      // Use selected characters from dropdown, or extract from prompt
+      const selectedChars = selectedCharacterIds.length > 0
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id))
+        : extractMentionedPeople(promptText).characters;
       
-      // Build reference images with mentioned characters
-      const charReferences = buildReferenceImagesFromMention(mentionedCharacters, false);
+      // Build reference images with selected/mentioned characters
+      const charReferences = buildReferenceImagesFromMention(selectedChars, false);
       
       // Add user's avatar if available
       const userReferences = userSettings?.generated_avatar_urls?.[0] ? [userSettings.generated_avatar_urls[0]] : [];
@@ -372,6 +394,49 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     <p className="text-xs text-muted-foreground">
                       {generationTab === "character" ? `${character.name} will "send" it in the chat and remember it.` : "Generate and send a photo of yourself in the chat."}
                     </p>
+
+                    {/* Character selector */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Character picker button */}
+                        <button
+                          onClick={() => { setShowCharacterPicker(v => !v); setShowLocationPicker(false); setShowZonePicker(false); }}
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${selectedCharacterIds.length > 0 ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
+                        >
+                          <Users className="w-3.5 h-3.5" />
+                          {selectedCharacterIds.length > 0 ? `${selectedCharacterIds.length} selected` : 'Add people'}
+                          <ChevronDown className="w-3 h-3" />
+                        </button>
+
+                        {/* Clear button */}
+                        {selectedCharacterIds.length > 0 && (
+                          <button onClick={clearSelectedCharacters} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Clear people">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Character picker dropdown */}
+                      {showCharacterPicker && allCharacters.length > 0 && (
+                        <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                          {allCharacters.map(char => (
+                            <button
+                              key={char.id}
+                              onClick={() => toggleCharacter(char.id)}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                            >
+                              {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
+                              {char.avatar_url ? (
+                                <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover" />
+                              ) : (
+                                <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">{char.name?.[0]}</div>
+                              )}
+                              <span className="font-medium">{char.name}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
 
                     {/* Environment selector */}
                     <div className="space-y-2">
