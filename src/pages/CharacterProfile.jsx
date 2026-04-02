@@ -599,11 +599,32 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships (includes family members synced in) */}
-          {(character.fictional_relationships?.filter(r => !r.related_character_id) || []).length > 0 ? (
+          {/* NPC relationships (includes family members synced in) — deduplicated by person_name */}
+          {(() => {
+            const npcRels = character.fictional_relationships?.filter(r => !r.related_character_id) || [];
+            // Deduplicate: keep first occurrence of each person_name (case-insensitive)
+            const seen = new Set();
+            const deduped = npcRels.filter(r => {
+              const key = r.person_name?.toLowerCase();
+              if (seen.has(key)) return false;
+              seen.add(key);
+              return true;
+            });
+            return deduped.length > 0;
+          })() ? (
             <div className="space-y-5">
-              {character.fictional_relationships
-                .filter(r => !r.related_character_id)
+              {(() => {
+                const npcRels = character.fictional_relationships?.filter(r => !r.related_character_id) || [];
+                // Deduplicate: keep first occurrence of each person_name (case-insensitive)
+                const seen = new Set();
+                const deduped = npcRels.filter(r => {
+                  const key = r.person_name?.toLowerCase();
+                  if (seen.has(key)) return false;
+                  seen.add(key);
+                  return true;
+                });
+                return deduped;
+              })()
                 .map((rel, idx) => (
                   <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
                     <div className="flex items-start justify-between gap-2">
