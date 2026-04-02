@@ -421,10 +421,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-hidden flex flex-col gap-0">
-                  {/* Generate image panel */}
-                  {character && conversationId && (
-                    <div className="flex-shrink-0 overflow-y-auto border-b border-border bg-primary/5 rounded-2xl m-4 p-4 space-y-3" style={{ maxHeight: '50vh' }}>
+                {/* Generate image panel — above images */}
+                {character && conversationId && (
+                  <div className="flex-shrink-0 overflow-y-auto border-b border-border bg-primary/5 mx-6 mt-4 mb-2 p-4 space-y-3 rounded-xl" style={{ maxHeight: '50vh' }}>
                     {/* Tab switcher */}
                     <div className="flex items-center gap-2 mb-2">
                       <button
@@ -678,10 +677,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     </button>
                   </div>
                 )}
-                </div>
 
-                {/* Image grid */}
-                <div className="flex-1 overflow-y-auto px-6 pb-6">
+                {/* Image grid — below generator */}
+                <div className="flex-1 overflow-y-auto px-6 pb-6 pt-2">
                   {images.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-8">No images shared yet.</p>
                   ) : (
