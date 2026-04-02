@@ -81,7 +81,7 @@ export default function CharacterManager() {
           setRenamingId(null);
           return;
         }
-        const sourceChar = characters.find(c => c.id === sourceCharId);
+        const sourceChar = roster.find(c => c.id === sourceCharId && c.is_character);
         if (sourceChar) {
           const updated = (sourceChar.fictional_relationships || []).map(r =>
             r.person_name === oldPersonName ? { ...r, person_name: newName } : r
