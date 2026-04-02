@@ -599,9 +599,14 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships (includes family members synced in) — deduplicated by person_name */}
+          {/* NPC relationships — exclude family members and active characters, deduplicated by person_name */}
           {(() => {
-            const npcRels = character.fictional_relationships?.filter(r => !r.related_character_id) || [];
+            const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+            const npcRels = character.fictional_relationships?.filter(r => 
+              !r.related_character_id && 
+              !r._from_family && 
+              !familyNames.has(r.person_name?.toLowerCase())
+            ) || [];
             // Deduplicate: keep first occurrence of each person_name (case-insensitive)
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -614,7 +619,12 @@ export default function CharacterProfile() {
           })() ? (
             <div className="space-y-5">
               {(() => {
-                const npcRels = character.fictional_relationships?.filter(r => !r.related_character_id) || [];
+                const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+                const npcRels = character.fictional_relationships?.filter(r => 
+                  !r.related_character_id && 
+                  !r._from_family && 
+                  !familyNames.has(r.person_name?.toLowerCase())
+                ) || [];
                 // Deduplicate: keep first occurrence of each person_name (case-insensitive)
                 const seen = new Set();
                 const deduped = npcRels.filter(r => {
@@ -704,12 +714,28 @@ export default function CharacterProfile() {
             )
           )}
 
-          {/* Chance Encounters */}
-          {character.transient_encounters?.length > 0 && (
+          {/* Chance Encounters — filter to exclude group/event references */}
+          {(() => {
+            const groupKeywords = ['class', 'group', 'people', 'team', 'meeting', 'event', 'program', 'session', 'training', 'workshop'];
+            const filtered = (character.transient_encounters || []).filter(enc => {
+              const desc = (enc.description || '').toLowerCase();
+              const ctx = (enc.context || '').toLowerCase();
+              // Exclude if description mentions groups or events
+              return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
+            });
+            return filtered.length > 0;
+          })() && (
             <div className="space-y-3">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Chance Encounters</p>
               <div className="space-y-3">
-                {character.transient_encounters.map((enc, idx) => (
+                {(() => {
+                  const groupKeywords = ['class', 'group', 'people', 'team', 'meeting', 'event', 'program', 'session', 'training', 'workshop'];
+                  return (character.transient_encounters || []).filter(enc => {
+                    const desc = (enc.description || '').toLowerCase();
+                    const ctx = (enc.context || '').toLowerCase();
+                    return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
+                  });
+                })().map((enc, idx) => (
                   <div key={idx} className="pb-2 border-b border-border/50 last:border-b-0">
                     <p className="text-xs text-foreground">{enc.description}</p>
                     {enc.context && (
