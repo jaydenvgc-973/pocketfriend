@@ -12,6 +12,11 @@ import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
+import { generateLocationActions } from "@/lib/actionGenerator";
+import { buildUnifiedMemoryContext, formatMemoryForLLM, shouldReferenceMemory, getLocationMemories } from "@/lib/memoryUnity";
+import { checkCharacterAvailability, getLocationEmployees, spawnLocationNPCs, shouldNPCApproach } from "@/lib/npcSpawner";
+import ConversationTypeSelector from "@/components/scene/ConversationTypeSelector";
+import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext } from "@/lib/sceneMemoryInjection";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -133,6 +138,7 @@ export default function Scene() {
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [activeZone, setActiveZone] = useState(null);
   const [showZonePicker, setShowZonePicker] = useState(false);
+  const [conversationModal, setConversationModal] = useState(null); // {npcId, npcName, hasEmployees}
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -359,12 +365,20 @@ export default function Scene() {
     );
   };
 
-  // Initialize actions
+  // Initialize actions dynamically
   useEffect(() => {
     if (location) {
-      setActions(getLocationActions(location.category, isHomeLocation));
+      const hour = new Date().getHours();
+      const newActions = generateLocationActions(
+        location,
+        activeZone || locationZones[0]?.zone_name,
+        hour,
+        sceneCharacters,
+        0
+      );
+      setActions(newActions);
     }
-  }, [location?.id]);
+  }, [location?.id, activeZone]);
 
   // Auto-scroll
   useEffect(() => {
@@ -375,10 +389,18 @@ export default function Scene() {
   useEffect(() => {
     if (!location) return;
     const interval = setInterval(() => {
-      setActions(getLocationActions(location.category, isHomeLocation));
+      const hour = new Date().getHours();
+      const newActions = generateLocationActions(
+        location,
+        activeZone || locationZones[0]?.zone_name,
+        hour,
+        sceneCharacters,
+        0
+      );
+      setActions(newActions);
     }, 180000);
     return () => clearInterval(interval);
-  }, [location?.id]);
+  }, [location?.id, activeZone]);
 
   // Generate scene image on load or when zone changes (sceneImage set to null)
   useEffect(() => {
@@ -663,7 +685,15 @@ Return JSON:
     await sendMessage(`[${action.emoji} ${action.label}${payerNote}]`, true, null, null);
 
     setTimeout(() => {
-      setActions(getLocationActions(location?.category, isHomeLocation));
+      const hour = new Date().getHours();
+      const newActions = generateLocationActions(
+        location,
+        activeZone || locationZones[0]?.zone_name,
+        hour,
+        sceneCharacters,
+        0
+      );
+      setActions(newActions);
     }, 1000);
   };
 
@@ -732,7 +762,19 @@ Return JSON:
                       return (
                         <button
                           key={npc.id}
-                          onClick={() => toggleNpc(npc.id)}
+                          onClick={() => {
+                            toggleNpc(npc.id);
+                            // Open conversation type selector when selecting an NPC
+                            setTimeout(() => {
+                              const employees = getLocationEmployees(location, characters);
+                              setConversationModal({
+                                npcId: npc.id,
+                                npcName: npc.name,
+                                hasEmployees: employees.some(e => e.characterId === npc.id || e.name === npc.name),
+                                isGroup: selectedNpcs.length > 0,
+                              });
+                            }, 100);
+                          }}
                           className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
                         >
                           <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
@@ -1032,6 +1074,20 @@ Return JSON:
           />
         )}
       </AnimatePresence>
+
+      {/* Conversation type selector */}
+      <ConversationTypeSelector
+        isOpen={!!conversationModal}
+        onClose={() => setConversationModal(null)}
+        onSelect={(conversationType) => {
+          // Log the selected conversation type (can be used for memory context, tone adjustment, etc)
+          console.log(`Selected conversation type: ${conversationType} with ${conversationModal?.npcName}`);
+          // Future: adjust NPC response tone based on conversation type
+        }}
+        npcName={conversationModal?.npcName || "them"}
+        hasEmployees={conversationModal?.hasEmployees || false}
+        isGroup={conversationModal?.isGroup || false}
+      />
     </div>
   );
 }
