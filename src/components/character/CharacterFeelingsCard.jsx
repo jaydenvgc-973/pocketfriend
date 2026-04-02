@@ -12,6 +12,7 @@ export default function CharacterFeelingsCard({ character }) {
     setFeelings(null);
     base44.functions.invoke("generateCharacterFeelings", { characterId: character.id })
       .then(res => setFeelings(res?.data?.feelings || null))
+      .catch(() => setFeelings(null))
       .finally(() => setLoading(false));
   }, [character?.id]);
 
