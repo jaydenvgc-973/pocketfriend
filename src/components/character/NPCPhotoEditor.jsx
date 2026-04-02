@@ -37,7 +37,6 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
 
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
-        existing_image_urls: sourceCharacter.avatar_url ? [sourceCharacter.avatar_url] : undefined,
       });
       
       if (result?.url) {
