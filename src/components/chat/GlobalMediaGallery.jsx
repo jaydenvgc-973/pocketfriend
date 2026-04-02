@@ -47,7 +47,7 @@ export default function GlobalMediaGallery({ isOpen, onClose, activeCharacterId 
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] flex flex-col"
+              className="bg-card rounded-2xl p-6 max-w-2xl w-full max-h-[99vh] flex flex-col"
               onClick={e => e.stopPropagation()}
             >
               <div className="flex items-center justify-between mb-4">

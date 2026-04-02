@@ -58,7 +58,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         .then(settings => setUserSettings(settings?.[0] || null))
         .catch(() => {}),
       fetchUnifiedRoster(base44, userEmail)
-        .then(roster => setAllCharacters(roster || []))
+        .then(roster => {
+          // Include ALL active characters in the list for selection
+          setAllCharacters(roster || []);
+        })
         .catch(() => {}),
     ]);
   }, [isOpen, userEmail]);
@@ -471,32 +474,33 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       {/* Character picker dropdown */}
                       {showCharacterPicker && allCharacters.length > 0 && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
-                          {/* Active characters first, then others */}
+                          {/* User first, then all active characters, then others */}
                           {(() => {
+                            const userChar = allCharacters.find(c => c.is_user);
                             const activeChars = allCharacters.filter(c => c.is_active_character && !c.is_user);
                             const otherChars = allCharacters.filter(c => !c.is_active_character && !c.is_user);
-                            const userChar = allCharacters.find(c => c.is_user);
                             return [
                               ...(userChar ? [userChar] : []),
                               ...activeChars,
                               ...otherChars
                             ];
                           })().map(char => (
-                           <button
-                             key={char.id}
-                             onClick={() => toggleCharacter(char.id)}
-                             className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border last:border-b-0 ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
-                           >
-                             {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
-                             {char.avatar_url && char.avatar_url.trim() ? (
-                               <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
-                             ) : (
-                               <div className={`w-6 h-6 rounded-full ${char.is_world_person ? 'bg-purple-500' : 'bg-primary/20'} flex items-center justify-center text-[10px] font-bold ${char.is_world_person ? 'text-white' : 'text-primary'} flex-shrink-0`}>{getInitial(char.name)}</div>
-                             )}
-                             <span className="font-medium">{char.name}</span>
-                             {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
-                             {char.is_world_person && <span className="text-[10px] text-muted-foreground/60 ml-auto">{char.source_character_name}</span>}
-                           </button>
+                            <button
+                              key={char.id}
+                              onClick={() => toggleCharacter(char.id)}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border last:border-b-0 ${selectedCharacterIds.includes(char.id) ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                            >
+                              {selectedCharacterIds.includes(char.id) && <Check className="w-3.5 h-3.5 text-primary" />}
+                              {char.avatar_url && char.avatar_url.trim() ? (
+                                <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" onError={(e) => { e.target.style.display = 'none'; }} />
+                              ) : (
+                                <div className={`w-6 h-6 rounded-full ${char.is_world_person ? 'bg-purple-500' : 'bg-primary/20'} flex items-center justify-center text-[10px] font-bold ${char.is_world_person ? 'text-white' : 'text-primary'} flex-shrink-0`}>{getInitial(char.name)}</div>
+                              )}
+                              <span className="font-medium">{char.name}</span>
+                              {char.is_user && <span className="text-[10px] text-primary/60 ml-auto">(You)</span>}
+                              {char.is_world_person && <span className="text-[10px] text-muted-foreground/60 ml-auto">{char.source_character_name}</span>}
+                              {char.is_active_character && !char.is_user && <span className="text-[10px] text-primary/60 ml-auto">Active</span>}
+                            </button>
                           ))}
                         </div>
                       )}
