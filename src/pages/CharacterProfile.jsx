@@ -640,13 +640,13 @@ export default function CharacterProfile() {
                   <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <button
-                            onClick={() => rel.photo_url && setLightboxSrc(rel.photo_url)}
-                            className={rel.photo_url ? "cursor-pointer" : "cursor-default"}
+                            onClick={() => (rel.avatar_url || rel.photo_url) && setLightboxSrc(rel.avatar_url || rel.photo_url)}
+                            className={(rel.avatar_url || rel.photo_url) ? "cursor-pointer" : "cursor-default"}
                           >
                             <div className="flex items-center gap-3">
-                              {rel.photo_url ? (
+                              {rel.avatar_url || rel.photo_url ? (
                                 <div className="relative group">
-                                  <img src={rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                                  <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
                                   <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                     <ZoomIn className="w-4 h-4 text-white" />
                                   </div>
