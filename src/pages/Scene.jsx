@@ -38,6 +38,7 @@ function getLocationActions(category, recentChat = "") {
     home: [
       { id: "sit", label: "Sit down", emoji: "🛋️", cost: 0, type: "neutral" },
       { id: "eat", label: "Eat something", emoji: "🍽️", cost: 0, type: "positive", imagePrompt: "homemade meal on a kitchen table, cozy, photorealistic" },
+      { id: "drink", label: "Get a drink", emoji: "🥤", cost: 0, type: "positive", imagePrompt: "refreshing drink in a glass, cozy home kitchen, photorealistic" },
       { id: "relax", label: "Just relax", emoji: "😌", cost: 0, type: "positive" },
       { id: "talk", label: "Start talking", emoji: "💬", cost: 0, type: "neutral" },
       { id: "order_takeout", label: "Order takeout", emoji: "🥡", cost: 20, type: "positive", imagePrompt: "takeout food containers on a coffee table, cozy home setting, photorealistic" },
@@ -349,15 +350,20 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      // Only include people who actually belong here: residents present + characters the user brought
+      // Only show: residents who are home + characters the user brought. If alone, show just the user/space.
       const homeKnownPeople = [
         ...broughtCharacters,
         ...homeResidentsPresent,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-      const peopleDesc = homeKnownPeople.length > 0
-        ? `${homeKnownPeople.map(c => c.name).join(" and ")} is/are present`
-        : "empty, no people visible";
-      prompt = `Realistic interior scene inside ${location.name}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc}. Do NOT include any random strangers or unrecognized people. Photorealistic, warm, authentic atmosphere.`;
+
+      let peopleDesc;
+      if (homeKnownPeople.length > 0) {
+        peopleDesc = `Only these specific people are present: ${homeKnownPeople.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`;
+      } else {
+        // User is alone — show just the space or the user in the space
+        peopleDesc = `A person relaxing alone in the space. No other people visible — no strangers, no background figures.`;
+      }
+      prompt = `Realistic interior scene inside ${location.name}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. IMPORTANT: Do NOT generate any random or unrecognized people in this image.`;
     } else {
       const charNames = sceneCharacters.map(c => c.name).join(", ");
       const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
