@@ -94,6 +94,7 @@ const NPC_DRAFT_KEY = "create_character_draft";
 export default function CharacterProfile() {
   const { characterId } = useParams();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [promotingNPC, setPromotingNPC] = useState(null); // { rel, sourceCharacter }
@@ -800,6 +801,7 @@ export default function CharacterProfile() {
             return r;
           });
           await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
+          queryClient.invalidateQueries({ queryKey: ["character", character.id] });
           await refetch();
           setEditingNPCPhoto(null);
         }}
