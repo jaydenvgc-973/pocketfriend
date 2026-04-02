@@ -176,11 +176,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       
       // Use selected characters from dropdown, or extract from prompt
       let selectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id))
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user")
         : extractMentionedPeople(prompt).characters;
       
       const userIncluded = selectedCharacterIds.length > 0
-        ? false
+        ? selectedCharacterIds.includes("user")
         : extractMentionedPeople(prompt).userIncluded;
       
       // Build reference images from selected/mentioned people
@@ -269,11 +269,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       // Use selected characters from dropdown, or extract from prompt
       const selectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id))
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user")
         : extractMentionedPeople(promptText).characters;
       
+      const userIncludedInGen = selectedCharacterIds.length > 0
+        ? selectedCharacterIds.includes("user")
+        : false;
+      
       // Build reference images with selected/mentioned characters
-      const charReferences = buildReferenceImagesFromMention(selectedChars, false);
+      const charReferences = buildReferenceImagesFromMention(selectedChars, userIncludedInGen);
       
       // Add user's avatar if available
       const userReferences = userSettings?.generated_avatar_urls?.[0] ? [userSettings.generated_avatar_urls[0]] : [];
@@ -417,8 +421,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       </div>
 
                       {/* Character picker dropdown */}
-                      {showCharacterPicker && allCharacters.length > 0 && (
+                      {showCharacterPicker && (allCharacters.length > 0 || userSettings?.fictional_world_name) && (
                         <div className="rounded-xl border border-border bg-card shadow-lg overflow-hidden max-h-48 overflow-y-auto">
+                          {/* User option */}
+                          {userSettings?.fictional_world_name && (
+                            <button
+                              onClick={() => toggleCharacter("user")}
+                              className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-secondary transition-colors border-b border-border ${selectedCharacterIds.includes("user") ? 'bg-primary/10 text-primary' : 'text-foreground'}`}
+                            >
+                              {selectedCharacterIds.includes("user") && <Check className="w-3.5 h-3.5 text-primary" />}
+                              <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-bold text-primary">You</div>
+                              <span className="font-medium">{userSettings.fictional_world_name}</span>
+                            </button>
+                          )}
+                          
+                          {/* Character options */}
                           {allCharacters.map(char => (
                             <button
                               key={char.id}
