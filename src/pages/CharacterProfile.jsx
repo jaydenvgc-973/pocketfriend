@@ -788,22 +788,29 @@ export default function CharacterProfile() {
         npc={editingNPCPhoto.npc}
         sourceCharacter={character}
         onPhotoUpdate={async (photoUrl) => {
-          // Update the NPC's photo and store as reference image
-          const updatedRels = (character.fictional_relationships || []).map(r => {
-            if (r.person_name === editingNPCPhoto.npc.person_name) {
-              const existingRefs = r.reference_image_urls || [];
-              return {
-                ...r,
-                photo_url: photoUrl,
-                reference_image_urls: existingRefs.includes(photoUrl) ? existingRefs : [...existingRefs, photoUrl]
-              };
-            }
-            return r;
-          });
-          await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
-          queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-          await refetch();
-          setEditingNPCPhoto(null);
+          try {
+            // Update the NPC's photo and store as reference image
+            const updatedRels = (character.fictional_relationships || []).map(r => {
+              if (r.person_name === editingNPCPhoto.npc.person_name) {
+                const existingRefs = r.reference_image_urls || [];
+                return {
+                  ...r,
+                  photo_url: photoUrl,
+                  reference_image_urls: existingRefs.includes(photoUrl) ? existingRefs : [...existingRefs, photoUrl]
+                };
+              }
+              return r;
+            });
+            await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
+            setEditingNPCPhoto(null);
+            // Invalidate and refetch after closing modal
+            setTimeout(() => {
+              queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+              refetch();
+            }, 100);
+          } catch (error) {
+            console.error('Failed to update NPC photo:', error);
+          }
         }}
         onClose={() => setEditingNPCPhoto(null)}
       />
