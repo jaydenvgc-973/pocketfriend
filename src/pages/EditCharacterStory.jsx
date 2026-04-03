@@ -116,7 +116,7 @@ Make it feel like a real person, not a description. No flowery language.`
 
     // Upload system prompt if it's too large
     let systemPromptUrl = null;
-    if (systemPrompt.length > 50000) {
+    if (systemPrompt.length > 5000) {
       const uploadRes = await base44.integrations.Core.UploadFile({
         file: new Blob([systemPrompt], { type: "text/plain" })
       });
