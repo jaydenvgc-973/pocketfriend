@@ -117,14 +117,25 @@ export default function MyProfile() {
       let updatedFamily = currentFamilyMembers.filter(m => !m._is_user);
 
       if (reciprocal) {
+        // Calculate user's current age from birthday
+        let userAge = null;
+        if (settings.user_birthday) {
+          const birth = new Date(settings.user_birthday);
+          const today = new Date();
+          userAge = today.getFullYear() - birth.getFullYear();
+          const m = today.getMonth() - birth.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) userAge--;
+        }
+        const userAvatarUrl = user?.avatar_url || user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
         updatedFamily = [
           ...updatedFamily,
           {
             name: displayName,
             relationship_type: reciprocal,
             _is_user: true,
-            age_at_creation: null,
-            age_set_date: null,
+            photo_url: userAvatarUrl,
+            age_at_creation: userAge,
+            age_set_date: new Date().toISOString(),
           }
         ];
       }
