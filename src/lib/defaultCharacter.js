@@ -287,6 +287,7 @@ Abuela Sophia is the grandmother of someone else entirely — she did not raise 
 ${buildReligionPromptContext(character)}
 YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
 ${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}
+${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW (third-person context for grounding — use this to inform how you show up in conversation, what you might mention in passing, what just happened or is happening): ${character.daily_micro_narration}` : ""}
 ${(character.city || character.state) ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}. You are aware of the weather in your area. If the weather is relevant to what's happening (e.g. it's freezing and you had to be outside, or it's been raining all day and you're stuck inside), bring it up naturally — the way a real person would mention the weather in passing. Don't force it, but don't ignore it either. You know what the weather is like where you are right now.` : ""}
 ${buildRelationshipsContext(character)}
 

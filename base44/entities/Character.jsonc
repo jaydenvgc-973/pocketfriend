@@ -155,8 +155,7 @@
         "graduated",
         "dropped"
       ],
-      "default": "not_student",
-      "description": "Whether this character is currently a student"
+      "default": "not_student"
     },
     "avatar_url": {
       "type": "string"
@@ -414,12 +413,10 @@
       }
     },
     "occupation_location_id": {
-      "type": "string",
-      "description": "ID of the LocationReference linked as primary workplace"
+      "type": "string"
     },
     "occupation_location_name": {
-      "type": "string",
-      "description": "Display name of the primary linked workplace location"
+      "type": "string"
     },
     "additional_occupation_locations": {
       "type": "array",
@@ -439,12 +436,10 @@
       }
     },
     "education_location_id": {
-      "type": "string",
-      "description": "ID of the LocationReference linked as primary education site"
+      "type": "string"
     },
     "education_location_name": {
-      "type": "string",
-      "description": "Display name of the primary linked education location"
+      "type": "string"
     },
     "additional_education_locations": {
       "type": "array",
@@ -497,8 +492,7 @@
           }
         }
       },
-      "default": [],
-      "description": "All school enrollments for this character"
+      "default": []
     },
     "frequented_places": {
       "type": "array",
@@ -583,6 +577,10 @@
     },
     "current_life_event": {
       "type": "string"
+    },
+    "daily_micro_narration": {
+      "type": "string",
+      "description": "1\u20133 short third-person sentences describing what the character is doing right now. Strictly third-person (he/she/they/name). Updated by life simulation."
     },
     "life_last_updated": {
       "type": "string"
@@ -817,34 +815,27 @@
         "user_created",
         "merged_alias"
       ],
-      "default": "user_created",
-      "description": "Classification of character type"
+      "default": "user_created"
     },
     "is_protected": {
       "type": "boolean",
-      "default": false,
-      "description": "True for system-protected characters that cannot be deleted"
+      "default": false
     },
     "is_active_character": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this is one of the user's primary active characters"
+      "default": false
     },
     "merged_into_character_id": {
-      "type": "string",
-      "description": "If merged, the ID of the character this was merged into"
+      "type": "string"
     },
     "schedule_profile_id": {
-      "type": "string",
-      "description": "ID of linked CharacterScheduleProfile"
+      "type": "string"
     },
     "messaging_profile_id": {
-      "type": "string",
-      "description": "ID of linked CharacterMessagingProfile"
+      "type": "string"
     },
     "relationship_state_id": {
-      "type": "string",
-      "description": "ID of linked RelationshipState"
+      "type": "string"
     }
   },
   "required": [

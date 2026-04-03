@@ -178,6 +178,14 @@ Deno.serve(async (req) => {
         } catch (_) {}
       }
 
+      // Gender pronoun resolution for third-person narration
+      const gender = character.gender?.toLowerCase();
+      const pronouns = (() => {
+        if (gender === 'female') return { subject: 'she', object: 'her', possessive: 'her' };
+        if (gender === 'male') return { subject: 'he', object: 'him', possessive: 'his' };
+        return { subject: 'they', object: 'them', possessive: 'their' };
+      })();
+
       const prompt = `You are writing realistic life updates for a fictional character named ${name}. This character is fully alive in their world — they have flaws, habits, vulnerabilities, good days, and bad days.
 
 REAL CURRENT TIME: ${fullDate}, ${timeOfDay} (Eastern Time)${weatherContext}
@@ -221,6 +229,24 @@ REALISM RULES — READ CAREFULLY:
 TODAY'S TASK:
 Generate realistic life updates grounded in current time, the character's history, and their specific vulnerabilities/strengths.
 
+MICRO-NARRATION SYSTEM (EXTENSION — DO NOT SKIP):
+Generate a daily_micro_narration field: 1–3 short third-person sentences describing what ${name} is doing RIGHT NOW or in this general time window.
+
+Rules for daily_micro_narration:
+- STRICTLY third-person only. Use "${name}" or pronouns (${pronouns.subject}/${pronouns.object}/${pronouns.possessive}) — NEVER "I", "me", "my"
+- Short and grounded. Like a quiet observer watching a real person's day
+- Match the current time of day: ${timeOfDay} on a ${dayOfWeek}
+- Reflect the character's personality (disciplined = structured tone, anxious = overthinking, tired = slow/minimal)
+- Vary phrasing — avoid robotic or repetitive sentence structures
+- Length: 1 sentence for routine moments, 2-3 for transitions or more context
+- DO NOT override or replace current_life_event — this is separate, smaller, more mundane
+- Examples of the right tone:
+  * "${name} wakes up to the alarm and hits snooze before finally getting out of bed."
+  * "${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} settles at ${pronouns.possessive} desk, already going through emails."
+  * "Lunch comes quick. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} steps outside for a few minutes."
+  * "${name} stops at the store on the way home. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} keeps it simple."
+  * "The dishes are done. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} finally sits down."
+
 Return JSON:
 {
   "fictional_relationships": [
@@ -243,6 +269,7 @@ Return JSON:
     }
   ],
   "current_life_event": string (ONE sentence about what's active right now — real, specific, shaped by their history),
+  "daily_micro_narration": string (1–3 short third-person sentences describing what ${name} is doing right now. STRICT third person — use ${name} or ${pronouns.subject}/${pronouns.object}/${pronouns.possessive}. NEVER use "I", "me", "my"),
   "emotional_state": string (from: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated, hopelessness, grief, resentment, shame, longing, apathy, detachment, nostalgia),
   "health_status": string,
   "health_habits": string,
@@ -268,6 +295,7 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
             fictional_relationships: { type: 'array', items: { type: 'object' } },
             transient_encounters: { type: 'array', items: { type: 'object' } },
             current_life_event: { type: 'string' },
+            daily_micro_narration: { type: 'string' },
             emotional_state: { type: 'string' },
             health_status: { type: 'string' },
             health_habits: { type: 'string' },
@@ -286,6 +314,7 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         fictional_relationships: preservedRelationships,
         transient_encounters: update.transient_encounters || [],
         current_life_event: update.current_life_event || '',
+        daily_micro_narration: update.daily_micro_narration || '',
         emotional_state: update.emotional_state || character.emotional_state || 'calm',
         health_status: update.health_status || character.health_status || 'healthy',
         health_habits: update.health_habits || character.health_habits || '',
