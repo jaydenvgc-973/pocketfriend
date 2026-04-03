@@ -130,6 +130,74 @@
           "description": "character | user | joint"
         }
       }
+    },
+    "songs_heard": {
+      "type": "array",
+      "description": "Songs shared or referenced in this message",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "spotify_id": {
+            "type": "string"
+          },
+          "lyrics_excerpt": {
+            "type": "string"
+          },
+          "full_lyrics": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string"
+          },
+          "preview_url": {
+            "type": "string"
+          },
+          "added_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "videos_watched": {
+      "type": "array",
+      "description": "Videos shared or referenced in this message",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "creator": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string"
+          },
+          "added_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
     }
   },
   "required": [
