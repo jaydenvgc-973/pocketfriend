@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { characterId, songLink } = await req.json();
+    const { characterId, songLink, isVideo } = await req.json();
 
     if (!characterId || !songLink) {
       return Response.json({ error: 'characterId and songLink are required' }, { status: 400 });
@@ -36,10 +36,105 @@ Deno.serve(async (req) => {
       if (/soundcloud\.com/.test(url)) return 'soundcloud';
       if (/bandcamp\.com/.test(url)) return 'bandcamp';
       if (/amazon\.com.*music|music\.amazon\.com/.test(url)) return 'amazon';
+      if (/vimeo\.com/.test(url)) return 'vimeo';
       return 'generic';
     };
 
+    // Detect if this is a video link
+    const isVideoLink = isVideo || /youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com.*video|instagram\.com.*reel/.test(songLink);
+
     const platform = detectPlatform(songLink);
+
+    // ── VIDEO LINK PATH ──────────────────────────────────────────────────────
+    if (isVideoLink) {
+      const videoPrompt = `You have access to the internet. Look up this exact video link: ${songLink}
+
+Search the web for this URL and return the REAL video information.
+
+Return:
+1. title: the exact video title (REQUIRED)
+2. creator: the creator/channel name (REQUIRED)
+3. description: what the video is about (2-3 sentences)
+4. platform: the video platform (youtube, vimeo, tiktok, etc.)
+5. duration: estimated video length (e.g. "4:32" or "15 minutes")
+
+Return valid JSON only:
+{
+  "title": "...",
+  "creator": "...",
+  "description": "...",
+  "platform": "...",
+  "duration": "..."
+}`;
+
+      let videoData = null;
+      try {
+        videoData = await base44.integrations.Core.InvokeLLM({
+          prompt: videoPrompt,
+          add_context_from_internet: true,
+          model: 'gemini_3_flash',
+          response_json_schema: {
+            type: 'object',
+            properties: {
+              title: { type: 'string' },
+              creator: { type: 'string' },
+              description: { type: 'string' },
+              platform: { type: 'string' },
+              duration: { type: 'string' }
+            },
+            required: ['title', 'creator']
+          }
+        });
+      } catch (llmErr) {
+        console.error('[processSongLink] Video LLM error:', llmErr.message);
+        // Try fallback search for title
+        try {
+          const titleRes = await base44.integrations.Core.InvokeLLM({
+            prompt: `Extract just the video title from this URL: ${songLink}. Return only the title, nothing else.`,
+            add_context_from_internet: true
+          });
+          videoData = {
+            title: titleRes?.trim() || 'Unknown Video',
+            creator: 'Unknown Creator',
+            description: 'Video shared',
+            platform: platform,
+            duration: 'Unknown'
+          };
+        } catch (_) {
+          return Response.json({ error: 'Failed to identify video. Try another link.' }, { status: 500 });
+        }
+      }
+
+      if (!videoData?.title) {
+        return Response.json({ error: 'Could not identify video from this link.' }, { status: 422 });
+      }
+
+      const videosWatched = character.videos_watched || [];
+      const now = new Date().toISOString();
+
+      const newVideo = {
+        title: videoData.title,
+        creator: videoData.creator,
+        description: videoData.description,
+        platform: platform,
+        duration: videoData.duration || 'Unknown',
+        link: songLink,
+        added_date: now,
+      };
+
+      const videosWatchedUpdated = [...videosWatched, newVideo];
+      await base44.asServiceRole.entities.Character.update(characterId, {
+        videos_watched: videosWatchedUpdated,
+      });
+
+      return Response.json({
+        success: true,
+        is_video: true,
+        platform: platform,
+        video: newVideo,
+        message: `${character.name} just watched "${videoData.title}" by ${videoData.creator}`,
+      });
+    }
 
     // Detect if this is a playlist/album link
     const isPlaylist =

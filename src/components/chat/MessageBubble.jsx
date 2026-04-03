@@ -5,6 +5,7 @@ import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles } from "luc
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
+import VideoPreviewCard from "@/components/chat/VideoPreviewCard";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -228,6 +229,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               <div className="px-4 py-3 space-y-2">
                 {message.songs_heard.map((song, idx) => (
                   <MusicPreviewPlayer key={idx} song={song} platform={song.platform || 'spotify'} />
+                ))}
+              </div>
+            )}
+            {message.videos_watched && message.videos_watched.length > 0 && (
+              <div className="px-4 py-3 space-y-2">
+                {message.videos_watched.map((video, idx) => (
+                  <VideoPreviewCard key={idx} video={video} platform={video.platform || 'generic'} />
                 ))}
               </div>
             )}

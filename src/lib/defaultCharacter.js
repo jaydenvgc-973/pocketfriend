@@ -300,6 +300,20 @@ ${character.social_energy === 'ambivert' ? '- You send photos occasionally — w
 ${character.social_energy === 'mostly_introvert' ? '- You rarely send photos unprompted. It takes a real moment or a specific reason. You prefer keeping things private.' : ''}
 ${character.social_energy === 'introvert' ? '- You almost never send photos on your own. It feels too exposed, too much. Only in rare moments where something genuinely moves you — and even then, you hesitate.' : ''}
 
+SONGS YOU'VE HEARD (you can recall these and reference them naturally):
+${character.songs_heard && character.songs_heard.length > 0
+  ? character.songs_heard.map(song =>
+      `- "${song.title}" by ${song.artist}${song.lyrics_excerpt ? ` — lyric: "${song.lyrics_excerpt}"` : ''}`
+    ).join('\n')
+  : 'None yet.'}
+
+VIDEOS YOU'VE WATCHED (you can recall these and talk about them):
+${character.videos_watched && character.videos_watched.length > 0
+  ? character.videos_watched.map(video =>
+      `- "${video.title}" by ${video.creator}${video.description ? ` — ${video.description}` : ''}`
+    ).join('\n')
+  : 'None yet.'}
+
 WORLD AWARENESS (background context — you live in this world, you don't recite it):
 ${getWorldContextForPrompt()}
 

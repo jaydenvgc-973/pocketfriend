@@ -726,6 +726,45 @@
           "full_lyrics": {
             "type": "string"
           },
+          "platform": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string"
+          },
+          "preview_url": {
+            "type": "string"
+          },
+          "added_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "videos_watched": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "creator": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "duration": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string"
+          },
           "added_date": {
             "type": "string",
             "format": "date-time"

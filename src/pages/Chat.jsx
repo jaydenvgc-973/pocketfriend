@@ -602,16 +602,22 @@ export default function Chat() {
     }
   };
 
-  const handleShareSong = async (songLink) => {
+  const handleShareSong = async (mediaLink, isVideo = false) => {
     if (!character) return;
     try {
       const res = await base44.functions.invoke('processSongLink', {
         characterId,
-        songLink
+        songLink: mediaLink,
+        isVideo
       });
       if (res?.data?.success) {
         let content;
-        if (res.data.is_playlist) {
+        if (isVideo) {
+          const video = res.data.video || {};
+          const title = video.title || 'that video';
+          const creator = video.creator || 'the creator';
+          content = `Just watched "${title}" by ${video.creator}. Interesting stuff.`;
+        } else if (res.data.is_playlist) {
           const playlistName = res.data.playlist_name || 'that playlist';
           const count = res.data.songs_added || 0;
           const songList = (res.data.songs || []).slice(0, 3).map(s => `"${s.title}" by ${s.artist}`).join(', ');
@@ -639,8 +645,8 @@ export default function Chat() {
       }
     } catch (err) {
       console.warn('[handleShareSong] failed:', err.message);
-      // Don't show an error to the user — song processing is supplementary
-      // The message will still be sent normally; character just won't acknowledge the song
+      // Don't show an error to the user — media processing is supplementary
+      // The message will still be sent normally; character just won't acknowledge the media
     }
   };
 
@@ -657,9 +663,15 @@ export default function Chat() {
     }
 
     // Check for music platform links (Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, etc.)
-    const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|youtube\.com|youtu\.be|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
+    const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
-      await handleShareSong(musicLinkMatch[0]);
+      await handleShareSong(musicLinkMatch[0], false);
+    }
+
+    // Check for video links (YouTube, Vimeo, TikTok, Instagram, Twitch, etc.)
+    const videoLinkMatch = text.match(/https?:\/\/[^\s]*(youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com|twitch\.tv|dailymotion\.com)[^\s]*/i);
+    if (videoLinkMatch && !musicLinkMatch) {
+      await handleShareSong(videoLinkMatch[0], true);
     }
 
     // Check if user is asking character to look something up
