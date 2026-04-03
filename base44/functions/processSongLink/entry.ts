@@ -43,6 +43,8 @@ Search the web for this URL and return the REAL tracklist with actual song title
 For EACH song (up to 10) provide:
 - title: the exact song title (REQUIRED — must be a real song name)
 - artist: the artist/band name (REQUIRED)
+- spotify_id: the Spotify track ID if available (from the URL or API)
+- preview_url: the 30-second preview URL from Spotify if available
 - lyric_excerpt: a real, memorable lyric line from the song
 - mood: 2-3 words describing the feel/vibe (e.g. "melancholic, romantic", "upbeat, danceable")
 
@@ -55,7 +57,7 @@ Return valid JSON only:
 {
   "playlist_name": "...",
   "songs": [
-    { "title": "...", "artist": "...", "lyric_excerpt": "...", "mood": "..." }
+    { "title": "...", "artist": "...", "spotify_id": "...", "preview_url": "...", "lyric_excerpt": "...", "mood": "..." }
   ]
 }`;
 
@@ -76,6 +78,8 @@ Return valid JSON only:
                   properties: {
                     title: { type: 'string' },
                     artist: { type: 'string' },
+                    spotify_id: { type: 'string' },
+                    preview_url: { type: 'string' },
                     lyric_excerpt: { type: 'string' },
                     mood: { type: 'string' }
                   },
@@ -106,6 +110,8 @@ Return valid JSON only:
           artist: s.artist,
           lyrics_excerpt: s.lyric_excerpt || '',
           full_lyrics: s.mood ? `Mood/vibe: ${s.mood}` : '',
+          spotify_id: s.spotify_id || '',
+          preview_url: s.preview_url || '',
           added_date: now,
         }));
 
@@ -135,14 +141,18 @@ Search the web for this URL and return the REAL song title and artist.
 Return:
 1. title: the exact song title (REQUIRED)
 2. artist: the artist name (REQUIRED)
-3. summary: what the song is about (2-3 sentences)
-4. lyric_excerpt: a real, memorable lyric line
-5. mood: 2-3 words for the vibe (e.g. "melancholic, romantic")
+3. spotify_id: the Spotify track ID if available
+4. preview_url: the 30-second preview URL from Spotify if available
+5. summary: what the song is about (2-3 sentences)
+6. lyric_excerpt: a real, memorable lyric line
+7. mood: 2-3 words for the vibe (e.g. "melancholic, romantic")
 
 Return valid JSON only:
 {
   "title": "...",
   "artist": "...",
+  "spotify_id": "...",
+  "preview_url": "...",
   "summary": "...",
   "lyric_excerpt": "...",
   "mood": "..."
@@ -159,6 +169,8 @@ Return valid JSON only:
           properties: {
             title: { type: 'string' },
             artist: { type: 'string' },
+            spotify_id: { type: 'string' },
+            preview_url: { type: 'string' },
             summary: { type: 'string' },
             lyric_excerpt: { type: 'string' },
             mood: { type: 'string' }
@@ -195,6 +207,8 @@ Return valid JSON only:
       artist: songData.artist,
       lyrics_excerpt: songData.lyric_excerpt || '',
       full_lyrics: fullLyrics + (songData.mood ? `\n\nMood/vibe: ${songData.mood}` : ''),
+      spotify_id: songData.spotify_id || '',
+      preview_url: songData.preview_url || '',
       added_date: new Date().toISOString(),
     };
 
