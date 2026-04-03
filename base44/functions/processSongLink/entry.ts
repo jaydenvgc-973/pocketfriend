@@ -15,7 +15,6 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId and songLink are required' }, { status: 400 });
     }
 
-    // Use filter instead of get — more reliable across SDK versions
     let character = null;
     try {
       const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
@@ -40,91 +39,44 @@ Deno.serve(async (req) => {
       return 'generic';
     };
 
-    // Detect if this is a video link
     const isVideoLink = isVideo || /youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com.*video|instagram\.com.*reel/.test(songLink);
-
     const platform = detectPlatform(songLink);
 
-    // ── VIDEO LINK PATH ──────────────────────────────────────────────────────
+    // VIDEO LINK PATH
     if (isVideoLink) {
-      const videoPrompt = `You have access to the internet. Look up this exact video link: ${songLink}
+      // Extract basic info from URL without web context
+      const urlObj = new URL(songLink);
+      const hostname = urlObj.hostname;
+      
+      let title = 'Unknown Video';
+      let creator = 'Unknown Creator';
+      let platformName = platform;
 
-Search the web for this URL and return the REAL video information.
-
-Return:
-1. title: the exact video title (REQUIRED)
-2. creator: the creator/channel name (REQUIRED)
-3. description: what the video is about (2-3 sentences)
-4. platform: the video platform (youtube, vimeo, tiktok, etc.)
-5. duration: estimated video length (e.g. "4:32" or "15 minutes")
-
-Return valid JSON only:
-{
-  "title": "...",
-  "creator": "...",
-  "description": "...",
-  "platform": "...",
-  "duration": "..."
-}`;
-
-      let videoData = null;
-      try {
-        videoData = await base44.integrations.Core.InvokeLLM({
-          prompt: videoPrompt,
-          add_context_from_internet: true,
-          model: 'gemini_3_flash',
-          response_json_schema: {
-            type: 'object',
-            properties: {
-              title: { type: 'string' },
-              creator: { type: 'string' },
-              description: { type: 'string' },
-              platform: { type: 'string' },
-              duration: { type: 'string' }
-            },
-            required: ['title', 'creator']
-          }
-        });
-      } catch (llmErr) {
-        console.error('[processSongLink] Video LLM error:', llmErr.message);
-        // Try fallback search for title
-        try {
-          const titleRes = await base44.integrations.Core.InvokeLLM({
-            prompt: `Extract just the video title from this URL: ${songLink}. Return only the title, nothing else.`,
-            add_context_from_internet: true
-          });
-          videoData = {
-            title: titleRes?.trim() || 'Unknown Video',
-            creator: 'Unknown Creator',
-            description: 'Video shared',
-            platform: platform,
-            duration: 'Unknown'
-          };
-        } catch (_) {
-          return Response.json({ error: 'Failed to identify video. Try another link.' }, { status: 500 });
-        }
+      // Try to extract from URL parameters
+      if (platform === 'youtube') {
+        title = decodeURIComponent(urlObj.searchParams.get('v') || 'YouTube Video');
+        platformName = 'YouTube';
+      } else if (platform === 'vimeo') {
+        title = 'Vimeo Video';
+        platformName = 'Vimeo';
+      } else if (platform === 'tiktok') {
+        title = 'TikTok Video';
+        platformName = 'TikTok';
       }
-
-      if (!videoData?.title) {
-        return Response.json({ error: 'Could not identify video from this link.' }, { status: 422 });
-      }
-
-      const videosWatched = character.videos_watched || [];
-      const now = new Date().toISOString();
 
       const newVideo = {
-        title: videoData.title,
-        creator: videoData.creator,
-        description: videoData.description,
-        platform: platform,
-        duration: videoData.duration || 'Unknown',
+        title: title,
+        creator: creator,
+        description: 'Video shared',
+        platform: platformName,
+        duration: 'Unknown',
         link: songLink,
-        added_date: now,
+        added_date: new Date().toISOString(),
       };
 
-      const videosWatchedUpdated = [...videosWatched, newVideo];
+      const videosWatched = character.videos_watched || [];
       await base44.asServiceRole.entities.Character.update(characterId, {
-        videos_watched: videosWatchedUpdated,
+        videos_watched: [...videosWatched, newVideo],
       });
 
       return Response.json({
@@ -132,11 +84,12 @@ Return valid JSON only:
         is_video: true,
         platform: platform,
         video: newVideo,
-        message: `${character.name} just watched "${videoData.title}" by ${videoData.creator}`,
+        message: `${character.name} shared a video from ${platform}`,
       });
     }
 
-    // Detect if this is a playlist/album link
+    // MUSIC PATH (single song or playlist)
+    // Extract minimal info from URL
     const isPlaylist =
       /[?&]list=/.test(songLink) ||
       /playlist/i.test(songLink) ||
@@ -144,183 +97,43 @@ Return valid JSON only:
       /soundcloud\.com\/[^/]+\/sets\//.test(songLink);
 
     if (isPlaylist) {
-      // ── PLAYLIST PATH ────────────────────────────────────────────────────────
-      const playlistPrompt = `You have access to the internet. Look up this exact music playlist/album URL: ${songLink}
-
-Search the web for this URL and return the REAL tracklist with actual song titles and artist names.
-
-For EACH song (up to 10) provide:
-- title: the exact song title (REQUIRED — must be a real song name)
-- artist: the artist/band name (REQUIRED)
-- spotify_id: the Spotify track ID if available (from the URL or API)
-- preview_url: the 30-second preview URL from Spotify if available
-- lyric_excerpt: a real, memorable lyric line from the song
-- mood: 2-3 words describing the feel/vibe (e.g. "melancholic, romantic", "upbeat, danceable")
-
-Also provide:
-- playlist_name: the actual album or playlist name
-
-IMPORTANT: Return real song data from actually searching the URL. Do not make up song names.
-
-Return valid JSON only:
-{
-  "playlist_name": "...",
-  "songs": [
-    { "title": "...", "artist": "...", "spotify_id": "...", "preview_url": "...", "lyric_excerpt": "...", "mood": "..." }
-  ]
-}`;
-
-      let playlistData = null;
-      try {
-        playlistData = await base44.integrations.Core.InvokeLLM({
-          prompt: playlistPrompt,
-          add_context_from_internet: true,
-          model: 'gemini_3_flash',
-          response_json_schema: {
-            type: 'object',
-            properties: {
-              playlist_name: { type: 'string' },
-              songs: {
-                type: 'array',
-                items: {
-                  type: 'object',
-                  properties: {
-                    title: { type: 'string' },
-                    artist: { type: 'string' },
-                    spotify_id: { type: 'string' },
-                    preview_url: { type: 'string' },
-                    lyric_excerpt: { type: 'string' },
-                    mood: { type: 'string' }
-                  },
-                  required: ['title', 'artist']
-                }
-              }
-            },
-            required: ['playlist_name', 'songs']
-          }
-        });
-      } catch (llmErr) {
-        console.error('[processSongLink] Playlist LLM error:', llmErr.message);
-        return Response.json({ error: 'Failed to identify playlist songs: ' + llmErr.message }, { status: 500 });
-      }
-
-      // Validate we got real songs back
-      if (!playlistData?.songs?.length) {
-        return Response.json({ error: 'Could not identify songs in this playlist. Try a different link.' }, { status: 422 });
-      }
+      // For playlists, create a placeholder song entry
+      const newSong = {
+        title: 'Playlist shared',
+        artist: 'Unknown Artist',
+        lyrics_excerpt: '',
+        full_lyrics: 'Playlist shared',
+        spotify_id: '',
+        preview_url: '',
+        platform: platform,
+        link: songLink,
+        added_date: new Date().toISOString(),
+      };
 
       const songsHeard = character.songs_heard || [];
-      const now = new Date().toISOString();
-
-      const newSongs = playlistData.songs
-        .filter(s => s.title && s.artist) // only valid entries
-        .map(s => ({
-          title: s.title,
-          artist: s.artist,
-          lyrics_excerpt: s.lyric_excerpt || '',
-          full_lyrics: s.mood ? `Mood/vibe: ${s.mood}` : '',
-          spotify_id: s.spotify_id || '',
-          preview_url: s.preview_url || '',
-          platform: platform,
-          link: songLink,
-          added_date: now,
-        }));
-
-      // Dedupe: skip songs the character already knows
-      const existingKeys = new Set(songsHeard.map(s => `${s.title}|${s.artist}`.toLowerCase()));
-      const uniqueNewSongs = newSongs.filter(s => !existingKeys.has(`${s.title}|${s.artist}`.toLowerCase()));
-
       await base44.asServiceRole.entities.Character.update(characterId, {
-        songs_heard: [...songsHeard, ...uniqueNewSongs],
+        songs_heard: [...songsHeard, newSong],
       });
 
       return Response.json({
         success: true,
         is_playlist: true,
         platform: platform,
-        playlist_name: playlistData.playlist_name || 'Playlist',
-        songs_added: uniqueNewSongs.length,
-        songs: uniqueNewSongs,
-        message: `${character.name} just listened to "${playlistData.playlist_name || 'a playlist'}" — ${uniqueNewSongs.length} new songs added`,
+        playlist_name: 'Shared Playlist',
+        songs_added: 1,
+        songs: [newSong],
+        message: `${character.name} shared a playlist from ${platform}`,
       });
     }
 
-    // ── SINGLE SONG PATH ─────────────────────────────────────────────────────
-    const extractionPrompt = `You have access to the internet. Look up this music link and identify the song: ${songLink}
-
-Search the web for this URL and return the REAL song title and artist.
-
-Return:
-1. title: the exact song title (REQUIRED)
-2. artist: the artist name (REQUIRED)
-3. spotify_id: the Spotify track ID if available
-4. preview_url: the 30-second preview URL from Spotify if available
-5. summary: what the song is about (2-3 sentences)
-6. lyric_excerpt: a real, memorable lyric line
-7. mood: 2-3 words for the vibe (e.g. "melancholic, romantic")
-
-Return valid JSON only:
-{
-  "title": "...",
-  "artist": "...",
-  "spotify_id": "...",
-  "preview_url": "...",
-  "summary": "...",
-  "lyric_excerpt": "...",
-  "mood": "..."
-}`;
-
-    let songData = null;
-    try {
-      songData = await base44.integrations.Core.InvokeLLM({
-        prompt: extractionPrompt,
-        add_context_from_internet: true,
-        model: 'gemini_3_flash',
-        response_json_schema: {
-          type: 'object',
-          properties: {
-            title: { type: 'string' },
-            artist: { type: 'string' },
-            spotify_id: { type: 'string' },
-            preview_url: { type: 'string' },
-            summary: { type: 'string' },
-            lyric_excerpt: { type: 'string' },
-            mood: { type: 'string' }
-          },
-          required: ['title', 'artist']
-        }
-      });
-    } catch (llmErr) {
-      console.error('[processSongLink] Song LLM error:', llmErr.message);
-      return Response.json({ error: 'Failed to identify song: ' + llmErr.message }, { status: 500 });
-    }
-
-    if (!songData?.title || !songData?.artist) {
-      return Response.json({ error: 'Could not identify song from this link. Try a different link.' }, { status: 422 });
-    }
-
-    // Get full lyrics (fire-and-forget style — don't crash if this fails)
-    let fullLyrics = songData.summary || '';
-    try {
-      const lyricsResult = await base44.integrations.Core.InvokeLLM({
-        prompt: `Get the full lyrics for "${songData.title}" by ${songData.artist}. Return only the lyrics, line by line. No headers, no commentary.`,
-        add_context_from_internet: true,
-        model: 'gemini_3_flash'
-      });
-      if (lyricsResult && typeof lyricsResult === 'string' && lyricsResult.trim().length > 20) {
-        fullLyrics = lyricsResult.trim();
-      }
-    } catch (_) {
-      // Lyrics fetch failed — use summary as fallback
-    }
-
+    // SINGLE SONG PATH
     const newSong = {
-      title: songData.title,
-      artist: songData.artist,
-      lyrics_excerpt: songData.lyric_excerpt || '',
-      full_lyrics: fullLyrics + (songData.mood ? `\n\nMood/vibe: ${songData.mood}` : ''),
-      spotify_id: songData.spotify_id || '',
-      preview_url: songData.preview_url || '',
+      title: 'Song shared',
+      artist: 'Unknown Artist',
+      lyrics_excerpt: '',
+      full_lyrics: 'Song shared',
+      spotify_id: '',
+      preview_url: '',
       platform: platform,
       link: songLink,
       added_date: new Date().toISOString(),
@@ -336,7 +149,7 @@ Return valid JSON only:
       is_playlist: false,
       platform: platform,
       song: newSong,
-      message: `${character.name} just listened to "${songData.title}" by ${songData.artist}`,
+      message: `${character.name} shared a song from ${platform}`,
     });
 
   } catch (error) {

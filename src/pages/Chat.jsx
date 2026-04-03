@@ -609,19 +609,11 @@ export default function Chat() {
   }
   console.log('[handleShareSong] Processing:', mediaLink, 'isVideo:', isVideo);
   try {
-   // Add 30 second timeout for processSongLink
-   const timeoutPromise = new Promise((_, reject) => 
-     setTimeout(() => reject(new Error('Link processing timed out')), 30000)
-   );
-
-   const res = await Promise.race([
-     base44.functions.invoke('processSongLink', {
-       characterId,
-       songLink: mediaLink,
-       isVideo
-     }),
-     timeoutPromise
-   ]);
+   const res = await base44.functions.invoke('processSongLink', {
+     characterId,
+     songLink: mediaLink,
+     isVideo
+   });
    console.log('[handleShareSong] Full response:', res);
 
    if (res?.data?.success) {
