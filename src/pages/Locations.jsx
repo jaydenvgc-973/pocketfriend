@@ -138,14 +138,6 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
           <button onClick={() => onEdit(location)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
             <Pencil className="w-4 h-4" />
           </button>
-          <button 
-            onClick={() => onDelete(location.id)} 
-            disabled={location.created_by !== currentUser?.email && location.location_type !== 'global'}
-            title={(location.created_by === currentUser?.email || location.location_type === 'global') ? "Delete location" : "Only locations you created can be deleted"}
-            className={`p-1.5 rounded-lg transition-colors ${(location.created_by === currentUser?.email || location.location_type === 'global') ? "text-muted-foreground hover:text-destructive cursor-pointer" : "text-muted-foreground/30 cursor-not-allowed"}`}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
           <button onClick={() => setExpanded(v => !v)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
