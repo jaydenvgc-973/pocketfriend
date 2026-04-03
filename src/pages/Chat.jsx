@@ -790,6 +790,11 @@ export default function Chat() {
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     try {
+      if (!isMountedRef.current) {
+        console.warn('[sendMessage] Component unmounted, aborting message send');
+        return;
+      }
+
       recentMsgs = [...messages.slice(-50), userMsg];
       const chatHistory = recentMsgs.map(m => ({
         role: m.sender_type === "user" ? "user" : "assistant",
@@ -1170,7 +1175,17 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         response = await callLLMWithRetry(fullPrompt);
         responseObj = parseCharacterResponse(response);
       } catch (llmErr) {
-        throw llmErr;
+        console.error('[sendMessage] LLM error:', llmErr.message);
+        // Network or timeout error — use fallback response
+        if (llmErr?.message?.includes('Network') || llmErr?.message?.includes('timeout') || llmErr?.message?.includes('429')) {
+          responseObj = {
+            message_type: "text_only",
+            text_content: `[Connection issue — I'll respond when the connection is back]`,
+            image_generation_prompts: []
+          };
+        } else {
+          throw llmErr;
+        }
       }
 
       msgType = responseObj.message_type || "text_only";
