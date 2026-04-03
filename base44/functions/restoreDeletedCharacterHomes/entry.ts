@@ -16,9 +16,10 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Characters whose homes were wrongly deleted
+    // Characters whose homes were wrongly deleted (using actual full names)
     const targetCharacterNames = [
-      'Ethan', 'Nathan', 'James', 'Jonathan', 'Lila', 'Brian', 'Andre', 'Melody', 'Matt'
+      'Ethan Nathan Thompson', 'Nathan Parker', 'James Anderson', 'Jonathan', 
+      'Lila Green', 'Brian Anderson', 'Andre Rivera', 'Melody Jackson Perry', 'Matt'
     ];
 
     // Fetch all characters for this user
@@ -86,10 +87,10 @@ Deno.serve(async (req) => {
         location_type: 'character_specific',
         category: 'home',
         character_id: character.id,
-        character_name: charName,
+        character_name: character.name,
         resident_character_ids: [character.id],
-        resident_character_names: [charName],
-        description: `${charName}'s residence (restored after system deletion error)`,
+        resident_character_names: [character.name],
+        description: `${character.name}'s residence (restored after system deletion error)`,
         zones: [
           { zone_name: 'Living Room', image_urls: [] },
           { zone_name: 'Bedroom', image_urls: [] },

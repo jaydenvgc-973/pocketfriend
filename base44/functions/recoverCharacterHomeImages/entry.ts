@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const targetCharacterNames = ['Ethan', 'Matt', 'Nathan'];
+    const targetCharacterNames = ['Ethan Nathan Thompson', 'Matt', 'Nathan Parker'];
 
     // Fetch all characters
     const allCharacters = await base44.asServiceRole.entities.Character.filter({
