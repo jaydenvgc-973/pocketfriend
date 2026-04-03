@@ -1228,7 +1228,11 @@ export default function Locations() {
     if (!confirm(`Delete ${selectedForDelete.size} location(s)?\n\n${names}\n\nThis cannot be undone.`)) return;
     
     for (const id of selectedForDelete) {
-      await base44.entities.LocationReference.delete(id);
+      try {
+        await base44.entities.LocationReference.delete(id);
+      } catch (err) {
+        console.warn(`Failed to delete location ${id}:`, err.message);
+      }
     }
     setSelectedForDelete(new Set());
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
