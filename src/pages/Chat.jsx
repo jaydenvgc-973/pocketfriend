@@ -767,8 +767,10 @@ export default function Chat() {
 
       let songsContext = "";
       if (character.songs_heard && character.songs_heard.length > 0) {
-        const songsInfo = character.songs_heard.map(song => `"${song.title}" by ${song.artist} - key lyrics: "${song.lyrics_excerpt}"`).join("; ");
-        songsContext = `\n\nSONGS YOU KNOW: You have listened to these songs and know them well: ${songsInfo}. You can naturally reference these songs, quote lyrics, or discuss what they mean to you in conversations.`;
+        const songsInfo = character.songs_heard.map(song =>
+          `"${song.title}" by ${song.artist}${song.lyrics_excerpt ? ` — lyrics: "${song.lyrics_excerpt}"` : ''}${song.full_lyrics?.includes('Mood/vibe:') ? ` — ${song.full_lyrics.split('Mood/vibe:')[1]?.trim() ? `vibe: ${song.full_lyrics.split('Mood/vibe:')[1].trim()}` : ''}` : ''}`
+        ).join('\n');
+        songsContext = `\n\nSONGS YOU'VE HEARD: You've actually listened to all of these songs and know them well. When the user brings them up, you can recall the title, artist, a lyric, and how it made you feel. Reference them naturally — quote a line, say what the vibe was, share your reaction.\n${songsInfo}`;
       }
 
       // Weather context — use pre-fetched daily weather as primary, live lookup as fallback

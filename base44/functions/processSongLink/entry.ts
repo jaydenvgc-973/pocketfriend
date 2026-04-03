@@ -29,15 +29,21 @@ Deno.serve(async (req) => {
 
     if (isPlaylist) {
       // ── PLAYLIST PATH ────────────────────────────────────────────────────────
-      const playlistPrompt = `This is a music playlist/album link: ${songLink}
+      const playlistPrompt = `You have access to the internet. Look up this exact music playlist/album URL and identify all the songs in it: ${songLink}
 
-Identify the playlist or album and return a list of up to 10 songs from it.
-For each song include: title, artist, and a brief lyric excerpt (1 line).
-If it's a well-known album or playlist, list the actual tracks. If unknown, make a best-effort guess based on the URL.
+Search for this URL and return the real tracklist. Include up to 10 songs.
+
+For EACH song provide:
+- title: the exact song title
+- artist: the artist/band name
+- lyric_excerpt: a real, memorable lyric line from the song (make it meaningful, not generic)
+- mood: 2-3 words describing the feel/vibe of the song (e.g. "melancholic, romantic", "upbeat, danceable", "dark, introspective")
+
+Also provide the playlist_name (the album/playlist title).
 
 Return JSON with fields:
-- playlist_name: string
-- songs: array of { title, artist, lyric_excerpt }`;
+- playlist_name: string (the actual album or playlist name)
+- songs: array of { title, artist, lyric_excerpt, mood }`;
 
       const playlistData = await base44.integrations.Core.InvokeLLM({
         prompt: playlistPrompt,
@@ -54,7 +60,8 @@ Return JSON with fields:
                 properties: {
                   title: { type: 'string' },
                   artist: { type: 'string' },
-                  lyric_excerpt: { type: 'string' }
+                  lyric_excerpt: { type: 'string' },
+                  mood: { type: 'string' }
                 }
               }
             }
@@ -69,7 +76,7 @@ Return JSON with fields:
         title: s.title,
         artist: s.artist,
         lyrics_excerpt: s.lyric_excerpt || '',
-        full_lyrics: '',
+        full_lyrics: s.mood ? `Mood/vibe: ${s.mood}` : '',
         added_date: now,
       }));
 
@@ -92,17 +99,16 @@ Return JSON with fields:
     }
 
     // ── SINGLE SONG PATH ─────────────────────────────────────────────────────
-    const extractionPrompt = `Extract song information from this music link: ${songLink}
+    const extractionPrompt = `You have access to the internet. Look up this music link and identify the song: ${songLink}
 
-This could be from Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, or any other platform.
-
-Please provide:
-1. The song title
+Search for this URL and return:
+1. The exact song title
 2. The artist name
 3. A brief summary of what the song is about (2-3 sentences)
-4. Key lyrics or a notable lyric excerpt from the song
+4. A real, memorable lyric excerpt from the song
+5. The mood/vibe of the song in 2-3 words (e.g. "melancholic, romantic", "upbeat, energetic")
 
-Return as JSON with fields: title, artist, summary, lyric_excerpt`;
+Return as JSON with fields: title, artist, summary, lyric_excerpt, mood`;
 
     const response = await base44.integrations.Core.InvokeLLM({
       prompt: extractionPrompt,
@@ -136,7 +142,7 @@ Return as JSON with fields: title, artist, summary, lyric_excerpt`;
       title: response.title,
       artist: response.artist,
       lyrics_excerpt: response.lyric_excerpt,
-      full_lyrics: fullLyrics,
+      full_lyrics: fullLyrics + (response.mood ? `\n\nMood/vibe: ${response.mood}` : ''),
       added_date: new Date().toISOString(),
     };
 
