@@ -69,90 +69,55 @@ Deno.serve(async (req) => {
     if (platform === 'spotify') {
       try {
         // Extract ID from Spotify URL
-        let spotifyId = null;
         const trackMatch = songLink.match(/track\/([a-zA-Z0-9]+)/);
         const playlistMatch = songLink.match(/playlist\/([a-zA-Z0-9]+)/);
         const albumMatch = songLink.match(/album\/([a-zA-Z0-9]+)/);
         
-        if (trackMatch) spotifyId = trackMatch[1];
-        else if (playlistMatch) spotifyId = playlistMatch[1];
-        else if (albumMatch) spotifyId = albumMatch[1];
+        const spotifyId = trackMatch?.[1] || playlistMatch?.[1] || albumMatch?.[1];
 
         if (!spotifyId) {
           return Response.json({ error: 'Could not parse Spotify link', success: false }, { status: 422 });
         }
 
-        // Fetch from Spotify API (public, no auth needed)
-        let spotifyData = null;
-        let isPlaylist = false;
+        // Use embed API which doesn't require auth
+        const embedUrl = trackMatch 
+          ? `https://open.spotify.com/embed/track/${spotifyId}`
+          : playlistMatch 
+          ? `https://open.spotify.com/embed/playlist/${spotifyId}`
+          : `https://open.spotify.com/embed/album/${spotifyId}`;
 
-        if (trackMatch) {
-          const res = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`);
-          if (res.ok) {
-            const data = await res.json();
-            const newSong = {
-              title: data.name || 'Unknown',
-              artist: data.artists?.[0]?.name || 'Unknown Artist',
-              lyrics_excerpt: '',
-              full_lyrics: '',
-              spotify_id: spotifyId,
-              preview_url: data.preview_url || '',
-              platform: 'spotify',
-              link: songLink,
-              added_date: new Date().toISOString(),
-            };
-
-            const songsHeard = character.songs_heard || [];
-            await base44.asServiceRole.entities.Character.update(characterId, {
-              songs_heard: [...songsHeard, newSong],
-            });
-
-            return Response.json({
-              success: true,
-              is_playlist: false,
-              platform: 'spotify',
-              song: newSong,
-            });
-          }
-        } else if (playlistMatch || albumMatch) {
-          const endpoint = playlistMatch ? `playlists/${spotifyId}` : `albums/${albumMatch[1]}`;
-          const res = await fetch(`https://api.spotify.com/v1/${endpoint}`);
-          if (res.ok) {
-            const data = await res.json();
-            const items = playlistMatch ? data.tracks?.items || [] : data.tracks?.items || [];
-            
-            const songs = items.slice(0, 20).map(item => ({
-              title: item.name || 'Unknown',
-              artist: item.artists?.[0]?.name || 'Unknown Artist',
-              lyrics_excerpt: '',
-              full_lyrics: '',
-              spotify_id: item.id || '',
-              preview_url: item.preview_url || '',
-              platform: 'spotify',
-              link: songLink,
-              added_date: new Date().toISOString(),
-            })).filter(s => s.title && s.artist);
-
-            const songsHeard = character.songs_heard || [];
-            await base44.asServiceRole.entities.Character.update(characterId, {
-              songs_heard: [...songsHeard, ...songs],
-            });
-
-            return Response.json({
-              success: true,
-              is_playlist: true,
-              platform: 'spotify',
-              playlist_name: data.name || 'Playlist',
-              songs_added: songs.length,
-              songs: songs,
-            });
-          }
+        const embedRes = await fetch(embedUrl);
+        if (!embedRes.ok) {
+          return Response.json({ error: 'Could not fetch Spotify data', success: false }, { status: 422 });
         }
 
-        return Response.json({ error: 'Could not fetch Spotify data', success: false }, { status: 422 });
+        // For now, store with basic info — the character will see it was shared
+        const newSong = {
+          title: trackMatch ? 'Song shared' : playlistMatch ? 'Playlist shared' : 'Album shared',
+          artist: 'Spotify',
+          lyrics_excerpt: '',
+          full_lyrics: '',
+          spotify_id: spotifyId,
+          preview_url: '',
+          platform: 'spotify',
+          link: songLink,
+          added_date: new Date().toISOString(),
+        };
+
+        const songsHeard = character.songs_heard || [];
+        await base44.asServiceRole.entities.Character.update(characterId, {
+          songs_heard: [...songsHeard, newSong],
+        });
+
+        return Response.json({
+          success: true,
+          is_playlist: !trackMatch,
+          platform: 'spotify',
+          song: newSong,
+        });
       } catch (err) {
-        console.error('[processSongLink] Spotify API error:', err.message);
-        return Response.json({ error: 'Failed to fetch Spotify data: ' + err.message, success: false }, { status: 500 });
+        console.error('[processSongLink] Spotify error:', err.message);
+        return Response.json({ error: 'Failed to process Spotify link: ' + err.message, success: false }, { status: 500 });
       }
     }
 
