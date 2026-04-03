@@ -13,6 +13,7 @@ import CharacterFinancialSummary from "@/components/character/CharacterFinancial
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
+import { getReciprocalRole, getRelationshipLabel } from "@/lib/relationshipUtils";
 import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
 import NPCPromotionModal from "@/components/character/NPCPromotionModal";
 import NPCPhotoEditor from "@/components/character/NPCPhotoEditor";

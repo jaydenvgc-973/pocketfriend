@@ -5,6 +5,8 @@ import { Link } from "react-router-dom";
 import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
+import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
+import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils";
 
 export default function MyProfile() {
   const queryClient = useQueryClient();
@@ -17,9 +19,10 @@ export default function MyProfile() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: settingsList = [] } = useQuery({
+  const { data: settingsList = [], refetch: refetchSettings } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
+    staleTime: 0,
   });
 
   const { data: characters = [] } = useQuery({
@@ -32,13 +35,14 @@ export default function MyProfile() {
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
   const balance = settings.user_balance ?? 6000;
+  const userGender = settings.user_gender || "other";
 
-  // Load user's relative relationships from their metadata
+  // Sync local state from settings
   useEffect(() => {
-    if (settings.id && settings.user_relatives) {
+    if (settings.user_relatives) {
       setRelativeRelationships(settings.user_relatives);
     }
-  }, [settings.id, settings.user_relatives]);
+  }, [JSON.stringify(settings.user_relatives)]);
 
   // Initialize balance if not set
   useEffect(() => {
@@ -79,18 +83,60 @@ export default function MyProfile() {
     }
   }, [characters.length]);
 
+  /**
+   * Assign or update a relationship between user and a character.
+   * Also syncs the reciprocal entry into the character's family_members.
+   */
   const handleAssignRelative = async (charId, relationship) => {
     const updated = { ...relativeRelationships };
+    const character = characters.find(c => c.id === charId);
+    if (!character) return;
+
+    const oldRelationship = updated[charId];
+
     if (relationship) {
       updated[charId] = relationship;
     } else {
       delete updated[charId];
     }
+
     setRelativeRelationships(updated);
-    
+
+    // Persist to UserSettings
     if (settings.id) {
       await base44.entities.UserSettings.update(settings.id, { user_relatives: updated }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+    }
+
+    // Sync reciprocal into character's family_members
+    if (character && isFamilyRelationship(relationship || "")) {
+      const reciprocal = relationship ? getReciprocalRole(relationship, userGender) : null;
+      const currentFamilyMembers = character.family_members || [];
+
+      // Remove old user entry (by _is_user flag)
+      let updatedFamily = currentFamilyMembers.filter(m => !m._is_user);
+
+      if (reciprocal) {
+        updatedFamily = [
+          ...updatedFamily,
+          {
+            name: displayName,
+            relationship_type: reciprocal,
+            _is_user: true,
+            age_at_creation: null,
+            age_set_date: null,
+          }
+        ];
+      }
+
+      await base44.entities.Character.update(charId, { family_members: updatedFamily }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["character", charId] });
+      queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+    } else if (character && !relationship) {
+      // Removing relationship — also remove from family list
+      const updatedFamily = (character.family_members || []).filter(m => !m._is_user);
+      await base44.entities.Character.update(charId, { family_members: updatedFamily }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ["character", charId] });
     }
   };
 
@@ -210,18 +256,27 @@ export default function MyProfile() {
           </Link>
         </div>
 
-        {/* Characters in their world */}
+        {/* Characters in their world — with full relationship selector */}
         {characters.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Characters in your world ({characters.length})</p>
-            <div className="space-y-2">
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <div>
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                Characters in your world ({characters.length})
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Assign your relationship to each active character.
+              </p>
+            </div>
+            <div className="space-y-4">
               {characters.map(char => {
                 const currentRelative = relativeRelationships[char.id];
+                const reciprocal = currentRelative ? getReciprocalRole(currentRelative, userGender) : null;
+
                 return (
-                  <div key={char.id}>
+                  <div key={char.id} className="pb-4 border-b border-border last:border-b-0">
                     <Link to={`/profile/${char.id}`}>
-                      <div className="flex items-center gap-3 py-1.5 hover:opacity-80 transition-opacity">
-                        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
+                      <div className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+                        <div className="w-9 h-9 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
                           {char.avatar_url ? (
                             <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
                           ) : (
@@ -232,52 +287,21 @@ export default function MyProfile() {
                           <p className="text-sm font-medium text-foreground">{char.name}</p>
                           {char.archetype && <p className="text-xs text-muted-foreground">{char.archetype}</p>}
                         </div>
-                        {currentRelative && (
-                          <div className="flex items-center gap-1 text-xs text-pink-400">
-                            <Heart className="w-3 h-3 fill-current" />
-                            {currentRelative}
-                          </div>
-                        )}
                       </div>
                     </Link>
-                    <div className="ml-11 flex gap-1 mt-1 flex-wrap">
-                      {!currentRelative && (
-                        <>
-                          <button
-                            onClick={() => handleAssignRelative(char.id, "mother")}
-                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            Mother
-                          </button>
-                          <button
-                            onClick={() => handleAssignRelative(char.id, "father")}
-                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            Father
-                          </button>
-                          <button
-                            onClick={() => handleAssignRelative(char.id, "sibling")}
-                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            Sibling
-                          </button>
-                          <button
-                            onClick={() => handleAssignRelative(char.id, "child")}
-                            className="text-xs px-2 py-1 rounded bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                          >
-                            Child
-                          </button>
-                        </>
-                      )}
-                      {currentRelative && (
-                        <button
-                          onClick={() => handleAssignRelative(char.id, null)}
-                          className="text-xs px-2 py-1 rounded bg-destructive/10 hover:bg-destructive/20 text-destructive hover:text-destructive transition-colors"
-                        >
-                          Remove
-                        </button>
-                      )}
-                    </div>
+
+                    <UserCharacterRelationshipSelector
+                      character={char}
+                      currentValue={currentRelative}
+                      onSave={(rel) => handleAssignRelative(char.id, rel)}
+                      onRemove={() => handleAssignRelative(char.id, null)}
+                    />
+
+                    {currentRelative && reciprocal && (
+                      <p className="ml-11 mt-1.5 text-[10px] text-muted-foreground">
+                        {char.name} sees you as: <span className="text-foreground font-medium capitalize">{getRelationshipLabel(reciprocal)}</span>
+                      </p>
+                    )}
                   </div>
                 );
               })}
