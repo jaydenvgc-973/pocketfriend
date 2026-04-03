@@ -612,34 +612,41 @@ export default function Chat() {
       });
       if (res?.data?.success) {
         let content;
+        let msgData = {
+          conversation_id: conversationIdRef.current,
+          sender_type: 'character',
+          character_id: characterId,
+          character_name: character.name,
+          timestamp: new Date().toISOString(),
+        };
+
         if (isVideo) {
           const video = res.data.video || {};
           const title = video.title || 'that video';
           const creator = video.creator || 'the creator';
-          content = `Just watched "${title}" by ${video.creator}. Interesting stuff.`;
+          content = `Just watched "${title}" by ${creator}. Interesting stuff.`;
+          msgData.videos_watched = [video];
         } else if (res.data.is_playlist) {
           const playlistName = res.data.playlist_name || 'that playlist';
           const count = res.data.songs_added || 0;
           const songList = (res.data.songs || []).slice(0, 3).map(s => `"${s.title}" by ${s.artist}`).join(', ');
           content = `Just listened through "${playlistName}" — ${count} new tracks. ${songList ? `Really felt ${songList}.` : 'Good taste.'}`;
+          msgData.songs_heard = res.data.songs || [];
         } else {
           const song = res.data.song || {};
           const title = song.title || 'that song';
           const artist = song.artist || 'the artist';
           const lyric = song.lyrics_excerpt;
           content = `"${title}" by ${artist} is a vibe.${lyric ? ` "${lyric}" hits different.` : ''}`;
+          msgData.songs_heard = [song];
         }
+
+        msgData.content = content;
+
         // Persist this acknowledgment to the DB so it survives navigation
         const convoId = conversationIdRef.current;
         if (convoId) {
-          await base44.entities.Message.create({
-            conversation_id: convoId,
-            sender_type: 'character',
-            character_id: characterId,
-            character_name: character.name,
-            content,
-            timestamp: new Date().toISOString(),
-          });
+          await base44.entities.Message.create(msgData);
         }
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }
