@@ -609,11 +609,19 @@ export default function Chat() {
   }
   console.log('[handleShareSong] Processing:', mediaLink, 'isVideo:', isVideo);
   try {
-   const res = await base44.functions.invoke('processSongLink', {
-     characterId,
-     songLink: mediaLink,
-     isVideo
-   });
+   // Add 30 second timeout for processSongLink
+   const timeoutPromise = new Promise((_, reject) => 
+     setTimeout(() => reject(new Error('Link processing timed out')), 30000)
+   );
+
+   const res = await Promise.race([
+     base44.functions.invoke('processSongLink', {
+       characterId,
+       songLink: mediaLink,
+       isVideo
+     }),
+     timeoutPromise
+   ]);
    console.log('[handleShareSong] Full response:', res);
 
    if (res?.data?.success) {
@@ -655,11 +663,19 @@ export default function Chat() {
      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
    } else {
      console.error('[handleShareSong] processSongLink returned success=false');
+     setSendError(`Couldn't process the link. Try another.`);
    }
-  } catch (err) {
-   console.error('[handleShareSong] Error:', err);
-  }
-  };
+   } catch (err) {
+   console.error('[handleShareSong] Error:', err.message);
+   if (err.message.includes('timed out')) {
+     setSendError('Link processing took too long. Try a different link.');
+   } else if (err.message.includes('502') || err.message.includes('Bad gateway')) {
+     setSendError('Service temporarily unavailable. Try again in a moment.');
+   } else {
+     setSendError(`Couldn't process that link.`);
+   }
+   }
+   };
 
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
