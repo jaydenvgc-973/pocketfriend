@@ -151,7 +151,7 @@ Return JSON matching this schema exactly:
                 <p className="text-muted-foreground mt-2 text-sm">A character that feels real. Built to push back, not just agree.</p>
               </div>
               <Button onClick={() => setStep(1)} className="w-full h-12 rounded-xl">Get started</Button>
-              <Link to="/home" className="block text-center text-xs text-muted-foreground hover:text-foreground transition-colors mt-2 whitespace-nowrap">Or go to home</Link>
+              <Link to="/home" className="block text-center text-xs text-muted-foreground hover:text-foreground transition-colors mt-2">Or go to home</Link>
             </motion.div>
           )}
           {step === 1 && (
