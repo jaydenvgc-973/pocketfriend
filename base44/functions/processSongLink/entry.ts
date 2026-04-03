@@ -19,14 +19,12 @@ Deno.serve(async (req) => {
     try {
       const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
       character = chars?.[0] || null;
-    } catch (_) {
-      // filter can throw on invalid IDs
-    }
+    } catch (_) {}
+    
     if (!character) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
-    // Detect platform from URL
     const detectPlatform = (url) => {
       if (/spotify\.com/.test(url)) return 'spotify';
       if (/apple\.com|music\.apple\.com/.test(url)) return 'apple';
@@ -42,33 +40,13 @@ Deno.serve(async (req) => {
     const isVideoLink = isVideo || /youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com.*video|instagram\.com.*reel/.test(songLink);
     const platform = detectPlatform(songLink);
 
-    // VIDEO LINK PATH
+    // VIDEO PATH
     if (isVideoLink) {
-      // Extract basic info from URL without web context
-      const urlObj = new URL(songLink);
-      const hostname = urlObj.hostname;
-      
-      let title = 'Unknown Video';
-      let creator = 'Unknown Creator';
-      let platformName = platform;
-
-      // Try to extract from URL parameters
-      if (platform === 'youtube') {
-        title = decodeURIComponent(urlObj.searchParams.get('v') || 'YouTube Video');
-        platformName = 'YouTube';
-      } else if (platform === 'vimeo') {
-        title = 'Vimeo Video';
-        platformName = 'Vimeo';
-      } else if (platform === 'tiktok') {
-        title = 'TikTok Video';
-        platformName = 'TikTok';
-      }
-
       const newVideo = {
-        title: title,
-        creator: creator,
+        title: 'Video shared',
+        creator: 'Unknown Creator',
         description: 'Video shared',
-        platform: platformName,
+        platform: platform,
         duration: 'Unknown',
         link: songLink,
         added_date: new Date().toISOString(),
@@ -84,54 +62,106 @@ Deno.serve(async (req) => {
         is_video: true,
         platform: platform,
         video: newVideo,
-        message: `${character.name} shared a video from ${platform}`,
       });
     }
 
-    // MUSIC PATH (single song or playlist)
-    // Extract minimal info from URL
-    const isPlaylist =
-      /[?&]list=/.test(songLink) ||
-      /playlist/i.test(songLink) ||
-      /album/i.test(songLink) ||
-      /soundcloud\.com\/[^/]+\/sets\//.test(songLink);
+    // SPOTIFY PATH
+    if (platform === 'spotify') {
+      try {
+        // Extract ID from Spotify URL
+        let spotifyId = null;
+        const trackMatch = songLink.match(/track\/([a-zA-Z0-9]+)/);
+        const playlistMatch = songLink.match(/playlist\/([a-zA-Z0-9]+)/);
+        const albumMatch = songLink.match(/album\/([a-zA-Z0-9]+)/);
+        
+        if (trackMatch) spotifyId = trackMatch[1];
+        else if (playlistMatch) spotifyId = playlistMatch[1];
+        else if (albumMatch) spotifyId = albumMatch[1];
 
-    if (isPlaylist) {
-      // For playlists, create a placeholder song entry
-      const newSong = {
-        title: 'Playlist shared',
-        artist: 'Unknown Artist',
-        lyrics_excerpt: '',
-        full_lyrics: 'Playlist shared',
-        spotify_id: '',
-        preview_url: '',
-        platform: platform,
-        link: songLink,
-        added_date: new Date().toISOString(),
-      };
+        if (!spotifyId) {
+          return Response.json({ error: 'Could not parse Spotify link', success: false }, { status: 422 });
+        }
 
-      const songsHeard = character.songs_heard || [];
-      await base44.asServiceRole.entities.Character.update(characterId, {
-        songs_heard: [...songsHeard, newSong],
-      });
+        // Fetch from Spotify API (public, no auth needed)
+        let spotifyData = null;
+        let isPlaylist = false;
 
-      return Response.json({
-        success: true,
-        is_playlist: true,
-        platform: platform,
-        playlist_name: 'Shared Playlist',
-        songs_added: 1,
-        songs: [newSong],
-        message: `${character.name} shared a playlist from ${platform}`,
-      });
+        if (trackMatch) {
+          const res = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`);
+          if (res.ok) {
+            const data = await res.json();
+            const newSong = {
+              title: data.name || 'Unknown',
+              artist: data.artists?.[0]?.name || 'Unknown Artist',
+              lyrics_excerpt: '',
+              full_lyrics: '',
+              spotify_id: spotifyId,
+              preview_url: data.preview_url || '',
+              platform: 'spotify',
+              link: songLink,
+              added_date: new Date().toISOString(),
+            };
+
+            const songsHeard = character.songs_heard || [];
+            await base44.asServiceRole.entities.Character.update(characterId, {
+              songs_heard: [...songsHeard, newSong],
+            });
+
+            return Response.json({
+              success: true,
+              is_playlist: false,
+              platform: 'spotify',
+              song: newSong,
+            });
+          }
+        } else if (playlistMatch || albumMatch) {
+          const endpoint = playlistMatch ? `playlists/${spotifyId}` : `albums/${albumMatch[1]}`;
+          const res = await fetch(`https://api.spotify.com/v1/${endpoint}`);
+          if (res.ok) {
+            const data = await res.json();
+            const items = playlistMatch ? data.tracks?.items || [] : data.tracks?.items || [];
+            
+            const songs = items.slice(0, 20).map(item => ({
+              title: item.name || 'Unknown',
+              artist: item.artists?.[0]?.name || 'Unknown Artist',
+              lyrics_excerpt: '',
+              full_lyrics: '',
+              spotify_id: item.id || '',
+              preview_url: item.preview_url || '',
+              platform: 'spotify',
+              link: songLink,
+              added_date: new Date().toISOString(),
+            })).filter(s => s.title && s.artist);
+
+            const songsHeard = character.songs_heard || [];
+            await base44.asServiceRole.entities.Character.update(characterId, {
+              songs_heard: [...songsHeard, ...songs],
+            });
+
+            return Response.json({
+              success: true,
+              is_playlist: true,
+              platform: 'spotify',
+              playlist_name: data.name || 'Playlist',
+              songs_added: songs.length,
+              songs: songs,
+            });
+          }
+        }
+
+        return Response.json({ error: 'Could not fetch Spotify data', success: false }, { status: 422 });
+      } catch (err) {
+        console.error('[processSongLink] Spotify API error:', err.message);
+        return Response.json({ error: 'Failed to fetch Spotify data: ' + err.message, success: false }, { status: 500 });
+      }
     }
 
-    // SINGLE SONG PATH
+    // OTHER PLATFORMS - placeholder
     const newSong = {
       title: 'Song shared',
       artist: 'Unknown Artist',
       lyrics_excerpt: '',
-      full_lyrics: 'Song shared',
+      full_lyrics: '',
       spotify_id: '',
       preview_url: '',
       platform: platform,
@@ -149,11 +179,10 @@ Deno.serve(async (req) => {
       is_playlist: false,
       platform: platform,
       song: newSong,
-      message: `${character.name} shared a song from ${platform}`,
     });
 
   } catch (error) {
-    console.error('[processSongLink] Unexpected error:', error.message);
+    console.error('[processSongLink] Error:', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
