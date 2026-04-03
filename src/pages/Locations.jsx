@@ -131,9 +131,9 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
           </button>
           <button 
             onClick={() => onDelete(location.id)} 
-            disabled={location.created_by !== currentUser?.email}
-            title={location.created_by !== currentUser?.email ? "Only locations you created can be deleted" : "Delete location"}
-            className={`p-1.5 rounded-lg transition-colors ${location.created_by === currentUser?.email ? "text-muted-foreground hover:text-destructive cursor-pointer" : "text-muted-foreground/30 cursor-not-allowed"}`}
+            disabled={location.created_by !== currentUser?.email && location.location_type !== 'global'}
+            title={(location.created_by === currentUser?.email || location.location_type === 'global') ? "Delete location" : "Only locations you created can be deleted"}
+            className={`p-1.5 rounded-lg transition-colors ${(location.created_by === currentUser?.email || location.location_type === 'global') ? "text-muted-foreground hover:text-destructive cursor-pointer" : "text-muted-foreground/30 cursor-not-allowed"}`}
           >
             <Trash2 className="w-4 h-4" />
           </button>
@@ -1201,9 +1201,11 @@ export default function Locations() {
     const loc = locations.find(l => l.id === id);
     if (!loc) return;
     
-    // Only allow deletion if user created this location
-    if (loc.created_by !== currentUser?.email) {
-      alert(`You can only delete locations you created. This location was created by the system or another user.`);
+    // Allow deletion if: user created it OR it's a global location
+    const canDelete = loc.created_by === currentUser?.email || loc.location_type === 'global';
+    
+    if (!canDelete) {
+      alert(`You can only delete locations you created.`);
       return;
     }
     
