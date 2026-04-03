@@ -126,7 +126,7 @@ export default function MyProfile() {
           const m = today.getMonth() - birth.getMonth();
           if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) userAge--;
         }
-        const userAvatarUrl = user?.avatar_url || user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+        const userAvatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
         updatedFamily = [
           ...updatedFamily,
           {
