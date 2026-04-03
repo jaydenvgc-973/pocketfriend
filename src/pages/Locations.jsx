@@ -129,6 +129,9 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
           <button onClick={() => onEdit(location)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
             <Pencil className="w-4 h-4" />
           </button>
+          <button onClick={() => onDelete(location.id)} className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors">
+            <Trash2 className="w-4 h-4" />
+          </button>
           <button onClick={() => setExpanded(v => !v)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
             {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
