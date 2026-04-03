@@ -1,14 +1,16 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 /**
- * mergeCharacters
+ * mergeCharacters - COMPLETE MERGE WITH FULL DATA CONSOLIDATION
  * 
- * Merge multiple characters into a primary character:
- * - Selects primary character (or uses recommendation logic)
- * - Remaps all dependent records to primary
- * - Marks secondaries as merged (status = 'merged')
+ * Merge multiple characters into ONE primary character:
+ * - Consolidates ALL memory, relationships, family, schedules, locations
+ * - Remaps ALL dependent records (conversations, messages, etc.)
+ * - DELETES all secondary characters after consolidation
  * - Creates CharacterAlias entries for merged names
  * - Creates CharacterMergeAudit
+ * 
+ * RESULT: Only ONE character remains with ALL consolidated data.
  */
 
 Deno.serve(async (req) => {
@@ -23,22 +25,18 @@ Deno.serve(async (req) => {
     }
 
     // ─────────────────────────────────────────────────────────
-    // FETCH ALL RECORDS
+    // FETCH ALL CHARACTERS & DATA
     // ─────────────────────────────────────────────────────────
     const chars = await Promise.all(
-      characterIds.map(id => base44.entities.Character.get(id))
+      characterIds.map(id => base44.asServiceRole.entities.Character.get(id))
     );
 
-    const missingIds = chars
-      .map((c, i) => c ? null : characterIds[i])
-      .filter(Boolean);
+    const missingIds = chars.map((c, i) => c ? null : characterIds[i]).filter(Boolean);
     if (missingIds.length > 0) {
       return Response.json({ error: `Characters not found: ${missingIds.join(', ')}` }, { status: 404 });
     }
 
-    // ─────────────────────────────────────────────────────────
-    // SELECT PRIMARY
-    // ─────────────────────────────────────────────────────────
+    // SELECT PRIMARY (always preserve active > created > other)
     let primary = primaryCharacterId 
       ? chars.find(c => c.id === primaryCharacterId)
       : recommendPrimary(chars);
@@ -48,43 +46,211 @@ Deno.serve(async (req) => {
     }
 
     const secondaryIds = characterIds.filter(id => id !== primary.id);
+    const secondaryChars = chars.filter(c => c.id !== primary.id);
     const oldNames = chars.map(c => c.name);
 
     // ─────────────────────────────────────────────────────────
-    // REMAP DEPENDENT RECORDS (conversations, messages, etc.)
+    // CONSOLIDATE ALL DATA INTO PRIMARY
     // ─────────────────────────────────────────────────────────
-    // In production, this would batch update:
-    // - Conversation.character_ids
-    // - Message.character_id
-    // - Memory.character_id
-    // - RelationshipState.character_id
-    // - ScheduledEvent.character_ids
-    // - CharacterAutonomyEvent.character_id
-    // etc.
 
-    // For now, we'll do basic remapping
+    // Merge memory: combine all memories from secondaries
+    const primaryMemories = (primary.fictional_relationships || []);
+    const secondaryMemories = secondaryChars.flatMap(c => c.fictional_relationships || []);
+    const mergedMemories = [...primaryMemories];
+    
+    for (const secMem of secondaryMemories) {
+      const exists = mergedMemories.some(m => 
+        m.person_name?.toLowerCase() === secMem.person_name?.toLowerCase()
+      );
+      if (!exists) {
+        mergedMemories.push(secMem);
+      }
+    }
+
+    // Merge family members
+    const primaryFamily = (primary.family_members || []);
+    const secondaryFamily = secondaryChars.flatMap(c => c.family_members || []);
+    const mergedFamily = [...primaryFamily];
+    
+    for (const secFam of secondaryFamily) {
+      const exists = mergedFamily.some(f => 
+        f.name?.toLowerCase() === secFam.name?.toLowerCase()
+      );
+      if (!exists) {
+        mergedFamily.push(secFam);
+      }
+    }
+
+    // Merge life events
+    const primaryEvents = (primary.departed_characters || []);
+    const secondaryEvents = secondaryChars.flatMap(c => c.departed_characters || []);
+    const mergedEvents = [...primaryEvents];
+    
+    for (const secEv of secondaryEvents) {
+      const exists = mergedEvents.some(e => 
+        e.name?.toLowerCase() === secEv.name?.toLowerCase()
+      );
+      if (!exists) {
+        mergedEvents.push(secEv);
+      }
+    }
+
+    // Merge songs heard
+    const primarySongs = (primary.songs_heard || []);
+    const secondarySongs = secondaryChars.flatMap(c => c.songs_heard || []);
+    const songIds = new Set(primarySongs.map(s => s.spotify_id));
+    const mergedSongs = [...primarySongs];
+    
+    for (const song of secondarySongs) {
+      if (!songIds.has(song.spotify_id)) {
+        mergedSongs.push(song);
+        songIds.add(song.spotify_id);
+      }
+    }
+
+    // Merge videos watched
+    const primaryVideos = (primary.videos_watched || []);
+    const secondaryVideos = secondaryChars.flatMap(c => c.videos_watched || []);
+    const videoLinks = new Set(primaryVideos.map(v => v.link));
+    const mergedVideos = [...primaryVideos];
+    
+    for (const video of secondaryVideos) {
+      if (!videoLinks.has(video.link)) {
+        mergedVideos.push(video);
+        videoLinks.add(video.link);
+      }
+    }
+
+    // Merge life goals
+    const primaryGoals = (primary.future_life_goals || []);
+    const secondaryGoals = secondaryChars.flatMap(c => c.future_life_goals || []);
+    const mergedGoals = [...primaryGoals];
+    
+    for (const goal of secondaryGoals) {
+      const exists = mergedGoals.some(g => 
+        g.description?.toLowerCase() === goal.description?.toLowerCase()
+      );
+      if (!exists) {
+        mergedGoals.push(goal);
+      }
+    }
+
+    // Update primary with consolidated data
+    await base44.asServiceRole.entities.Character.update(primary.id, {
+      fictional_relationships: mergedMemories,
+      family_members: mergedFamily,
+      departed_characters: mergedEvents,
+      songs_heard: mergedSongs,
+      videos_watched: mergedVideos,
+      future_life_goals: mergedGoals,
+      name: conflictResolutions.display_name || primary.name,
+    });
+
+    // ─────────────────────────────────────────────────────────
+    // REMAP ALL DEPENDENT RECORDS
+    // ─────────────────────────────────────────────────────────
+
+    // Remap conversations
     const convos = await base44.asServiceRole.entities.Conversation.filter({});
     for (const convo of convos) {
       const charIds = convo.character_ids || [];
       const updatedIds = charIds.map(id => 
         secondaryIds.includes(id) ? primary.id : id
-      ).filter((v, i, a) => a.indexOf(v) === i); // dedupe
+      ).filter((v, i, a) => a.indexOf(v) === i);
 
-      if (updatedIds.length !== charIds.length || !updatedIds.every(id => charIds.includes(id))) {
+      if (JSON.stringify(updatedIds) !== JSON.stringify(charIds)) {
         await base44.asServiceRole.entities.Conversation.update(convo.id, {
           character_ids: updatedIds,
         });
       }
     }
 
-    // ─────────────────────────────────────────────────────────
-    // MARK SECONDARIES AS MERGED
-    // ─────────────────────────────────────────────────────────
-    for (const secondaryId of secondaryIds) {
-      await base44.entities.Character.update(secondaryId, {
-        status: 'merged',
-        merged_into_character_id: primary.id,
-      });
+    // Remap messages
+    const messages = await base44.asServiceRole.entities.Message.filter({});
+    for (const msg of messages) {
+      let needsUpdate = false;
+      const updates = {};
+
+      if (msg.character_id && secondaryIds.includes(msg.character_id)) {
+        updates.character_id = primary.id;
+        needsUpdate = true;
+      }
+
+      if (msg.played_as_character_id && secondaryIds.includes(msg.played_as_character_id)) {
+        updates.played_as_character_id = primary.id;
+        needsUpdate = true;
+      }
+
+      if (needsUpdate) {
+        await base44.asServiceRole.entities.Message.update(msg.id, updates);
+      }
+    }
+
+    // Remap memories
+    const memories = await base44.asServiceRole.entities.Memory.filter({});
+    for (const mem of memories) {
+      if (mem.character_id && secondaryIds.includes(mem.character_id)) {
+        await base44.asServiceRole.entities.Memory.update(mem.id, {
+          character_id: primary.id,
+        });
+      }
+    }
+
+    // Remap relationship states
+    const relStates = await base44.asServiceRole.entities.RelationshipState.filter({});
+    for (const rel of relStates) {
+      if (rel.character_id && secondaryIds.includes(rel.character_id)) {
+        await base44.asServiceRole.entities.RelationshipState.update(rel.id, {
+          character_id: primary.id,
+        });
+      }
+    }
+
+    // Remap life events
+    const lifeEvents = await base44.asServiceRole.entities.LifeEvent.filter({});
+    for (const ev of lifeEvents) {
+      if (ev.character_id && secondaryIds.includes(ev.character_id)) {
+        await base44.asServiceRole.entities.LifeEvent.update(ev.id, {
+          character_id: primary.id,
+          character_name: primary.name,
+        });
+      }
+    }
+
+    // Remap pending messages
+    const pendingMsgs = await base44.asServiceRole.entities.PendingMessage.filter({});
+    for (const pm of pendingMsgs) {
+      if (pm.character_id && secondaryIds.includes(pm.character_id)) {
+        await base44.asServiceRole.entities.PendingMessage.update(pm.id, {
+          character_id: primary.id,
+        });
+      }
+    }
+
+    // Remap scheduled events
+    const schedEvents = await base44.asServiceRole.entities.ScheduledEvent.filter({});
+    for (const se of schedEvents) {
+      const charIds = se.character_ids || [];
+      const updated = charIds.map(id => 
+        secondaryIds.includes(id) ? primary.id : id
+      ).filter((v, i, a) => a.indexOf(v) === i);
+
+      if (JSON.stringify(updated) !== JSON.stringify(charIds)) {
+        await base44.asServiceRole.entities.ScheduledEvent.update(se.id, {
+          character_ids: updated,
+          primary_character_id: primary.id,
+        });
+      }
+    }
+
+    // Remap autonomy events
+    const autonomyEvents = await base44.asServiceRole.entities.CharacterAutonomyEvent.filter({});
+    for (const ae of autonomyEvents) {
+      if (ae.character_id && secondaryIds.includes(ae.character_id)) {
+        await base44.asServiceRole.entities.CharacterAutonomyEvent.update(ae.id, {
+          character_id: primary.id,
+        });
+      }
     }
 
     // ─────────────────────────────────────────────────────────
@@ -92,7 +258,7 @@ Deno.serve(async (req) => {
     // ─────────────────────────────────────────────────────────
     for (const char of chars) {
       if (char.id !== primary.id) {
-        await base44.entities.CharacterAlias.create({
+        await base44.asServiceRole.entities.CharacterAlias.create({
           character_id: primary.id,
           alias_name: char.name,
           source_type: 'merge',
@@ -104,7 +270,7 @@ Deno.serve(async (req) => {
     // ─────────────────────────────────────────────────────────
     // CREATE MERGE AUDIT
     // ─────────────────────────────────────────────────────────
-    await base44.entities.CharacterMergeAudit.create({
+    await base44.asServiceRole.entities.CharacterMergeAudit.create({
       primary_character_id: primary.id,
       merged_character_ids: secondaryIds,
       old_names: oldNames,
@@ -113,14 +279,10 @@ Deno.serve(async (req) => {
     });
 
     // ─────────────────────────────────────────────────────────
-    // UPDATE PRIMARY IF CONFLICTS RESOLVED
+    // DELETE SECONDARY CHARACTERS (permanent removal after consolidation)
     // ─────────────────────────────────────────────────────────
-    const primaryUpdate = {};
-    if (conflictResolutions.display_name && conflictResolutions.display_name !== primary.name) {
-      primaryUpdate.name = conflictResolutions.display_name;
-    }
-    if (Object.keys(primaryUpdate).length > 0) {
-      await base44.entities.Character.update(primary.id, primaryUpdate);
+    for (const secondaryId of secondaryIds) {
+      await base44.asServiceRole.entities.Character.delete(secondaryId);
     }
 
     return Response.json({
@@ -129,7 +291,7 @@ Deno.serve(async (req) => {
       primary_character_name: conflictResolutions.display_name || primary.name,
       merged_character_ids: secondaryIds,
       merged_names: oldNames.filter(n => n !== primary.name),
-      message: `Merged ${secondaryIds.length} character(s) into "${conflictResolutions.display_name || primary.name}". All history preserved.`,
+      message: `Merged ${secondaryIds.length} character(s) into "${conflictResolutions.display_name || primary.name}". All history consolidated. Secondary characters removed.`,
     });
   } catch (error) {
     console.error('[mergeCharacters]', error);
