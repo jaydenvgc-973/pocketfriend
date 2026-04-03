@@ -609,13 +609,16 @@ export default function Chat() {
         songLink
       });
       if (res?.data?.success) {
+        const content = res.data.is_playlist
+          ? `Just went through "${res.data.playlist_name}" — ${res.data.songs_added} new songs. Good taste.`
+          : `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`;
         setMessages(prev => [...prev, {
           id: 'system_' + Date.now(),
           conversation_id: conversationIdRef.current,
           sender_type: 'character',
           character_id: characterId,
           character_name: character.name,
-          content: `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`,
+          content,
           timestamp: new Date().toISOString()
         }]);
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });
@@ -638,7 +641,7 @@ export default function Chat() {
     }
 
     // Check for music platform links (Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, etc.)
-    const musicLinkMatch = text.match(/https?:\/\/[^\s]+(spotify|apple|music|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
+    const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify|apple\.com\/[^\s]*music|music\.apple|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0]);
     }
