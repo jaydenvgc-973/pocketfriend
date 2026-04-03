@@ -614,7 +614,7 @@ export default function Chat() {
      songLink: mediaLink,
      isVideo
    });
-   console.log('[handleShareSong] Response:', res?.data);
+   console.log('[handleShareSong] Full response:', res);
 
    if (res?.data?.success) {
      let msgData = {
@@ -623,34 +623,41 @@ export default function Chat() {
        character_id: characterId,
        character_name: character.name,
        timestamp: new Date().toISOString(),
-       content: '',
+       content: `Shared: ${isVideo ? (res.data.video?.title || 'a video') : (res.data.is_playlist ? (res.data.playlist_name || 'a playlist') : (res.data.song?.title || 'a song'))}`,
      };
 
      if (isVideo) {
-       msgData.videos_watched = [res.data.video || {}];
+       msgData.videos_watched = res.data.video ? [res.data.video] : [];
      } else if (res.data.is_playlist) {
        msgData.songs_heard = res.data.songs || [];
      } else {
-       msgData.songs_heard = [res.data.song || {}];
+       msgData.songs_heard = res.data.song ? [res.data.song] : [];
      }
 
      console.log('[handleShareSong] Creating message with:', msgData);
      const newMsg = await base44.entities.Message.create(msgData);
-     console.log('[handleShareSong] Created message:', newMsg?.id);
+     console.log('[handleShareSong] Message created:', newMsg?.id);
+     console.log('[handleShareSong] Returned message has:', { songs: newMsg?.songs_heard?.length, videos: newMsg?.videos_watched?.length });
 
-     if (!isMountedRef.current) {
-       await base44.entities.Conversation.update(conversationIdRef.current, {
-         last_message_preview: isVideo ? "(video)" : "(song)",
-         last_message_date: new Date().toISOString(),
-       });
-       queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-     } else {
-       setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
+     // Always update conversation and refresh queries
+     await base44.entities.Conversation.update(conversationIdRef.current, {
+       last_message_preview: msgData.content,
+       last_message_date: new Date().toISOString(),
+     });
+     queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+
+     // Add to local state immediately
+     if (isMountedRef.current) {
+       console.log('[handleShareSong] Adding to local state:', newMsg?.id);
+       setMessages(prev => [...prev, newMsg]);
      }
+
      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+   } else {
+     console.error('[handleShareSong] processSongLink returned success=false');
    }
   } catch (err) {
-   console.error('[handleShareSong] Error:', err.message);
+   console.error('[handleShareSong] Error:', err);
   }
   };
 
