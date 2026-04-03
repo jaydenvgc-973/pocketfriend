@@ -307,7 +307,10 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
   const save = async () => {
     setSaving(true);
     try {
-      const valid = members.filter(m => m.name?.trim());
+      // Preserve _is_user entries; only validate/save non-user members
+      const userEntry = members.find(m => m._is_user);
+      const valid = members.filter(m => m.name?.trim() && !m._is_user);
+      if (userEntry) valid.push(userEntry); // keep user entry intact
       const updatedRelationships = await syncFamilyToRelationships(character, valid);
       const updated = { ...character, family_members: valid };
       const systemPrompt = buildSystemPrompt(updated);
@@ -334,7 +337,9 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
     }
   };
 
-  const hasChanges = JSON.stringify(members) !== JSON.stringify(character.family_members || []);
+  const nonUserMembers = members.filter(m => !m._is_user);
+  const originalNonUser = (character.family_members || []).filter(m => !m._is_user);
+  const hasChanges = JSON.stringify(nonUserMembers) !== JSON.stringify(originalNonUser);
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
@@ -352,14 +357,26 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
         )}
       </div>
 
-      {members.length === 0 && (
+      {members.filter(m => !m._is_user).length === 0 && !members.some(m => m._is_user) && (
         <p className="text-xs text-muted-foreground italic">No family members added yet.</p>
       )}
 
       <div className="space-y-3">
         {members.map((member, idx) => (
           <div key={idx} className="rounded-xl border border-border bg-secondary/30 p-3 space-y-2">
-            {readOnly ? (
+            {/* User entry — read-only, managed from My Profile */}
+            {member._is_user ? (
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                  <span className="text-sm font-semibold text-primary">{member.name?.[0]?.toUpperCase() || "?"}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-foreground font-medium">{member.name}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{member.relationship_type}</p>
+                </div>
+                <span className="text-[10px] text-pink-400 border border-pink-400/30 rounded px-1.5 py-0.5">You</span>
+              </div>
+            ) : readOnly ? (
               /* Read-only view with photo */
               <div className="flex items-center gap-3">
                 {(() => {

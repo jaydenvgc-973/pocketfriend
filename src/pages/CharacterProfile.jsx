@@ -131,16 +131,12 @@ export default function CharacterProfile() {
     staleTime: 0,
   });
 
-  const getReciprocal = (rel) => {
-    if (!rel || !userSettings[0]?.user_relatives) return null;
-    const userRelatives = userSettings[0].user_relatives;
-    const currentUserIsChild = (userRelatives[character?.id]);
-    const userGender = userSettings[0]?.user_gender;
-    if (currentUserIsChild === "mother") return userGender === "male" ? "son" : "daughter";
-    if (currentUserIsChild === "father") return userGender === "male" ? "son" : "daughter";
-    if (currentUserIsChild === "sibling") return "sibling";
-    if (currentUserIsChild === "child") return character?.gender === "female" ? "mother" : "father";
-    return null;
+  const getReciprocal = () => {
+    const settings = userSettings[0];
+    if (!settings?.user_relatives || !character?.id) return null;
+    const assignedRole = settings.user_relatives[character.id];
+    if (!assignedRole) return null;
+    return getReciprocalRole(assignedRole, settings.user_gender);
   };
 
   const zodiacSign = character?.birthday ? getZodiacSign(character.birthday) : (character?.zodiac_sign || null);
@@ -286,12 +282,19 @@ export default function CharacterProfile() {
         <div className="bg-card border border-border rounded-2xl p-4">
           <div className="flex items-center justify-between mb-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Your Connection</p>
-            {getReciprocal() && (
-              <div className="flex items-center gap-1 text-xs text-pink-400">
-                <Heart className="w-3 h-3 fill-current" />
-                <span className="capitalize">{getReciprocal()}</span>
-              </div>
-            )}
+            {(() => {
+              const reciprocal = getReciprocal();
+              const settings = userSettings[0];
+              const assignedRole = settings?.user_relatives?.[character?.id];
+              return reciprocal ? (
+                <div className="space-y-0.5 text-right">
+                  <div className="flex items-center gap-1 text-xs text-pink-400">
+                    <Heart className="w-3 h-3 fill-current" />
+                    <span className="capitalize">{getRelationshipLabel(assignedRole)} ↔ {getRelationshipLabel(reciprocal)}</span>
+                  </div>
+                </div>
+              ) : null;
+            })()}
           </div>
           <div className="space-y-3">
             {[

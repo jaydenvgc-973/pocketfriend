@@ -6,7 +6,7 @@ import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
-import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils";
+import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
 export default function MyProfile() {
   const queryClient = useQueryClient();
