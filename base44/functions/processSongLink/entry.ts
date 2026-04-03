@@ -15,12 +15,19 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId and songLink are required' }, { status: 400 });
     }
 
-    const character = await base44.asServiceRole.entities.Character.get(characterId);
+    // Use filter instead of get — more reliable across SDK versions
+    let character = null;
+    try {
+      const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+      character = chars?.[0] || null;
+    } catch (_) {
+      // filter can throw on invalid IDs
+    }
     if (!character) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
-    // Detect if this is a playlist link
+    // Detect if this is a playlist/album link
     const isPlaylist =
       /[?&]list=/.test(songLink) ||
       /playlist/i.test(songLink) ||
@@ -29,56 +36,78 @@ Deno.serve(async (req) => {
 
     if (isPlaylist) {
       // ── PLAYLIST PATH ────────────────────────────────────────────────────────
-      const playlistPrompt = `You have access to the internet. Look up this exact music playlist/album URL and identify all the songs in it: ${songLink}
+      const playlistPrompt = `You have access to the internet. Look up this exact music playlist/album URL: ${songLink}
 
-Search for this URL and return the real tracklist. Include up to 10 songs.
+Search the web for this URL and return the REAL tracklist with actual song titles and artist names.
 
-For EACH song provide:
-- title: the exact song title
-- artist: the artist/band name
-- lyric_excerpt: a real, memorable lyric line from the song (make it meaningful, not generic)
-- mood: 2-3 words describing the feel/vibe of the song (e.g. "melancholic, romantic", "upbeat, danceable", "dark, introspective")
+For EACH song (up to 10) provide:
+- title: the exact song title (REQUIRED — must be a real song name)
+- artist: the artist/band name (REQUIRED)
+- lyric_excerpt: a real, memorable lyric line from the song
+- mood: 2-3 words describing the feel/vibe (e.g. "melancholic, romantic", "upbeat, danceable")
 
-Also provide the playlist_name (the album/playlist title).
+Also provide:
+- playlist_name: the actual album or playlist name
 
-Return JSON with fields:
-- playlist_name: string (the actual album or playlist name)
-- songs: array of { title, artist, lyric_excerpt, mood }`;
+IMPORTANT: Return real song data from actually searching the URL. Do not make up song names.
 
-      const playlistData = await base44.integrations.Core.InvokeLLM({
-        prompt: playlistPrompt,
-        add_context_from_internet: true,
-        model: 'gemini_3_flash',
-        response_json_schema: {
-          type: 'object',
-          properties: {
-            playlist_name: { type: 'string' },
-            songs: {
-              type: 'array',
-              items: {
-                type: 'object',
-                properties: {
-                  title: { type: 'string' },
-                  artist: { type: 'string' },
-                  lyric_excerpt: { type: 'string' },
-                  mood: { type: 'string' }
+Return valid JSON only:
+{
+  "playlist_name": "...",
+  "songs": [
+    { "title": "...", "artist": "...", "lyric_excerpt": "...", "mood": "..." }
+  ]
+}`;
+
+      let playlistData = null;
+      try {
+        playlistData = await base44.integrations.Core.InvokeLLM({
+          prompt: playlistPrompt,
+          add_context_from_internet: true,
+          model: 'gemini_3_flash',
+          response_json_schema: {
+            type: 'object',
+            properties: {
+              playlist_name: { type: 'string' },
+              songs: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    title: { type: 'string' },
+                    artist: { type: 'string' },
+                    lyric_excerpt: { type: 'string' },
+                    mood: { type: 'string' }
+                  },
+                  required: ['title', 'artist']
                 }
               }
-            }
+            },
+            required: ['playlist_name', 'songs']
           }
-        }
-      });
+        });
+      } catch (llmErr) {
+        console.error('[processSongLink] Playlist LLM error:', llmErr.message);
+        return Response.json({ error: 'Failed to identify playlist songs: ' + llmErr.message }, { status: 500 });
+      }
+
+      // Validate we got real songs back
+      if (!playlistData?.songs?.length) {
+        return Response.json({ error: 'Could not identify songs in this playlist. Try a different link.' }, { status: 422 });
+      }
 
       const songsHeard = character.songs_heard || [];
       const now = new Date().toISOString();
 
-      const newSongs = (playlistData.songs || []).map(s => ({
-        title: s.title,
-        artist: s.artist,
-        lyrics_excerpt: s.lyric_excerpt || '',
-        full_lyrics: s.mood ? `Mood/vibe: ${s.mood}` : '',
-        added_date: now,
-      }));
+      const newSongs = playlistData.songs
+        .filter(s => s.title && s.artist) // only valid entries
+        .map(s => ({
+          title: s.title,
+          artist: s.artist,
+          lyrics_excerpt: s.lyric_excerpt || '',
+          full_lyrics: s.mood ? `Mood/vibe: ${s.mood}` : '',
+          added_date: now,
+        }));
 
       // Dedupe: skip songs the character already knows
       const existingKeys = new Set(songsHeard.map(s => `${s.title}|${s.artist}`.toLowerCase()));
@@ -101,48 +130,71 @@ Return JSON with fields:
     // ── SINGLE SONG PATH ─────────────────────────────────────────────────────
     const extractionPrompt = `You have access to the internet. Look up this music link and identify the song: ${songLink}
 
-Search for this URL and return:
-1. The exact song title
-2. The artist name
-3. A brief summary of what the song is about (2-3 sentences)
-4. A real, memorable lyric excerpt from the song
-5. The mood/vibe of the song in 2-3 words (e.g. "melancholic, romantic", "upbeat, energetic")
+Search the web for this URL and return the REAL song title and artist.
 
-Return as JSON with fields: title, artist, summary, lyric_excerpt, mood`;
+Return:
+1. title: the exact song title (REQUIRED)
+2. artist: the artist name (REQUIRED)
+3. summary: what the song is about (2-3 sentences)
+4. lyric_excerpt: a real, memorable lyric line
+5. mood: 2-3 words for the vibe (e.g. "melancholic, romantic")
 
-    const response = await base44.integrations.Core.InvokeLLM({
-      prompt: extractionPrompt,
-      add_context_from_internet: true,
-      model: 'gemini_3_flash',
-      response_json_schema: {
-        type: 'object',
-        properties: {
-          title: { type: 'string' },
-          artist: { type: 'string' },
-          summary: { type: 'string' },
-          lyric_excerpt: { type: 'string' }
-        }
-      }
-    });
+Return valid JSON only:
+{
+  "title": "...",
+  "artist": "...",
+  "summary": "...",
+  "lyric_excerpt": "...",
+  "mood": "..."
+}`;
 
-    // Get full lyrics
-    const lyricsPrompt = `Get the full lyrics for the song "${response.title}" by ${response.artist}. Return only the lyrics, line by line.`;
-    let fullLyrics = '';
+    let songData = null;
     try {
-      fullLyrics = await base44.integrations.Core.InvokeLLM({
-        prompt: lyricsPrompt,
+      songData = await base44.integrations.Core.InvokeLLM({
+        prompt: extractionPrompt,
+        add_context_from_internet: true,
+        model: 'gemini_3_flash',
+        response_json_schema: {
+          type: 'object',
+          properties: {
+            title: { type: 'string' },
+            artist: { type: 'string' },
+            summary: { type: 'string' },
+            lyric_excerpt: { type: 'string' },
+            mood: { type: 'string' }
+          },
+          required: ['title', 'artist']
+        }
+      });
+    } catch (llmErr) {
+      console.error('[processSongLink] Song LLM error:', llmErr.message);
+      return Response.json({ error: 'Failed to identify song: ' + llmErr.message }, { status: 500 });
+    }
+
+    if (!songData?.title || !songData?.artist) {
+      return Response.json({ error: 'Could not identify song from this link. Try a different link.' }, { status: 422 });
+    }
+
+    // Get full lyrics (fire-and-forget style — don't crash if this fails)
+    let fullLyrics = songData.summary || '';
+    try {
+      const lyricsResult = await base44.integrations.Core.InvokeLLM({
+        prompt: `Get the full lyrics for "${songData.title}" by ${songData.artist}. Return only the lyrics, line by line. No headers, no commentary.`,
         add_context_from_internet: true,
         model: 'gemini_3_flash'
       });
+      if (lyricsResult && typeof lyricsResult === 'string' && lyricsResult.trim().length > 20) {
+        fullLyrics = lyricsResult.trim();
+      }
     } catch (_) {
-      fullLyrics = response.summary;
+      // Lyrics fetch failed — use summary as fallback
     }
 
     const newSong = {
-      title: response.title,
-      artist: response.artist,
-      lyrics_excerpt: response.lyric_excerpt,
-      full_lyrics: fullLyrics + (response.mood ? `\n\nMood/vibe: ${response.mood}` : ''),
+      title: songData.title,
+      artist: songData.artist,
+      lyrics_excerpt: songData.lyric_excerpt || '',
+      full_lyrics: fullLyrics + (songData.mood ? `\n\nMood/vibe: ${songData.mood}` : ''),
       added_date: new Date().toISOString(),
     };
 
@@ -155,10 +207,11 @@ Return as JSON with fields: title, artist, summary, lyric_excerpt, mood`;
       success: true,
       is_playlist: false,
       song: newSong,
-      message: `${character.name} just listened to "${response.title}" by ${response.artist}`,
+      message: `${character.name} just listened to "${songData.title}" by ${songData.artist}`,
     });
 
   } catch (error) {
+    console.error('[processSongLink] Unexpected error:', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

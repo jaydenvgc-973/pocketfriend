@@ -609,22 +609,37 @@ export default function Chat() {
         songLink
       });
       if (res?.data?.success) {
-        const content = res.data.is_playlist
-          ? `Just went through "${res.data.playlist_name}" — ${res.data.songs_added} new songs. Good taste.`
-          : `Thanks for the song! "${res.data.song.title}" by ${res.data.song.artist} is great. ${res.data.song.lyrics_excerpt ? `I love the line "${res.data.song.lyrics_excerpt}"` : ''}.`;
-        setMessages(prev => [...prev, {
-          id: 'system_' + Date.now(),
-          conversation_id: conversationIdRef.current,
-          sender_type: 'character',
-          character_id: characterId,
-          character_name: character.name,
-          content,
-          timestamp: new Date().toISOString()
-        }]);
+        let content;
+        if (res.data.is_playlist) {
+          const playlistName = res.data.playlist_name || 'that playlist';
+          const count = res.data.songs_added || 0;
+          const songList = (res.data.songs || []).slice(0, 3).map(s => `"${s.title}" by ${s.artist}`).join(', ');
+          content = `Just listened through "${playlistName}" — ${count} new tracks. ${songList ? `Really felt ${songList}.` : 'Good taste.'}`;
+        } else {
+          const song = res.data.song || {};
+          const title = song.title || 'that song';
+          const artist = song.artist || 'the artist';
+          const lyric = song.lyrics_excerpt;
+          content = `"${title}" by ${artist} is a vibe.${lyric ? ` "${lyric}" hits different.` : ''}`;
+        }
+        // Persist this acknowledgment to the DB so it survives navigation
+        const convoId = conversationIdRef.current;
+        if (convoId) {
+          await base44.entities.Message.create({
+            conversation_id: convoId,
+            sender_type: 'character',
+            character_id: characterId,
+            character_name: character.name,
+            content,
+            timestamp: new Date().toISOString(),
+          });
+        }
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }
     } catch (err) {
-      setSendError("Failed to process song link. Try again.");
+      console.warn('[handleShareSong] failed:', err.message);
+      // Don't show an error to the user — song processing is supplementary
+      // The message will still be sent normally; character just won't acknowledge the song
     }
   };
 
@@ -734,6 +749,27 @@ export default function Chat() {
     }
 
     if (isMountedRef.current) setIsTyping(true);
+
+    // Exponential backoff retry for rate limits — defined here so it's available throughout sendMessage
+    const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
+      let retryCount = 0;
+      while (retryCount <= maxRetries) {
+        try {
+          return await base44.integrations.Core.InvokeLLM({
+            prompt,
+            add_context_from_internet: true,
+            model
+          });
+        } catch (err) {
+          const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
+          if (!isRateLimit || retryCount === maxRetries) throw err;
+          const delayMs = Math.pow(2, retryCount + 1) * 1000;
+          console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`);
+          await new Promise(r => setTimeout(r, delayMs));
+          retryCount++;
+        }
+      }
+    };
 
     let recentMsgs, response, responseText, emotionalState, imagePrompts = [], msgType = "text_only";
     try {
@@ -1110,29 +1146,6 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         }
 
         return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
-      };
-
-      // Exponential backoff retry for rate limits
-      const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
-        let retryCount = 0;
-        while (retryCount <= maxRetries) {
-          try {
-            return await base44.integrations.Core.InvokeLLM({
-              prompt,
-              add_context_from_internet: true,
-              model
-            });
-          } catch (err) {
-            const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
-            if (!isRateLimit || retryCount === maxRetries) throw err;
-            
-            // Exponential backoff: 2s, 4s, 8s
-            const delayMs = Math.pow(2, retryCount + 1) * 1000;
-            console.warn(`[RATE_LIMIT] Retry ${retryCount + 1}/${maxRetries} after ${delayMs}ms`);
-            await new Promise(r => setTimeout(r, delayMs));
-            retryCount++;
-          }
-        }
       };
 
       let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
