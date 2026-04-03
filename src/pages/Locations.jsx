@@ -16,6 +16,8 @@ import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
 import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import { Link } from "react-router-dom";
+import { getVenuePositions } from "@/lib/venuePositions";
+import PositionInput from "@/components/location/PositionInput";
 
 // ── Zone presets per category ────────────────────────────────────────────────
 const ZONE_PRESETS = {
@@ -789,13 +791,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
                             </div>
                           </div>
                           <div className="flex flex-col gap-1">
-                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Title</label>
-                            <Input
-                              type="text"
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Position</label>
+                            <PositionInput
+                              category={form.category}
                               value={form.worker_job_titles[workerId] || ''}
-                              onChange={(e) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: e.target.value })}
-                              placeholder="e.g. Manager"
-                              className="h-8 text-xs"
+                              onChange={(val) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: val })}
                             />
                           </div>
                         </div>
