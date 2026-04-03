@@ -51,8 +51,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     }
   };
 
-  // A message is an "image placeholder" if it has no content, no image_url, and was sent by a character
-  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && !message.content?.trim();
+  // A message is an "image placeholder" if it has no content, no image_url, no media, and was sent by a character
+  const hasMedia = (message.songs_heard?.length > 0) || (message.videos_watched?.length > 0);
+  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && !message.content?.trim() && !hasMedia;
 
   const handleImageRetry = async (forceRegenerate = false) => {
     if (imageRetrying) return;
