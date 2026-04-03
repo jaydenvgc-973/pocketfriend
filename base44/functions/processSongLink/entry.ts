@@ -27,6 +27,20 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
+    // Detect platform from URL
+    const detectPlatform = (url) => {
+      if (/spotify\.com/.test(url)) return 'spotify';
+      if (/apple\.com|music\.apple\.com/.test(url)) return 'apple';
+      if (/youtube\.com|youtu\.be|music\.youtube\.com/.test(url)) return 'youtube';
+      if (/tidal\.com/.test(url)) return 'tidal';
+      if (/soundcloud\.com/.test(url)) return 'soundcloud';
+      if (/bandcamp\.com/.test(url)) return 'bandcamp';
+      if (/amazon\.com.*music|music\.amazon\.com/.test(url)) return 'amazon';
+      return 'generic';
+    };
+
+    const platform = detectPlatform(songLink);
+
     // Detect if this is a playlist/album link
     const isPlaylist =
       /[?&]list=/.test(songLink) ||
@@ -112,6 +126,8 @@ Return valid JSON only:
           full_lyrics: s.mood ? `Mood/vibe: ${s.mood}` : '',
           spotify_id: s.spotify_id || '',
           preview_url: s.preview_url || '',
+          platform: platform,
+          link: songLink,
           added_date: now,
         }));
 
@@ -126,6 +142,7 @@ Return valid JSON only:
       return Response.json({
         success: true,
         is_playlist: true,
+        platform: platform,
         playlist_name: playlistData.playlist_name || 'Playlist',
         songs_added: uniqueNewSongs.length,
         songs: uniqueNewSongs,
@@ -209,6 +226,8 @@ Return valid JSON only:
       full_lyrics: fullLyrics + (songData.mood ? `\n\nMood/vibe: ${songData.mood}` : ''),
       spotify_id: songData.spotify_id || '',
       preview_url: songData.preview_url || '',
+      platform: platform,
+      link: songLink,
       added_date: new Date().toISOString(),
     };
 
@@ -220,6 +239,7 @@ Return valid JSON only:
     return Response.json({
       success: true,
       is_playlist: false,
+      platform: platform,
       song: newSong,
       message: `${character.name} just listened to "${songData.title}" by ${songData.artist}`,
     });

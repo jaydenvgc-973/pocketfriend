@@ -4,6 +4,7 @@ import { format } from "date-fns";
 import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
+import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
 
 const emotionalColors = {
   calm: "bg-secondary",
@@ -222,6 +223,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
             />
             {message.content && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap break-all px-4 py-2.5">{message.content}</p>
+            )}
+            {message.songs_heard && message.songs_heard.length > 0 && (
+              <div className="px-4 py-3 space-y-2">
+                {message.songs_heard.map((song, idx) => (
+                  <MusicPreviewPlayer key={idx} song={song} platform={song.platform || 'spotify'} />
+                ))}
+              </div>
             )}
           </div>
 
