@@ -56,12 +56,13 @@ const CATEGORIES = [
 ];
 
 // ── LocationCard ─────────────────────────────────────────────────────────────
-function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {} }) {
+function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {}, isSelected = false, onSelectChange = null }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
   const zones = location.zones || [];
   const totalImages = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
   const isGenericHome = location.is_default_generic;
+  const canDelete = location.created_by === currentUser?.email || location.location_type === 'global';
 
   return (
     <motion.div
@@ -69,9 +70,17 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.95 }}
-      className="bg-card border border-border rounded-2xl overflow-hidden"
+      className={`bg-card border rounded-2xl overflow-hidden transition-colors ${isSelected ? 'border-primary bg-primary/5' : 'border-border'}`}
     >
       <div className="flex items-center gap-3 p-4">
+        {onSelectChange && canDelete && (
+          <input
+            type="checkbox"
+            checked={isSelected}
+            onChange={(e) => onSelectChange(location.id, e.target.checked)}
+            className="w-5 h-5 rounded cursor-pointer"
+          />
+        )}
         <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0 text-lg">
           {catDef.emoji}
         </div>
@@ -1112,6 +1121,7 @@ export default function Locations() {
   const [editingLocation, setEditingLocation] = useState(null);
   const [filter, setFilter] = useState("all");
   const [newlyCreatedLocation, setNewlyCreatedLocation] = useState(null);
+  const [selectedForDelete, setSelectedForDelete] = useState(new Set());
 
   const { data: currentUser } = useQuery({
     queryKey: ["user"],
@@ -1197,6 +1207,33 @@ export default function Locations() {
     setEditingLocation(null);
   };
 
+  const handleSelectChange = (id, checked) => {
+    const newSet = new Set(selectedForDelete);
+    if (checked) {
+      newSet.add(id);
+    } else {
+      newSet.delete(id);
+    }
+    setSelectedForDelete(newSet);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedForDelete.size === 0) return;
+    
+    const names = Array.from(selectedForDelete)
+      .map(id => locations.find(l => l.id === id)?.name)
+      .filter(Boolean)
+      .join(', ');
+    
+    if (!confirm(`Delete ${selectedForDelete.size} location(s)?\n\n${names}\n\nThis cannot be undone.`)) return;
+    
+    for (const id of selectedForDelete) {
+      await base44.entities.LocationReference.delete(id);
+    }
+    setSelectedForDelete(new Set());
+    queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+  };
+
   const handleDelete = async (id) => {
     const loc = locations.find(l => l.id === id);
     if (!loc) return;
@@ -1249,14 +1286,24 @@ export default function Locations() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Filter tabs */}
-        <div className="flex gap-2">
-          {["all", "global", "character_specific"].map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-              {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
+        {/* Filter tabs + bulk delete */}
+        <div className="flex gap-2 items-center">
+          <div className="flex gap-2 flex-1">
+            {["all", "global", "character_specific"].map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
+                {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
+              </button>
+            ))}
+          </div>
+          {selectedForDelete.size > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              className="px-3 py-2 rounded-xl text-xs font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors whitespace-nowrap"
+            >
+              Delete {selectedForDelete.size}
             </button>
-          ))}
+          )}
         </div>
 
         {/* Empty state */}
@@ -1299,6 +1346,8 @@ export default function Locations() {
                 onEdit={handleEdit}
                 characters={characters}
                 currentUser={currentUser}
+                isSelected={selectedForDelete.has(loc.id)}
+                onSelectChange={handleSelectChange}
               />
             ))}
           </AnimatePresence>
