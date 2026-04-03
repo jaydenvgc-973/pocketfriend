@@ -603,13 +603,19 @@ export default function Chat() {
   };
 
   const handleShareSong = async (mediaLink, isVideo = false) => {
-  if (!character) return;
+  if (!character || !conversationIdRef.current) {
+   console.warn('[handleShareSong] Missing character or conversationId');
+   return;
+  }
+  console.log('[handleShareSong] Processing:', mediaLink, 'isVideo:', isVideo);
   try {
    const res = await base44.functions.invoke('processSongLink', {
      characterId,
      songLink: mediaLink,
      isVideo
    });
+   console.log('[handleShareSong] Response:', res?.data);
+
    if (res?.data?.success) {
      let msgData = {
        conversation_id: conversationIdRef.current,
@@ -617,41 +623,34 @@ export default function Chat() {
        character_id: characterId,
        character_name: character.name,
        timestamp: new Date().toISOString(),
+       content: '',
      };
 
      if (isVideo) {
-       const video = res.data.video || {};
-       msgData.content = '';
-       msgData.videos_watched = [video];
+       msgData.videos_watched = [res.data.video || {}];
      } else if (res.data.is_playlist) {
-       msgData.content = '';
        msgData.songs_heard = res.data.songs || [];
      } else {
-       const song = res.data.song || {};
-       msgData.content = '';
-       msgData.songs_heard = [song];
+       msgData.songs_heard = [res.data.song || {}];
      }
 
-     // Persist media-only message so it survives navigation
-     const convoId = conversationIdRef.current;
-     if (convoId) {
-       const newMsg = await base44.entities.Message.create(msgData);
-       if (!isMountedRef.current) {
-         // User navigated away — update conversation so unread badge shows
-         await base44.entities.Conversation.update(convoId, {
-           last_message_preview: isVideo ? "(video)" : "(song)",
-           last_message_date: new Date().toISOString(),
-         });
-         queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-       } else {
-         // User still on page — add to local state
-         setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
-       }
+     console.log('[handleShareSong] Creating message with:', msgData);
+     const newMsg = await base44.entities.Message.create(msgData);
+     console.log('[handleShareSong] Created message:', newMsg?.id);
+
+     if (!isMountedRef.current) {
+       await base44.entities.Conversation.update(conversationIdRef.current, {
+         last_message_preview: isVideo ? "(video)" : "(song)",
+         last_message_date: new Date().toISOString(),
+       });
+       queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+     } else {
+       setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg]);
      }
      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
    }
   } catch (err) {
-   console.warn('[handleShareSong] failed:', err.message);
+   console.error('[handleShareSong] Error:', err.message);
   }
   };
 
