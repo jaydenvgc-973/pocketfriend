@@ -21,6 +21,13 @@ export default function CharacterManager() {
     queryFn: () => base44.auth.me(),
   });
 
+  const { data: userSettingsList = [] } = useQuery({
+    queryKey: ['userSettings'],
+    queryFn: () => base44.entities.UserSettings.list(),
+    enabled: !!currentUser?.email,
+  });
+  const userSettings = userSettingsList[0] || {};
+
   const { data: roster = [] } = useQuery({
     queryKey: ['unifiedRoster', currentUser?.email],
     queryFn: () => fetchUnifiedRoster(base44, currentUser?.email),
@@ -285,7 +292,10 @@ export default function CharacterManager() {
             const itemData = item.data;
             // Create truly unique IDs: user prefix, character ID for active, or source_character_id_person_name_index for NPCs
             const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}_${index}` : itemData.id);
-            const itemName = isUser ? itemData.full_name : itemData.name;
+            // For user, always use the in-world name from settings if set
+            const itemName = isUser
+              ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
+              : itemData.name;
             const isSelected = selectedForMerge.has(itemId);
             
             return (
@@ -305,15 +315,19 @@ export default function CharacterManager() {
                       {isSelected && <Check className="w-3 h-3 text-white" />}
                     </div>
                   )}
-                  {isUser ? (
-                    itemData.avatar_url ? (
-                      <img src={itemData.avatar_url} alt={itemName} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
-                    ) : (
-                      <div className="w-12 h-12 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-                        <span className="text-sm font-semibold text-primary-foreground">{getInitial(itemName)}</span>
-                      </div>
-                    )
-                  ) : isNPC ? (
+                  {isUser ? (() => {
+                   const userAvatar = itemData.avatar_url
+                     || userSettings?.generated_avatar_urls?.[0]
+                     || userSettings?.reference_image_urls?.[0]
+                     || null;
+                   return userAvatar ? (
+                     <img src={userAvatar} alt={itemName} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+                   ) : (
+                     <div className="w-12 h-12 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+                       <span className="text-sm font-semibold text-primary-foreground">{getInitial(itemName)}</span>
+                     </div>
+                   );
+                  })() : isNPC ? (
                     itemData.avatar_url ? (
                       <img src={itemData.avatar_url} alt={itemName} className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
                     ) : (

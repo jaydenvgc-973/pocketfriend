@@ -1217,9 +1217,14 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
       /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
     );
     const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-    const userRefImages = currentUser.generated_avatar_urls?.length > 0
-      ? currentUser.generated_avatar_urls
-      : (currentUser.reference_image_urls || []);
+    // Authoritative user reference images — generated avatars first (stronger identity signal), then raw uploads
+    // Also fall back to userSettings avatars in case auth user object is stale
+    const userRefImages = [
+      ...(currentUser.generated_avatar_urls || []),
+      ...(userSettings.generated_avatar_urls || []),
+      ...(currentUser.reference_image_urls || []),
+      ...(userSettings.reference_image_urls || []),
+    ].filter((v, i, a) => v && a.indexOf(v) === i); // dedupe, non-empty
     const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
     const charRefs = character.avatar_url
       ? [character.avatar_url, ...(character.reference_image_urls || [])]
@@ -1250,6 +1255,7 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
           characterReferenceImages: charRefs,
           userReferenceImages: useUserRefs ? userRefImages : [],
           characterName: character.name,
+          userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
           subjectType,
           characterId,
         }).then(() => {

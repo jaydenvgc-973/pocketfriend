@@ -519,7 +519,7 @@ PROHIBITED CHANGES:
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode, userAppearanceData } = await req.json();
+    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, userWorldName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode, userAppearanceData } = await req.json();
 
     if (!messageId || !prompt) {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
@@ -569,7 +569,45 @@ Deno.serve(async (req) => {
       }
     }
 
-    const hasUserImages = userReferenceImages && userReferenceImages.length > 0;
+    // ── SERVER-SIDE USER REF RESOLUTION ──────────────────────────────────────
+    // Always resolve from the message owner's settings to prevent stale/empty refs
+    let resolvedUserRefs = userReferenceImages || [];
+    let resolvedUserAppearanceData = userAppearanceData || null;
+
+    try {
+      const message = await base44.entities.Message.get(messageId).catch(() => null);
+      const createdBy = message?.created_by;
+      if (createdBy && (resolvedSubjectType === "user" || resolvedSubjectType === "joint")) {
+        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: createdBy }, null, 1).catch(() => []);
+        const sett = settingsList?.[0] || {};
+        // Merge: generated avatars first (highest fidelity), then raw uploads
+        const settRefs = [
+          ...(sett.generated_avatar_urls || []),
+          ...(sett.reference_image_urls || []),
+        ].filter(Boolean);
+        if (settRefs.length > resolvedUserRefs.length) {
+          resolvedUserRefs = settRefs;
+          console.log(`[USER-REFS] Server resolved ${settRefs.length} user ref images from settings`);
+        }
+        // Build appearance data if not provided
+        if (!resolvedUserAppearanceData && (sett.user_gender || sett.user_birthday)) {
+          resolvedUserAppearanceData = {
+            gender: sett.user_gender || '',
+            age_range: sett.user_age_range || '',
+            appearance_notes: sett.appearance_notes || '',
+            ethnicities: sett.ethnicities || [],
+          };
+        }
+        // Log the user's in-world name for debugging
+        if (sett.fictional_world_name) {
+          console.log(`[USER-IDENTITY] In-world name: "${sett.fictional_world_name}" (passed: "${userWorldName}")`);
+        }
+      }
+    } catch (refErr) {
+      console.error('[USER-REFS] Failed to resolve user refs server-side:', refErr.message);
+    }
+
+    const hasUserImages = resolvedUserRefs.length > 0;
     const hasCharacterImages = resolvedCharacterRefs.length > 0;
 
     // Parse [TAG] from start of prompt
@@ -655,7 +693,7 @@ Deno.serve(async (req) => {
       referenceImages = [
         ...locationImages.slice(0, 3),
         ...resolvedCharacterRefs.slice(0, 2),
-        ...userReferenceImages.slice(0, 2),
+        ...resolvedUserRefs.slice(0, 2),
       ].filter(Boolean);
 
       const roomNote = hasLocationImages
@@ -666,8 +704,8 @@ Deno.serve(async (req) => {
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       // User identity-lock mode: prioritize user refs, strong identity preservation
       // Strict mode requires maximum facial consistency, no drift/beautification
-      referenceImages = userReferenceImages.slice(0, 4);
-      const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(userAppearanceData, userIdentityStrictMode) : '';
+      referenceImages = resolvedUserRefs.slice(0, 4);
+      const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(resolvedUserAppearanceData, userIdentityStrictMode) : '';
       enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.${identityLockNote}`;
 
     } else if (hasCharacterImages) {
@@ -678,8 +716,8 @@ Deno.serve(async (req) => {
       ].filter(Boolean);
 
       // If user is included in the scene, add their identity lock
-      const userIdentityNote = (isUserIdentityLocked && hasUserImages && userAppearanceData) 
-        ? `\n\nUSER ALSO PRESENT: The user must be recognizable and consistent with their reference images. ${buildUserIdentityLockNote(userAppearanceData)}`
+      const userIdentityNote = (isUserIdentityLocked && hasUserImages && resolvedUserAppearanceData) 
+        ? `\n\nUSER ALSO PRESENT: The user must be recognizable and consistent with their reference images. ${buildUserIdentityLockNote(resolvedUserAppearanceData)}`
         : '';
 
       const roomInstruction = hasLocationImages
@@ -716,8 +754,8 @@ Deno.serve(async (req) => {
         location_name: resolvedLocationName || null,
         location_reference_images: locationImages.slice(0, 3),
         subject_type: resolvedSubjectType,
-        user_reference_images: userReferenceImages?.slice(0, 4) || [],
-        user_appearance_data: userAppearanceData || null,
+        user_reference_images: resolvedUserRefs.slice(0, 4),
+        user_appearance_data: resolvedUserAppearanceData || null,
         is_user_identity_locked: isUserIdentityLocked || false,
       };
       await base44.entities.Message.update(messageId, {

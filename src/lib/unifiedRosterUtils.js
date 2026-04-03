@@ -67,17 +67,41 @@ export async function fetchUnifiedRoster(base44, userEmail) {
     userAvatarUrl = user.reference_image_urls[0];
   }
 
-  const userEntity = user ? createVisualEntity({
-    id: 'user',
-    name: user.full_name || 'You',
-    avatar_url: userAvatarUrl,
-    appearance_notes: user.appearance_notes || '',
-    age_range: user.age_range || '',
-    gender: user.gender || '',
-    ethnicities: user.ethnicities || [],
-    reference_image_urls: user.reference_image_urls || [],
-    generated_avatar_urls: user.generated_avatar_urls || [],
-  }, 'user') : null;
+  // Prefer generated avatars first, then reference images for display
+  const userDisplayAvatar = user?.generated_avatar_urls?.[0]
+    || settings?.generated_avatar_urls?.[0]
+    || user?.reference_image_urls?.[0]
+    || settings?.reference_image_urls?.[0]
+    || null;
+
+  // The authoritative in-world name for the user — MUST use fictional_world_name if set
+  const userWorldName = settings?.fictional_world_name || user?.full_name || 'You';
+
+  // All reference images for generation — generated first (stronger identity signal), then raw uploads
+  const userReferenceImages = [
+    ...(user?.generated_avatar_urls || []),
+    ...(settings?.generated_avatar_urls || []),
+    ...(user?.reference_image_urls || []),
+    ...(settings?.reference_image_urls || []),
+  ].filter((v, i, a) => v && a.indexOf(v) === i); // dedupe
+
+  const userEntity = user ? {
+    ...createVisualEntity({
+      id: 'user',
+      name: userWorldName,
+      avatar_url: userDisplayAvatar,
+      appearance_notes: user.appearance_notes || settings?.appearance_notes || '',
+      age_range: user.age_range || settings?.user_age_range || '',
+      gender: user.gender || settings?.user_gender || '',
+      ethnicities: user.ethnicities || [],
+      reference_image_urls: userReferenceImages,
+      generated_avatar_urls: user?.generated_avatar_urls || settings?.generated_avatar_urls || [],
+    }, 'user'),
+    // Expose world name separately for consumers that need it
+    world_name: userWorldName,
+    // Full reference image list for image generation
+    all_reference_images: userReferenceImages,
+  } : null;
 
   // ── ALL CHARACTERS ──────────────────────────────────────────────────
   const allChars = activeCharacters

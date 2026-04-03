@@ -171,9 +171,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
     });
     
-    // Add user avatar if included (placeholder since we don't have user avatar)
-    if (userIncluded && userSettings?.generated_avatar_urls?.[0]) {
-      refs.push(userSettings.generated_avatar_urls[0]);
+    // Add user reference images for identity-locked generation
+    if (userIncluded) {
+      const userChar = allCharacters.find(c => c.is_user);
+      const userImgs = (userChar?.all_reference_images || userChar?.reference_image_urls || []);
+      refs.push(...userImgs.slice(0, 3));
     }
     
     return refs;
@@ -311,7 +313,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     setIsGenerating(true);
     setGenerateError(null);
     try {
-      const userName = userSettings?.fictional_world_name || "the user";
+      const userCharForGen = allCharacters.find(c => c.is_user);
+      const userName = userSettings?.fictional_world_name || userCharForGen?.world_name || userCharForGen?.name || "the user";
       const promptText = prompt.trim() || "candid natural moment, everyday life";
 
       // Use selected entities from dropdown (excluding user and world people for user generation)
@@ -323,8 +326,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const charReferences = buildReferenceImagesFromMention(selectedChars, false);
       
       // Get user profile for identity-locked generation
-      const userChar = allCharacters.find(c => c.is_user);
-      const userAppearanceData = buildUserAppearanceData(userChar);
+      const userAppearanceData = buildUserAppearanceData(userCharForGen);
 
       // Create a placeholder message for user
       const newMsg = await base44.entities.Message.create({
@@ -342,7 +344,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
           promptText,
           charReferences,
           selectedLocation ? locationImages : [],
-          userChar,
+          userCharForGen,
           userAppearanceData,
           true // strictMode: enforce maximum identity preservation
         );
@@ -359,7 +361,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
             zone_name: selectedZone || null,
             location_name: selectedLocation?.name || null,
             location_reference_images: selectedLocation ? locationImages : [],
-            user_reference_images: userChar ? buildUserReferenceImages(userChar) : [],
+            user_reference_images: userCharForGen ? buildUserReferenceImages(userCharForGen) : [],
             user_appearance_data: userAppearanceData,
             is_user_identity_locked: true,
           },
@@ -436,14 +438,14 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                         onClick={() => setGenerationTab("user")}
                         className={`flex-1 py-2 px-3 rounded-lg text-xs font-medium transition-colors ${generationTab === "user" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
                       >
-                        {userSettings?.fictional_world_name || "You"}
+                        {userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "You"}
                       </button>
                     </div>
 
                     <div className="flex items-center gap-2">
                       <Sparkles className="w-4 h-4 text-primary" />
                       <p className="text-sm font-medium text-foreground">
-                        {generationTab === "character" ? `Generate a photo from ${character.name}` : `Generate a photo of ${userSettings?.fictional_world_name || "you"}`}
+                        {generationTab === "character" ? `Generate a photo from ${character.name}` : `Generate a photo of ${userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "you"}`}
                       </p>
                     </div>
                     <p className="text-xs text-muted-foreground">

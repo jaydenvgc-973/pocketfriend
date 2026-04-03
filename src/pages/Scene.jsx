@@ -565,7 +565,7 @@ If no one is listed, return an empty responses array. Do NOT invent responses fr
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a group scene at ${location.name} (${location.category}).
 
-People present: ${displayName} (the user), ${charSummaries || "no one the user knows"}
+People present: ${displayName}, ${charSummaries || "no one they know"}
 
 Recent conversation:
 ${conversationHistory}
@@ -913,7 +913,7 @@ Return JSON:
               : <span className="text-xs font-bold text-primary">{displayName?.[0]}</span>
             }
           </div>
-          <span className="text-[9px] text-primary font-medium">You</span>
+          <span className="text-[9px] text-primary font-medium">{displayName}</span>
         </div>
         {sceneCharacters.map(char => (
           <div key={char.id} className="flex flex-col items-center gap-1">
