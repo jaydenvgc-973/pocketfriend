@@ -1268,11 +1268,12 @@ export default function Locations() {
     characterIds.has(l.owner_character_id) ||
     (l.resident_character_ids || []).some(id => characterIds.has(id));
   
-  const filtered = filter === "all" 
+  const filtered = (filter === "all" 
     ? locations 
     : filter === "character_specific"
     ? locations.filter(isCharacterHome)
-    : locations.filter(l => l.location_type === filter && !isCharacterHome(l));
+    : locations.filter(l => l.location_type === filter && !isCharacterHome(l))
+  ).filter(l => !selectedForDelete.has(l.id));
 
   return (
     <div className="min-h-screen bg-background pb-24">
