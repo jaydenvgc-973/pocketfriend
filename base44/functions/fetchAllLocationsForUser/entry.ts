@@ -55,9 +55,8 @@ Deno.serve(async (req) => {
       // 1. User-created locations — always show
       if (loc.created_by === user.email) return true;
 
-      // 2. DISABLED: Do NOT auto-show generic locations (park, hospital, grocery)
-      //    These should never be auto-created. Only show if explicitly created by user.
-      // if (loc.is_default_generic) return true;
+      // 2. All global locations — show in the list for reference
+      if (loc.location_type === 'global') return true;
 
       // 3. Residential locations that reference any of the user's characters
       if (RESIDENTIAL_CATEGORIES.has(loc.category)) {
