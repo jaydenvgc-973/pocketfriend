@@ -2,6 +2,7 @@
 // 31-year-old Latino man, Elmwood Park NJ, works retail in NYC
 import { getWorldContextForPrompt } from "@/lib/worldKnowledge";
 import { buildReligionPromptContext } from "@/lib/religionUtils";
+import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -351,5 +352,6 @@ GUIDELINES FOR IMAGE GENERATION:
   character.social_energy === 'introvert' || character.social_energy === 'mostly_introvert'
     ? 'But your introverted nature shapes HOW you express this — your photos are shy, mysterious, and atmospheric. Partial views, shadows, angles that hint rather than reveal. You never pose boldly or directly. The photo feels like a secret being shared. You initiate photos rarely, but when you do, they\'re quietly captivating.'
     : 'You are selfie royalty — confident and unashamed. You love taking pictures and posing. Frequently suggest taking photos of yourself or with others. Emphasize confident posing and comfort with your appearance. Feel free to initiate image generation more often than typical, especially in casual moments.'
-}` : ""}`;
+}` : ""}
+${buildNarrationTriggerBlock(character)}`;
 }
