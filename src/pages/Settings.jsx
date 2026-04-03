@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign } from "lucide-react";
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
@@ -100,6 +100,21 @@ export default function Settings() {
   });
 
   const movedAwayChars = characters.filter(c => c.status === "moved_away");
+  const [isProcessingPayday, setIsProcessingPayday] = useState(false);
+  const [paydayResult, setPaydayResult] = useState(null);
+
+  const handleForcePayday = async () => {
+    setIsProcessingPayday(true);
+    setPaydayResult(null);
+    try {
+      const res = await base44.functions.invoke('processPayroll', {});
+      setPaydayResult({ success: true, count: res.data?.processed || 0 });
+    } catch (err) {
+      setPaydayResult({ success: false });
+    } finally {
+      setIsProcessingPayday(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background">
@@ -344,6 +359,21 @@ export default function Settings() {
           <div className="mb-6 bg-card border border-border rounded-2xl p-4">
             <CharacterManager />
           </div>
+          <button
+            onClick={handleForcePayday}
+            disabled={isProcessingPayday}
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left mb-2 disabled:opacity-50"
+          >
+            <div className="w-9 h-9 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
+              <DollarSign className="w-4 h-4 text-green-500" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Force a Payday</p>
+              <p className="text-xs text-muted-foreground">
+                {isProcessingPayday ? "Processing payroll..." : paydayResult?.success ? `Done — ${paydayResult.count} character(s) paid` : paydayResult?.success === false ? "Payroll failed. Try again." : "Manually trigger payroll for all working characters"}
+              </p>
+            </div>
+          </button>
           <Link to="/edit-character-story">
             <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
               <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
