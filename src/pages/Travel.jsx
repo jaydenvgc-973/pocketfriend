@@ -269,20 +269,44 @@ export default function Travel() {
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6">
          {/* Character selection */}
-         <div>
-           <div className="flex items-center gap-2 mb-3">
-             <Users className="w-4 h-4 text-muted-foreground" />
-             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
-           </div>
-           <TravelCharacterSelector
-             characters={characters}
-             currentUser={currentUser}
-             displayName={displayName}
-             selectedIds={selectedCharacterIds}
-             locationMap={locationMap}
-             onToggle={toggleCharacter}
-           />
-         </div>
+                <div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
+                  </div>
+                  <TravelCharacterSelector
+                    characters={characters}
+                    currentUser={currentUser}
+                    displayName={displayName}
+                    selectedIds={selectedCharacterIds}
+                    locationMap={locationMap}
+                    onToggle={toggleCharacter}
+                  />
+                </div>
+
+                {/* Travel location search textbox - must activate on first tap */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Search or select location:</p>
+                  <input
+                    type="text"
+                    placeholder="Type location name..."
+                    className="w-full px-4 py-2 rounded-xl bg-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground text-sm"
+                    onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
+                    onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                    onInput={(e) => {
+                      // Filter locations based on search input
+                      const searchTerm = e.target.value.toLowerCase();
+                      if (searchTerm) {
+                        const filtered = locationsData.filter(l => 
+                          l.name.toLowerCase().includes(searchTerm)
+                        );
+                        if (filtered.length > 0) {
+                          setSelectedLocation(filtered[0]);
+                        }
+                      }
+                    }}
+                  />
+                </div>
 
          {/* Location grid */}
          <div>
@@ -291,6 +315,7 @@ export default function Travel() {
              locations={locationsData}
              selectedLocation={selectedLocation}
              onSelect={setSelectedLocation}
+             style={{ zIndex: 50 }}
            />
          </div>
 

@@ -33,6 +33,7 @@ import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
+import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
@@ -103,14 +104,16 @@ function App() {
   return (
     <AuthProvider>
       <ActiveCharacterProvider>
-        <QueryClientProvider client={queryClientInstance}>
-          <Router>
-            <PlayAsCharacterBanner />
-            <AuthenticatedApp />
-          </Router>
-          <AchievementUnlockModal />
-          <Toaster />
-        </QueryClientProvider>
+        <LocationEditProvider>
+          <QueryClientProvider client={queryClientInstance}>
+            <Router>
+              <PlayAsCharacterBanner />
+              <AuthenticatedApp />
+            </Router>
+            <AchievementUnlockModal />
+            <Toaster />
+          </QueryClientProvider>
+        </LocationEditProvider>
       </ActiveCharacterProvider>
     </AuthProvider>
   )
