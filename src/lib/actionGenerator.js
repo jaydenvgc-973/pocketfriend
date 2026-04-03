@@ -161,8 +161,9 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
   // 1. Get base action library for this location
   let baseActions = [];
   
-  if (location.subtype && ACTION_LIBRARY_BY_SUBTYPE[location.subtype.toLowerCase()]) {
-    baseActions = ACTION_LIBRARY_BY_SUBTYPE[location.subtype.toLowerCase()];
+  const subtypeStr = Array.isArray(location.subtype) ? location.subtype[0] : location.subtype;
+  if (subtypeStr && ACTION_LIBRARY_BY_SUBTYPE[subtypeStr.toLowerCase()]) {
+    baseActions = ACTION_LIBRARY_BY_SUBTYPE[subtypeStr.toLowerCase()];
   } else if (location.category && ACTION_LIBRARY_BY_CATEGORY[location.category]) {
     baseActions = ACTION_LIBRARY_BY_CATEGORY[location.category];
   } else {
