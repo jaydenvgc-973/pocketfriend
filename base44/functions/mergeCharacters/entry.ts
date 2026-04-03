@@ -302,22 +302,28 @@ Deno.serve(async (req) => {
 /**
  * recommendPrimary
  * 
- * Recommendation logic for which character should be the primary after merge.
- * Priority:
- * 1. Protected or default character
- * 2. Active character
- * 3. Most recently updated
+ * Identity priority when selecting which character remains after merge:
+ * 1. Active Character (highest priority - always preserved over NPCs/fictional)
+ * 2. Created Character (user-owned)
+ * 3. Protected/Default
+ * 4. Most recently updated
+ * 
+ * This ensures active versions are never replaced by NPC duplicates.
  */
 function recommendPrimary(chars) {
-  // Protected/default first
-  let candidate = chars.find(c => c.is_protected || c.is_default);
+  // Priority 1: Active character (never merge away active versions)
+  let candidate = chars.find(c => c.is_active_character && c.character_type === 'active');
   if (candidate) return candidate;
 
-  // Active character
-  candidate = chars.find(c => c.is_active_character);
+  // Priority 2: User-created character
+  candidate = chars.find(c => c.character_type === 'user_created');
   if (candidate) return candidate;
 
-  // Most recently updated
+  // Priority 3: Protected or default (system-managed)
+  candidate = chars.find(c => c.is_protected || c.is_default);
+  if (candidate) return candidate;
+
+  // Priority 4: Most recently updated
   return chars.reduce((latest, c) => {
     const latestTime = new Date(latest.updated_date || 0);
     const cTime = new Date(c.updated_date || 0);
