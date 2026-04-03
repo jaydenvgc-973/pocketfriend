@@ -641,7 +641,7 @@ export default function Chat() {
     }
 
     // Check for music platform links (Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, etc.)
-    const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify|apple\.com\/[^\s]*music|music\.apple|youtube|amazon|tidal|soundcloud|bandcamp)[^\s]*/i);
+    const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|youtube\.com|youtu\.be|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0]);
     }
