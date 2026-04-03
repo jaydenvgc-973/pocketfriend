@@ -221,7 +221,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               originalPrompt={message.generation_context?.prompt || null}
             />
             {message.content && (
-              <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap break-all px-4 py-2.5">{message.content}</p>
             )}
           </div>
 
