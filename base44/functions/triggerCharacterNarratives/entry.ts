@@ -26,7 +26,6 @@ Deno.serve(async (req) => {
 
     const results = [];
     const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
     const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
     for (const character of activeCharacters) {
@@ -44,15 +43,16 @@ Deno.serve(async (req) => {
         // Only proceed if the conversation has been active in the last 24h
         if (!convo.last_message_date || convo.last_message_date < oneDayAgo) continue;
 
-        // Count narratives already sent today for this character
-        const todayNarratives = await base44.asServiceRole.entities.Message.filter(
+        // Check: no narrative sent in the last 2 hours
+        const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+        const recentNarratives = await base44.asServiceRole.entities.Message.filter(
           { conversation_id: convo.id, is_narrative: true },
           '-timestamp',
-          10
+          5
         );
-        const narrativesToday = todayNarratives.filter(m => m.timestamp?.startsWith(todayStr)).length;
-        if (narrativesToday >= 2) {
-          results.push({ characterId: character.id, name: character.name, status: 'skipped', reason: '2 narratives already today' });
+        const narrativeRecently = recentNarratives.some(m => m.timestamp >= twoHoursAgo);
+        if (narrativeRecently) {
+          results.push({ characterId: character.id, name: character.name, status: 'skipped', reason: 'narrative sent within last 2 hours' });
           continue;
         }
 
