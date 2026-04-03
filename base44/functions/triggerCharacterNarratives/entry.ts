@@ -64,12 +64,6 @@ Deno.serve(async (req) => {
         );
         if (recentMessages.length < 3) continue;
 
-        // 40% random chance — keeps it feeling natural
-        if (Math.random() > 0.40) {
-          results.push({ characterId: character.id, name: character.name, status: 'skipped', reason: 'random chance' });
-          continue;
-        }
-
         // Build context for narrative generation
         const recentText = recentMessages
           .slice(0, 5)
