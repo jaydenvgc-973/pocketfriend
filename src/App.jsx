@@ -31,6 +31,7 @@ import Moments from './pages/Moments';
 import Locations from './pages/Locations';
 import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
+import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 
 const AuthenticatedApp = () => {
@@ -75,6 +76,7 @@ const AuthenticatedApp = () => {
       <Route path="/locations" element={<Locations />} />
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
+      <Route path="/edit-character-religion" element={<EditCharacterReligion />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
       <Route path="/my-profile" element={<MyProfile />} />
       <Route path="/finance" element={<Finance />} />
