@@ -27,51 +27,11 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // 1. Ensure default locations exist first — inline check (can't call self via invoke)
-    const existingAll = await base44.asServiceRole.entities.LocationReference.filter({ created_by: user.email });
-    const existingNames = existingAll.map(l => (l.name || '').toLowerCase());
-    if (!existingNames.some(n => n.includes('generic park'))) {
-      await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Park', location_type: 'global', category: 'outdoor',
-        description: 'A public park used for walks, outdoor recreation, and general outdoor activities.',
-        keywords: ['park', 'outside', 'walk', 'fresh air', 'the park', 'recreation', 'nature'],
-        is_default_generic: true, owner_is_npc: true, owner_npc_name: 'City', owner_role: 'operator',
-        zones: [{ zone_name: 'Main Field', image_urls: [] }, { zone_name: 'Walking Path', image_urls: [] }],
-      });
-    }
-    if (!existingNames.some(n => n.includes('generic hospital'))) {
-      await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Hospital', location_type: 'global', category: 'medical',
-        description: 'A general hospital used for appointments, treatment, patient visits, and emergency visits.',
-        keywords: ['hospital', 'emergency', 'appointment', 'admitted', 'surgery', 'checkup', 'clinic', 'patient', 'treatment'],
-        is_default_generic: true, owner_is_npc: true, owner_npc_name: 'City Health System', owner_role: 'operator',
-        zones: [{ zone_name: 'Waiting Area', image_urls: [] }, { zone_name: 'Patient Room', image_urls: [] }],
-      });
-    }
-    if (!existingNames.some(n => n.includes('generic grocery'))) {
-      await base44.asServiceRole.entities.LocationReference.create({
-        name: 'Generic Grocery Store', location_type: 'global', category: 'grocery',
-        description: 'A general grocery store used for buying food, household shopping, and everyday errands.',
-        keywords: ['grocery', 'groceries', 'store', 'supermarket', 'food shopping', 'buying food', 'market', 'milk'],
-        is_default_generic: true, owner_is_npc: true, owner_npc_name: 'Store Management', owner_role: 'operator',
-        zones: [{ zone_name: 'Main Floor', image_urls: [] }, { zone_name: 'Checkout', image_urls: [] }],
-      });
-    }
-
-    // 2. Fetch all default locations for this user
+    // 1. Fetch all existing locations for this user
     const allLocations = await base44.asServiceRole.entities.LocationReference.filter(
       { created_by: user.email }
     );
-    const genericPark = allLocations.find(l => (l.name || '').toLowerCase().includes('generic park'));
-    const genericHospital = allLocations.find(l => (l.name || '').toLowerCase().includes('generic hospital'));
-    const genericGrocery = allLocations.find(l => (l.name || '').toLowerCase().includes('generic grocery'));
-
-    // Check if custom locations of each type exist (non-generic)
-    const hasCustomPark = allLocations.some(l => l.category === 'outdoor' && !l.is_default_generic);
-    const hasCustomHospital = allLocations.some(l => l.category === 'medical' && !l.is_default_generic);
-    const hasCustomGrocery = allLocations.some(l => l.category === 'grocery' && !l.is_default_generic);
-
-    // 3. Fetch all active characters
+    // 2. Fetch all active characters
     const allChars = await base44.asServiceRole.entities.Character.filter(
       { created_by: user.email, status: 'active' }
     );
@@ -79,46 +39,6 @@ Deno.serve(async (req) => {
     const updates = [];
 
     for (const char of allChars) {
-      const textToCheck = [
-        char.current_activity,
-        char.current_situation,
-        char.current_life_event,
-      ].filter(Boolean).join(' ');
-
-      // Park backfill — only if no custom park and generic park exists
-      if (!hasCustomPark && genericPark && matchesKeywords(textToCheck, PARK_KEYWORDS)) {
-        // We don't write a permanent location_id for transient visits, but log the inference
-        updates.push({
-          characterId: char.id,
-          characterName: char.name,
-          action: 'noted_at_park',
-          locationId: genericPark.id,
-          locationName: genericPark.name,
-        });
-      }
-
-      // Hospital backfill — if current state implies hospital visit and no specific hospital linked
-      if (!hasCustomHospital && genericHospital && matchesKeywords(textToCheck, HOSPITAL_KEYWORDS)) {
-        updates.push({
-          characterId: char.id,
-          characterName: char.name,
-          action: 'noted_at_hospital',
-          locationId: genericHospital.id,
-          locationName: genericHospital.name,
-        });
-      }
-
-      // Grocery backfill — similar transient awareness
-      if (!hasCustomGrocery && genericGrocery && matchesKeywords(textToCheck, GROCERY_KEYWORDS)) {
-        updates.push({
-          characterId: char.id,
-          characterName: char.name,
-          action: 'noted_at_grocery',
-          locationId: genericGrocery.id,
-          locationName: genericGrocery.name,
-        });
-      }
-
       // Coworker inference — inline for characters with linked workplaces
       if (char.occupation_location_id) {
         try {
