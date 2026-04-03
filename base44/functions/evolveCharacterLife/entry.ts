@@ -226,6 +226,26 @@ REALISM RULES — READ CAREFULLY:
 11. OCCUPATION SHAPES LIFE: If ${name} recently changed jobs or started training, that affects their stress, schedule, income, and daily narrative.
 12. EDUCATION MATTERS: If ${name} is enrolled in something, it affects their time, social circle, aspirations, and daily stress.
 
+CHARACTER EVOLUTION SYSTEM (EXTENSION — integrate naturally):
+Characters are NOT static. Based on the event history and life context above, consider whether ${name} might be:
+- SHIFTING PRIORITIES (e.g. money vs relationships, independence vs connection, routine vs spontaneity)
+- GROWING (becoming more open, more responsible, more grounded — if experiences support it)
+- REGRESSING (slipping back into old habits — if stress, conflict, or substance events suggest it)
+- ADAPTING (not idealized growth — real, sometimes messy change)
+
+Signals to look for:
+- Multiple negative events → more guarded, more defensive, potentially isolating
+- Financial instability → increased anxiety, hesitation around spending, more cautious decisions
+- Financial stability → slightly more generous, less stressed about small choices
+- Consistent positive events → more confident, warmer, slightly more open
+- Grief or betrayal events → withdrawn, more protective of themselves
+- Repeated conflict → on-edge, quicker to escalate
+- Recovery events → slowly rebuilding, still fragile
+
+Include a "character_evolution_note" field in your response that briefly describes (1–2 sentences) any priority shift or behavioral change that is emerging for ${name} based on their recent experiences. This should be subtle and behavior-based, not a declaration like "I've changed." It should show through choices and tone.
+
+If nothing significant is changing, set character_evolution_note to null.
+
 TODAY'S TASK:
 Generate realistic life updates grounded in current time, the character's history, and their specific vulnerabilities/strengths.
 
@@ -270,6 +290,7 @@ Return JSON:
   ],
   "current_life_event": string (ONE sentence about what's active right now — real, specific, shaped by their history),
   "daily_micro_narration": string (1–3 short third-person sentences describing what ${name} is doing right now. STRICT third person — use ${name} or ${pronouns.subject}/${pronouns.object}/${pronouns.possessive}. NEVER use "I", "me", "my"),
+  "character_evolution_note": string or null (1–2 sentences describing any emerging behavioral or priority shift for ${name} based on recent experiences. Behavior-based only — no declarations. Null if nothing significant.),
   "emotional_state": string (from: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated, hopelessness, grief, resentment, shame, longing, apathy, detachment, nostalgia),
   "health_status": string,
   "health_habits": string,
@@ -296,6 +317,7 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
             transient_encounters: { type: 'array', items: { type: 'object' } },
             current_life_event: { type: 'string' },
             daily_micro_narration: { type: 'string' },
+            character_evolution_note: { type: 'string' },
             emotional_state: { type: 'string' },
             health_status: { type: 'string' },
             health_habits: { type: 'string' },
@@ -310,10 +332,14 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         return { ...updatedRel, related_character_id: original?.related_character_id || updatedRel.related_character_id };
       });
 
+      // Build enriched life event — append evolution note if present
+      const lifeEvent = [update.current_life_event, update.character_evolution_note]
+        .filter(Boolean).join(' ');
+
       await base44.asServiceRole.entities.Character.update(character.id, {
         fictional_relationships: preservedRelationships,
         transient_encounters: update.transient_encounters || [],
-        current_life_event: update.current_life_event || '',
+        current_life_event: lifeEvent || '',
         daily_micro_narration: update.daily_micro_narration || '',
         emotional_state: update.emotional_state || character.emotional_state || 'calm',
         health_status: update.health_status || character.health_status || 'healthy',

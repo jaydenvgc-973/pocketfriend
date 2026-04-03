@@ -186,6 +186,170 @@ export const ACHIEVEMENTS = {
     howToUnlock: "When a tense situation arises, choose to escalate it rather than calm things down. Add fuel to the fire — say the thing that makes it worse — and watch what happens.",
   },
 
+  // Relationship Growth
+  trust_built: {
+    id: "trust_built",
+    emoji: "🤝💙",
+    title: "Trust Built",
+    description: "A character's trust in you visibly grew",
+    category: "social",
+    howToUnlock: "Show up consistently and honestly for a character over multiple conversations. When their trust level shifts noticeably higher, this unlocks.",
+  },
+  reconnected: {
+    id: "reconnected",
+    emoji: "🔙🫂",
+    title: "Reconnected",
+    description: "Rebuilt a connection after distance",
+    category: "social",
+    howToUnlock: "Let a relationship go quiet for a while, then genuinely reconnect. If the warmth comes back, you've earned this.",
+  },
+  favorite_contact: {
+    id: "favorite_contact",
+    emoji: "📱⭐",
+    title: "Favorite Contact",
+    description: "Became someone's go-to person",
+    category: "social",
+    howToUnlock: "Be consistent and present enough that a character naturally reaches out to you first when something happens in their life.",
+  },
+  tension_resolved: {
+    id: "tension_resolved",
+    emoji: "🕊️✅",
+    title: "We Good",
+    description: "Resolved tension with a character",
+    category: "social",
+    howToUnlock: "Work through a real conflict with a character without walking away. Stay in it until things settle.",
+  },
+
+  // Life & Routine
+  productive_day: {
+    id: "productive_day",
+    emoji: "📋✅",
+    title: "Got It Done",
+    description: "Made it through a full productive day",
+    category: "moments",
+    howToUnlock: "Be present across morning, afternoon, and evening conversations in a single day without missing anything important.",
+  },
+  healthy_choice: {
+    id: "healthy_choice",
+    emoji: "🥗💪",
+    title: "Better Choice",
+    description: "Made a healthy decision under pressure",
+    category: "moments",
+    howToUnlock: "Help a character or make a choice that reflects stability and self-care when things are stressful.",
+  },
+  showed_up_anyway: {
+    id: "showed_up_anyway",
+    emoji: "🏃‍♂️🌧️",
+    title: "Showed Up Anyway",
+    description: "Kept going through a tough stretch",
+    category: "moments",
+    howToUnlock: "Stay engaged during a difficult period — bad days, conflict, instability — and come out the other side.",
+  },
+
+  // Financial
+  rent_paid: {
+    id: "rent_paid",
+    emoji: "🏠✅",
+    title: "Rent's Paid",
+    description: "Covered housing on time",
+    category: "moments",
+    howToUnlock: "Watch a character handle their housing payment without crisis. Be there when it happens.",
+  },
+  financial_clutch: {
+    id: "financial_clutch",
+    emoji: "💸🆘",
+    title: "Financial Clutch",
+    description: "Helped cover an unexpected expense",
+    category: "care",
+    howToUnlock: "Be present when a character faces an unexpected financial hit and help them navigate it.",
+  },
+  impulse_avoided: {
+    id: "impulse_avoided",
+    emoji: "🛑💰",
+    title: "Held Back",
+    description: "A bad financial decision was avoided",
+    category: "moments",
+    howToUnlock: "Talk a character out of an impulse buy or risky financial move. Your input has to be the reason they pause.",
+  },
+
+  // Travel & Social
+  night_out: {
+    id: "night_out",
+    emoji: "🌙🎉",
+    title: "Night Out",
+    description: "Had a memorable outing with someone",
+    category: "moments",
+    howToUnlock: "Be part of an outing — a dinner, a party, a club night — and actually stay engaged through the whole thing.",
+  },
+  group_hangout: {
+    id: "group_hangout",
+    emoji: "👥✨",
+    title: "The More the Merrier",
+    description: "Went out with a group",
+    category: "social",
+    howToUnlock: "Participate in a group chat or multi-character outing and keep the energy going.",
+  },
+  new_place: {
+    id: "new_place",
+    emoji: "📍🆕",
+    title: "New Territory",
+    description: "Visited somewhere new",
+    category: "moments",
+    howToUnlock: "Use the travel system to visit a location you haven't been to before with a character.",
+  },
+
+  // Emotional Depth
+  let_them_in: {
+    id: "let_them_in",
+    emoji: "🚪❤️",
+    title: "Let Them In",
+    description: "Opened up emotionally to a character",
+    category: "emotional",
+    howToUnlock: "Share something personal and real with a character. Don't deflect — let them see it.",
+  },
+  hard_truth: {
+    id: "hard_truth",
+    emoji: "🪞💬",
+    title: "Hard Truth",
+    description: "Said the difficult thing that needed to be said",
+    category: "emotional",
+    howToUnlock: "Tell a character something uncomfortable but true. Not to hurt them — because it matters.",
+  },
+  apologized: {
+    id: "apologized",
+    emoji: "🙏💙",
+    title: "My Bad",
+    description: "Apologized sincerely",
+    category: "emotional",
+    howToUnlock: "Admit fault genuinely during a conflict and have the character accept it. No deflecting.",
+  },
+  stayed_calm: {
+    id: "stayed_calm",
+    emoji: "🧘‍♂️⚡",
+    title: "Stayed Calm",
+    description: "Kept it together during conflict",
+    category: "emotional",
+    howToUnlock: "Navigate a heated moment without escalating. Let things stay tense but stay composed.",
+  },
+
+  // Story / Growth
+  watched_them_grow: {
+    id: "watched_them_grow",
+    emoji: "🌱👁️",
+    title: "Watched Them Grow",
+    description: "Witnessed a character genuinely change",
+    category: "moments",
+    howToUnlock: "Be present across a character's arc of real change — a shift in how they act, what they say, what they prioritize.",
+  },
+  relapse: {
+    id: "relapse",
+    emoji: "🔁💔",
+    title: "Old Habits",
+    description: "A character slipped back into old patterns",
+    category: "drama",
+    howToUnlock: "Be present when a character who was doing well makes a step backward. Witness it without judgment.",
+  },
+
   // Care / Support
   first_responder: {
     id: "first_responder",
@@ -268,6 +432,8 @@ export const CATEGORY_LABELS = {
   drama: { label: "Drama / Chaos", emoji: "🔥" },
   engagement: { label: "Engagement", emoji: "⏳" },
   care: { label: "Care / Support", emoji: "🤍" },
+  financial: { label: "Financial", emoji: "💰" },
+  growth: { label: "Growth", emoji: "🌱" },
 };
 
 export const TIER_STYLES = {
