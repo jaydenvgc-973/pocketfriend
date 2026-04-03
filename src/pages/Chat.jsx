@@ -1528,6 +1528,14 @@ Reply with ONLY the single emoji or the word "none".`,
       }).catch(() => {});
     }
 
+    // Update character location if they mention being somewhere (fire-and-forget)
+    if (responseText) {
+      base44.functions.invoke("updateCharacterLocationFromMessage", {
+        characterId,
+        messageContent: responseText,
+      }).catch(() => {});
+    }
+
     base44.functions.invoke("updateRelationshipLevels", {
       characterId,
       userMessage: text,
