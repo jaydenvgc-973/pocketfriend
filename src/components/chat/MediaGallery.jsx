@@ -238,6 +238,13 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       const promptText = prompt.trim() || "candid natural moment, everyday life";
 
+      // Determine subject type based on who's selected:
+      // - user alone (no other chars) → "user"
+      // - user + other chars → "joint"
+      // - no user → "character"
+      const hasOtherChars = selectedChars.length > 0 || selectedWorldPeople.length > 0;
+      const subjectType = userIncluded ? (hasOtherChars ? "joint" : "user") : "character";
+
       // Create a placeholder message then call generateImageAsync (which handles location locking)
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
@@ -261,7 +268,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         characterReferenceImages: charReferenceImages,
         userReferenceImages: userReferenceImages,
         characterName: charName,
-        subjectType: "character",
+        subjectType,
         characterId: character.id,
         manualLocationId: selectedLocation?.id || null,
         manualZoneId: selectedZone || null,
