@@ -239,66 +239,6 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 ))}
               </div>
             )}
-            {!message.content && !message.image_url && message.songs_heard?.length === 0 && message.videos_watched?.length === 0 && isImagePlaceholder && (
-              <div className="w-56 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-secondary/60 p-4 py-5">
-                {imageRetrying ? (
-                  <>
-                    <Loader2 className="w-8 h-8 text-primary/60 animate-spin" />
-                    <p className="text-xs text-muted-foreground text-center">
-                      {imageRetryStatus === 'regenerating' ? 'Regenerating image...' : 'Recovering image...'}
-                    </p>
-                    <p className="text-[10px] text-muted-foreground/50 text-center">This may take 10–20 seconds</p>
-                  </>
-                ) : imageRetryFailed ? (
-                  <>
-                    <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
-                    <p className="text-xs text-muted-foreground text-center font-medium">Image unavailable</p>
-                    <p className="text-[10px] text-muted-foreground/60 text-center">Recovery failed — try regenerating</p>
-                    <div className="flex flex-col gap-1.5 mt-1 w-full">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
-                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Regenerate Image
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
-                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Try Recovery Again
-                      </button>
-                      {onDelete && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors w-full"
-                        >
-                          <Trash2 className="w-3 h-3" /> Delete
-                        </button>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <ImageIcon className="w-7 h-7 text-muted-foreground/50" />
-                    <p className="text-xs text-muted-foreground text-center">Photo incoming</p>
-                    <div className="flex flex-col gap-1.5 mt-1 w-full">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
-                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Load Photo
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
-                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Regenerate
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
           </div>
 
           {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
