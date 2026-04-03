@@ -685,12 +685,14 @@ export default function Chat() {
     const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0], false);
+      return; // Don't generate character response for media links
     }
 
     // Check for video links (YouTube, Vimeo, TikTok, Instagram, Twitch, etc.)
     const videoLinkMatch = text.match(/https?:\/\/[^\s]*(youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com|twitch\.tv|dailymotion\.com)[^\s]*/i);
-    if (videoLinkMatch && !musicLinkMatch) {
+    if (videoLinkMatch) {
       await handleShareSong(videoLinkMatch[0], true);
+      return; // Don't generate character response for media links
     }
 
     // Check if user is asking character to look something up
