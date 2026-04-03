@@ -56,7 +56,7 @@ const CATEGORIES = [
 ];
 
 // ── LocationCard ─────────────────────────────────────────────────────────────
-function LocationCard({ location, onDelete, onEdit, characters = [] }) {
+function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {} }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
   const zones = location.zones || [];
@@ -129,7 +129,12 @@ function LocationCard({ location, onDelete, onEdit, characters = [] }) {
           <button onClick={() => onEdit(location)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
             <Pencil className="w-4 h-4" />
           </button>
-          <button onClick={() => onDelete(location.id)} className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors">
+          <button 
+            onClick={() => onDelete(location.id)} 
+            disabled={location.created_by !== currentUser?.email}
+            title={location.created_by !== currentUser?.email ? "Only locations you created can be deleted" : "Delete location"}
+            className={`p-1.5 rounded-lg transition-colors ${location.created_by === currentUser?.email ? "text-muted-foreground hover:text-destructive cursor-pointer" : "text-muted-foreground/30 cursor-not-allowed"}`}
+          >
             <Trash2 className="w-4 h-4" />
           </button>
           <button onClick={() => setExpanded(v => !v)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
@@ -1193,6 +1198,17 @@ export default function Locations() {
   };
 
   const handleDelete = async (id) => {
+    const loc = locations.find(l => l.id === id);
+    if (!loc) return;
+    
+    // Only allow deletion if user created this location
+    if (loc.created_by !== currentUser?.email) {
+      alert(`You can only delete locations you created. This location was created by the system or another user.`);
+      return;
+    }
+    
+    if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
+    
     await base44.entities.LocationReference.delete(id);
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
   };
@@ -1280,6 +1296,7 @@ export default function Locations() {
                 onDelete={handleDelete}
                 onEdit={handleEdit}
                 characters={characters}
+                currentUser={currentUser}
               />
             ))}
           </AnimatePresence>
