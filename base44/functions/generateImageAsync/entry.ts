@@ -519,7 +519,7 @@ PROHIBITED CHANGES:
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, userWorldName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode, userAppearanceData } = await req.json();
+    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, userWorldName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode, userAppearanceData, includesUser } = await req.json();
 
     if (!messageId || !prompt) {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
@@ -577,7 +577,8 @@ Deno.serve(async (req) => {
     try {
       const message = await base44.entities.Message.get(messageId).catch(() => null);
       const createdBy = message?.created_by;
-      if (createdBy && (resolvedSubjectType === "user" || resolvedSubjectType === "joint")) {
+      const needsUserRefs = resolvedSubjectType === "user" || resolvedSubjectType === "joint" || includesUser === true;
+      if (createdBy && needsUserRefs) {
         const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: createdBy }, null, 1).catch(() => []);
         const sett = settingsList?.[0] || {};
         // Merge: generated avatars first (highest fidelity), then raw uploads
@@ -607,14 +608,14 @@ Deno.serve(async (req) => {
       console.error('[USER-REFS] Failed to resolve user refs server-side:', refErr.message);
     }
 
-    const hasUserImages = resolvedUserRefs.length > 0;
-    const hasCharacterImages = resolvedCharacterRefs.length > 0;
-
-    // Parse [TAG] from start of prompt
+    // Parse [TAG] from start of prompt — do this BEFORE user ref resolution
     let resolvedSubjectType = subjectType || "character";
     const tagMatch = prompt.match(/^\[(USER|CHARACTER|JOINT)\]/i);
     if (tagMatch) resolvedSubjectType = tagMatch[1].toLowerCase();
     const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
+
+    const hasUserImages = resolvedUserRefs.length > 0;
+    const hasCharacterImages = resolvedCharacterRefs.length > 0;
 
     // ── LOCATION + ZONE RESOLUTION ────────────────────────────────────────────
     let locationImages = [];
@@ -715,14 +716,25 @@ Deno.serve(async (req) => {
         ...resolvedCharacterRefs.slice(0, 4),
       ].filter(Boolean);
 
-      // If user is included in the scene, add their identity lock
-      const userIdentityNote = (isUserIdentityLocked && hasUserImages && resolvedUserAppearanceData) 
-        ? `\n\nUSER ALSO PRESENT: The user must be recognizable and consistent with their reference images. ${buildUserIdentityLockNote(resolvedUserAppearanceData)}`
+      // If user is included in the scene, add their refs + identity lock
+      const effectiveUserIncluded = includesUser === true && resolvedUserRefs.length > 0;
+      if (effectiveUserIncluded) {
+        // Inject user refs alongside character refs
+        referenceImages = [
+          ...locationImages.slice(0, 3),
+          ...resolvedCharacterRefs.slice(0, 2),
+          ...resolvedUserRefs.slice(0, 2),
+        ].filter(Boolean);
+      }
+
+      const userIdentityNote = effectiveUserIncluded
+        ? `\n\nUSER ALSO IN THIS SCENE: A second person (the user) must appear alongside ${characterName}. Replicate the user's exact face, features, and appearance from the final reference images. ${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}`
         : '';
 
+      const doNotIncludeOthers = effectiveUserIncluded ? '' : ' Do NOT include any other person.';
       const roomInstruction = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + charCount} = ${characterName} — the person who must appear in the scene. Replicate ${characterName}'s exact face, skin tone, hair, and body with maximum fidelity. Do NOT include any other person. Do NOT redesign the room.`
-        : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance. Do NOT include any other person.`;
+        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + (effectiveUserIncluded ? 2 : charCount)} = ${characterName} — replicate their exact face, skin tone, hair, and body with maximum fidelity.${effectiveUserIncluded ? ` Final images = THE USER — also present in this scene, replicate their exact appearance.` : ''} Do NOT redesign the room.`
+        : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance.${doNotIncludeOthers}`;
       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}`;
 
     } else if (hasLocationImages) {
