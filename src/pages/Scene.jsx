@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -139,6 +139,7 @@ export default function Scene() {
   const [activeZone, setActiveZone] = useState(null);
   const [showZonePicker, setShowZonePicker] = useState(false);
   const [conversationModal, setConversationModal] = useState(null); // {npcId, npcName, hasEmployees}
+  const [narratorMode, setNarratorMode] = useState(false); // toggles between dialogue and narration input
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -168,21 +169,20 @@ export default function Scene() {
   const locationZones = location?.zones || [];
 
   // Characters explicitly brought + any active characters who work here during their shift
-  // INCLUDES: explicitly linked workers + any character assigned as worker on the location
+  // OWNERSHIP ≠ PRESENCE: a character who only owns a location does NOT appear here.
+  // They must be explicitly assigned as a worker (in worker_character_ids) AND on shift to appear.
   const workerCharacters = location
     ? characters.filter(c => {
         // Skip if user brought them
         if (characterIds.includes(c.id)) return false;
         // Skip if asleep
         if (isCharacterAsleep(c)) return false;
-        // Include if occupation location matches and they're on shift
-        if ((c.occupation_location_id === locationId ||
-             c.additional_occupation_locations?.some(j => j.location_id === locationId)) &&
-            isCharacterAtWork(c, location)) {
-          return true;
-        }
+        // Skip if owner but NOT a worker — ownership is a financial role, not a presence trigger
+        const isOwner = location.owner_character_id === c.id;
+        const isWorker = location.worker_character_ids?.includes(c.id);
+        if (isOwner && !isWorker) return false;
         // Include if listed in location's worker_character_ids and on shift
-        if (location.worker_character_ids?.includes(c.id) && isCharacterAtWork(c, location)) {
+        if (isWorker && isCharacterAtWork(c, location)) {
           return true;
         }
         return false;
@@ -527,6 +527,17 @@ export default function Scene() {
       const item = text.replace(/[[\]]/g, "").trim();
       generateFocusedImage(`${item}, drink in a glass, bar or restaurant setting, close-up,`);
     }
+  };
+
+  const sendNarration = (text) => {
+    if (!text.trim()) return;
+    setInputText("");
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      sender: "narrative",
+      content: text,
+      timestamp: new Date().toISOString(),
+    }]);
   };
 
   const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null) => {
@@ -1044,21 +1055,42 @@ Return JSON:
       </div>
 
       {/* Input bar */}
-      <div className="px-3 py-2 border-t border-border flex gap-2 flex-shrink-0 pb-safe">
-        <input
-          value={inputText}
-          onChange={e => setInputText(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && !e.shiftKey && sendMessage(inputText)}
-          placeholder="Say something..."
-          className="flex-1 h-10 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
-        />
-        <button
-          onClick={() => sendMessage(inputText)}
-          disabled={!inputText.trim()}
-          className="w-10 h-10 rounded-xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40 transition-opacity"
-        >
-          <Send className="w-4 h-4" />
-        </button>
+      <div className="border-t border-border flex-shrink-0 pb-safe">
+        {/* Mode toggle */}
+        <div className="flex gap-1 px-3 pt-2 pb-1">
+          <button
+            onClick={() => setNarratorMode(false)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${!narratorMode ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+          >
+            <Send className="w-3 h-3" /> Dialogue
+          </button>
+          <button
+            onClick={() => setNarratorMode(true)}
+            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${narratorMode ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
+          >
+            <BookOpen className="w-3 h-3" /> Narrate
+          </button>
+        </div>
+        <div className="flex gap-2 px-3 pb-2">
+          <input
+            value={inputText}
+            onChange={e => setInputText(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                narratorMode ? sendNarration(inputText) : sendMessage(inputText);
+              }
+            }}
+            placeholder={narratorMode ? "Describe the scene, set the atmosphere..." : "Say something..."}
+            className={`flex-1 h-10 px-3 rounded-xl bg-secondary border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none transition-colors ${narratorMode ? "border-primary/40 focus:border-primary italic" : "border-border focus:border-primary/50"}`}
+          />
+          <button
+            onClick={() => narratorMode ? sendNarration(inputText) : sendMessage(inputText)}
+            disabled={!inputText.trim()}
+            className={`w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all ${narratorMode ? "bg-primary/70 text-primary-foreground" : "bg-primary text-primary-foreground"}`}
+          >
+            {narratorMode ? <BookOpen className="w-4 h-4" /> : <Send className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
 
       {/* Photo modal */}

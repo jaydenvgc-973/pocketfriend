@@ -312,7 +312,7 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
 }
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
-function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerTooYoung, getNPCAge, allLocations = [] }) {
+function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [] }) {
   // Collect all unique NPCs from fictional_relationships across all characters
   const allNPCs = [];
   const seenNames = new Set();
@@ -1191,6 +1191,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
         />
       </div>
 
+      {editingLocation && onDuplicate && (
+        <Button
+          variant="outline"
+          onClick={onDuplicate}
+          className="w-full rounded-xl gap-2 border-dashed"
+        >
+          📋 Duplicate This Location
+        </Button>
+      )}
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
         <Button onClick={handleSave} disabled={!canSave} className="flex-1 rounded-xl">
@@ -1321,6 +1330,15 @@ export default function Locations() {
     setShowAddForm(false); // close add form if open
   };
 
+  const handleDuplicate = async (location) => {
+    const { id, created_date, updated_date, created_by, ...rest } = location;
+    const duplicate = { ...rest, name: `${rest.name} (Copy)` };
+    const created = await base44.entities.LocationReference.create(duplicate);
+    setNewlyCreatedLocation({ id: created.id, name: duplicate.name, category: duplicate.category });
+    queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+    setInlineEditId(null);
+  };
+
   const characterIds = new Set(characters.map(c => c.id));
   const isCharacterHome = (l) => 
     l.location_type === "character_specific" || 
@@ -1415,6 +1433,7 @@ export default function Locations() {
                       allLocations={locations}
                       onSave={(data) => handleSave(data, loc.id)}
                       onCancel={() => setInlineEditId(null)}
+                      onDuplicate={() => handleDuplicate(loc)}
                       isWorkerTooYoung={isWorkerTooYoung}
                       getNPCAge={getNPCAge}
                     />
