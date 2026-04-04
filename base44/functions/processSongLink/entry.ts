@@ -127,18 +127,14 @@ Deno.serve(async (req) => {
             const data = await res.json();
             // oEmbed title for tracks: "Song Name - Artist Name"
             // oEmbed title for playlists/albums: just the name, author_name has the creator
-            const rawTitle = data.title || '';
-            if (rawTitle.includes(' - ')) {
-              const parts = rawTitle.split(' - ');
-              title = parts[0].trim();
-              artist = parts.slice(1).join(' - ').trim();
-            } else {
-              title = rawTitle || title;
-              // For playlists/albums, author_name is the creator/artist
-              if (data.author_name && data.author_name !== 'Spotify') {
-                artist = data.author_name;
-              }
+            // author_name is always the most reliable artist/creator field
+            if (data.author_name && data.author_name !== 'Spotify') {
+              artist = data.author_name;
             }
+            // Title: strip " | Spotify" suffix, then strip " - Album by ..." / " - Playlist by ..." suffixes
+            let rawTitle = (data.title || '').replace(/\s*\|\s*Spotify\s*$/i, '').trim();
+            rawTitle = rawTitle.replace(/\s*-\s*(Album|Playlist|Single|EP|Compilation)\s+by\s+.*$/i, '').trim();
+            title = rawTitle || title;
             coverArt = data.thumbnail_url || null;
           }
         } catch (_) {}

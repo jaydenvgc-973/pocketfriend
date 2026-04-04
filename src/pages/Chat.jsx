@@ -619,11 +619,9 @@ export default function Chat() {
    if (res?.data?.success) {
     let msgData = {
       conversation_id: conversationIdRef.current,
-      sender_type: 'character',
-      character_id: characterId,
-      character_name: character.name,
+      sender_type: 'user',
       timestamp: new Date().toISOString(),
-      content: '', // hide raw text — the media card IS the message
+      content: '',
     };
 
     if (isVideo) {
