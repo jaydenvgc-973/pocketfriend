@@ -653,6 +653,27 @@ export default function Chat() {
        setMessages(prev => [...prev, newMsg]);
      }
 
+     // Trigger music understanding analysis for all shared songs (non-blocking)
+     if (msgData.songs_heard?.length > 0) {
+       msgData.songs_heard.forEach(song => {
+         base44.functions.invoke('analyzeMediaUnderstanding', {
+           mediaObject: song,
+           sources: {},
+         }).then(res => {
+           if (res?.data?.understanding) {
+             // Store understanding back to message for character access
+             base44.entities.Message.update(newMsg.id, {
+               songs_heard: msgData.songs_heard.map(s => 
+                 s.spotify_id === song.spotify_id 
+                   ? { ...s, _understanding: res.data.understanding }
+                   : s
+               ),
+             }).catch(() => {});
+           }
+         }).catch(err => console.error('[analyzeMedia] Analysis failed:', err.message));
+       });
+     }
+
      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
    } else {
      console.error('[handleShareSong] processSongLink returned success=false');

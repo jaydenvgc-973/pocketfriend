@@ -248,6 +248,21 @@ Deno.serve(async (req) => {
           songs_heard: [...songsHeard, newSong],
         });
 
+        // Trigger background analysis for character understanding (non-blocking)
+        base44.asServiceRole.functions.invoke('analyzeMediaUnderstanding', {
+          mediaObject: newSong,
+          sources: {},
+        }).then(res => {
+          if (res?.data?.understanding) {
+            // Store understanding on character for later access
+            base44.asServiceRole.entities.Character.update(characterId, {
+              songs_heard: character.songs_heard.map((s, idx) => 
+                idx === character.songs_heard.length ? { ...s, _understanding: res.data.understanding } : s
+              ),
+            }).catch(() => {});
+          }
+        }).catch(() => {});
+
         return Response.json({
           success: true,
           is_playlist: !trackMatch,
@@ -300,6 +315,12 @@ Deno.serve(async (req) => {
       await base44.asServiceRole.entities.Character.update(characterId, {
         songs_heard: [...songsHeard, newSong],
       });
+
+      // Trigger background analysis
+      base44.asServiceRole.functions.invoke('analyzeMediaUnderstanding', {
+        mediaObject: newSong,
+        sources: {},
+      }).catch(() => {});
 
       return Response.json({ success: true, is_playlist: false, platform, song: newSong });
     }
