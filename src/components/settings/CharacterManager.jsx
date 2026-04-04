@@ -122,7 +122,7 @@ export default function CharacterManager() {
     if (isNPC) {
       if (window.confirm('Remove this NPC from the world?')) {
         // Parse itemId to get sourceCharId and personName
-        const match = itemId.match(/^npc_(.+)_(.+)$/);
+        const match = itemId.match(/^npc_(.+?)_(.+?)_\d+$/);
         if (match) {
           const [, sourceCharId, personName] = match;
           const sourceChar = roster.find(c => c.id === sourceCharId);
@@ -242,11 +242,11 @@ export default function CharacterManager() {
     if (!selected.includes(masterCharId)) return;
 
     if (hasUser) {
-      // Merging with user: delete NPC duplicates
-      Promise.all(npcIds.map(npcId => {
-        const match = npcId.match(/^npc_(.+)_(.+)$/);
-        if (match) {
-          const [, sourceCharId, personName] = match;
+       // Merging with user: delete NPC duplicates
+       Promise.all(npcIds.map(npcId => {
+         const match = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
+         if (match) {
+           const [, sourceCharId, personName] = match;
           const sourceChar = roster.find(c => c.id === sourceCharId);
           if (sourceChar) {
             const updated = (sourceChar.fictional_relationships || []).filter(
@@ -271,7 +271,7 @@ export default function CharacterManager() {
         const [, primarySourceCharId, primaryPersonName] = primaryMatch;
 
         Promise.all(others.map(otherId => {
-          const match = otherId.match(/^npc_(.+)_(.+)$/);
+          const match = otherId.match(/^npc_(.+?)_(.+?)_\d+$/);
           if (match) {
             const [, sourceCharId, personName] = match;
             const sourceChar = roster.find(c => c.id === sourceCharId);
@@ -288,14 +288,13 @@ export default function CharacterManager() {
           setSelectedForMerge(new Set());
           setMergeMode(false);
           setMergeConfirmModal(null);
-        }).catch(() => {});
-      }
-      } else if (charIds.length === 1 && npcIds.length === 1) {
+          }).catch(() => {});
+          }
+          } else if (charIds.length === 1 && npcIds.length === 1) {
       // Merge active character with NPC: consolidate NPC data into active character, remove NPC
       const activeCharId = charIds[0];
       const npcId = npcIds[0];
-      const npcMatch = npcId.match(/^npc_(.+)_(.+)$/);
-
+      const npcMatch = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
       if (npcMatch) {
         const [, sourceCharId, personName] = npcMatch;
         const sourceChar = roster.find(c => c.id === sourceCharId && c.is_character);
