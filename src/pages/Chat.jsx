@@ -653,24 +653,50 @@ export default function Chat() {
        setMessages(prev => [...prev, newMsg]);
      }
 
-     // Trigger music understanding analysis for all shared songs (non-blocking)
+     // Trigger deep media research & character knowledge building (non-blocking)
      if (msgData.songs_heard?.length > 0) {
        msgData.songs_heard.forEach(song => {
+         // Layer 1: Analyze media understanding
          base44.functions.invoke('analyzeMediaUnderstanding', {
            mediaObject: song,
            sources: {},
-         }).then(res => {
-           if (res?.data?.understanding) {
-             // Store understanding back to message for character access
-             base44.entities.Message.update(newMsg.id, {
-               songs_heard: msgData.songs_heard.map(s => 
-                 s.spotify_id === song.spotify_id 
-                   ? { ...s, _understanding: res.data.understanding }
-                   : s
-               ),
-             }).catch(() => {});
-           }
-         }).catch(err => console.error('[analyzeMedia] Analysis failed:', err.message));
+         }).then(res1 => {
+           const understanding = res1?.data?.understanding;
+
+           // Layer 2: Deep research on artist, tracks, context
+           base44.functions.invoke('deepMediaResearch', {
+             mediaObject: song,
+             tracks: song.tracks || [],
+           }).then(res2 => {
+             const deepResearch = res2?.data?.deepResearch;
+
+             // Layer 3: Build character-specific knowledge
+             base44.functions.invoke('buildCharacterMediaKnowledge', {
+               character,
+               mediaObject: song,
+               understanding,
+               deepResearch,
+             }).then(res3 => {
+               const knowledge = res3?.data?.knowledge;
+
+               // Store all layers on message for character & narrative access
+               base44.entities.Message.update(newMsg.id, {
+                 songs_heard: msgData.songs_heard.map(s => 
+                   s.spotify_id === song.spotify_id 
+                     ? { 
+                         ...s, 
+                         _understanding: understanding,
+                         _deepResearch: deepResearch,
+                         _characterKnowledge: knowledge,
+                       }
+                     : s
+                 ),
+               }).catch(() => {});
+
+               console.log(`[Media Research] Complete for "${song.title}": ${knowledge?.knowledgeLevel?.level || 'unknown'}`);
+             }).catch(err => console.error('[buildKnowledge] Failed:', err.message));
+           }).catch(err => console.error('[deepResearch] Failed:', err.message));
+         }).catch(err => console.error('[analyzeMedia] Failed:', err.message));
        });
      }
 
@@ -870,21 +896,68 @@ export default function Chat() {
         console.log('[DEBUG] songs_heard:', JSON.stringify(character.songs_heard, null, 2));
         const songsInfo = character.songs_heard.map(song => {
           let info = `ALBUM/PLAYLIST TITLE: "${song.title}" by ${song.artist}`;
+          
+          // Layer 1: Track list
           if (song.tracks && Array.isArray(song.tracks) && song.tracks.length > 0) {
             const trackList = song.tracks.map(t => `${t.name}${t.artist ? ` (${t.artist})` : ''}`).join(' | ');
             info += ` | ACTUAL TRACKS ON IT: ${trackList}`;
           } else {
             info += ` | (track list not available)`;
           }
+
+          // Layer 2: Music understanding (mood, themes, energy)
+          if (song._understanding) {
+            const understanding = song._understanding;
+            info += `\n  MOOD & FEEL: ${understanding.overallMood?.join(', ') || 'unanalyzed'} | Energy: ${understanding.energyProfile}`;
+            if (understanding.themes?.length > 0) {
+              info += `\n  THEMES: ${understanding.themes.join(', ')}`;
+            }
+            if (understanding.narrativeSummary) {
+              info += `\n  ANALYSIS: ${understanding.narrativeSummary}`;
+            }
+          }
+
+          // Layer 3: Deep research (artist intent, track context, critical info)
+          if (song._deepResearch) {
+            const deep = song._deepResearch;
+            if (deep.artistContext?.background) {
+              info += `\n  ARTIST CONTEXT: ${deep.artistContext.background.substring(0, 200)}...`;
+            }
+            if (deep.trackInsights && deep.trackInsights.length > 0) {
+              const topTracks = deep.trackInsights.slice(0, 3).map(t => 
+                `"${t.trackName}": ${t.analysis?.substring(0, 80) || 'no details'}...`
+              ).join(' | ');
+              info += `\n  TRACK INSIGHTS: ${topTracks}`;
+            }
+            if (deep.contextualArticles?.length > 0) {
+              info += `\n  CONTEXT: ${deep.contextualArticles[0].summary?.substring(0, 150)}...`;
+            }
+          }
+
+          // Layer 4: Character-specific knowledge (resonance, interpretation)
+          if (song._characterKnowledge) {
+            const knowledge = song._characterKnowledge;
+            if (knowledge.personalResonance?.likelyInterpretation) {
+              info += `\n  YOUR TAKE: ${knowledge.personalResonance.likelyInterpretation}`;
+            }
+            if (knowledge.conversationHooks?.directReferences?.length > 0) {
+              info += `\n  YOU CAN REFERENCE: ${knowledge.conversationHooks.directReferences.map(r => r.theme).join(', ')}`;
+            }
+          }
+
           return info;
-        }).join('\n');
-        songsContext = `\n\nMUSIC SHARED WITH YOU: You've been sent these songs and albums. CRITICAL RULES:
-1. The TITLE is NOT a song — it's the album or playlist name.
-2. ONLY reference actual track names if you have them in the ACTUAL TRACKS list above.
-3. If track list is NOT available, admit "I can't see the individual songs on that" rather than making up fake track names.
-4. You can discuss how the album/artist makes you feel, ask if they want you to listen, or reference specific tracks you actually have listed.
-5. NEVER pretend to know songs that aren't in your track list — that's dishonest.
-\n${songsInfo}`;
+        }).join('\n\n---\n\n');
+        
+        songsContext = `\n\nMUSIC SHARED WITH YOU: Multi-layer understanding has been built for these songs/albums:
+CRITICAL RULES:
+1. Use the ACTUAL TRACKS list (not made-up songs)
+2. Reference the MOOD & FEEL, THEMES, and TRACK INSIGHTS provided
+3. Use ARTIST CONTEXT and TRACK INSIGHTS to inform your interpretation
+4. Draw on YOUR TAKE section for how this connects to you emotionally
+5. You can now discuss the music as though you understand it deeply — because you do.
+6. NEVER pretend to know info not listed. If it's there, use it. If not, say you haven't heard those details.
+
+${songsInfo}`;
       }
 
       // Weather context — only inject when user explicitly mentions weather or outdoor plans
