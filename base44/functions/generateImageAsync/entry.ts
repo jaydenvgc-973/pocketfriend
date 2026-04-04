@@ -565,8 +565,29 @@ Deno.serve(async (req) => {
           if (charRecord.appearance_notes) appearanceParts.push(charRecord.appearance_notes);
           if (charRecord.avatar_description_text) appearanceParts.push(charRecord.avatar_description_text);
 
-          if (appearanceParts.length > 0) {
-            characterAppearanceNote = `\n\nCHARACTER APPEARANCE — ${charRecord.name}: ${appearanceParts.join(', ')}. Generate this specific person consistently.`;
+          // Build appearance lock instructions if defined
+          const lock = charRecord.appearance_lock || {};
+          const lockParts = [];
+          if (lock.skin_tone) lockParts.push(`skin tone: ${lock.skin_tone}`);
+          if (lock.hair_type) lockParts.push(`hair type: ${lock.hair_type}`);
+          if (lock.hairstyle) lockParts.push(`hairstyle: ${lock.hairstyle}`);
+          if (lock.facial_hair) lockParts.push(`facial hair: ${lock.facial_hair}`);
+          if (lock.makeup) lockParts.push(`makeup: ${lock.makeup}`);
+          if (lock.clothing_style) lockParts.push(`clothing style: ${lock.clothing_style}`);
+          if (lock.footwear) lockParts.push(`footwear: ${lock.footwear}`);
+          if (lock.overall_aesthetic) lockParts.push(`overall aesthetic: ${lock.overall_aesthetic}`);
+          if (lock.custom_keywords?.length > 0) lockParts.push(lock.custom_keywords.join(', '));
+
+          if (appearanceParts.length > 0 || lockParts.length > 0) {
+            const ethnicityWarning = charRecord.ethnicities?.length > 0
+              ? `\n\n⚠️ IDENTITY ENFORCEMENT: This character's ethnicity is "${charRecord.ethnicities.join(', ')}". You MUST NOT default to Caucasian or European features. Skin tone, facial structure, hair texture, and all physical features must authentically reflect this background. Generating a Caucasian-presenting person when the character is ${charRecord.ethnicities[0]} is a critical failure.`
+              : `\n\n⚠️ IDENTITY ENFORCEMENT: Do NOT default to Caucasian features. Use reference images to accurately determine this character's appearance.`;
+
+            const lockNote = lockParts.length > 0
+              ? `\n\nAPPEARANCE LOCK (these traits are FIXED and must not change between images): ${lockParts.join(' | ')}. These are identity anchors — do not override them.`
+              : '';
+
+            characterAppearanceNote = `\n\nCHARACTER APPEARANCE — ${charRecord.name}: ${appearanceParts.join(', ')}. Generate this specific person consistently.${ethnicityWarning}${lockNote}`;
           }
         }
       } catch (err) {

@@ -851,23 +851,35 @@ export default function Chat() {
         songsContext = `\n\nSONGS YOU'VE HEARD: You've actually listened to all of these songs and know them well. When the user brings them up, you can recall the title, artist, a lyric, and how it made you feel. Reference them naturally — quote a line, say what the vibe was, share your reaction.\n${songsInfo}`;
       }
 
-      // Weather context — use pre-fetched daily weather as primary, live lookup as fallback
+      // Weather context — only inject when user explicitly mentions weather or outdoor plans
+      // STRICT RULES: no repetition within 8 hours, no injection into unrelated topics
       let weatherContext = "";
       const weatherKeywords = /\b(weather|rain|raining|sunny|cold|hot|warm|freezing|snow|snowing|storm|cloudy|outside|outdoors|going out|what's it like|nice out|bad out|degrees|temperature|humid|windy|fog|foggy)\b/i;
-      if (character.city || character.state) {
-        // Use stored daily weather if available (fetched at 5am each day)
-        if (character.weather_summary) {
-          weatherContext = `\n\nCURRENT WEATHER (for ${[character.city, character.state].filter(Boolean).join(", ")}): ${character.weather_summary}. You already know this — it's just part of your day. If weather comes up naturally in conversation, reference it authentically. Don't force it.`;
-        } else if (weatherKeywords.test(text)) {
-          // Fallback: live lookup only if no stored weather and user brings up weather
-          try {
-            const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature, conditions, and any notable weather patterns.`);
-            weatherContext = `\n\nCURRENT WEATHER: Right now in ${[character.city, character.state].filter(Boolean).join(", ")}: ${weatherRes}. Naturally reference this if it fits — mention how it affects your mood, what you're doing, or what you're wearing.`;
-          } catch (weatherErr) {
-            // Weather lookup failed, continue without it
+      const outdoorPlanKeywords = /\b(going out|heading out|outside|outdoor|park|walk|run|hike|beach|drive|trip|picnic|bbq|barbecue)\b/i;
+      const userMentionsWeather = weatherKeywords.test(text) || outdoorPlanKeywords.test(text);
+
+      if (userMentionsWeather && (character.city || character.state)) {
+        // Check if weather was mentioned recently in the last 8 messages (proxy for 8 hours)
+        const recentWeatherMention = recentMsgs.slice(-16).some(m =>
+          m.sender_type === "character" && weatherKeywords.test(m.content || "")
+        );
+
+        if (!recentWeatherMention) {
+          // Only inject weather if user is asking about it or discussing outdoor plans
+          if (character.weather_summary) {
+            weatherContext = `\n\nCURRENT WEATHER (for ${[character.city, character.state].filter(Boolean).join(", ")}): ${character.weather_summary}. You are aware of this. ONLY reference it if the user directly asked about weather or is making outdoor plans — do NOT volunteer it into unrelated topics.`;
+          } else if (weatherKeywords.test(text)) {
+            try {
+              const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature and conditions briefly.`);
+              weatherContext = `\n\nCURRENT WEATHER: ${weatherRes}. Reference this ONLY because the user asked about it.`;
+            } catch (weatherErr) {
+              // Weather lookup failed, continue without it
+            }
           }
         }
+        // If weather was already mentioned recently, silently skip — no injection
       }
+      // If user didn't mention weather at all — NO weather context is injected at all
 
       // Fetch recent events ONLY if conversation seems news/current-events-related
       let recentEventsContext = "";

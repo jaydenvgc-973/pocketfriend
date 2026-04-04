@@ -14,6 +14,43 @@
       "type": "number",
       "description": "Visual appearance age for image generation. Overrides profile age in generated images only."
     },
+    "appearance_lock": {
+      "type": "object",
+      "description": "Locked appearance attributes that persist across all generated images. These act as identity anchors.",
+      "properties": {
+        "skin_tone": {
+          "type": "string"
+        },
+        "hair_type": {
+          "type": "string"
+        },
+        "hairstyle": {
+          "type": "string"
+        },
+        "facial_hair": {
+          "type": "string"
+        },
+        "makeup": {
+          "type": "string"
+        },
+        "clothing_style": {
+          "type": "string"
+        },
+        "footwear": {
+          "type": "string"
+        },
+        "overall_aesthetic": {
+          "type": "string"
+        },
+        "custom_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    },
     "family_list_locked": {
       "type": "boolean",
       "default": false,

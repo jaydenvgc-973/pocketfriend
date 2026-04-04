@@ -19,6 +19,7 @@ import NPCPromotionModal from "@/components/character/NPCPromotionModal";
 import NPCPhotoEditor from "@/components/character/NPCPhotoEditor";
 import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.jsx";
 import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
+import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -813,6 +814,9 @@ export default function CharacterProfile() {
 
         {/* Appearance Age override for image generation */}
         <AppearanceAgeField character={character} />
+
+        {/* Appearance Lock — persistent identity anchors for image generation */}
+        <AppearanceLockEditor character={character} />
 
         {/* Nickname for User */}
         <NicknameForUserField character={character} />
