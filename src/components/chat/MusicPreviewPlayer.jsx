@@ -33,11 +33,14 @@ const PLATFORM_BADGE_COLORS = {
 
 export default function MusicPreviewPlayer({ song, platform = "spotify" }) {
   const [showEmbed, setShowEmbed] = useState(false);
+  const [showTracks, setShowTracks] = useState(false);
   const headerColor = PLATFORM_COLORS[platform] || PLATFORM_COLORS.spotify;
   const label = PLATFORM_LABELS[platform] || platform;
   const hasEmbed = platform === "spotify" && song?.spotify_embed_url;
   const hasCoverArt = !!song?.cover_art;
   const artistName = song?.artist && song.artist !== "Spotify" && song.artist !== "Unknown Artist" ? song.artist : null;
+  const destinationLabel = song?.destinationType === 'SONG' ? 'Song' : song?.destinationType === 'PLAYLIST' ? 'Playlist' : song?.destinationType === 'ALBUM' ? 'Album' : 'Music';
+  const hasTracks = Array.isArray(song?.tracks) && song.tracks.length > 0;
 
   return (
     <div className="rounded-xl overflow-hidden border border-white/10 max-w-xs shadow-lg bg-card/80">
@@ -46,13 +49,19 @@ export default function MusicPreviewPlayer({ song, platform = "spotify" }) {
         <div className="relative w-full">
           <img src={song.cover_art} alt={song.title} className="w-full h-36 object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-          <span className={`absolute top-2 right-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${PLATFORM_BADGE_COLORS[platform] || "bg-black/30 text-white"}`}>
-            {label}
-          </span>
+          <div className="absolute top-2 right-2 flex gap-1 items-center">
+            <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${PLATFORM_BADGE_COLORS[platform] || "bg-black/30 text-white"}`}>
+              {label}
+            </span>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-white/20 text-white">
+              {destinationLabel}
+            </span>
+          </div>
           {/* Title + artist overlaid on cover art */}
           <div className="absolute bottom-0 left-0 right-0 p-3">
             <p className="text-sm font-bold text-white leading-tight line-clamp-1">{song.title}</p>
             {artistName && <p className="text-xs text-white/80 mt-0.5 line-clamp-1">{artistName}</p>}
+            {hasTracks && <p className="text-xs text-white/70 mt-1">{song.tracks.length} songs</p>}
           </div>
         </div>
       ) : (
@@ -61,22 +70,31 @@ export default function MusicPreviewPlayer({ song, platform = "spotify" }) {
             <Music className="w-6 h-6 text-white" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-[10px] font-bold text-white/60 uppercase tracking-wide">{label}</p>
+            <p className="text-[10px] font-bold text-white/60 uppercase tracking-wide flex gap-1"><span>{label}</span>•<span>{destinationLabel}</span></p>
             <p className="text-sm font-bold text-white truncate">{song?.title || "Unknown Title"}</p>
             {artistName && <p className="text-xs text-white/75 truncate">{artistName}</p>}
+            {hasTracks && <p className="text-[10px] text-white/60 mt-1">{song.tracks.length} songs</p>}
           </div>
         </div>
       )}
 
       {/* Bottom action bar */}
-      <div className="px-3 py-2 flex items-center gap-2">
+      <div className="px-3 py-2 flex items-center gap-2 flex-wrap">
         {song?.lyrics_excerpt && (
           <p className="text-xs text-muted-foreground/70 italic line-clamp-1 flex-1">"{song.lyrics_excerpt}"</p>
+        )}
+        {hasTracks && (
+          <button
+            onClick={() => setShowTracks(v => !v)}
+            className="text-xs px-2.5 py-1 rounded-lg bg-primary/15 text-primary hover:bg-primary/25 transition-colors font-medium"
+          >
+            {showTracks ? "Hide tracks" : `${song.tracks.length} tracks`}
+          </button>
         )}
         {hasEmbed && (
           <button
             onClick={() => setShowEmbed(v => !v)}
-            className="text-xs px-2.5 py-1 rounded-lg bg-[#1DB954]/15 text-[#1DB954] hover:bg-[#1DB954]/25 transition-colors font-medium shrink-0"
+            className="text-xs px-2.5 py-1 rounded-lg bg-[#1DB954]/15 text-[#1DB954] hover:bg-[#1DB954]/25 transition-colors font-medium"
           >
             {showEmbed ? "Hide" : "Play"}
           </button>
@@ -86,12 +104,24 @@ export default function MusicPreviewPlayer({ song, platform = "spotify" }) {
             href={song.link}
             target="_blank"
             rel="noopener noreferrer"
-            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             Open <ExternalLink className="w-3 h-3" />
           </a>
         )}
       </div>
+
+      {/* Track list */}
+      {hasTracks && showTracks && (
+        <div className="px-3 py-2 border-t border-border max-h-40 overflow-y-auto space-y-1">
+          {song.tracks.map((track, idx) => (
+            <div key={idx} className="text-xs py-1 border-b border-border/50 last:border-b-0">
+              <p className="font-medium text-foreground truncate">{track.name}</p>
+              {track.artist && <p className="text-muted-foreground/70 text-[11px] truncate">{track.artist}</p>}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Spotify embed */}
       {hasEmbed && showEmbed && (

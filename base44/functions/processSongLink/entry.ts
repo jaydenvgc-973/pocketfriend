@@ -87,6 +87,7 @@ Deno.serve(async (req) => {
         thumbnail,
         link: songLink,
         added_date: new Date().toISOString(),
+        destinationType: 'VIDEO',
       };
 
       const videosWatched = character.videos_watched || [];
@@ -238,6 +239,7 @@ Deno.serve(async (req) => {
           platform: 'spotify',
           link: songLink,
           added_date: new Date().toISOString(),
+          destinationType: trackMatch ? 'SONG' : playlistMatch ? 'PLAYLIST' : 'ALBUM',
           tracks: tracks.length > 0 ? tracks : undefined,
         };
 
@@ -291,6 +293,7 @@ Deno.serve(async (req) => {
         platform,
         link: songLink,
         added_date: new Date().toISOString(),
+        destinationType: 'SONG',
       };
 
       const songsHeard = character.songs_heard || [];
@@ -312,6 +315,7 @@ Deno.serve(async (req) => {
       platform,
       link: songLink,
       added_date: new Date().toISOString(),
+      destinationType: 'SONG',
     };
 
     const songsHeard = character.songs_heard || [];
