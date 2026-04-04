@@ -119,47 +119,33 @@ Deno.serve(async (req) => {
         let artist = 'Unknown Artist';
         let coverArt = null;
 
-        // Try Spotify oEmbed first
-        try {
-          const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(songLink)}`;
-          const oembedRes = await fetch(oembedUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-          console.log('[processSongLink] oEmbed status:', oembedRes.status);
-          if (oembedRes.ok) {
-            const data = await oembedRes.json();
-            console.log('[processSongLink] oEmbed data:', JSON.stringify(data));
-            if (data.author_name && data.author_name !== 'Spotify') artist = data.author_name;
-            let rawTitle = (data.title || '').replace(/\s*\|\s*Spotify\s*$/i, '').trim();
-            rawTitle = rawTitle.replace(/\s*-\s*(Album|Playlist|Single|EP|Compilation)\s+by\s+.*$/i, '').trim();
-            if (rawTitle) title = rawTitle;
-            coverArt = data.thumbnail_url || null;
-          }
-        } catch (oembedErr) {
-          console.error('[processSongLink] oEmbed error:', oembedErr.message);
-        }
+        // Spotify Web API with client credentials
+        const clientId = Deno.env.get('SPOTIFY_CLIENT_ID');
+        const clientSecret = Deno.env.get('SPOTIFY_CLIENT_SECRET');
 
-        // Fallback: LLM lookup if we still have no metadata
-        if (title === 'Song shared' || title === 'Playlist shared' || title === 'Album shared' || artist === 'Unknown Artist') {
+        if (clientId && clientSecret) {
           try {
-            const spotifyType = trackMatch ? 'track' : albumMatch ? 'album' : 'playlist';
-            const llmRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
-              prompt: `Look up this Spotify ${spotifyType}: ${songLink}\nReturn the title, artist/creator name, and album art image URL if you can find it.\nRespond ONLY with JSON: {"title": "...", "artist": "...", "cover_art_url": "...or null"}`,
-              add_context_from_internet: true,
-              response_json_schema: {
-                type: "object",
-                properties: {
-                  title: { type: "string" },
-                  artist: { type: "string" },
-                  cover_art_url: { type: "string" }
-                }
-              }
+            const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}`,
             });
-            console.log('[processSongLink] LLM result:', JSON.stringify(llmRes));
-            if (llmRes?.title && llmRes.title.length > 2) title = llmRes.title;
-            if (llmRes?.artist && llmRes.artist !== 'Spotify') artist = llmRes.artist;
-            if (llmRes?.cover_art_url && llmRes.cover_art_url.startsWith('http')) coverArt = llmRes.cover_art_url;
-          } catch (llmErr) {
-            console.error('[processSongLink] LLM fallback error:', llmErr.message);
-          }
+            const tokenData = await tokenRes.json();
+            const accessToken = tokenData.access_token;
+
+            if (accessToken) {
+              const endpoint = trackMatch ? 'tracks' : albumMatch ? 'albums' : 'playlists';
+              const apiRes = await fetch(`https://api.spotify.com/v1/${endpoint}/${spotifyId}`, {
+                headers: { 'Authorization': `Bearer ${accessToken}` },
+              });
+              if (apiRes.ok) {
+                const data = await apiRes.json();
+                title = data.name || title;
+                artist = data.artists?.[0]?.name || data.owner?.display_name || artist;
+                coverArt = data.images?.[0]?.url || null;
+              }
+            }
+          } catch (_) {}
         }
 
         const embedUrl = trackMatch
