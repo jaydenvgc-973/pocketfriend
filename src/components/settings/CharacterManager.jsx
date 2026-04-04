@@ -195,6 +195,9 @@ export default function CharacterManager() {
 
   const [mergeConfirmModal, setMergeConfirmModal] = useState(null);
 
+  const duplicates = detectDuplicates();
+  const { orphans, ghosts } = detectOrphanNPCs();
+
   const toggleMergeSelection = (charId) => {
     const updated = new Set(selectedForMerge);
     if (updated.has(charId)) {
