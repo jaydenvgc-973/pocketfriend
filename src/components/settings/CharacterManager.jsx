@@ -233,6 +233,9 @@ export default function CharacterManager() {
     const npcIds = selected.filter(id => id.startsWith('npc_'));
     const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
 
+    // Ensure masterCharId is in the selected set
+    if (!selected.includes(masterCharId)) return;
+
     if (hasUser) {
       // Merging with user: delete NPC duplicates
       npcIds.forEach(npcId => {
@@ -335,8 +338,11 @@ export default function CharacterManager() {
         }
       }
     } else if (charIds.length >= 2) {
-      // Merge active characters only
-      mergeMutation.mutate({ characterIds: charIds });
+      // Merge active characters only — masterCharId is the one they selected
+      mergeMutation.mutate({ characterIds: charIds, masterCharId });
+      setSelectedForMerge(new Set());
+      setMergeMode(false);
+      setMergeConfirmModal(null);
     }
   };
 
@@ -539,22 +545,42 @@ export default function CharacterManager() {
             <div className="space-y-3 max-h-60 overflow-y-auto">
               {mergeConfirmModal.selectedItems.map(({ item, itemId }) => {
                 const isNPC = item.type === 'world_person' || item.type === 'family';
+                const isUser = item.type === 'user';
                 const itemData = item.data;
-                const itemName = item.type === 'user'
+                const itemName = isUser
                   ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
                   : itemData.name;
+                const description = isUser 
+                  ? null 
+                  : (isNPC ? itemData.appearance_notes : itemData.personality_summary);
+                const avatarUrl = isUser 
+                  ? (itemData.avatar_url || userSettings?.generated_avatar_urls?.[0] || userSettings?.reference_image_urls?.[0])
+                  : (itemData.avatar_url);
+
                 return (
                   <button
                     key={itemId}
-                    onClick={() => {
-                      confirmMerge(itemId);
-                    }}
-                    className="w-full text-left p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 transition-colors"
+                    onClick={() => confirmMerge(itemId)}
+                    className="w-full text-left p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 transition-colors flex gap-3 items-start"
                   >
-                    <p className="text-sm font-medium text-foreground">{itemName}</p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {isNPC ? `NPC (merge into this)` : `Active character (merge into this)`}
-                    </p>
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt={itemName} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 mt-0.5" />
+                    ) : (
+                      <div className={`w-10 h-10 rounded-lg ${isUser ? 'bg-primary' : isNPC ? 'bg-purple-500' : 'bg-secondary'} flex items-center justify-center flex-shrink-0 mt-0.5`}>
+                        <span className={`text-xs font-semibold ${isUser || isNPC ? 'text-white' : 'text-foreground'}`}>
+                          {itemName[0].toUpperCase()}
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground">{itemName}</p>
+                      {description && (
+                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{description}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground/70 mt-1 font-medium">
+                        {isNPC ? `NPC — merge into` : isUser ? `You — merge into` : `Active character — merge into`}
+                      </p>
+                    </div>
                   </button>
                 );
               })}
