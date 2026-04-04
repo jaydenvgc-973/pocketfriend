@@ -206,7 +206,7 @@ export default function CharacterManager() {
   };
 
   // Auto-select duplicates if they exist
-  React.useEffect(() => {
+  useEffect(() => {
     if (duplicates.length > 0 && selectedForMerge.size === 0) {
       const toSelect = new Set();
       duplicates.forEach(group => {
