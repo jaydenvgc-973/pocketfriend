@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle } from "lucide-react";
+import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
 import { getCharacterStatusDisplay } from "@/lib/characterStatusUtils";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
@@ -68,6 +68,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const isMovedAway = character.status === "moved_away";
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
+
+  const { data: financialRecords = [] } = useQuery({
+    queryKey: ['characterFinancial', character.id],
+    queryFn: () => base44.entities.CharacterFinancial.filter({ character_id: character.id }),
+    staleTime: 60000,
+  });
+  const balance = financialRecords[0]?.current_balance;
 
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', character.id],
@@ -264,6 +271,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
             <div className="flex items-center gap-2 mt-1">
               <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${stateDots[state] || "bg-zinc-500"}`} />
               <span className="text-xs text-muted-foreground capitalize">{stateLabels[state] || state}</span>
+              {balance !== undefined && (
+                <span className="ml-auto flex items-center gap-0.5 text-xs text-green-400 font-medium">
+                  <DollarSign className="w-3 h-3" />{balance.toLocaleString()}
+                </span>
+              )}
             </div>
           </div>
         </div>
