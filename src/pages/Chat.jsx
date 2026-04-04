@@ -1316,16 +1316,22 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     // If user navigated away, write directly to DB as unread (no local state update)
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
       const navigatedAway = !isMountedRef.current;
-      const imgMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: "",
-        emotional_state: emotionalState,
-        is_read: navigatedAway ? false : true, // unread if away so badge fires
-        timestamp: new Date().toISOString(),
-      });
+      let imgMsg;
+      try {
+        imgMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: "",
+          emotional_state: emotionalState,
+          is_read: navigatedAway ? false : true,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('[createImageMessage] Network error saving image message:', err.message);
+        return null;
+      }
       if (!imgMsg?.id) return null;
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
@@ -1341,7 +1347,6 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
           subjectType,
           characterId,
         }).then(() => {
-          // After image lands, update conversation preview so badge shows on Home
           base44.entities.Conversation.update(convoId, {
             last_message_preview: "(photo)",
             last_message_date: new Date().toISOString(),
@@ -1357,16 +1362,22 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
     const createTextMessage = async (textContent) => {
       if (!textContent?.trim()) return null;
       const navigatedAway = !isMountedRef.current;
-      const txtMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: textContent,
-        emotional_state: emotionalState,
-        is_read: navigatedAway ? false : true, // unread if away so badge fires
-        timestamp: new Date().toISOString(),
-      });
+      let txtMsg;
+      try {
+        txtMsg = await base44.entities.Message.create({
+          conversation_id: convoId,
+          sender_type: "character",
+          character_id: characterId,
+          character_name: character.name,
+          content: textContent,
+          emotional_state: emotionalState,
+          is_read: navigatedAway ? false : true,
+          timestamp: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('[createTextMessage] Network error saving message:', err.message);
+        return null;
+      }
       if (!txtMsg?.id) return null;
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
