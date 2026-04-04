@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -192,8 +193,7 @@ export default function CharacterManager() {
     return { orphans, ghosts };
   };
 
-  const duplicates = detectDuplicates();
-  const { orphans, ghosts } = detectOrphanNPCs();
+  const [mergeConfirmModal, setMergeConfirmModal] = useState(null);
 
   const toggleMergeSelection = (charId) => {
     const updated = new Set(selectedForMerge);
@@ -205,26 +205,27 @@ export default function CharacterManager() {
     setSelectedForMerge(updated);
   };
 
-  // Auto-select duplicates if they exist
-  useEffect(() => {
-    if (duplicates.length > 0 && selectedForMerge.size === 0) {
-      const toSelect = new Set();
-      duplicates.forEach(group => {
-        group.items.forEach(item => {
-          const isNPC = item.type === 'world_person' || item.type === 'family';
-          const itemId = item.type === 'user'
-            ? 'user'
-            : (isNPC ? `npc_${item.item.data.source_character_id}_${item.item.data.person_name}_${item.idx}` : item.item.data.id);
-          toSelect.add(itemId);
-        });
-      });
-      setSelectedForMerge(toSelect);
-    }
-  }, [duplicates]);
-
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
+    
+    // Show confirmation modal with selected characters
     const selected = Array.from(selectedForMerge);
+    const selectedItems = allManageableItems
+      .map((item, idx) => {
+        const isNPC = item.type === 'world_person' || item.type === 'family';
+        const itemId = item.type === 'user'
+          ? 'user'
+          : (isNPC ? `npc_${item.data.source_character_id}_${item.data.person_name}_${idx}` : item.data.id);
+        return selected.includes(itemId) ? { item, itemId, idx } : null;
+      })
+      .filter(Boolean);
+    
+    setMergeConfirmModal({ selectedItems, selected });
+  };
+
+  const confirmMerge = (masterCharId) => {
+    if (!mergeConfirmModal) return;
+    const selected = mergeConfirmModal.selected;
     const hasUser = selected.includes('user');
     const npcIds = selected.filter(id => id.startsWith('npc_'));
     const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
@@ -274,6 +275,7 @@ export default function CharacterManager() {
       }
       setSelectedForMerge(new Set());
       setMergeMode(false);
+      setMergeConfirmModal(null);
     } else if (charIds.length === 1 && npcIds.length === 1) {
       // Merge active character with NPC: consolidate NPC data into active character, remove NPC
       const activeCharId = charIds[0];
@@ -517,6 +519,55 @@ export default function CharacterManager() {
 
       {mergeMode && selectedForMerge.size < 2 && (
         <p className="text-xs text-muted-foreground text-center py-2">Select 2+ characters to merge</p>
+      )}
+
+      {/* Merge confirmation modal */}
+      {mergeConfirmModal && createPortal(
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={() => setMergeConfirmModal(null)}>
+          <motion.div
+            initial={{ y: 80, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-foreground">Merge Characters</h3>
+            <div className="space-y-3 max-h-60 overflow-y-auto">
+              {mergeConfirmModal.selectedItems.map(({ item, itemId }) => {
+                const isNPC = item.type === 'world_person' || item.type === 'family';
+                const itemData = item.data;
+                const itemName = item.type === 'user'
+                  ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
+                  : itemData.name;
+                return (
+                  <button
+                    key={itemId}
+                    onClick={() => {
+                      confirmMerge(itemId);
+                    }}
+                    className="w-full text-left p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 transition-colors"
+                  >
+                    <p className="text-sm font-medium text-foreground">{itemName}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {isNPC ? `NPC (merge into this)` : `Active character (merge into this)`}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground italic">
+              Select the character that should remain as the master — others will be merged into it.
+            </p>
+            <Button
+              onClick={() => setMergeConfirmModal(null)}
+              variant="outline"
+              size="sm"
+              className="w-full rounded-lg"
+            >
+              Cancel
+            </Button>
+          </motion.div>
+        </div>,
+        document.body
       )}
     </div>
   );
