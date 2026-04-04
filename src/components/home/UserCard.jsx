@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { User } from "lucide-react";
+import { User, DollarSign } from "lucide-react";
 
 export default function UserCard({ user, settings }) {
   const displayName = settings?.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
+  const balance = settings?.user_balance ?? 6000;
 
   return (
     <Link to="/my-profile">
@@ -26,6 +27,10 @@ export default function UserCard({ user, settings }) {
               <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">You</span>
             </div>
             <p className="text-xs text-muted-foreground mt-0.5">Tap to view your profile</p>
+          </div>
+          <div className="flex items-center gap-1 bg-green-500/10 px-2.5 py-1 rounded-full">
+            <DollarSign className="w-3 h-3 text-green-400" />
+            <span className="text-xs font-semibold text-green-400">{balance.toLocaleString()}</span>
           </div>
         </div>
       </motion.div>

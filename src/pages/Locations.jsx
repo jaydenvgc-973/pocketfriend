@@ -1,4 +1,4 @@
-import { useState } from "react";
+import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -282,8 +282,24 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
   );
 }
 
+// ── Worker Availability Helper ───────────────────────────────────────────────
+function getWorkerAvailability(character, locations, currentLocationId = null) {
+  const assignedLocations = locations.filter(loc =>
+    loc.id !== currentLocationId &&
+    (loc.worker_character_ids || []).includes(character.id)
+  );
+  if (assignedLocations.length === 0) return { status: 'available', label: 'Available', color: 'text-green-400' };
+
+  // Check for shift overlaps — simplified: if they have any other jobs, flag as partial
+  const workplaceCategories = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government'];
+  const otherJobLocs = assignedLocations.filter(l => workplaceCategories.includes(l.category));
+  if (otherJobLocs.length === 0) return { status: 'available', label: 'Available', color: 'text-green-400' };
+  if (otherJobLocs.length >= 2) return { status: 'unavailable', label: 'Overbooked', color: 'text-destructive' };
+  return { status: 'partial', label: `+1 job: ${otherJobLocs[0].name}`, color: 'text-amber-400' };
+}
+
 // ── LocationForm ─────────────────────────────────────────────────────────────
-function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerTooYoung, getNPCAge }) {
+function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerTooYoung, getNPCAge, allLocations = [] }) {
   // Collect all unique NPCs from fictional_relationships across all characters
   const allNPCs = [];
   const seenNames = new Set();
@@ -859,6 +875,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
             {characters.map(char => {
                const alreadyWorker = form.worker_character_ids?.includes(char.id);
                const tooYoung = isWorkerTooYoung(char.id, form.category);
+               const avail = getWorkerAvailability(char, allLocations, editingLocation?.id);
                return (
                  <button
                    key={char.id}
@@ -868,13 +885,16 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
                      }
                    }}
                    disabled={alreadyWorker || tooYoung}
-                   title={tooYoung ? form.category === 'social' || form.category === 'food_drink' ? "Must be 21+ for bars/nightclubs" : "Must be 16+ to work" : ""}
+                   title={tooYoung ? (form.category === 'social' || form.category === 'food_drink' ? "Must be 21+ for bars/nightclubs" : "Must be 16+ to work") : avail.status !== 'available' ? avail.label : ""}
                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
                  >
                    <CharacterAvatar character={char} size="sm" />
                    <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
                    {alreadyWorker && <span className="text-xs text-primary font-medium">✓ Working</span>}
                    {tooYoung && <span className="text-xs text-destructive font-medium">Too young</span>}
+                   {!alreadyWorker && !tooYoung && (
+                     <span className={`text-xs font-medium ${avail.color}`}>{avail.label}</span>
+                   )}
                  </button>
                );
              })}
@@ -1103,8 +1123,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
 // ── Main page ─────────────────────────────────────────────────────────────────
 export default function Locations() {
   const queryClient = useQueryClient();
-  const [showForm, setShowForm] = useState(false);
-  const [editingLocation, setEditingLocation] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [inlineEditId, setInlineEditId] = useState(null); // ID of location being edited inline
   const [filter, setFilter] = useState("all");
   const [newlyCreatedLocation, setNewlyCreatedLocation] = useState(null);
 
@@ -1162,11 +1182,11 @@ export default function Locations() {
     return false;
   };
 
-  const handleSave = async (formData) => {
+  const handleSave = async (formData, editingLocationId = null) => {
     let locationId;
-    if (editingLocation) {
-      await base44.entities.LocationReference.update(editingLocation.id, formData);
-      locationId = editingLocation.id;
+    if (editingLocationId) {
+      await base44.entities.LocationReference.update(editingLocationId, formData);
+      locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
       const created = await base44.entities.LocationReference.create(formData);
@@ -1178,48 +1198,20 @@ export default function Locations() {
     const workerIds = formData.worker_character_ids || [];
     const isEducation = formData.category === 'school' || formData.category === 'education';
     for (const charId of workerIds) {
-      // Only sync active characters (not NPC ids)
       if (charId.startsWith('npc__')) continue;
       base44.functions.invoke('syncLocationJobToCharacter', {
         locationId,
         characterId: charId,
         syncType: isEducation ? 'education' : 'work',
-      }).catch(() => {}); // fire-and-forget
+      }).catch(() => {});
     }
 
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
-    setShowForm(false);
-    setEditingLocation(null);
+    setShowAddForm(false);
+    setInlineEditId(null);
   };
 
 
-
-  const handleBulkDelete = async () => {
-    if (selectedForDelete.size === 0) return;
-    
-    const names = Array.from(selectedForDelete)
-      .map(id => locations.find(l => l.id === id)?.name)
-      .filter(Boolean)
-      .join(', ');
-    
-    const message = `Delete ${selectedForDelete.size} location(s)?\n\n${names}\n\nThis cannot be undone. Type "DELETE" to confirm.`;
-    const input = prompt(message);
-    
-    if (input !== 'DELETE') {
-      setSelectedForDelete(new Set());
-      return;
-    }
-    
-    for (const id of selectedForDelete) {
-      try {
-        await base44.entities.LocationReference.delete(id);
-      } catch (err) {
-        console.warn(`Failed to delete location ${id}:`, err.message);
-      }
-    }
-    setSelectedForDelete(new Set());
-    queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
-  };
 
   const handleDelete = async (id) => {
     const loc = locations.find(l => l.id === id);
@@ -1240,8 +1232,8 @@ export default function Locations() {
   };
 
   const handleEdit = (location) => {
-    setEditingLocation(location);
-    setShowForm(true);
+    setInlineEditId(location.id);
+    setShowAddForm(false); // close add form if open
   };
 
   const characterIds = new Set(characters.map(c => c.id));
@@ -1268,7 +1260,7 @@ export default function Locations() {
           <h1 className="text-base font-bold text-foreground">Location References</h1>
           <p className="text-xs text-muted-foreground">Zone-accurate visual references for generated images</p>
         </div>
-        <Button onClick={() => { setEditingLocation(null); setShowForm(true); }} size="sm" className="rounded-xl gap-1.5">
+        <Button onClick={() => { setInlineEditId(null); setShowAddForm(v => !v); }} size="sm" className="rounded-xl gap-1.5">
           <Plus className="w-4 h-4" /> Add
         </Button>
       </div>
@@ -1285,7 +1277,7 @@ export default function Locations() {
         </div>
 
         {/* Empty state */}
-        {locations.length === 0 && !showForm && (
+        {locations.length === 0 && !showAddForm && (
           <div className="text-center py-10 space-y-3">
             <MapPin className="w-10 h-10 text-muted-foreground/40 mx-auto" />
             <div>
@@ -1294,37 +1286,56 @@ export default function Locations() {
                 Add locations and assign reference images to specific rooms or zones. The AI will use them for visual accuracy in generated images.
               </p>
             </div>
-            <Button onClick={() => setShowForm(true)} className="rounded-xl gap-2">
+            <Button onClick={() => setShowAddForm(true)} className="rounded-xl gap-2">
               <Plus className="w-4 h-4" /> Add your first location
             </Button>
           </div>
         )}
 
+        {/* Add new location form — only shows at top when adding */}
         <AnimatePresence>
-          {showForm && (
+          {showAddForm && (
             <LocationForm
-              key="form"
-              editingLocation={editingLocation}
+              key="add-form"
+              editingLocation={null}
               characters={characters}
-              onSave={handleSave}
-              onCancel={() => { setShowForm(false); setEditingLocation(null); }}
+              allLocations={locations}
+              onSave={(data) => handleSave(data, null)}
+              onCancel={() => setShowAddForm(false)}
               isWorkerTooYoung={isWorkerTooYoung}
               getNPCAge={getNPCAge}
             />
           )}
         </AnimatePresence>
 
+        {/* Location list — each card may have inline edit form below it */}
         <div className="space-y-3">
           <AnimatePresence>
             {filtered.map(loc => (
-              <LocationCard
-                key={loc.id}
-                location={loc}
-                onDelete={handleDelete}
-                onEdit={handleEdit}
-                characters={characters}
-                currentUser={currentUser}
-              />
+              <React.Fragment key={loc.id}>
+                <LocationCard
+                  location={loc}
+                  onDelete={handleDelete}
+                  onEdit={handleEdit}
+                  characters={characters}
+                  currentUser={currentUser}
+                />
+                {/* Inline edit form — appears directly below the card being edited */}
+                <AnimatePresence>
+                  {inlineEditId === loc.id && (
+                    <LocationForm
+                      key={`edit-${loc.id}`}
+                      editingLocation={loc}
+                      characters={characters}
+                      allLocations={locations}
+                      onSave={(data) => handleSave(data, loc.id)}
+                      onCancel={() => setInlineEditId(null)}
+                      isWorkerTooYoung={isWorkerTooYoung}
+                      getNPCAge={getNPCAge}
+                    />
+                  )}
+                </AnimatePresence>
+              </React.Fragment>
             ))}
           </AnimatePresence>
         </div>

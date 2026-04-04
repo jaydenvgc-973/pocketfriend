@@ -89,6 +89,10 @@
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "last_daily_income_date": {
+      "type": "string",
+      "description": "YYYY-MM-DD of the last time daily income ($10) was awarded. Used to prevent double-payouts."
     }
   },
   "required": []

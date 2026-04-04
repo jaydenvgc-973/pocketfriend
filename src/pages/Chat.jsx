@@ -727,6 +727,9 @@ export default function Chat() {
     // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
+    // Award $5 income for sending a message (fire-and-forget)
+    base44.functions.invoke('processUserIncome', { mode: 'message' }).catch(() => {});
+
     // TEXT MODE: Insert status system message immediately if applicable
     if (isPhone) {
       const sysMsg = getTextSystemMessage(character);

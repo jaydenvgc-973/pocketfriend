@@ -102,6 +102,8 @@ export default function Settings() {
   const movedAwayChars = characters.filter(c => c.status === "moved_away");
   const [isProcessingPayday, setIsProcessingPayday] = useState(false);
   const [paydayResult, setPaydayResult] = useState(null);
+  const [isProcessingBills, setIsProcessingBills] = useState(false);
+  const [billsResult, setBillsResult] = useState(null);
 
   const handleForcePayday = async () => {
     setIsProcessingPayday(true);
@@ -113,6 +115,19 @@ export default function Settings() {
       setPaydayResult({ success: false });
     } finally {
       setIsProcessingPayday(false);
+    }
+  };
+
+  const handleForceBills = async () => {
+    setIsProcessingBills(true);
+    setBillsResult(null);
+    try {
+      const res = await base44.functions.invoke('processHousingCosts', {});
+      setBillsResult({ success: true, count: res.data?.processed || 0 });
+    } catch (err) {
+      setBillsResult({ success: false });
+    } finally {
+      setIsProcessingBills(false);
     }
   };
 
@@ -371,6 +386,21 @@ export default function Settings() {
               <p className="text-sm font-medium text-foreground">Force a Payday</p>
               <p className="text-xs text-muted-foreground">
                 {isProcessingPayday ? "Processing payroll..." : paydayResult?.success ? `Done — ${paydayResult.count} character(s) paid` : paydayResult?.success === false ? "Payroll failed. Try again." : "Manually trigger payroll for all working characters"}
+              </p>
+            </div>
+          </button>
+          <button
+            onClick={handleForceBills}
+            disabled={isProcessingBills}
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-destructive/40 transition-colors text-left mb-2 disabled:opacity-50"
+          >
+            <div className="w-9 h-9 rounded-xl bg-destructive/10 flex items-center justify-center flex-shrink-0">
+              <DollarSign className="w-4 h-4 text-destructive" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Force Pay Bills</p>
+              <p className="text-xs text-muted-foreground">
+                {isProcessingBills ? "Processing bills..." : billsResult?.success ? `Done — ${billsResult.count} character(s) billed` : billsResult?.success === false ? "Billing failed. Try again." : "Deduct rent & utilities from all characters now"}
               </p>
             </div>
           </button>
