@@ -2,7 +2,8 @@ import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import { BrowserRouter as Router, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { useEffect } from 'react';
+
+import { useEffect, useRef } from 'react';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { ActiveCharacterProvider } from '@/lib/ActiveCharacterContext';
@@ -38,9 +39,18 @@ import { LocationEditProvider } from '@/components/location/LocationEditConflict
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   
   // Preserve current route across orientation changes and remounts
   useRoutePreservation();
+
+  // On mount, restore the last known route if it differs from current location
+  useEffect(() => {
+    const saved = sessionStorage.getItem('lastKnownRoute');
+    if (saved && saved !== '/' && saved !== location.pathname + location.search) {
+      navigate(saved, { replace: true });
+    }
+  }, []);
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
