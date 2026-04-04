@@ -115,8 +115,14 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     if (activity.includes('coffee') || activity.includes('café') || activity.includes('cafe') || activity.includes('starbucks')) {
       return { iconType: 'out', label: 'at coffee shop', color: 'text-amber-400' };
     }
+    if (activity.includes('evening') || activity.includes('out for')) {
+      return { iconType: 'out', label: 'out for the evening', color: 'text-emerald-400' };
+    }
     if (activity.includes('park') || activity.includes('trail') || activity.includes('hike') || activity.includes('outside') || activity.includes('outdoor')) {
       return { iconType: 'out', label: 'outdoors', color: 'text-emerald-400' };
+    }
+    if (activity.includes('laundromat') || activity.includes('laundry') || activity.includes('dry cleaning')) {
+      return { iconType: 'out', label: 'at laundromat', color: 'text-blue-400' };
     }
     if (activity.includes('church') || activity.includes('mosque') || activity.includes('temple') || activity.includes('synagogue') || activity.includes('worship') || activity.includes('service') || activity.includes('prayer') || activity.includes('kingdom hall') || activity.includes('mass')) {
       const label = religionLocation ? `at ${religionLocation.name}` : 'at worship';
