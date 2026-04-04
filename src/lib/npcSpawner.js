@@ -148,8 +148,9 @@ export function getLocationEmployees(location, characters = [], currentTime = nu
       let status = 'off-duty';
 
       if (charShifts) {
-        const isWorking = charShifts.days.includes(now.day);
-        if (isWorking) {
+        const days = charShifts.days || [1,2,3,4,5];
+        const isWorking = days.includes(now.day);
+        if (isWorking && charShifts.start && charShifts.end) {
           const [startHour] = charShifts.start.split(':').map(Number);
           const [endHour] = charShifts.end.split(':').map(Number);
           isOnShift = now.hour >= startHour && now.hour < endHour;
