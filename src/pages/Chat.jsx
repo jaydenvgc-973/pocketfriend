@@ -846,10 +846,16 @@ export default function Chat() {
 
       let songsContext = "";
       if (character.songs_heard && character.songs_heard.length > 0) {
-        const songsInfo = character.songs_heard.map(song =>
-          `"${song.title}" by ${song.artist}${song.lyrics_excerpt ? ` — lyrics: "${song.lyrics_excerpt}"` : ''}${song.full_lyrics?.includes('Mood/vibe:') ? ` — ${song.full_lyrics.split('Mood/vibe:')[1]?.trim() ? `vibe: ${song.full_lyrics.split('Mood/vibe:')[1].trim()}` : ''}` : ''}`
-        ).join('\n');
-        songsContext = `\n\nSONGS YOU'VE HEARD: You've actually listened to all of these songs and know them well. When the user brings them up, you can recall the title, artist, a lyric, and how it made you feel. Reference them naturally — quote a line, say what the vibe was, share your reaction.\n${songsInfo}`;
+        const songsInfo = character.songs_heard.map(song => {
+          let info = `"${song.title}" by ${song.artist}`;
+          if (song.tracks && song.tracks.length > 0) {
+            const trackList = song.tracks.map(t => `${t.name}${t.artist ? ` (${t.artist})` : ''}`).join(', ');
+            info += ` — tracks: ${trackList}`;
+          }
+          if (song.lyrics_excerpt) info += ` — lyrics: "${song.lyrics_excerpt}"`;
+          return info;
+        }).join('\n');
+        songsContext = `\n\nMUSIC YOU'VE BEEN SENT: You've received these songs and albums. You know the real titles, artists, and actual track lists. When discussing them, reference actual song names from the list. You can ask if the user wants you to listen, suggest you're about to listen, or share thoughts about specific tracks you actually know are on there.\n${songsInfo}`;
       }
 
       // Weather context — only inject when user explicitly mentions weather or outdoor plans
