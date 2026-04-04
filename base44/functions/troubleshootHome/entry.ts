@@ -64,13 +64,50 @@ Deno.serve(async (req) => {
       }
     }
 
-    // AVAILABILITY DISPLAY CHECK
+    // AVAILABILITY DISPLAY CHECK — validate ALL activity type detection
     if (selectedIssues.includes('availability_display')) {
-      results.checked.push('Availability and status display');
+      results.checked.push('Availability and status display (all activity types)');
       
-      const noSchedule = characters.filter(c => !c.work_days && !c.sleep_start_time);
-      if (noSchedule.length > 0) {
-        results.issues_found.push(`${noSchedule.length} character(s) missing schedule data`);
+      const issues = [];
+      for (const char of characters) {
+        const issues_for_char = [];
+        
+        // Check for missing schedule basics
+        if (!char.sleep_start_time || !char.wake_up_time) {
+          issues_for_char.push('missing sleep schedule');
+        }
+        
+        // Check work schedule
+        if (char.work_details?.job_title && (!char.work_start_time || !char.work_end_time)) {
+          issues_for_char.push('has job but no work hours');
+        }
+        
+        // Check education schedule
+        if (char.current_education_activity && char.current_education_activity !== 'none' && !char.education_expected_completion_date) {
+          issues_for_char.push('in education but no completion date');
+        }
+        
+        // Check job training schedule
+        if (char.current_job_training_activity && char.current_job_training_activity !== 'none' && !char.job_training_expected_completion_date) {
+          issues_for_char.push('in training but no completion date');
+        }
+        
+        // Check current_activity is being mapped (at least one activity keyword check)
+        const activity = (char.current_activity || '').toLowerCase();
+        const activityKeywords = ['work', 'school', 'class', 'gym', 'bar', 'club', 'mall', 'home', 'hospital', 'prayer', 'worship', 'doctor', 'coffee', 'park', 'restaurant', 'store', 'errand'];
+        const hasDetectable = activityKeywords.some(kw => activity.includes(kw)) || activity.trim() === '';
+        
+        if (activity && !hasDetectable) {
+          issues_for_char.push(`current_activity "${activity}" not recognized by status detector`);
+        }
+        
+        if (issues_for_char.length > 0) {
+          results.issues_found.push(`${char.name}: ${issues_for_char.join(', ')}`);
+        }
+      }
+      
+      if (results.issues_found.length === 0) {
+        results.fixed.push('All characters have complete availability/activity data');
       }
     }
 

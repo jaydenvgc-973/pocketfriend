@@ -239,7 +239,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
               {!isMovedAway && (() => {
                 const workLocation = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
                 const educationLocation = character.education_location_id ? locationMap[character.education_location_id] : null;
-                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation });
+                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: null, gymLocation: null });
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,

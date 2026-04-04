@@ -10,7 +10,7 @@ const ISSUE_LIST = [
   { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
   { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
   { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },
-  { id: 'availability_display', label: 'Availability incorrect', description: 'Verify work schedule display' },
+  { id: 'availability_display', label: 'Availability incorrect', description: 'Verify all activity types: work, school, gym, bar, home, hospital, prayer, etc.' },
   { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
   { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect and fix characters sharing threads, memories, or routing' },
   { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page and fix created_by' },
