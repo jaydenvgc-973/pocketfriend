@@ -125,7 +125,8 @@ Deno.serve(async (req) => {
           const res = await fetch(oembedUrl);
           if (res.ok) {
             const data = await res.json();
-            // oEmbed title is usually "Song Name - Artist Name" or "Playlist Name"
+            // oEmbed title for tracks: "Song Name - Artist Name"
+            // oEmbed title for playlists/albums: just the name, author_name has the creator
             const rawTitle = data.title || '';
             if (rawTitle.includes(' - ')) {
               const parts = rawTitle.split(' - ');
@@ -133,6 +134,10 @@ Deno.serve(async (req) => {
               artist = parts.slice(1).join(' - ').trim();
             } else {
               title = rawTitle || title;
+              // For playlists/albums, author_name is the creator/artist
+              if (data.author_name && data.author_name !== 'Spotify') {
+                artist = data.author_name;
+              }
             }
             coverArt = data.thumbnail_url || null;
           }

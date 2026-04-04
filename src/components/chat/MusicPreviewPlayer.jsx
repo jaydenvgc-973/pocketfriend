@@ -62,10 +62,14 @@ export default function MusicPreviewPlayer({ song, platform = "spotify" }) {
           </div>
         ) : (
           <div className="w-full p-4 flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
-              <Music className="w-5 h-5 text-white" />
+            <div className="w-12 h-12 rounded-lg bg-white/20 flex items-center justify-center flex-shrink-0">
+              <Music className="w-6 h-6 text-white" />
             </div>
-            <span className="text-xs font-bold text-white uppercase tracking-wide">{label}</span>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold text-white/60 uppercase tracking-wide">{label}</p>
+              {song?.title && <p className="text-sm font-semibold text-white truncate">{song.title}</p>}
+              {song?.artist && song.artist !== "Spotify" && <p className="text-xs text-white/70 truncate">{song.artist}</p>}
+            </div>
           </div>
         )}
       </div>
@@ -76,7 +80,7 @@ export default function MusicPreviewPlayer({ song, platform = "spotify" }) {
           {song?.title || "Unknown Title"}
         </p>
         <p className="text-xs text-muted-foreground line-clamp-1">
-          {song?.artist || "Unknown Artist"}
+          {song?.artist && song.artist !== "Spotify" && song.artist !== "Unknown Artist" ? song.artist : ""}
         </p>
 
         {/* Lyrics excerpt */}
