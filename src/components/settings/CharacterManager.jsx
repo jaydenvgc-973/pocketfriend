@@ -36,8 +36,9 @@ export default function CharacterManager() {
   });
 
   // All items from unified roster (user + characters + family + world people)
+  // EXCLUDE merged/deleted characters from the list
   const allManageableItems = roster
-    .filter(e => e.entity_type !== undefined)
+    .filter(e => e.entity_type !== undefined && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
     .map(c => {
       if (c.is_user) return { type: 'user', data: c };
       if (c.is_family) return { type: 'family', data: c };
