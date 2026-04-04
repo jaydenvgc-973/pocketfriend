@@ -570,9 +570,8 @@ export default function CharacterManager() {
           onClick={submitMerge}
           size="sm"
           className="w-full rounded-lg"
-          disabled={mergeMutation.isPending}
         >
-          {mergeMutation.isPending ? 'Merging...' : `Merge ${selectedForMerge.size} Characters`}
+          `Merge ${selectedForMerge.size} Characters`
         </Button>
       )}
 
