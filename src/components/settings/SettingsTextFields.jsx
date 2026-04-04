@@ -1,20 +1,21 @@
 import { useState, useEffect, useRef } from "react";
 
 export default function SettingsTextFields({ settings, onSave }) {
-  const [worldName, setWorldName] = useState(settings.fictional_world_name || "");
-  const [birthday, setBirthday] = useState(settings.user_birthday || "");
-  const [scheduleNotes, setScheduleNotes] = useState(settings.user_schedule_notes || "");
-  const initialized = useRef(false);
+  const [worldName, setWorldName] = useState("");
+  const [birthday, setBirthday] = useState("");
+  const [scheduleNotes, setScheduleNotes] = useState("");
+  const loadedSettingsId = useRef(null);
 
-  // Only sync once when settings first load from the server (empty → populated)
+  // Only load from DB once per settings record (identified by settings.id)
+  // After that, local state is authoritative until the user explicitly changes it
   useEffect(() => {
-    if (!initialized.current && (settings.fictional_world_name || settings.user_birthday || settings.user_schedule_notes)) {
+    if (settings.id && settings.id !== loadedSettingsId.current) {
       setWorldName(settings.fictional_world_name || "");
       setBirthday(settings.user_birthday || "");
       setScheduleNotes(settings.user_schedule_notes || "");
-      initialized.current = true;
+      loadedSettingsId.current = settings.id;
     }
-  }, [settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes]);
+  }, [settings.id, settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes]);
 
   return (
     <div className="space-y-6 pt-2 border-t border-border">
@@ -27,11 +28,7 @@ export default function SettingsTextFields({ settings, onSave }) {
           placeholder="Your fictional world name..."
           value={worldName}
           onChange={e => setWorldName(e.target.value)}
-          onBlur={() => {
-            if (worldName !== (settings.fictional_world_name || "")) {
-              onSave({ fictional_world_name: worldName });
-            }
-          }}
+          onBlur={() => onSave({ fictional_world_name: worldName })}
           className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
         />
       </div>
@@ -60,11 +57,7 @@ export default function SettingsTextFields({ settings, onSave }) {
           placeholder="e.g. I'm usually free evenings and weekends..."
           value={scheduleNotes}
           onChange={e => setScheduleNotes(e.target.value)}
-          onBlur={() => {
-            if (scheduleNotes !== (settings.user_schedule_notes || "")) {
-              onSave({ user_schedule_notes: scheduleNotes });
-            }
-          }}
+          onBlur={() => onSave({ user_schedule_notes: scheduleNotes })}
           rows={3}
           className="w-full px-3 py-2 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 resize-none"
         />

@@ -10,6 +10,23 @@
       "type": "string",
       "description": "The name this character uses when referring to or addressing the user."
     },
+    "appearance_age": {
+      "type": "number",
+      "description": "Visual appearance age for image generation. Overrides profile age in generated images only."
+    },
+    "family_list_locked": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, no new family members can be added to this character's family list by any source."
+    },
+    "family_locked_members": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of family member names (lowercased) that are individually locked and cannot be removed."
+    },
     "is_default": {
       "type": "boolean",
       "default": false

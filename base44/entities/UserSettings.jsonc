@@ -59,6 +59,14 @@
       "type": "string",
       "description": "The name the user goes by in the fictional world."
     },
+    "user_aliases": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Alternate names, nicknames, and aliases for the user. Used to prevent duplicate NPC creation."
+    },
     "response_lag_enabled": {
       "type": "boolean",
       "default": true,

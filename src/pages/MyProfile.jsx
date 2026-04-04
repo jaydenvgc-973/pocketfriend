@@ -6,6 +6,7 @@ import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart } from "lucide-react"
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
+import UserAliasSection from "@/components/user/UserAliasSection";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
 export default function MyProfile() {
@@ -266,6 +267,17 @@ export default function MyProfile() {
             </button>
           </Link>
         </div>
+
+        {/* User Aliases */}
+        <UserAliasSection
+          settings={settings}
+          onSave={async (data) => {
+            if (settings.id) {
+              await base44.entities.UserSettings.update(settings.id, data).catch(() => {});
+              queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+            }
+          }}
+        />
 
         {/* Characters in their world — with full relationship selector */}
         {characters.length > 0 && (

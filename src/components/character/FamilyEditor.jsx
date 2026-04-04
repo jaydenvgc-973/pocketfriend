@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Plus, Trash2, Camera, Loader2, ZoomIn } from "lucide-react";
+import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -91,6 +91,35 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   const [saving, setSaving] = useState(false);
   const [generatingIdx, setGeneratingIdx] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  // Master lock: prevents ANY new additions to the family list
+  const [masterLocked, setMasterLocked] = useState(character.family_list_locked || false);
+  // Per-member locks: stored as a set of member names (lowercased)
+  const [lockedMembers, setLockedMembers] = useState(new Set((character.family_locked_members || []).map(n => n.toLowerCase())));
+
+  const saveLocks = async (newMasterLocked, newLockedMembersSet) => {
+    await base44.entities.Character.update(character.id, {
+      family_list_locked: newMasterLocked,
+      family_locked_members: [...newLockedMembersSet],
+    }).catch(() => {});
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+  };
+
+  const toggleMasterLock = () => {
+    const next = !masterLocked;
+    setMasterLocked(next);
+    saveLocks(next, lockedMembers);
+  };
+
+  const toggleMemberLock = (memberName) => {
+    const key = memberName?.toLowerCase();
+    const next = new Set(lockedMembers);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    setLockedMembers(next);
+    saveLocks(masterLocked, next);
+  };
+
+  const isMemberLocked = (name) => lockedMembers.has(name?.toLowerCase());
 
   // Helper: get avatar URL for a family member if they're an active character
   const getFamilyMemberAvatar = (memberName) => {
@@ -108,6 +137,7 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   }, [character.id, JSON.stringify(character.family_members)]);
 
   const addMember = () => {
+    if (masterLocked) return; // master lock blocks new additions
     setMembers(prev => [...prev, { name: "", relationship_type: "mother", photo_url: null, age_at_creation: null, age_set_date: null }]);
   };
 
@@ -116,6 +146,8 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
   };
 
   const removeMember = (idx) => {
+    const member = members[idx];
+    if (isMemberLocked(member?.name)) return; // individual lock blocks removal
     setMembers(prev => prev.filter((_, i) => i !== idx));
   };
 
@@ -345,8 +377,20 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
     <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
       <ImageLightbox src={lightboxSrc} alt="Family member" onClose={() => setLightboxSrc(null)} />
       <div className="flex items-center justify-between">
-        <p className="text-xs text-muted-foreground uppercase tracking-wider">Family</p>
-        {!readOnly && (
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Family</p>
+          {/* Master lock — blocks all new additions */}
+          {!readOnly && (
+            <button
+              onClick={toggleMasterLock}
+              title={masterLocked ? "Family list locked — click to allow additions" : "Click to lock family list (no new additions)"}
+              className={`p-1 rounded-lg transition-colors ${masterLocked ? "text-amber-400 hover:text-amber-300" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {masterLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+            </button>
+          )}
+        </div>
+        {!readOnly && !masterLocked && (
           <button
             onClick={addMember}
             className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
@@ -354,6 +398,9 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
             <Plus className="w-3.5 h-3.5" />
             Add
           </button>
+        )}
+        {!readOnly && masterLocked && (
+          <span className="text-[10px] text-amber-400/80 font-medium">List locked</span>
         )}
       </div>
 
@@ -488,9 +535,18 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                       <option key={type} value={type}>{type}</option>
                     ))}
                   </select>
+                  {/* Individual member lock */}
+                  <button
+                    onClick={() => toggleMemberLock(member.name)}
+                    title={isMemberLocked(member.name) ? "Locked — click to unlock this family member" : "Lock this family member in place"}
+                    className={`flex-shrink-0 transition-colors ${isMemberLocked(member.name) ? "text-amber-400 hover:text-amber-300" : "text-muted-foreground hover:text-foreground"}`}
+                  >
+                    {isMemberLocked(member.name) ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                  </button>
                   <button
                     onClick={() => removeMember(idx)}
-                    className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
+                    disabled={isMemberLocked(member.name)}
+                    className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 disabled:opacity-30 disabled:cursor-not-allowed"
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
