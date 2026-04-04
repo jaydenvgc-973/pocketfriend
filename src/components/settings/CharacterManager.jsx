@@ -340,52 +340,51 @@ export default function CharacterManager() {
       }
     } else if (charIds.length >= 2) {
       // Merge active characters only — masterCharId is the one they selected
-      // Fetch master character data to use as authoritative source
       const masterChar = roster.find(c => c.id === masterCharId && c.is_character);
       const secondaryCharIds = charIds.filter(id => id !== masterCharId);
 
       if (masterChar && secondaryCharIds.length > 0) {
-        // Update all secondary characters' relationships to point to master, using master's avatar/info
-        Promise.all(secondaryCharIds.map(charId => {
+        // CONSOLIDATE ALL RELATIONSHIPS INTO MASTER FIRST
+        let masterRels = masterChar.fictional_relationships || [];
+
+        // Loop through all secondary chars and consolidate their rels into the accumulator
+        secondaryCharIds.forEach(charId => {
           const secondaryChar = roster.find(c => c.id === charId);
           if (secondaryChar) {
-            // Consolidate fictional relationships, preferring master's data for duplicates
-            const masterRels = masterChar.fictional_relationships || [];
             const secondaryRels = secondaryChar.fictional_relationships || [];
-            const consolidatedRels = [...masterRels];
-
             secondaryRels.forEach(rel => {
-              const existingIdx = consolidatedRels.findIndex(r => 
+              const existingIdx = masterRels.findIndex(r => 
                 r.person_name?.toLowerCase() === rel.person_name?.toLowerCase()
               );
               if (existingIdx >= 0) {
                 // Merge relationship scores, take max of each
-                consolidatedRels[existingIdx] = {
-                  ...consolidatedRels[existingIdx],
-                  friendship_level: Math.max(consolidatedRels[existingIdx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                  user_respect_level: Math.max(consolidatedRels[existingIdx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                  romantic_level: Math.max(consolidatedRels[existingIdx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                  attraction_level: Math.max(consolidatedRels[existingIdx].attraction_level ?? 0, rel.attraction_level ?? 0),
+                masterRels[existingIdx] = {
+                  ...masterRels[existingIdx],
+                  friendship_level: Math.max(masterRels[existingIdx].friendship_level ?? 50, rel.friendship_level ?? 50),
+                  user_respect_level: Math.max(masterRels[existingIdx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
+                  romantic_level: Math.max(masterRels[existingIdx].romantic_level ?? 0, rel.romantic_level ?? 0),
+                  attraction_level: Math.max(masterRels[existingIdx].attraction_level ?? 0, rel.attraction_level ?? 0),
                 };
               } else {
-                consolidatedRels.push(rel);
+                masterRels.push(rel);
               }
             });
+          }
+        });
 
-            // Consolidate into master, then soft-delete secondary
-            return base44.entities.Character.update(masterCharId, {
-              fictional_relationships: consolidatedRels,
-            }).then(() => {
-              // Soft-delete the secondary character
-              return base44.entities.Character.update(charId, {
-                status: 'merged',
-                merged_into_character_id: masterCharId,
-              });
-            });
-            }
-            return Promise.resolve();
-            })).then(() => {
-            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+        // NOW update master ONCE with all consolidated relationships
+        base44.entities.Character.update(masterCharId, {
+          fictional_relationships: masterRels,
+        }).then(() => {
+          // THEN soft-delete all secondary characters
+          return Promise.all(secondaryCharIds.map(charId =>
+            base44.entities.Character.update(charId, {
+              status: 'merged',
+              merged_into_character_id: masterCharId,
+            })
+          ));
+        }).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
           setSelectedForMerge(new Set());
           setMergeMode(false);
           setMergeConfirmModal(null);
