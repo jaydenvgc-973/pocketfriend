@@ -137,26 +137,25 @@ Deno.serve(async (req) => {
           console.error('[processSongLink] oEmbed error:', oembedErr.message);
         }
 
-        // Fallback: LLM lookup if we still have no metadata
+        // Fallback: LLM lookup with web search
         if (title === 'Song shared' || title === 'Playlist shared' || title === 'Album shared' || artist === 'Unknown Artist') {
           try {
             const spotifyType = trackMatch ? 'track' : albumMatch ? 'album' : 'playlist';
+            const spotifyId = trackMatch?.[1] || playlistMatch?.[1] || albumMatch?.[1];
             const llmRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
-              prompt: `Look up this Spotify ${spotifyType}: ${songLink}\nReturn the title, artist/creator name, and album art image URL if you can find it.\nRespond ONLY with JSON: {"title": "...", "artist": "...", "cover_art_url": "...or null"}`,
+              prompt: `Visit this Spotify URL and tell me the exact title and artist/creator of this ${spotifyType}: ${songLink}\n\nAlso search for: spotify ${spotifyType} ${spotifyId}\n\nReturn ONLY valid JSON with the real title and real artist name (not "Spotify", not "Unknown"). If you cannot find it, make your best guess based on the Spotify ID.\n{"title": "exact title here", "artist": "exact artist name here"}`,
               add_context_from_internet: true,
               response_json_schema: {
                 type: "object",
                 properties: {
                   title: { type: "string" },
-                  artist: { type: "string" },
-                  cover_art_url: { type: "string" }
+                  artist: { type: "string" }
                 }
               }
             });
             console.log('[processSongLink] LLM result:', JSON.stringify(llmRes));
-            if (llmRes?.title && llmRes.title.length > 2) title = llmRes.title;
-            if (llmRes?.artist && llmRes.artist !== 'Spotify') artist = llmRes.artist;
-            if (llmRes?.cover_art_url && llmRes.cover_art_url.startsWith('http')) coverArt = llmRes.cover_art_url;
+            if (llmRes?.title && llmRes.title.length > 2 && !llmRes.title.includes('...')) title = llmRes.title;
+            if (llmRes?.artist && llmRes.artist !== 'Spotify' && llmRes.artist !== 'Unknown Artist' && !llmRes.artist.includes('...')) artist = llmRes.artist;
           } catch (llmErr) {
             console.error('[processSongLink] LLM fallback error:', llmErr.message);
           }
