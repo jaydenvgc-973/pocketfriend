@@ -101,6 +101,43 @@
     "last_daily_income_date": {
       "type": "string",
       "description": "YYYY-MM-DD of the last time daily income ($10) was awarded. Used to prevent double-payouts."
+    },
+    "appearance_lock": {
+      "type": "object",
+      "description": "Locked appearance attributes for the user. Used as identity anchors in generated images.",
+      "properties": {
+        "skin_tone": {
+          "type": "string"
+        },
+        "hair_type": {
+          "type": "string"
+        },
+        "hairstyle": {
+          "type": "string"
+        },
+        "facial_hair": {
+          "type": "string"
+        },
+        "makeup": {
+          "type": "string"
+        },
+        "clothing_style": {
+          "type": "string"
+        },
+        "footwear": {
+          "type": "string"
+        },
+        "overall_aesthetic": {
+          "type": "string"
+        },
+        "custom_keywords": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
     }
   },
   "required": []

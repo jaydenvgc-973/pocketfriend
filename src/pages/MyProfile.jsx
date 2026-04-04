@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
 import UserAliasSection from "@/components/user/UserAliasSection";
+import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
 export default function MyProfile() {
@@ -278,6 +279,9 @@ export default function MyProfile() {
             }
           }}
         />
+
+        {/* Appearance Lock */}
+        <UserAppearanceLockEditor settings={settings} user={user} />
 
         {/* Characters in their world — with full relationship selector */}
         {characters.length > 0 && (

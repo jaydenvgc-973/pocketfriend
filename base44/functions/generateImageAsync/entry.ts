@@ -625,6 +625,23 @@ Deno.serve(async (req) => {
             ethnicities: sett.ethnicities || [],
           };
         }
+        // Inject user appearance lock into prompt if defined
+        const userLock = sett.appearance_lock || {};
+        const userLockParts = [];
+        if (userLock.skin_tone) userLockParts.push(`skin tone: ${userLock.skin_tone}`);
+        if (userLock.hair_type) userLockParts.push(`hair type: ${userLock.hair_type}`);
+        if (userLock.hairstyle) userLockParts.push(`hairstyle: ${userLock.hairstyle}`);
+        if (userLock.facial_hair) userLockParts.push(`facial hair: ${userLock.facial_hair}`);
+        if (userLock.makeup) userLockParts.push(`makeup: ${userLock.makeup}`);
+        if (userLock.clothing_style) userLockParts.push(`clothing style: ${userLock.clothing_style}`);
+        if (userLock.footwear) userLockParts.push(`footwear: ${userLock.footwear}`);
+        if (userLock.overall_aesthetic) userLockParts.push(`overall aesthetic: ${userLock.overall_aesthetic}`);
+        if (userLock.custom_keywords?.length > 0) userLockParts.push(userLock.custom_keywords.join(', '));
+        if (userLockParts.length > 0) {
+          resolvedUserAppearanceData = resolvedUserAppearanceData || {};
+          resolvedUserAppearanceData._lock_note = `USER APPEARANCE LOCK (identity anchors — never change): ${userLockParts.join(' | ')}. ⚠️ Do NOT default to Caucasian features. Preserve these traits exactly.`;
+          console.log(`[USER-LOCK] Applied ${userLockParts.length} appearance lock traits for user`);
+        }
         // Log the user's in-world name for debugging
         if (sett.fictional_world_name) {
           console.log(`[USER-IDENTITY] In-world name: "${sett.fictional_world_name}" (passed: "${userWorldName}")`);
@@ -733,7 +750,8 @@ Deno.serve(async (req) => {
       // Strict mode requires maximum facial consistency, no drift/beautification
       referenceImages = resolvedUserRefs.slice(0, 4);
       const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(resolvedUserAppearanceData, userIdentityStrictMode) : '';
-      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.${identityLockNote}`;
+      const userLockNote = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
+      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.${identityLockNote}${userLockNote}`;
 
     } else if (hasCharacterImages) {
       // Character refs come AFTER location refs but get more slots (4 vs 3) for face priority
@@ -753,8 +771,9 @@ Deno.serve(async (req) => {
         ].filter(Boolean);
       }
 
+      const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
       const userIdentityNote = effectiveUserIncluded
-        ? `\n\nUSER ALSO IN THIS SCENE: A second person (the user) must appear alongside ${characterName}. Replicate the user's exact face, features, and appearance from the final reference images. ${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}`
+        ? `\n\nUSER ALSO IN THIS SCENE: A second person (the user) must appear alongside ${characterName}. Replicate the user's exact face, features, and appearance from the final reference images. ${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}${userLockNoteJoint}`
         : '';
 
       const doNotIncludeOthers = effectiveUserIncluded ? '' : ' Do NOT include any other person.';
