@@ -847,15 +847,22 @@ export default function Chat() {
       let songsContext = "";
       if (character.songs_heard && character.songs_heard.length > 0) {
         const songsInfo = character.songs_heard.map(song => {
-          let info = `"${song.title}" by ${song.artist}`;
+          let info = `ALBUM/PLAYLIST TITLE: "${song.title}" by ${song.artist}`;
           if (song.tracks && song.tracks.length > 0) {
-            const trackList = song.tracks.map(t => `${t.name}${t.artist ? ` (${t.artist})` : ''}`).join(', ');
-            info += ` — tracks: ${trackList}`;
+            const trackList = song.tracks.map(t => `${t.name}${t.artist ? ` (${t.artist})` : ''}`).join(' | ');
+            info += ` | ACTUAL TRACKS ON IT: ${trackList}`;
+          } else {
+            info += ` | (track list not available)`;
           }
-          if (song.lyrics_excerpt) info += ` — lyrics: "${song.lyrics_excerpt}"`;
           return info;
         }).join('\n');
-        songsContext = `\n\nMUSIC YOU'VE BEEN SENT: You've received these songs and albums. You know the real titles, artists, and actual track lists. When discussing them, reference actual song names from the list. You can ask if the user wants you to listen, suggest you're about to listen, or share thoughts about specific tracks you actually know are on there.\n${songsInfo}`;
+        songsContext = `\n\nMUSIC SHARED WITH YOU: You've been sent these songs and albums. CRITICAL RULES:
+1. The TITLE is NOT a song — it's the album or playlist name.
+2. ONLY reference actual track names if you have them in the ACTUAL TRACKS list above.
+3. If track list is NOT available, admit "I can't see the individual songs on that" rather than making up fake track names.
+4. You can discuss how the album/artist makes you feel, ask if they want you to listen, or reference specific tracks you actually have listed.
+5. NEVER pretend to know songs that aren't in your track list — that's dishonest.
+\n${songsInfo}`;
       }
 
       // Weather context — only inject when user explicitly mentions weather or outdoor plans
