@@ -239,7 +239,7 @@ export default function CharacterManager() {
 
     if (hasUser) {
       // Merging with user: delete NPC duplicates
-      npcIds.forEach(npcId => {
+      Promise.all(npcIds.map(npcId => {
         const match = npcId.match(/^npc_(.+)_(.+)$/);
         if (match) {
           const [, sourceCharId, personName] = match;
@@ -248,14 +248,16 @@ export default function CharacterManager() {
             const updated = (sourceChar.fictional_relationships || []).filter(
               r => r.person_name !== personName
             );
-            base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated })
-              .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
-              .catch(() => {});
+            return base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated });
           }
         }
-      });
-      setSelectedForMerge(new Set());
-      setMergeMode(false);
+        return Promise.resolve();
+      })).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+        setSelectedForMerge(new Set());
+        setMergeMode(false);
+        setMergeConfirmModal(null);
+      }).catch(() => {});
     } else if (npcIds.length >= 2 && charIds.length === 0) {
       // Merging NPCs: keep the first one, delete others
       const [primary, ...others] = npcIds;
@@ -344,33 +346,33 @@ export default function CharacterManager() {
       const secondaryCharIds = charIds.filter(id => id !== masterCharId);
 
       if (masterChar && secondaryCharIds.length > 0) {
-        // CONSOLIDATE ALL RELATIONSHIPS INTO MASTER FIRST
-        let masterRels = masterChar.fictional_relationships || [];
+         // CONSOLIDATE ALL RELATIONSHIPS INTO MASTER FIRST (deep copy to avoid mutation)
+         let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
 
-        // Loop through all secondary chars and consolidate their rels into the accumulator
-        secondaryCharIds.forEach(charId => {
-          const secondaryChar = roster.find(c => c.id === charId);
-          if (secondaryChar) {
-            const secondaryRels = secondaryChar.fictional_relationships || [];
-            secondaryRels.forEach(rel => {
-              const existingIdx = masterRels.findIndex(r => 
-                r.person_name?.toLowerCase() === rel.person_name?.toLowerCase()
-              );
-              if (existingIdx >= 0) {
-                // Merge relationship scores, take max of each
-                masterRels[existingIdx] = {
-                  ...masterRels[existingIdx],
-                  friendship_level: Math.max(masterRels[existingIdx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                  user_respect_level: Math.max(masterRels[existingIdx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                  romantic_level: Math.max(masterRels[existingIdx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                  attraction_level: Math.max(masterRels[existingIdx].attraction_level ?? 0, rel.attraction_level ?? 0),
-                };
-              } else {
-                masterRels.push(rel);
-              }
-            });
-          }
-        });
+         // Loop through all secondary chars and consolidate their rels into the accumulator
+         secondaryCharIds.forEach(charId => {
+           const secondaryChar = roster.find(c => c.id === charId);
+           if (secondaryChar) {
+             const secondaryRels = secondaryChar.fictional_relationships || [];
+             secondaryRels.forEach(rel => {
+               const existingIdx = masterRels.findIndex(r => 
+                 r.person_name?.toLowerCase() === rel.person_name?.toLowerCase()
+               );
+               if (existingIdx >= 0) {
+                 // Merge relationship scores, take max of each
+                 masterRels[existingIdx] = {
+                   ...masterRels[existingIdx],
+                   friendship_level: Math.max(masterRels[existingIdx].friendship_level ?? 50, rel.friendship_level ?? 50),
+                   user_respect_level: Math.max(masterRels[existingIdx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
+                   romantic_level: Math.max(masterRels[existingIdx].romantic_level ?? 0, rel.romantic_level ?? 0),
+                   attraction_level: Math.max(masterRels[existingIdx].attraction_level ?? 0, rel.attraction_level ?? 0),
+                 };
+               } else {
+                 masterRels.push({...rel});
+               }
+             });
+           }
+         });
 
         // NOW update master ONCE with all consolidated relationships
         base44.entities.Character.update(masterCharId, {
@@ -570,7 +572,7 @@ export default function CharacterManager() {
           size="sm"
           className="w-full rounded-lg"
         >
-          `Merge ${selectedForMerge.size} Characters`
+          Merge {selectedForMerge.size} Characters
         </Button>
       )}
 
