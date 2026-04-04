@@ -1382,12 +1382,33 @@ export default function Locations() {
     characterIds.has(l.owner_character_id) ||
     (l.resident_character_ids || []).some(id => characterIds.has(id));
   
-  const filtered = (filter === "all" 
-    ? locations 
-    : filter === "character_specific"
-    ? locations.filter(isCharacterHome)
-    : locations.filter(l => l.location_type === filter && !isCharacterHome(l))
-  );
+  // Group and sort locations
+  const getFilteredAndGrouped = () => {
+    let allFiltered = locations;
+    
+    if (filter === "global") {
+      allFiltered = locations.filter(l => l.location_type === "global" && !isCharacterHome(l));
+    } else if (filter === "character_specific") {
+      allFiltered = locations.filter(isCharacterHome);
+    }
+    // if filter === "all", use all locations
+    
+    // Sort alphabetically by name within filtered set
+    allFiltered = [...allFiltered].sort((a, b) => 
+      (a.name || "").localeCompare(b.name || "")
+    );
+    
+    if (filter === "all") {
+      // For "All" tab: separate into global and character-specific, each sorted alphabetically
+      const global = allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l));
+      const characterSpecific = allFiltered.filter(isCharacterHome);
+      return { global, characterSpecific };
+    }
+    
+    return { all: allFiltered };
+  };
+
+  const filtered = getFilteredAndGrouped();
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -1447,20 +1468,83 @@ export default function Locations() {
           )}
         </AnimatePresence>
 
-        {/* Location list — each card may have inline edit form below it */}
-        <div className="space-y-3">
-          <AnimatePresence>
-            {filtered.map(loc => (
-              <React.Fragment key={loc.id}>
-                <LocationCard
-                  location={loc}
-                  onDelete={handleDelete}
-                  onEdit={handleEdit}
-                  characters={characters}
-                  currentUser={currentUser}
-                />
-                {/* Inline edit form — appears directly below the card being edited */}
-                <AnimatePresence>
+        {/* Location list — grouped by type and sorted alphabetically */}
+        <div className="space-y-4">
+          {filter === "all" && filtered.global && filtered.global.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">🌐 Global Locations</h2>
+              <AnimatePresence>
+                {filtered.global.map(loc => (
+                  <React.Fragment key={loc.id}>
+                    <LocationCard
+                      location={loc}
+                      onDelete={handleDelete}
+                      onEdit={handleEdit}
+                      characters={characters}
+                      currentUser={currentUser}
+                    />
+                    {inlineEditId === loc.id && (
+                      <LocationForm
+                        key={`edit-${loc.id}`}
+                        editingLocation={loc}
+                        characters={characters}
+                        allLocations={locations}
+                        onSave={(data) => handleSave(data, loc.id)}
+                        onCancel={() => setInlineEditId(null)}
+                        onDuplicate={() => handleDuplicate(loc)}
+                        isWorkerTooYoung={isWorkerTooYoung}
+                        getNPCAge={getNPCAge}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {filter === "all" && filtered.characterSpecific && filtered.characterSpecific.length > 0 && (
+            <div className="space-y-3">
+              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">👤 Character Locations</h2>
+              <AnimatePresence>
+                {filtered.characterSpecific.map(loc => (
+                  <React.Fragment key={loc.id}>
+                    <LocationCard
+                      location={loc}
+                      onDelete={handleDelete}
+                      onEdit={handleEdit}
+                      characters={characters}
+                      currentUser={currentUser}
+                    />
+                    {inlineEditId === loc.id && (
+                      <LocationForm
+                        key={`edit-${loc.id}`}
+                        editingLocation={loc}
+                        characters={characters}
+                        allLocations={locations}
+                        onSave={(data) => handleSave(data, loc.id)}
+                        onCancel={() => setInlineEditId(null)}
+                        onDuplicate={() => handleDuplicate(loc)}
+                        isWorkerTooYoung={isWorkerTooYoung}
+                        getNPCAge={getNPCAge}
+                      />
+                    )}
+                  </React.Fragment>
+                ))}
+              </AnimatePresence>
+            </div>
+          )}
+
+          {filter !== "all" && filtered.all && (
+            <AnimatePresence>
+              {filtered.all.map(loc => (
+                <React.Fragment key={loc.id}>
+                  <LocationCard
+                    location={loc}
+                    onDelete={handleDelete}
+                    onEdit={handleEdit}
+                    characters={characters}
+                    currentUser={currentUser}
+                  />
                   {inlineEditId === loc.id && (
                     <LocationForm
                       key={`edit-${loc.id}`}
@@ -1474,10 +1558,10 @@ export default function Locations() {
                       getNPCAge={getNPCAge}
                     />
                   )}
-                </AnimatePresence>
-              </React.Fragment>
-            ))}
-          </AnimatePresence>
+                </React.Fragment>
+              ))}
+            </AnimatePresence>
+          )}
         </div>
       </div>
 
