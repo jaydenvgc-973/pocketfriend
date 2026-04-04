@@ -122,74 +122,90 @@ Deno.serve(async (req) => {
 
         // Fetch Spotify metadata using Web API with credentials
         try {
-          const clientId = Deno.env.get('SPOTIFY_CLIENT_ID') || process.env.SPOTIFY_CLIENT_ID;
-          const clientSecret = Deno.env.get('SPOTIFY_CLIENT_SECRET') || process.env.SPOTIFY_CLIENT_SECRET;
+          const clientId = Deno.env.get('SPOTIFY_CLIENT_ID');
+          const clientSecret = Deno.env.get('SPOTIFY_CLIENT_SECRET');
+
+          console.log('[processSongLink] Spotify auth check:', { hasId: !!clientId, hasSecret: !!clientSecret });
 
           if (clientId && clientSecret) {
-            // Get access token
-            const authHeader = btoa(`${clientId}:${clientSecret}`);
-            const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Basic ${authHeader}`,
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: 'grant_type=client_credentials',
-            });
+            try {
+              // Get access token
+              const authHeader = btoa(`${clientId}:${clientSecret}`);
+              const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Basic ${authHeader}`,
+                  'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'grant_type=client_credentials',
+              });
 
-            if (tokenRes.ok) {
-              const tokenData = await tokenRes.json();
-              const accessToken = tokenData.access_token;
+              console.log('[processSongLink] Spotify token response:', tokenRes.status);
 
-              // Fetch track data
-              if (trackMatch) {
-                const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`, {
-                  headers: { 'Authorization': `Bearer ${accessToken}` },
-                });
-                if (trackRes.ok) {
-                  const trackData = await trackRes.json();
-                  title = trackData.name || title;
-                  artist = trackData.artists?.[0]?.name || artist;
-                  coverArt = trackData.album?.images?.[0]?.url || null;
-                  tracks = [{ name: trackData.name, artist: trackData.artists?.[0]?.name }];
+              if (tokenRes.ok) {
+                const tokenData = await tokenRes.json();
+                const accessToken = tokenData.access_token;
+
+                // Fetch track data
+                if (trackMatch) {
+                  const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` },
+                  });
+                  if (trackRes.ok) {
+                    const trackData = await trackRes.json();
+                    title = trackData.name || title;
+                    artist = trackData.artists?.[0]?.name || artist;
+                    coverArt = trackData.album?.images?.[0]?.url || null;
+                    tracks = [{ name: trackData.name, artist: trackData.artists?.[0]?.name }];
+                  }
                 }
-              }
 
-              // Fetch album data with tracks
-              if (albumMatch) {
-                const albumRes = await fetch(`https://api.spotify.com/v1/albums/${spotifyId}`, {
-                  headers: { 'Authorization': `Bearer ${accessToken}` },
-                });
-                if (albumRes.ok) {
-                  const albumData = await albumRes.json();
-                  title = albumData.name || title;
-                  artist = albumData.artists?.[0]?.name || artist;
-                  coverArt = albumData.images?.[0]?.url || null;
-                  tracks = (albumData.tracks?.items || []).map(t => ({
-                    name: t.name,
-                    artist: t.artists?.[0]?.name,
-                  }));
+                // Fetch album data with tracks
+                if (albumMatch) {
+                  const albumRes = await fetch(`https://api.spotify.com/v1/albums/${spotifyId}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` },
+                  });
+                  if (albumRes.ok) {
+                    const albumData = await albumRes.json();
+                    title = albumData.name || title;
+                    artist = albumData.artists?.[0]?.name || artist;
+                    coverArt = albumData.images?.[0]?.url || null;
+                    tracks = (albumData.tracks?.items || []).map(t => ({
+                      name: t.name,
+                      artist: t.artists?.[0]?.name,
+                    }));
+                    console.log('[processSongLink] Album fetched:', { title, trackCount: tracks.length });
+                  }
                 }
-              }
 
-              // Fetch playlist data with tracks
-              if (playlistMatch) {
-                const playlistRes = await fetch(`https://api.spotify.com/v1/playlists/${spotifyId}`, {
-                  headers: { 'Authorization': `Bearer ${accessToken}` },
-                });
-                if (playlistRes.ok) {
-                  const playlistData = await playlistRes.json();
-                  title = playlistData.name || title;
-                  coverArt = playlistData.images?.[0]?.url || null;
-                  tracks = (playlistData.tracks?.items || []).map(t => ({
-                    name: t.track?.name,
-                    artist: t.track?.artists?.[0]?.name,
-                  })).filter(t => t.name);
+                // Fetch playlist data with tracks
+                if (playlistMatch) {
+                  const playlistRes = await fetch(`https://api.spotify.com/v1/playlists/${spotifyId}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` },
+                  });
+                  if (playlistRes.ok) {
+                    const playlistData = await playlistRes.json();
+                    title = playlistData.name || title;
+                    coverArt = playlistData.images?.[0]?.url || null;
+                    tracks = (playlistData.tracks?.items || []).map(t => ({
+                      name: t.track?.name,
+                      artist: t.track?.artists?.[0]?.name,
+                    })).filter(t => t.name);
+                    console.log('[processSongLink] Playlist fetched:', { title, trackCount: tracks.length });
+                  }
                 }
+              } else {
+                console.error('[processSongLink] Token fetch failed:', tokenRes.status);
               }
+            } catch (tokenErr) {
+              console.error('[processSongLink] Spotify API error:', tokenErr.message);
             }
+          } else {
+            console.warn('[processSongLink] Spotify credentials missing - using fallback');
           }
-        } catch (_) {}
+        } catch (spotifyErr) {
+          console.error('[processSongLink] Outer catch:', spotifyErr.message);
+        }
 
         const embedUrl = trackMatch
           ? `https://open.spotify.com/embed/track/${spotifyId}`

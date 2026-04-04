@@ -846,9 +846,10 @@ export default function Chat() {
 
       let songsContext = "";
       if (character.songs_heard && character.songs_heard.length > 0) {
+        console.log('[DEBUG] songs_heard:', JSON.stringify(character.songs_heard, null, 2));
         const songsInfo = character.songs_heard.map(song => {
           let info = `ALBUM/PLAYLIST TITLE: "${song.title}" by ${song.artist}`;
-          if (song.tracks && song.tracks.length > 0) {
+          if (song.tracks && Array.isArray(song.tracks) && song.tracks.length > 0) {
             const trackList = song.tracks.map(t => `${t.name}${t.artist ? ` (${t.artist})` : ''}`).join(' | ');
             info += ` | ACTUAL TRACKS ON IT: ${trackList}`;
           } else {
