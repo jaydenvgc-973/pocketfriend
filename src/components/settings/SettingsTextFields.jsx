@@ -43,11 +43,10 @@ export default function SettingsTextFields({ settings, onSave }) {
         <input
           type="date"
           value={birthday}
-          onChange={e => setBirthday(e.target.value)}
-          onBlur={() => {
-            if (birthday !== (settings.user_birthday || "")) {
-              onSave({ user_birthday: birthday });
-            }
+          onChange={e => {
+            const val = e.target.value;
+            setBirthday(val);
+            if (val) onSave({ user_birthday: val });
           }}
           className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
         />
