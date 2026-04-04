@@ -207,6 +207,32 @@
         "type": "string"
       }
     },
+    "resident_family_members": {
+      "type": "array",
+      "default": [],
+      "description": "NPC, family member, and fictional character residents who live at this location",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "relationship_type": {
+            "type": "string"
+          },
+          "source_character_id": {
+            "type": "string"
+          },
+          "isNPC": {
+            "type": "boolean",
+            "default": false
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
     "worker_character_ids": {
       "type": "array",
       "items": {
