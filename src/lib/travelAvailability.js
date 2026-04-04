@@ -31,7 +31,8 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
     const workEnd = character.work_end_time || null;
     return {
       available: false,
-      reason: { iconType: 'work', message: `${character.name} is at work right now and can't come.`, color: 'text-blue-400' },
+      isBusy: true,
+      reason: `${character.name} is at work${workEnd ? ` until ${workEnd}` : ''}`,
       availableAt: workEnd ? `May be free after ${workEnd}` : null,
     };
   }
@@ -39,7 +40,8 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (iconType === 'school') {
     return {
       available: false,
-      reason: { iconType: 'school', message: `${character.name} is at school right now and can't join.`, color: 'text-amber-400' },
+      isBusy: true,
+      reason: `${character.name} is at school right now`,
       availableAt: null,
     };
   }
@@ -47,7 +49,8 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (iconType === 'hospital') {
     return {
       available: false,
-      reason: { iconType: 'hospital', message: `${character.name} is at the hospital and can't come.`, color: 'text-red-400' },
+      isBusy: true,
+      reason: `${character.name} is at the hospital right now`,
       availableAt: null,
     };
   }
@@ -55,7 +58,8 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (iconType === 'prayer') {
     return {
       available: false,
-      reason: { iconType: 'prayer', message: `${character.name} is praying right now and can't join.`, color: 'text-violet-300' },
+      isBusy: true,
+      reason: `${character.name} is praying right now`,
       availableAt: 'Should be free soon',
     };
   }

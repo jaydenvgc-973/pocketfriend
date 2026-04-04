@@ -9,6 +9,7 @@ import BottomNav from "@/components/BottomNav";
 import TravelLocationGrid from "@/components/travel/TravelLocationGrid";
 import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector";
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
+import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow } from "@/lib/workScheduleUtils";
@@ -19,7 +20,9 @@ export default function Travel() {
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
   const [unavailablePopup, setUnavailablePopup] = useState(null); // array of { character, reason, availableAt }
+  const [busyPopup, setBusyPopup] = useState(null); // { character, reason, charId }
   const [isTraveling, setIsTraveling] = useState(false);
+  const [isConvincing, setIsConvincing] = useState(false);
   const [wakeUpModal, setWakeUpModal] = useState(null); // { character, pendingCharacterId }
   const [isWakingUp, setIsWakingUp] = useState(false);
 
@@ -113,7 +116,12 @@ export default function Travel() {
 
     const availability = getCharacterTravelAvailability(char, locationMap);
     if (!availability.available) {
-      // Show individual popup immediately on selection attempt
+      // If they're busy (not unavailable due to other reasons), show convince popup
+      if (availability.isBusy) {
+        setBusyPopup({ character: char, reason: availability.reason, charId });
+        return;
+      }
+      // Otherwise show unavailable popup
       setUnavailablePopup([{ character: char, reason: availability.reason, availableAt: availability.availableAt }]);
       return;
     }
@@ -121,6 +129,53 @@ export default function Travel() {
     setSelectedCharacterIds(prev =>
       prev.includes(charId) ? prev.filter(id => id !== charId) : [...prev, charId]
     );
+  };
+
+  const handleConvinceCharacter = async () => {
+    if (!busyPopup?.charId) return;
+    setIsConvincing(true);
+
+    try {
+      // Call LLM to generate convince response
+      const char = characters.find(c => c.id === busyPopup.charId);
+      if (!char) return;
+
+      const convinceRes = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are ${char.name}. You are currently busy: ${busyPopup.reason}.
+The user is trying to convince you to come with them anyway. Based on your personality (${char.personality_summary || "friendly"}), would you agree to reschedule or join them?
+
+Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me just...") or politely decline with a reason.`,
+      });
+
+      const response = convinceRes?.trim() || "Sorry, I really can't leave right now.";
+      
+      // 50/50 chance they agree
+      const agreed = Math.random() > 0.5;
+
+      if (agreed) {
+        setSelectedCharacterIds(prev =>
+          prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]
+        );
+        setBusyPopup(null);
+      } else {
+        // Show their response
+        setUnavailablePopup([{
+          character: char,
+          reason: {
+            iconType: "info",
+            message: response,
+            color: "text-muted-foreground",
+          },
+          availableAt: "Maybe ask them later",
+        }]);
+        setBusyPopup(null);
+      }
+    } catch (err) {
+      console.error('Convince failed:', err);
+      setBusyPopup(null);
+    } finally {
+      setIsConvincing(false);
+    }
   };
 
   const handleWakeUp = async () => {
@@ -408,6 +463,15 @@ export default function Travel() {
           />
         )}
       </AnimatePresence>
+
+      <BusyCharacterPopup
+        isOpen={!!busyPopup}
+        character={busyPopup?.character}
+        busyReason={busyPopup?.reason}
+        onConvince={handleConvinceCharacter}
+        onClose={() => setBusyPopup(null)}
+        isProcessing={isConvincing}
+      />
 
       <WakeUpModal
         isOpen={!!wakeUpModal}

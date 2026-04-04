@@ -134,6 +134,20 @@ Deno.serve(async (req) => {
     const charArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
     const character = charArr[0];
     const existingRels = character?.fictional_relationships || [];
+
+    // ── FAMILY LIST LOCK: if locked, never suggest creating a family NPC ────
+    const familyKeywords = /\b(mom|mother|dad|father|sister|brother|son|daughter|grandmother|grandfather|grandma|grandpa|aunt|uncle|cousin|niece|nephew|spouse|wife|husband|family|parent|sibling|child|kid)\b/i;
+    if (character?.family_list_locked && familyKeywords.test(mentionedName + ' ' + (context || ''))) {
+      return Response.json({
+        shouldCreate: false,
+        confidence: 0,
+        reason: 'Family list is locked — new family members cannot be added by the system',
+        isGenericNoun: false,
+        isNickname: false,
+        matchedExisting: null,
+        familyListLocked: true,
+      });
+    }
     
     const existingNPCMatch = existingRels.find(r => {
       const relName = (r.person_name || '').toLowerCase();
