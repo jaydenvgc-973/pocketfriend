@@ -283,19 +283,32 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
 }
 
 // ── Worker Availability Helper ───────────────────────────────────────────────
-function getWorkerAvailability(character, locations, currentLocationId = null) {
+const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government'];
+const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+
+function formatShift(shift) {
+  if (!shift) return null;
+  const parts = [];
+  if (shift.start && shift.end) parts.push(`${shift.start}–${shift.end}`);
+  if (shift.days?.length > 0) parts.push(shift.days.map(d => DAY_LABELS[d]).join('/'));
+  return parts.join(' ') || null;
+}
+
+function getWorkerAvailability(workerId, locations, currentLocationId = null) {
   const assignedLocations = locations.filter(loc =>
     loc.id !== currentLocationId &&
-    (loc.worker_character_ids || []).includes(character.id)
+    (loc.worker_character_ids || []).includes(workerId)
   );
-  if (assignedLocations.length === 0) return { status: 'available', label: 'Available', color: 'text-green-400' };
-
-  // Check for shift overlaps — simplified: if they have any other jobs, flag as partial
-  const workplaceCategories = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government'];
-  const otherJobLocs = assignedLocations.filter(l => workplaceCategories.includes(l.category));
-  if (otherJobLocs.length === 0) return { status: 'available', label: 'Available', color: 'text-green-400' };
-  if (otherJobLocs.length >= 2) return { status: 'unavailable', label: 'Overbooked', color: 'text-destructive' };
-  return { status: 'partial', label: `+1 job: ${otherJobLocs[0].name}`, color: 'text-amber-400' };
+  const otherJobLocs = assignedLocations.filter(l => WORK_CATEGORIES.includes(l.category));
+  if (otherJobLocs.length === 0) return { status: 'available', jobs: [] };
+  return {
+    status: otherJobLocs.length >= 2 ? 'overbooked' : 'employed',
+    jobs: otherJobLocs.map(loc => ({
+      name: loc.name,
+      title: loc.worker_job_titles?.[workerId] || null,
+      shift: formatShift(loc.worker_shifts?.[workerId]),
+    })),
+  };
 }
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
@@ -875,7 +888,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
             {characters.map(char => {
                const alreadyWorker = form.worker_character_ids?.includes(char.id);
                const tooYoung = isWorkerTooYoung(char.id, form.category);
-               const avail = getWorkerAvailability(char, allLocations, editingLocation?.id);
+               const avail = getWorkerAvailability(char.id, allLocations, editingLocation?.id);
                return (
                  <button
                    key={char.id}
@@ -885,53 +898,125 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, isWorkerT
                      }
                    }}
                    disabled={alreadyWorker || tooYoung}
-                   title={tooYoung ? (form.category === 'social' || form.category === 'food_drink' ? "Must be 21+ for bars/nightclubs" : "Must be 16+ to work") : avail.status !== 'available' ? avail.label : ""}
-                   className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
+                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
                  >
                    <CharacterAvatar character={char} size="sm" />
-                   <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                   {alreadyWorker && <span className="text-xs text-primary font-medium">✓ Working</span>}
-                   {tooYoung && <span className="text-xs text-destructive font-medium">Too young</span>}
-                   {!alreadyWorker && !tooYoung && (
-                     <span className={`text-xs font-medium ${avail.color}`}>{avail.label}</span>
-                   )}
+                   <div className="flex-1 min-w-0">
+                     <p className="text-sm text-foreground font-medium">{char.name}</p>
+                     {tooYoung && <p className="text-xs text-destructive">Too young</p>}
+                     {!tooYoung && avail.jobs.length > 0 && avail.jobs.map((job, i) => (
+                       <p key={i} className={`text-xs ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                         {job.title ? `${job.title} @ ` : ''}{job.name}{job.shift ? ` · ${job.shift}` : ''}
+                       </p>
+                     ))}
+                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400">Available</p>}
+                   </div>
+                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                   {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0">Overbooked</span>}
                  </button>
                );
              })}
+            {/* Family members as hireable workers */}
+            {(() => {
+              const familyWorkers = [];
+              const seenFam = new Set();
+              characters.forEach(char => {
+                (char.family_members || []).filter(fm => !fm._is_user).forEach(fm => {
+                  if (!fm.name || seenFam.has(fm.name.toLowerCase())) return;
+                  if (allNPCs.some(n => n.name.toLowerCase() === fm.name.toLowerCase())) return;
+                  seenFam.add(fm.name.toLowerCase());
+                  familyWorkers.push({ id: `npc__${fm.name}`, name: fm.name, relationship_type: fm.relationship_type, sourceChar: char.name });
+                });
+              });
+              if (familyWorkers.length === 0) return null;
+              return (
+                <>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Family Members</p>
+                  {familyWorkers.map(fm => {
+                    const alreadyWorker = form.worker_character_ids?.includes(fm.id);
+                    const fmAge = getNPCAge(fm.name);
+                    let tooYoung = false;
+                    if (fmAge !== null) {
+                      if (fmAge < 16) tooYoung = true;
+                      if ((form.category === 'social' || form.category === 'food_drink') && fmAge < 21) tooYoung = true;
+                    }
+                    const avail = getWorkerAvailability(fm.id, allLocations, editingLocation?.id);
+                    return (
+                      <button
+                        key={fm.id}
+                        onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), fm.id]); }}
+                        disabled={alreadyWorker || tooYoung}
+                        className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
+                      >
+                        <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
+                          {fm.name[0]?.toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm text-foreground font-medium">{fm.name}</span>
+                            <span className="text-[10px] text-muted-foreground/50 bg-secondary px-1 rounded capitalize">{fm.relationship_type}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground/60">of {fm.sourceChar}</p>
+                          {tooYoung && <p className="text-xs text-destructive">Too young</p>}
+                          {!tooYoung && avail.jobs.length > 0 && avail.jobs.map((job, i) => (
+                            <p key={i} className={`text-xs ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                              {job.title ? `${job.title} @ ` : ''}{job.name}{job.shift ? ` · ${job.shift}` : ''}
+                            </p>
+                          ))}
+                          {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400">Available</p>}
+                        </div>
+                        {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                      </button>
+                    );
+                  })}
+                </>
+              );
+            })()}
             {allNPCs.length > 0 && (
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>
             )}
             {allNPCs.map(npc => {
-              const alreadyWorker = form.worker_character_ids?.includes(npc.id);
-              const npcAge = getNPCAge(npc.name);
-              let tooYoung = false;
-              if (npcAge !== null) {
-                if (npcAge < 16) tooYoung = true;
-                if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
-              }
-              return (
-                <button
-                  key={npc.id}
-                  onClick={() => {
-                    if (!alreadyWorker && !tooYoung) {
-                      update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]);
-                    }
-                  }}
-                  disabled={alreadyWorker || tooYoung}
-                  title={tooYoung ? form.category === 'social' || form.category === 'food_drink' ? "Must be 21+ for bars/nightclubs" : "Must be 16+ to work" : ""}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
-                >
-                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
-                    {npc.name[0]?.toUpperCase()}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm text-foreground font-medium block">{npc.name}</span>
-                    {npc.relationship_type && <span className="text-xs text-muted-foreground capitalize">{npc.relationship_type}</span>}
-                  </div>
-                  {alreadyWorker ? <span className="text-xs text-primary font-medium">✓ Working</span> : tooYoung ? <span className="text-xs text-destructive font-medium">Too young</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
-                </button>
-              );
-            })}
+               const alreadyWorker = form.worker_character_ids?.includes(npc.id);
+               const npcAge = getNPCAge(npc.name);
+               let tooYoung = false;
+               if (npcAge !== null) {
+                 if (npcAge < 16) tooYoung = true;
+                 if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
+               }
+               const avail = getWorkerAvailability(npc.id, allLocations, editingLocation?.id);
+               return (
+                 <button
+                   key={npc.id}
+                   onClick={() => {
+                     if (!alreadyWorker && !tooYoung) {
+                       update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]);
+                     }
+                   }}
+                   disabled={alreadyWorker || tooYoung}
+                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
+                 >
+                   <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
+                     {npc.name[0]?.toUpperCase()}
+                   </div>
+                   <div className="flex-1 min-w-0">
+                     <div className="flex items-center gap-1.5">
+                       <span className="text-sm text-foreground font-medium">{npc.name}</span>
+                       <span className="text-[10px] text-muted-foreground/50 bg-secondary px-1 rounded">NPC</span>
+                     </div>
+                     {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                     {tooYoung && <p className="text-xs text-destructive">Too young</p>}
+                     {!tooYoung && avail.jobs.length > 0 && avail.jobs.map((job, i) => (
+                       <p key={i} className={`text-xs ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                         {job.title ? `${job.title} @ ` : ''}{job.name}{job.shift ? ` · ${job.shift}` : ''}
+                       </p>
+                     ))}
+                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400">Available</p>}
+                   </div>
+                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                   {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0">Overbooked</span>}
+                 </button>
+               );
+             })}
             {characters.length === 0 && allNPCs.length === 0 && (
               <p className="text-xs text-muted-foreground italic p-3">No characters available.</p>
             )}
