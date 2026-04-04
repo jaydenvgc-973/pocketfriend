@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -137,6 +137,64 @@ export default function CharacterManager() {
     }
   };
 
+  // Auto-detect duplicates: same name appears on multiple cards
+  const detectDuplicates = () => {
+    const nameMap = new Map();
+    const duplicateGroups = [];
+    
+    allManageableItems.forEach((item, idx) => {
+      const itemData = item.data;
+      const itemName = item.type === 'user'
+        ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
+        : itemData.name;
+      const normalizedName = itemName.toLowerCase().trim();
+      
+      if (!nameMap.has(normalizedName)) {
+        nameMap.set(normalizedName, []);
+      }
+      nameMap.get(normalizedName).push({ item, idx, itemName, type: item.type });
+    });
+    
+    // Build groups where count >= 2
+    nameMap.forEach((group, name) => {
+      if (group.length >= 2) {
+        duplicateGroups.push({ name, items: group });
+      }
+    });
+    
+    return duplicateGroups;
+  };
+
+  // Auto-detect orphan NPCs (NPC with no active character counterpart) + ghost NPCs
+  const detectOrphanNPCs = () => {
+    const activeCharIds = new Set(roster.filter(c => c.is_character && c.status === 'active').map(c => c.id));
+    const orphans = [];
+    const ghosts = [];
+    
+    allManageableItems.forEach((item, idx) => {
+      const isNPC = item.type === 'world_person' || item.type === 'family';
+      if (isNPC) {
+        const itemData = item.data;
+        const sourceCharExists = activeCharIds.has(itemData.source_character_id);
+        
+        // Orphan: NPC whose source character doesn't exist as active
+        if (!sourceCharExists) {
+          orphans.push({ item, idx, itemData });
+        }
+        
+        // Ghost NPC: Active character exists, so NPC should be merged into it
+        if (sourceCharExists) {
+          ghosts.push({ item, idx, itemData, sourceCharId: itemData.source_character_id });
+        }
+      }
+    });
+    
+    return { orphans, ghosts };
+  };
+
+  const duplicates = detectDuplicates();
+  const { orphans, ghosts } = detectOrphanNPCs();
+
   const toggleMergeSelection = (charId) => {
     const updated = new Set(selectedForMerge);
     if (updated.has(charId)) {
@@ -146,6 +204,23 @@ export default function CharacterManager() {
     }
     setSelectedForMerge(updated);
   };
+
+  // Auto-select duplicates if they exist
+  React.useEffect(() => {
+    if (duplicates.length > 0 && selectedForMerge.size === 0) {
+      const toSelect = new Set();
+      duplicates.forEach(group => {
+        group.items.forEach(item => {
+          const isNPC = item.type === 'world_person' || item.type === 'family';
+          const itemId = item.type === 'user'
+            ? 'user'
+            : (isNPC ? `npc_${item.item.data.source_character_id}_${item.item.data.person_name}_${item.idx}` : item.item.data.id);
+          toSelect.add(itemId);
+        });
+      });
+      setSelectedForMerge(toSelect);
+    }
+  }, [duplicates]);
 
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
@@ -405,6 +480,18 @@ export default function CharacterManager() {
           })
         )}
       </div>
+
+      {/* Alert duplicates & ghost NPCs */}
+      {(duplicates.length > 0 || ghosts.length > 0) && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-xs text-amber-700 space-y-1">
+          {duplicates.length > 0 && (
+            <p><strong>{duplicates.length}</strong> duplicate(s) detected: {duplicates.map(d => d.name).join(', ')}</p>
+          )}
+          {ghosts.length > 0 && (
+            <p><strong>{ghosts.length}</strong> ghost NPC(s) found — these should be merged into active characters</p>
+          )}
+        </div>
+      )}
 
       {editable.length > 1 && !mergeMode && (
         <Button
