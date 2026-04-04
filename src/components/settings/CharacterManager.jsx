@@ -291,59 +291,8 @@ export default function CharacterManager() {
           }).catch(() => {});
           }
           } else if (charIds.length === 1 && npcIds.length === 1) {
-      // Merge active character with NPC: consolidate NPC data into active character, remove NPC
-      const activeCharId = charIds[0];
-      const npcId = npcIds[0];
-      const npcMatch = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
-      if (npcMatch) {
-        const [, sourceCharId, personName] = npcMatch;
-        const sourceChar = roster.find(c => c.id === sourceCharId && c.is_character);
-        const activeChar = roster.find(c => c.id === activeCharId && c.is_character);
-        const npcData = sourceChar?.fictional_relationships?.find(r => r.person_name === personName);
-
-        if (sourceChar && activeChar && npcData) {
-          // Merge NPC data into active character: take max relationship scores and richer descriptions
-          const mergedRelationship = {
-            ...npcData,
-            related_character_id: activeCharId,
-            person_name: activeChar.name,
-            friendship_level: Math.max(npcData.friendship_level ?? 50, activeChar.friendship_level ?? 50),
-            user_respect_level: Math.max(npcData.user_respect_level ?? 50, activeChar.user_respect_level ?? 50),
-            romantic_level: Math.max(npcData.romantic_level ?? 0, activeChar.romantic_level ?? 0),
-            attraction_level: Math.max(npcData.attraction_level ?? 0, activeChar.attraction_level ?? 0),
-            chosen_family_level: Math.max(npcData.chosen_family_level ?? 0, activeChar.chosen_family_level ?? 0),
-          };
-
-          // Remove NPC from fictional_relationships of source character
-          const updatedSourceRels = (sourceChar.fictional_relationships || []).filter(
-            r => r.person_name !== personName
-          );
-
-          // Add merged relationship to active character if it doesn't already have this person
-          const activeHasRelationship = (activeChar.fictional_relationships || []).some(
-            r => r.person_name?.toLowerCase() === activeChar.name.toLowerCase()
-          );
-          const updatedActiveRels = activeHasRelationship
-            ? (activeChar.fictional_relationships || []).map(r =>
-                r.person_name?.toLowerCase() === activeChar.name.toLowerCase()
-                  ? mergedRelationship
-                  : r
-              )
-            : [...(activeChar.fictional_relationships || []), mergedRelationship];
-
-          // Update both characters and delete source if no relationships left
-           Promise.all([
-             base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
-             base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
-             updatedSourceRels.length === 0 ? base44.entities.Character.update(sourceCharId, { status: 'soft_deleted' }) : Promise.resolve(),
-           ]).then(() => {
-             queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-             setSelectedForMerge(new Set());
-             setMergeMode(false);
-             setMergeConfirmModal(null);
-           }).catch(() => {});
-        }
-      }
+            // NPC + active character: auto-merge with active character as master (no confirmation needed)
+            confirmMerge(charIds[0]);
     } else if (charIds.length >= 2) {
       // Merge active characters only — masterCharId is the one they selected
       const masterChar = roster.find(c => c.id === masterCharId && c.is_character);
