@@ -17,6 +17,8 @@ import { getReciprocalRole, getRelationshipLabel } from "@/lib/relationshipUtils
 import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
 import NPCPromotionModal from "@/components/character/NPCPromotionModal";
 import NPCPhotoEditor from "@/components/character/NPCPhotoEditor";
+import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.jsx";
+import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -805,6 +807,12 @@ export default function CharacterProfile() {
             <p className="text-sm text-foreground leading-relaxed">{character.communication_style}</p>
           </div>
         )}
+
+        {/* Aliases */}
+        <CharacterAliasEditor character={character} />
+
+        {/* Appearance Age override for image generation */}
+        <AppearanceAgeField character={character} />
 
         {/* Nickname for User */}
         <NicknameForUserField character={character} />

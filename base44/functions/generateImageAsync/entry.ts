@@ -554,7 +554,12 @@ Deno.serve(async (req) => {
 
           // Build appearance description text for when refs are sparse/missing
           const appearanceParts = [];
-          if (charRecord.age_range) appearanceParts.push(charRecord.age_range);
+          // appearance_age overrides profile age for visual generation
+          if (charRecord.appearance_age != null) {
+            appearanceParts.push(`appears ${charRecord.appearance_age} years old (visual age override — use this age in generated image, NOT the profile birthday age)`);
+          } else if (charRecord.age_range) {
+            appearanceParts.push(charRecord.age_range);
+          }
           if (charRecord.gender) appearanceParts.push(charRecord.gender);
           if (charRecord.ethnicities?.length > 0) appearanceParts.push(charRecord.ethnicities.join(', '));
           if (charRecord.appearance_notes) appearanceParts.push(charRecord.appearance_notes);

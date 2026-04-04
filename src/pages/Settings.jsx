@@ -19,6 +19,7 @@ import StorageBackup from "@/components/settings/StorageBackup";
 import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import CharacterManager from "@/components/settings/CharacterManager";
+import SettingsTextFields from "@/components/settings/SettingsTextFields";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -218,51 +219,13 @@ export default function Settings() {
             </div>
           )}
         </div>
-        <div className="space-y-4">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Name in This World</p>
-          <p className="text-xs text-muted-foreground">The name characters use when referring to you. Leave blank to stay anonymous.</p>
-          <input
-            type="text"
-            placeholder="e.g. Alex, Jordan, Skylar..."
-            value={settings.fictional_world_name || ""}
-            onChange={e => mutation.mutate({ fictional_world_name: e.target.value })}
-            className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
-          />
-        </div>
-        <div className="space-y-4">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Birthday (optional)</p>
-          <input
-            type="date"
-            value={settings.user_birthday || ""}
-            onChange={e => mutation.mutate({ user_birthday: e.target.value })}
-            className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm"
-          />
-        </div>
-        <div className="space-y-4">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Gender</p>
-          <Select value={settings.user_gender || ""} onValueChange={v => mutation.mutate({ user_gender: v })}>
-            <SelectTrigger className="rounded-xl h-11"><SelectValue placeholder="Select your gender" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="male">Male</SelectItem>
-              <SelectItem value="female">Female</SelectItem>
-              <SelectItem value="non-binary">Non-binary</SelectItem>
-              <SelectItem value="other">Other</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-4">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Schedule</p>
-          <p className="text-xs text-muted-foreground">Let characters know when you're usually free so they reach out at the right times.</p>
-          <textarea
-            placeholder="e.g. I work 9-5 on weekdays. I'm usually free evenings and weekends. I'm a night owl."
-            value={settings.user_schedule_notes || ""}
-            onChange={e => mutation.mutate({ user_schedule_notes: e.target.value })}
-            rows={3}
-            className="w-full px-3 py-2.5 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground resize-none"
-          />
-        </div>
+        <SettingsTextFields settings={settings} onSave={(data) => mutation.mutate(data)} />
         <div className="pt-4 border-t border-border">
-          <UserPhotoUploader referenceImages={user.reference_image_urls || []} generatedAvatars={user.generated_avatar_urls || []} />
+          <UserPhotoUploader
+            referenceImages={user.reference_image_urls || []}
+            generatedAvatars={user.generated_avatar_urls || []}
+            selectedAvatar={user.selected_avatar_url || null}
+          />
         </div>
         <VoiceAudioSettings settings={settings} onUpdate={(field, value) => mutation.mutate({ [field]: value })} isSaving={mutation.isPending} />
         <div className="space-y-4 pt-4 border-t border-border">

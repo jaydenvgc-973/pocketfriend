@@ -54,7 +54,13 @@ const AuthenticatedApp = () => {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     } else if (authError.type === 'auth_required') {
-      navigateToLogin();
+      // Only redirect to login if we're not already on a preserved route
+      const preserved = sessionStorage.getItem('lastKnownRoute');
+      const currentPath = location.pathname;
+      // Don't redirect if user is on a real page (not '/')
+      if (!preserved || currentPath === '/') {
+        navigateToLogin();
+      }
       return null;
     }
   }
@@ -89,16 +95,19 @@ const AuthenticatedApp = () => {
 };
 
 function App() {
-  // Prevent unintended navigation on orientation change
+  // Prevent navigation on orientation change — block any history manipulation triggered by resize/rotate
   useEffect(() => {
     const handleOrientationChange = () => {
-      // Orientation changed, but do NOT navigate
-      // Current route will be preserved by useRoutePreservation hook in AuthenticatedApp
-      console.log('Orientation changed — route preserved');
+      // Store current route immediately before any potential re-render
+      const current = window.location.pathname + window.location.search;
+      sessionStorage.setItem('lastKnownRoute', current);
     };
-
     window.addEventListener('orientationchange', handleOrientationChange);
-    return () => window.removeEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('resize', handleOrientationChange);
+    return () => {
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('resize', handleOrientationChange);
+    };
   }, []);
 
   return (
