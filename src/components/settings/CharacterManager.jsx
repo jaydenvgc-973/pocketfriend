@@ -216,8 +216,40 @@ export default function CharacterManager() {
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
     
-    // Show confirmation modal with selected characters
     const selected = Array.from(selectedForMerge);
+    const npcIds = selected.filter(id => id.startsWith('npc_'));
+    const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
+    
+    // NPC + active character: auto-merge with active character as master
+    if (charIds.length === 1 && npcIds.length === 1) {
+      const activeCharId = charIds[0];
+      const npcId = npcIds[0];
+      const npcMatch = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
+      if (npcMatch) {
+        const [, sourceCharId, personName] = npcMatch;
+        const sourceChar = roster.find(c => c.id === sourceCharId && c.is_character);
+        const activeChar = roster.find(c => c.id === activeCharId && c.is_character);
+        const npcData = sourceChar?.fictional_relationships?.find(r => r.person_name === personName);
+
+        if (sourceChar && activeChar && npcData) {
+          const updatedSourceRels = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
+          const updatedActiveRels = [...(activeChar.fictional_relationships || []), { ...npcData, related_character_id: activeCharId, person_name: activeChar.name }];
+
+          Promise.all([
+            base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
+            base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
+            updatedSourceRels.length === 0 ? base44.entities.Character.update(sourceCharId, { status: 'soft_deleted' }) : Promise.resolve(),
+          ]).then(() => {
+            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+            setSelectedForMerge(new Set());
+            setMergeMode(false);
+          }).catch(() => {});
+        }
+      }
+      return;
+    }
+    
+    // Show confirmation modal for other merges
     const selectedItems = allManageableItems
       .map((item, idx) => {
         const isNPC = item.type === 'world_person' || item.type === 'family';
@@ -290,10 +322,7 @@ export default function CharacterManager() {
           setMergeConfirmModal(null);
           }).catch(() => {});
           }
-          } else if (charIds.length === 1 && npcIds.length === 1) {
-            // NPC + active character: auto-merge with active character as master (no confirmation needed)
-            confirmMerge(charIds[0]);
-    } else if (charIds.length >= 2) {
+          } else if (charIds.length >= 2) {
       // Merge active characters only — masterCharId is the one they selected
       const masterChar = roster.find(c => c.id === masterCharId && c.is_character);
       const secondaryCharIds = charIds.filter(id => id !== masterCharId);
