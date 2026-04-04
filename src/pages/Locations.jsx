@@ -294,6 +294,17 @@ function formatShift(shift) {
   return parts.join(' ') || null;
 }
 
+function isShiftCurrentlyActive(shift) {
+  if (!shift?.start || !shift?.end || !shift?.days) return false;
+  const now = new Date();
+  const day = now.getDay();
+  const hour = now.getHours();
+  if (!shift.days.includes(day)) return false;
+  const [startH] = shift.start.split(':').map(Number);
+  const [endH] = shift.end.split(':').map(Number);
+  return hour >= startH && hour < endH;
+}
+
 function getWorkerAvailability(workerId, locations, currentLocationId = null) {
   const assignedLocations = locations.filter(loc =>
     loc.id !== currentLocationId &&
@@ -301,13 +312,23 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
   );
   const otherJobLocs = assignedLocations.filter(l => WORK_CATEGORIES.includes(l.category));
   if (otherJobLocs.length === 0) return { status: 'available', jobs: [] };
-  return {
-    status: otherJobLocs.length >= 2 ? 'overbooked' : 'employed',
-    jobs: otherJobLocs.map(loc => ({
+
+  const jobs = otherJobLocs.map(loc => {
+    const shift = loc.worker_shifts?.[workerId];
+    return {
       name: loc.name,
       title: loc.worker_job_titles?.[workerId] || null,
-      shift: formatShift(loc.worker_shifts?.[workerId]),
-    })),
+      shift: formatShift(shift),
+      onShiftNow: isShiftCurrentlyActive(shift),
+      days: shift?.days?.map(d => DAY_LABELS[d]) || [],
+    };
+  });
+
+  const onShiftNow = jobs.some(j => j.onShiftNow);
+  return {
+    status: otherJobLocs.length >= 2 ? 'overbooked' : 'employed',
+    onShiftNow,
+    jobs,
   };
 }
 
@@ -890,30 +911,37 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                const tooYoung = isWorkerTooYoung(char.id, form.category);
                const avail = getWorkerAvailability(char.id, allLocations, editingLocation?.id);
                return (
-                 <button
-                   key={char.id}
-                   onClick={() => {
-                     if (!alreadyWorker && !tooYoung) {
-                       update("worker_character_ids", [...(form.worker_character_ids || []), char.id]);
-                     }
-                   }}
-                   disabled={alreadyWorker || tooYoung}
-                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
-                 >
-                   <CharacterAvatar character={char} size="sm" />
-                   <div className="flex-1 min-w-0">
-                     <p className="text-sm text-foreground font-medium">{char.name}</p>
-                     {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                     {!tooYoung && avail.jobs.length > 0 && avail.jobs.map((job, i) => (
-                       <p key={i} className={`text-xs ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                         {job.title ? `${job.title} @ ` : ''}{job.name}{job.shift ? ` · ${job.shift}` : ''}
-                       </p>
-                     ))}
-                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400">Available</p>}
+               <button
+               key={char.id}
+               onClick={() => {
+                 if (!alreadyWorker && !tooYoung) {
+                   update("worker_character_ids", [...(form.worker_character_ids || []), char.id]);
+                 }
+               }}
+               disabled={alreadyWorker || tooYoung}
+               className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
+               >
+               <CharacterAvatar character={char} size="sm" />
+               <div className="flex-1 min-w-0">
+                 <div className="flex items-center gap-1.5">
+                   <p className="text-sm text-foreground font-medium">{char.name}</p>
+                   {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
+                 </div>
+                 {tooYoung && <p className="text-xs text-destructive">Too young to work here</p>}
+                 {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                 {!tooYoung && avail.jobs.map((job, i) => (
+                   <div key={i} className="mt-0.5">
+                     <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                       {avail.status === 'overbooked' ? '⚠ ' : ''}{job.title ? `${job.title} @ ` : ''}{job.name}
+                     </p>
+                     {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
+                     {job.days.length > 0 && !job.shift && <p className="text-[10px] text-muted-foreground">{job.days.join(', ')}</p>}
                    </div>
-                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                   {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0">Overbooked</span>}
-                 </button>
+                 ))}
+               </div>
+               {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+               {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0 text-right">Overbooked<br/>{avail.jobs.length} jobs</span>}
+               </button>
                );
              })}
             {/* Family members as hireable workers */}
@@ -955,15 +983,19 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                           <div className="flex items-center gap-1.5">
                             <span className="text-sm text-foreground font-medium">{fm.name}</span>
                             <span className="text-[10px] text-muted-foreground/50 bg-secondary px-1 rounded capitalize">{fm.relationship_type}</span>
+                            {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
                           </div>
                           <p className="text-xs text-muted-foreground/60">of {fm.sourceChar}</p>
                           {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                          {!tooYoung && avail.jobs.length > 0 && avail.jobs.map((job, i) => (
-                            <p key={i} className={`text-xs ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                              {job.title ? `${job.title} @ ` : ''}{job.name}{job.shift ? ` · ${job.shift}` : ''}
-                            </p>
+                          {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                          {!tooYoung && avail.jobs.map((job, i) => (
+                            <div key={i}>
+                              <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                                {job.title ? `${job.title} @ ` : ''}{job.name}
+                              </p>
+                              {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
+                            </div>
                           ))}
-                          {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400">Available</p>}
                         </div>
                         {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
                       </button>
@@ -1002,18 +1034,22 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                      <div className="flex items-center gap-1.5">
                        <span className="text-sm text-foreground font-medium">{npc.name}</span>
                        <span className="text-[10px] text-muted-foreground/50 bg-secondary px-1 rounded">NPC</span>
+                       {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
                      </div>
                      {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
                      {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                     {!tooYoung && avail.jobs.length > 0 && avail.jobs.map((job, i) => (
-                       <p key={i} className={`text-xs ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                         {job.title ? `${job.title} @ ` : ''}{job.name}{job.shift ? ` · ${job.shift}` : ''}
-                       </p>
+                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                     {!tooYoung && avail.jobs.map((job, i) => (
+                       <div key={i}>
+                         <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                           {avail.status === 'overbooked' ? '⚠ ' : ''}{job.title ? `${job.title} @ ` : ''}{job.name}
+                         </p>
+                         {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
+                       </div>
                      ))}
-                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400">Available</p>}
                    </div>
                    {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                   {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0">Overbooked</span>}
+                   {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0 text-right">Overbooked<br/>{avail.jobs.length} jobs</span>}
                  </button>
                );
              })}

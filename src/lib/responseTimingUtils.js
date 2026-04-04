@@ -30,13 +30,28 @@ export function getCharacterStatus(character) {
 
 /**
  * Returns exact response delay in milliseconds for CHAT (direct) mode.
- * Chat always responds 0–60 seconds when awake, regardless of status.
- * Sleep may still respond (0–60s) or not at all — caller decides.
+ * Chat: near-instant when available, short delays for busy statuses.
  */
 export function getChatDelayMs(character) {
-  // Chat: always 0–60 seconds when awake (strict)
-  const delaySeconds = Math.random() * 60;
-  console.log(`[TIMING] CHAT | status=${getCharacterStatus(character)} | delay=${Math.round(delaySeconds)}s`);
+  const status = getCharacterStatus(character);
+  // Chat mode: fast responses. Available = 0–4s, busy statuses = slightly longer.
+  let delaySeconds;
+  switch (status) {
+    case 'work':
+    case 'school':
+      delaySeconds = 5 + Math.random() * 10; // 5–15s
+      break;
+    case 'gym':
+    case 'bar':
+    case 'out':
+      delaySeconds = 2 + Math.random() * 8; // 2–10s
+      break;
+    case 'available':
+    default:
+      delaySeconds = Math.random() * 4; // 0–4s
+      break;
+  }
+  console.log(`[TIMING] CHAT | status=${status} | delay=${Math.round(delaySeconds)}s`);
   return delaySeconds * 1000;
 }
 
@@ -57,23 +72,23 @@ export function getTextDelayMs(character) {
       delaySeconds = null; // blocked — devout character is praying
       break;
     case 'work':
-      delaySeconds = 120; // exact: 120 seconds
+      delaySeconds = 30 + Math.random() * 30; // 30–60s (was 120s)
       break;
     case 'school':
-      delaySeconds = 120 + Math.random() * 60; // exact: 120–180 seconds
+      delaySeconds = 30 + Math.random() * 30; // 30–60s (was 120–180s)
       break;
     case 'gym':
-      delaySeconds = Math.random() * 60; // 0–60 seconds
+      delaySeconds = 5 + Math.random() * 15; // 5–20s
       break;
     case 'bar':
-      delaySeconds = Math.random() * 60; // 0–60 seconds
+      delaySeconds = 3 + Math.random() * 12; // 3–15s
       break;
     case 'out':
-      delaySeconds = Math.random() * 60; // 0–60 seconds
+      delaySeconds = 3 + Math.random() * 12; // 3–15s
       break;
     case 'available':
     default:
-      delaySeconds = Math.random() * 60; // 0–60 seconds
+      delaySeconds = Math.random() * 8; // 0–8s
       break;
   }
 

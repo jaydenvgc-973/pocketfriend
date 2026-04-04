@@ -1268,13 +1268,13 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
         }
       }
 
-      // Calculate typing delay based on user's WPM setting
+      // Calculate typing delay based on user's WPM setting — capped at 6s max
       let typingDelayMs = 0;
       const typingSpeedEnabled = userSettings.typing_speed_enabled !== false;
       if (typingSpeedEnabled) {
         const wpm = userSettings.words_per_minute || 41;
         const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
-        typingDelayMs = (wordCount / wpm) * 60000;
+        typingDelayMs = Math.min((wordCount / wpm) * 60000, 6000); // cap at 6s
       }
 
       await new Promise(r => setTimeout(r, typingDelayMs));
