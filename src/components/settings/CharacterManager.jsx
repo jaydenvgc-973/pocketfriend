@@ -331,16 +331,17 @@ export default function CharacterManager() {
               )
             : [...(activeChar.fictional_relationships || []), mergedRelationship];
 
-          // Update both characters
-          Promise.all([
-            base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
-            base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
-          ]).then(() => {
-            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-            setSelectedForMerge(new Set());
-            setMergeMode(false);
-            setMergeConfirmModal(null);
-          }).catch(() => {});
+          // Update both characters and delete source if no relationships left
+           Promise.all([
+             base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
+             base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
+             updatedSourceRels.length === 0 ? base44.entities.Character.update(sourceCharId, { status: 'soft_deleted' }) : Promise.resolve(),
+           ]).then(() => {
+             queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+             setSelectedForMerge(new Set());
+             setMergeMode(false);
+             setMergeConfirmModal(null);
+           }).catch(() => {});
         }
       }
     } else if (charIds.length >= 2) {
