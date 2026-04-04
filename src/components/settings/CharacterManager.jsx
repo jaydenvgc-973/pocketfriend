@@ -371,13 +371,20 @@ export default function CharacterManager() {
               }
             });
 
+            // Consolidate into master, then soft-delete secondary
             return base44.entities.Character.update(masterCharId, {
               fictional_relationships: consolidatedRels,
+            }).then(() => {
+              // Soft-delete the secondary character
+              return base44.entities.Character.update(charId, {
+                status: 'merged',
+                merged_into_character_id: masterCharId,
+              });
             });
-          }
-          return Promise.resolve();
-        })).then(() => {
-          mergeMutation.mutate({ characterIds: charIds, masterCharId });
+            }
+            return Promise.resolve();
+            })).then(() => {
+            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
           setSelectedForMerge(new Set());
           setMergeMode(false);
           setMergeConfirmModal(null);
