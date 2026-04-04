@@ -155,11 +155,17 @@ export function isCharacterAtSchool(character, educationLocation = null) {
     return { attending: false, label: '' };
   }
 
+  // CRITICAL: Only check attendance if character has an active education location
+  // Do NOT infer attendance from time-of-day alone
+  if (!educationLocation && !character?.education_location_id) {
+    return { attending: false, label: '' };
+  }
+
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
   const currentHour = Math.floor(currentMinutes / 60);
 
-  // Layer 1: Education location hours
+  // Layer 1: Education location hours (only if location is explicitly provided or linked)
   if (educationLocation) {
     const locationActive = isLocationActiveNow(educationLocation);
     if (locationActive === true) {
@@ -173,8 +179,8 @@ export function isCharacterAtSchool(character, educationLocation = null) {
     // null = no hours defined, fall through to time-of-day check
   }
 
-  // Layer 2: Plausible class-time window (8am–9pm)
-  if (currentHour >= 8 && currentHour < 21) {
+  // Layer 2: Plausible class-time window (8am–9pm) — ONLY if character has active education_location_id
+  if (character?.education_location_id && currentHour >= 8 && currentHour < 21) {
     const courseName = character.education_details?.course_name || character.current_education_activity;
     const label = educationLocation
       ? `at ${educationLocation.name} — ${courseName}`
