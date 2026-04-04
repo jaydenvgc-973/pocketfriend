@@ -83,8 +83,8 @@ export default function CharacterManager() {
     }
     if (isNPC) {
       // Parse itemId to get sourceCharId and old personName
-      const match = itemId.match(/^npc_(.+)_(.+)$/);
-      if (match) {
+      const match = itemId.match(/^npc_(.+?)_(.+)$/);
+      if (match && match[1]) {
         const [, sourceCharId, oldPersonName] = match;
         if (oldPersonName === newName) {
           setRenamingId(null);
@@ -102,7 +102,11 @@ export default function CharacterManager() {
             setNewName('');
           })
             .catch(() => {});
+        } else {
+          setRenamingId(null);
         }
+      } else {
+        setRenamingId(null);
       }
     } else {
       const char = roster.find(c => c.id === itemId);
@@ -266,7 +270,7 @@ export default function CharacterManager() {
       if (primaryMatch) {
         const [, primarySourceCharId, primaryPersonName] = primaryMatch;
 
-        others.forEach(otherId => {
+        Promise.all(others.map(otherId => {
           const match = otherId.match(/^npc_(.+)_(.+)$/);
           if (match) {
             const [, sourceCharId, personName] = match;
@@ -275,17 +279,17 @@ export default function CharacterManager() {
               const updated = (sourceChar.fictional_relationships || []).filter(
                 r => r.person_name !== personName
               );
-              base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated })
-                .then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] }))
-                .catch(() => {});
+              return base44.entities.Character.update(sourceChar.id, { fictional_relationships: updated });
             }
           }
-        });
+          return Promise.resolve();
+        })).then(() => {
+          queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+          setSelectedForMerge(new Set());
+          setMergeMode(false);
+          setMergeConfirmModal(null);
+        }).catch(() => {});
       }
-      setSelectedForMerge(new Set());
-      setMergeMode(false);
-      setMergeConfirmModal(null);
-      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
       } else if (charIds.length === 1 && npcIds.length === 1) {
       // Merge active character with NPC: consolidate NPC data into active character, remove NPC
       const activeCharId = charIds[0];
