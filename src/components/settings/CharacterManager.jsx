@@ -233,7 +233,8 @@ export default function CharacterManager() {
 
         if (sourceChar && activeChar && npcData) {
           const updatedSourceRels = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
-          const updatedActiveRels = [...(activeChar.fictional_relationships || []), { ...npcData, related_character_id: activeCharId, person_name: activeChar.name }];
+          const mergedNPC = { ...npcData, related_character_id: activeCharId };
+          const updatedActiveRels = [...(activeChar.fictional_relationships || []), mergedNPC];
 
           Promise.all([
             base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
@@ -256,7 +257,7 @@ export default function CharacterManager() {
         const itemId = item.type === 'user'
           ? 'user'
           : (isNPC ? `npc_${item.data.source_character_id}_${item.data.person_name}_${idx}` : item.data.id);
-        return selected.includes(itemId) ? { item, itemId, idx } : null;
+        return selected.includes(itemId) ? { item, itemId } : null;
       })
       .filter(Boolean);
     
@@ -341,11 +342,15 @@ export default function CharacterManager() {
       });
 
       // Update master, run NPC cleanup, then soft-delete secondaries
-      Promise.all(npcPromises)
+      const updateChain = npcPromises.length > 0 
+        ? Promise.all(npcPromises)
+        : Promise.resolve();
+
+      updateChain
         .then(() => base44.entities.Character.update(masterItemId, { fictional_relationships: masterRels }))
-        .then(() => Promise.all(otherCharIds.map(charId => 
+        .then(() => otherCharIds.length > 0 ? Promise.all(otherCharIds.map(charId => 
           base44.entities.Character.update(charId, { status: 'merged', merged_into_character_id: masterItemId })
-        )))
+        )) : Promise.resolve())
         .then(() => {
           queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
           setSelectedForMerge(new Set());
