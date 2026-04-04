@@ -119,34 +119,33 @@ Deno.serve(async (req) => {
         let artist = 'Unknown Artist';
         let coverArt = null;
 
-        // Spotify Web API with client credentials
-        const clientId = Deno.env.get('SPOTIFY_CLIENT_ID');
-        const clientSecret = Deno.env.get('SPOTIFY_CLIENT_SECRET');
+        // Fetch Spotify metadata via LLM with web search
+        try {
+          const metadataRes = await base44.integrations.Core.InvokeLLM({
+            prompt: `Look up this Spotify ${trackMatch ? 'track' : albumMatch ? 'album' : 'playlist'} link and extract metadata: ${songLink}
 
-        if (clientId && clientSecret) {
-          try {
-            const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              body: `grant_type=client_credentials&client_id=${clientId}&client_secret=${clientSecret}`,
-            });
-            const tokenData = await tokenRes.json();
-            const accessToken = tokenData.access_token;
-
-            if (accessToken) {
-              const endpoint = trackMatch ? 'tracks' : albumMatch ? 'albums' : 'playlists';
-              const apiRes = await fetch(`https://api.spotify.com/v1/${endpoint}/${spotifyId}`, {
-                headers: { 'Authorization': `Bearer ${accessToken}` },
-              });
-              if (apiRes.ok) {
-                const data = await apiRes.json();
-                title = data.name || title;
-                artist = data.artists?.[0]?.name || data.owner?.display_name || artist;
-                coverArt = data.images?.[0]?.url || null;
+Return ONLY JSON (no markdown, no explanation):
+{
+  "name": "exact name from Spotify",
+  "artist": "primary artist/creator",
+  "image_url": "direct image URL from Spotify CDN"
+}`,
+            add_context_from_internet: true,
+            response_json_schema: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                artist: { type: "string" },
+                image_url: { type: "string" }
               }
             }
-          } catch (_) {}
-        }
+          });
+          if (metadataRes && typeof metadataRes === 'object') {
+            title = metadataRes.name || title;
+            artist = metadataRes.artist || artist;
+            coverArt = metadataRes.image_url || null;
+          }
+        } catch (_) {}
 
         const embedUrl = trackMatch
           ? `https://open.spotify.com/embed/track/${spotifyId}`
