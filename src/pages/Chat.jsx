@@ -617,22 +617,25 @@ export default function Chat() {
    console.log('[handleShareSong] Full response:', res);
 
    if (res?.data?.success) {
-     let msgData = {
-       conversation_id: conversationIdRef.current,
-       sender_type: 'character',
-       character_id: characterId,
-       character_name: character.name,
-       timestamp: new Date().toISOString(),
-       content: `Shared: ${isVideo ? (res.data.video?.title || 'a video') : (res.data.is_playlist ? (res.data.playlist_name || 'a playlist') : (res.data.song?.title || 'a song'))}`,
-     };
+    let msgData = {
+      conversation_id: conversationIdRef.current,
+      sender_type: 'character',
+      character_id: characterId,
+      character_name: character.name,
+      timestamp: new Date().toISOString(),
+      content: '', // hide raw text — the media card IS the message
+    };
 
-     if (isVideo) {
-       msgData.videos_watched = res.data.video ? [res.data.video] : [];
-     } else if (res.data.is_playlist) {
-       msgData.songs_heard = res.data.songs || [];
-     } else {
-       msgData.songs_heard = res.data.song ? [res.data.song] : [];
-     }
+    if (isVideo) {
+      msgData.videos_watched = res.data.video ? [res.data.video] : [];
+    } else {
+      // Both single song AND playlist: use res.data.songs (array) or fall back to res.data.song (single)
+      msgData.songs_heard = res.data.songs?.length > 0
+        ? res.data.songs
+        : res.data.song
+        ? [res.data.song]
+        : [];
+    }
 
      console.log('[handleShareSong] Creating message with:', msgData);
      const newMsg = await base44.entities.Message.create(msgData);
@@ -905,66 +908,12 @@ export default function Chat() {
         }
       }
 
-      // Get contextually relevant memories for long-term recall
-      // Uses smart retrieval: scores ALL stored memories against the current message
-      // so archived/older memories surface when relevant — never silently dropped
-      let memoryContext = "";
-      try {
-        const memRes = await base44.functions.invoke('retrieveActiveMemory', {
-          characterId,
-          currentMessage: text,
-          recentMessages: recentMsgs.slice(-6),
-          topK: 14,
-        });
-        const activeMemories = memRes?.data?.memories || [];
-        if (activeMemories.length > 0) {
-          const memoryList = activeMemories.map(m => `- ${m.title}: ${m.description}`).join("\n");
-          const totalStored = memRes?.data?.total || activeMemories.length;
-          memoryContext = `\n\nLONG-TERM MEMORY BANK (${activeMemories.length} most relevant from ${totalStored} total stored memories — reference naturally when relevant, don't force it):\n${memoryList}`;
-        }
-      } catch (_memErr) {
-        // Fallback: direct query if smart retrieval fails
-        const fallbackMems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12);
-        if (fallbackMems.length > 0) {
-          const memoryList = fallbackMems.map(m => `- ${m.title}: ${m.description}`).join("\n");
-          memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference naturally when relevant):\n${memoryList}`;
-        }
-      }
-
-      // Get recent life events for behavioral context
-      let lifeEventContext = "";
-      try {
-        const recentLifeEvents = await base44.entities.LifeEvent.filter({ character_id: characterId }, "-timestamp", 8);
-        if (recentLifeEvents.length > 0) {
-          const negEvents = recentLifeEvents.filter(e => e.valence === "negative");
-          const posEvents = recentLifeEvents.filter(e => e.valence === "positive");
-          const eventLines = recentLifeEvents.map(e => `- [${e.valence}] ${e.title}`).join("\n");
-          let behaviorNote = "";
-          if (negEvents.filter(e => e.event_type === "substance_use_event").length >= 2) {
-            behaviorNote += " You've been drinking more than usual lately — your judgment and emotional regulation are affected.";
-          }
-          if (negEvents.filter(e => e.event_type === "grief_event").length >= 1) {
-            behaviorNote += " You're carrying grief right now. It shapes how you see everything.";
-          }
-          if (negEvents.filter(e => ["conflict_event","fight_event"].includes(e.event_type)).length >= 2) {
-            behaviorNote += " You've had repeated conflict recently. You may be more on edge than usual.";
-          }
-          if (posEvents.filter(e => ["growth_event","healthy_choice_event","recovery_event"].includes(e.event_type)).length >= 2) {
-            behaviorNote += " You've been in a good place lately — making better choices, feeling more stable.";
-          }
-          lifeEventContext = `\n\nRECENT LIFE EVENTS (shape your current mood, behavior, and what's on your mind):\n${eventLines}${behaviorNote ? "\n\nBEHAVIORAL NOTE:" + behaviorNote : ""}`;
-        }
-      } catch (_) {
-        // Life event fetch failed — continue without it
-      }
-
       // Detect frequented places and update emotional state asynchronously (non-blocking)
       const frequentedPlaces = character.frequented_places || [];
       if (frequentedPlaces.length > 0) {
         const fullText = (text + " " + (recentMsgs.slice(-3).map(m => m.content).join(" "))).toLowerCase();
         const mentionedPlace = frequentedPlaces.find(p => fullText.includes(p.toLowerCase()));
         if (mentionedPlace) {
-          // Fire-and-forget — does not block response generation
           setTimeout(() => {
             base44.integrations.Core.InvokeLLM({
               prompt: `A character named ${character.name} (personality: ${character.personality_summary || "unknown"}) is currently at or talking about "${mentionedPlace}", one of their frequented places. Based on their personality and the context, what emotional state best fits them right now? Choose ONE from this list: calm, irritated, defensive, reflective, closed-off, flirtatious, bored, burnt out, joyful, anxious, sad, excited, overwhelmed, content, frustrated. Return ONLY the single word.`,
@@ -980,18 +929,84 @@ export default function Chat() {
         }
       }
 
-      // Get past web lookups to reference naturally
-      let researchContext = "";
-      const pastLookups = await base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10);
-      if (pastLookups.length > 0) {
-        const researchInfo = pastLookups.map(l => `"${l.search_query}" - Found: "${l.title}" by ${l.author_source}. Key info: ${l.summary}`).join("\n");
-        researchContext = `\n\nTHINGS YOU'VE LOOKED UP: You've researched these topics and have this knowledge:\n${researchInfo}\nWhen relevant, naturally reference what you've learned from these lookups. Don't force it, but if something comes up in conversation that relates to your research, mention it like you actually read about it.`;
-      }
-
       // Perform web lookup asynchronously if user asked for one (non-blocking)
       if (lookupMatch && lookupMatch[1]) {
         const query = lookupMatch[1].trim();
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
+      }
+
+      // ── PARALLEL context fetching — run all async lookups simultaneously ──
+      const [memoryResult, lifeEventsResult, pastLookupsResult, spatialResult] = await Promise.all([
+        // Memory retrieval
+        base44.functions.invoke('retrieveActiveMemory', {
+          characterId,
+          currentMessage: text,
+          recentMessages: recentMsgs.slice(-6),
+          topK: 14,
+        }).catch(async () => {
+          // Fallback: direct query
+          const mems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12).catch(() => []);
+          return { data: { memories: mems, total: mems.length, _fallback: true } };
+        }),
+        // Life events
+        base44.entities.LifeEvent.filter({ character_id: characterId }, "-timestamp", 8).catch(() => []),
+        // Web lookups
+        base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
+        // Spatial awareness
+        (character.occupation_location_id || character.current_activity)
+          ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
+              const allLocs = allLocRes?.data?.locations || [];
+              const allActiveChars = await base44.entities.Character.filter({ created_by: currentUser.email, status: 'active' });
+              const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
+              const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
+              return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
+            }).catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      // Build memory context
+      let memoryContext = "";
+      const memData = memoryResult?.data;
+      if (memData?._fallback) {
+        const mems = memData.memories || [];
+        if (mems.length > 0) {
+          memoryContext = `\n\nLONG-TERM MEMORY BANK (things that happened that you remember — reference naturally when relevant):\n${mems.map(m => `- ${m.title}: ${m.description}`).join("\n")}`;
+        }
+      } else {
+        const activeMemories = memData?.memories || [];
+        if (activeMemories.length > 0) {
+          const totalStored = memData?.total || activeMemories.length;
+          memoryContext = `\n\nLONG-TERM MEMORY BANK (${activeMemories.length} most relevant from ${totalStored} total stored memories — reference naturally when relevant, don't force it):\n${activeMemories.map(m => `- ${m.title}: ${m.description}`).join("\n")}`;
+        }
+      }
+
+      // Build life event context
+      let lifeEventContext = "";
+      const recentLifeEvents = Array.isArray(lifeEventsResult) ? lifeEventsResult : [];
+      if (recentLifeEvents.length > 0) {
+        const negEvents = recentLifeEvents.filter(e => e.valence === "negative");
+        const posEvents = recentLifeEvents.filter(e => e.valence === "positive");
+        const eventLines = recentLifeEvents.map(e => `- [${e.valence}] ${e.title}`).join("\n");
+        let behaviorNote = "";
+        if (negEvents.filter(e => e.event_type === "substance_use_event").length >= 2) behaviorNote += " You've been drinking more than usual lately.";
+        if (negEvents.filter(e => e.event_type === "grief_event").length >= 1) behaviorNote += " You're carrying grief right now.";
+        if (negEvents.filter(e => ["conflict_event","fight_event"].includes(e.event_type)).length >= 2) behaviorNote += " You've had repeated conflict recently.";
+        if (posEvents.filter(e => ["growth_event","healthy_choice_event","recovery_event"].includes(e.event_type)).length >= 2) behaviorNote += " You've been in a good place lately.";
+        lifeEventContext = `\n\nRECENT LIFE EVENTS:\n${eventLines}${behaviorNote ? "\n\nBEHAVIORAL NOTE:" + behaviorNote : ""}`;
+      }
+
+      // Build research context
+      let researchContext = "";
+      const pastLookups = Array.isArray(pastLookupsResult) ? pastLookupsResult : [];
+      if (pastLookups.length > 0) {
+        const researchInfo = pastLookups.map(l => `"${l.search_query}" - Found: "${l.title}" by ${l.author_source}. Key info: ${l.summary}`).join("\n");
+        researchContext = `\n\nTHINGS YOU'VE LOOKED UP:\n${researchInfo}`;
+      }
+
+      // Build spatial context
+      let spatialContext = "";
+      if (spatialResult) {
+        spatialContext = `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.`;
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
@@ -1012,24 +1027,6 @@ export default function Chat() {
         if (charStatus === 'out') return `\n\nAWARENESS: You are out right now. You can briefly mention it if natural, but don't force it or repeat it.`;
         return '';
       })();
-
-      // Spatial awareness: detect if other characters are at the same location
-      let spatialContext = "";
-      try {
-        if (character.occupation_location_id || character.current_activity) {
-          const allLocRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
-          const allLocs = allLocRes?.data?.locations || [];
-          const allActiveChars = await base44.entities.Character.filter({ created_by: currentUser.email, status: 'active' });
-          const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
-          const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
-          const spatialStr = buildSpatialContextString(characterId, occupancyMap, allLocs);
-          if (spatialStr) {
-            spatialContext = `\n\nSPATIAL AWARENESS: ${spatialStr} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.`;
-          }
-        }
-      } catch (_spatialErr) {
-        // Non-blocking — continue without spatial context
-      }
 
       let playAsInstruction = "";
       if (activeCharacter) {

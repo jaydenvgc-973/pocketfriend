@@ -223,7 +223,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               error={regenError}
               originalPrompt={message.generation_context?.prompt || null}
             />
-            {message.content && (
+            {message.content && message.content.trim() && (
               <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
             )}
             {message.songs_heard && message.songs_heard.length > 0 && (
