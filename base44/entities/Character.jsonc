@@ -6,6 +6,159 @@
       "type": "string",
       "description": "Character display name"
     },
+    "primary_name": {
+      "type": "string",
+      "description": "One main canonical name per character (does not change unless user edits directly)"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "What the UI shows by default (can be preferred name or nickname)"
+    },
+    "full_name": {
+      "type": "string",
+      "description": "Full legal or formal name if different from primary"
+    },
+    "aliases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "normalized": {
+            "type": "string",
+            "description": "lowercased, punctuation stripped, whitespace compressed"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "nickname",
+              "family_role",
+              "descriptor",
+              "title",
+              "contextual_name",
+              "short_name",
+              "alternate_spelling"
+            ]
+          },
+          "source_context_type": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "text",
+              "location",
+              "media",
+              "memory_import",
+              "manual_user_entry"
+            ]
+          },
+          "location_scope_id": {
+            "type": "string",
+            "description": "For aliases like 'the bartender' at one specific bar"
+          },
+          "relationship_scope_character_id": {
+            "type": "string",
+            "description": "For aliases like 'my mom' dependent on who is speaking"
+          },
+          "user_confirmed": {
+            "type": "boolean",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": [],
+      "description": "Direct alias list attached to character (not separate table)"
+    },
+    "character_type": {
+      "type": "string",
+      "enum": [
+        "active",
+        "npc",
+        "family_npc",
+        "background",
+        "promoted_npc"
+      ],
+      "default": "active",
+      "description": "Character type classification"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "moved_away",
+        "deleted",
+        "soft_deleted",
+        "merged"
+      ],
+      "default": "active"
+    },
+    "age": {
+      "type": "number",
+      "description": "Age in years"
+    },
+    "birth_year": {
+      "type": "number",
+      "description": "Birth year for calculation"
+    },
+    "zodiac_sign": {
+      "type": "string"
+    },
+    "profile_summary": {
+      "type": "string",
+      "description": "One-paragraph summary of who this person is"
+    },
+    "backstory": {
+      "type": "string",
+      "description": "Full backstory narrative"
+    },
+    "occupation": {
+      "type": "string",
+      "description": "Current job or occupation"
+    },
+    "education": {
+      "type": "string",
+      "description": "Education history"
+    },
+    "current_home_location_id": {
+      "type": "string",
+      "description": "ID of current home location"
+    },
+    "current_work_location_id": {
+      "type": "string",
+      "description": "ID of current work location"
+    },
+    "current_school_location_id": {
+      "type": "string",
+      "description": "ID of current school location"
+    },
+    "image_avatar_url": {
+      "type": "string",
+      "description": "Primary avatar image URL"
+    },
+    "alias_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Count of aliases for quick reference"
+    },
+    "relationship_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Count of relationships for quick reference"
+    },
+    "is_protected": {
+      "type": "boolean",
+      "default": false
+    },
+    "created_by_user": {
+      "type": "boolean",
+      "default": true,
+      "description": "True if user explicitly created; false if AI-spawned"
+    },
     "nickname_for_user": {
       "type": "string",
       "description": "The name this character uses when referring to or addressing the user."
@@ -129,9 +282,6 @@
       "type": "string",
       "format": "date"
     },
-    "zodiac_sign": {
-      "type": "string"
-    },
     "religion": {
       "type": "string",
       "default": "None"
@@ -188,17 +338,6 @@
     },
     "voice_style_note": {
       "type": "string"
-    },
-    "status": {
-      "type": "string",
-      "enum": [
-        "active",
-        "moved_away",
-        "deleted",
-        "soft_deleted",
-        "merged"
-      ],
-      "default": "active"
     },
     "student_status": {
       "type": "string",
@@ -897,22 +1036,6 @@
     "chosen_family_level": {
       "type": "number",
       "default": 0
-    },
-    "character_type": {
-      "type": "string",
-      "enum": [
-        "npc",
-        "active",
-        "default",
-        "protected",
-        "user_created",
-        "merged_alias"
-      ],
-      "default": "user_created"
-    },
-    "is_protected": {
-      "type": "boolean",
-      "default": false
     },
     "is_active_character": {
       "type": "boolean",

@@ -1,0 +1,46 @@
+{
+  "name": "CharacterMergeLog",
+  "type": "object",
+  "properties": {
+    "canonical_character_id": {
+      "type": "string",
+      "description": "ID of the canonical/primary character that was kept"
+    },
+    "duplicate_character_id": {
+      "type": "string",
+      "description": "ID of the duplicate character that was merged away"
+    },
+    "canonical_character_name": {
+      "type": "string",
+      "description": "Display name of canonical character"
+    },
+    "duplicate_character_name": {
+      "type": "string",
+      "description": "Display name of duplicate character"
+    },
+    "merge_reason": {
+      "type": "string",
+      "description": "Why these characters were merged (e.g., 'Mike is alias of Michael Rivera')"
+    },
+    "merged_aliases_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Number of aliases transferred"
+    },
+    "merged_relationships_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Number of relationships merged"
+    },
+    "merged_memories_count": {
+      "type": "integer",
+      "default": 0,
+      "description": "Number of memories transferred"
+    }
+  },
+  "required": [
+    "canonical_character_id",
+    "duplicate_character_id",
+    "merge_reason"
+  ]
+}

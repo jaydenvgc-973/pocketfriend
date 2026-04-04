@@ -1,0 +1,87 @@
+{
+  "name": "CharacterMemory",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of character this memory belongs to (must be canonical character ID, never raw text or alias)"
+    },
+    "memory_type": {
+      "type": "string",
+      "enum": [
+        "identity",
+        "relationship",
+        "event",
+        "preference",
+        "location",
+        "alias",
+        "fact",
+        "course_progress"
+      ],
+      "description": "Classification of memory type"
+    },
+    "memory_text": {
+      "type": "string",
+      "description": "Full memory content"
+    },
+    "memory_summary": {
+      "type": "string",
+      "description": "Short summary for quick retrieval"
+    },
+    "related_character_id": {
+      "type": "string",
+      "description": "ID of related character if applicable (must be canonical, not alias)"
+    },
+    "related_location_id": {
+      "type": "string",
+      "description": "ID of related location if applicable"
+    },
+    "related_message_id": {
+      "type": "string",
+      "description": "ID of source message if from chat"
+    },
+    "importance_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 5,
+      "description": "Importance ranking 0-10"
+    },
+    "confidence_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "default": 0.8,
+      "description": "Confidence in accuracy 0-1"
+    },
+    "permanence": {
+      "type": "string",
+      "enum": [
+        "short_term",
+        "long_term",
+        "protected"
+      ],
+      "default": "long_term",
+      "description": "How long to retain this memory"
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": [
+        "confirmed",
+        "pending",
+        "unresolved_identity"
+      ],
+      "default": "confirmed",
+      "description": "Whether this memory is ready or waiting for identity resolution"
+    },
+    "original_raw_reference": {
+      "type": "string",
+      "description": "If saved before identity resolution, the raw phrase that needs validation"
+    }
+  },
+  "required": [
+    "character_id",
+    "memory_type",
+    "memory_text"
+  ]
+}

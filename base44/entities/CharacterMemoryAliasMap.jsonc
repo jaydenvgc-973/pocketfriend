@@ -1,0 +1,23 @@
+{
+  "name": "CharacterMemoryAliasMap",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of character who owns the alias and memory"
+    },
+    "alias_text": {
+      "type": "string",
+      "description": "The alias text itself"
+    },
+    "memory_id": {
+      "type": "string",
+      "description": "ID of memory that references this alias"
+    }
+  },
+  "required": [
+    "character_id",
+    "alias_text",
+    "memory_id"
+  ]
+}

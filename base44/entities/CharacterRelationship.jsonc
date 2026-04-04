@@ -1,0 +1,100 @@
+{
+  "name": "CharacterRelationship",
+  "type": "object",
+  "properties": {
+    "source_character_id": {
+      "type": "string",
+      "description": "ID of the character having the relationship"
+    },
+    "target_character_id": {
+      "type": "string",
+      "description": "ID of the character they have the relationship with"
+    },
+    "relationship_type": {
+      "type": "string",
+      "enum": [
+        "family",
+        "friend",
+        "coworker",
+        "romantic",
+        "ex",
+        "enemy",
+        "roommate",
+        "classmate",
+        "acquaintance",
+        "other"
+      ],
+      "description": "Type of relationship"
+    },
+    "label_from_source_perspective": {
+      "type": "string",
+      "description": "How source character refers to target (e.g., 'my brother', 'best friend')"
+    },
+    "label_from_target_perspective": {
+      "type": "string",
+      "description": "How target character refers to source"
+    },
+    "friendship_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "Friendship score 0-100"
+    },
+    "trust_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "Trust score 0-100"
+    },
+    "attraction_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Physical/emotional attraction 0-100"
+    },
+    "respect_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "Respect score 0-100"
+    },
+    "tension_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 0,
+      "description": "Conflict/tension score 0-100"
+    },
+    "familiarity_level": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "default": 50,
+      "description": "How well they know each other 0-100"
+    },
+    "is_household_member": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if they live together"
+    },
+    "is_family": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if blood or adopted family relation"
+    },
+    "is_hidden": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if relationship should be hidden from certain contexts"
+    }
+  },
+  "required": [
+    "source_character_id",
+    "target_character_id",
+    "relationship_type"
+  ]
+}

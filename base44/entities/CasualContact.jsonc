@@ -1,0 +1,39 @@
+{
+  "name": "CasualContact",
+  "type": "object",
+  "properties": {
+    "owner_character_id": {
+      "type": "string",
+      "description": "ID of character who knows this casual contact (null if global)"
+    },
+    "raw_label": {
+      "type": "string",
+      "description": "The raw phrase for this casual contact (e.g., 'some guy at the club')"
+    },
+    "normalized_label": {
+      "type": "string",
+      "description": "Normalized form for deduplication"
+    },
+    "context_note": {
+      "type": "string",
+      "description": "Optional context about who or what this is"
+    },
+    "source_location_id": {
+      "type": "string",
+      "description": "Location where this contact was mentioned"
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "Message ID where this contact appeared"
+    },
+    "priority_rank": {
+      "type": "integer",
+      "default": 1,
+      "description": "Rank for managing max active casual contacts (older/lower rank = eligible for removal)"
+    }
+  },
+  "required": [
+    "raw_label",
+    "normalized_label"
+  ]
+}

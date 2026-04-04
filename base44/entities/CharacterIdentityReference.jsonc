@@ -1,0 +1,77 @@
+{
+  "name": "CharacterIdentityReference",
+  "type": "object",
+  "properties": {
+    "raw_text": {
+      "type": "string",
+      "description": "The exact phrase detected (e.g., 'Mike', 'Mom', 'the bartender')"
+    },
+    "normalized_text": {
+      "type": "string",
+      "description": "Normalized form for matching (lowercased, punctuation stripped, whitespace compressed)"
+    },
+    "detected_as": {
+      "type": "string",
+      "enum": [
+        "name",
+        "nickname",
+        "descriptor",
+        "role",
+        "family_reference",
+        "unknown"
+      ],
+      "description": "How the system categorized this reference"
+    },
+    "source_message_id": {
+      "type": "string",
+      "description": "ID of the message where this reference appeared"
+    },
+    "source_character_id": {
+      "type": "string",
+      "description": "ID of the character who mentioned it (for family-scoped aliases)"
+    },
+    "source_location_id": {
+      "type": "string",
+      "description": "ID of location context if applicable"
+    },
+    "suggested_character_id": {
+      "type": "string",
+      "description": "ID of suggested character match if any"
+    },
+    "suggested_character_name": {
+      "type": "string",
+      "description": "Display name of suggested match"
+    },
+    "validation_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "linked",
+        "created_new",
+        "irrelevant",
+        "rejected"
+      ],
+      "description": "Current resolution status"
+    },
+    "resolved_character_id": {
+      "type": "string",
+      "description": "Final resolved character ID after user validation"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence score of suggestion (0-1)"
+    },
+    "user_confirmed": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once user has validated this reference"
+    }
+  },
+  "required": [
+    "raw_text",
+    "normalized_text",
+    "detected_as"
+  ]
+}
