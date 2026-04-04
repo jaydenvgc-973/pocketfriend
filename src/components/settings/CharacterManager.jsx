@@ -279,7 +279,8 @@ export default function CharacterManager() {
       setSelectedForMerge(new Set());
       setMergeMode(false);
       setMergeConfirmModal(null);
-    } else if (charIds.length === 1 && npcIds.length === 1) {
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+      } else if (charIds.length === 1 && npcIds.length === 1) {
       // Merge active character with NPC: consolidate NPC data into active character, remove NPC
       const activeCharId = charIds[0];
       const npcId = npcIds[0];
@@ -329,6 +330,7 @@ export default function CharacterManager() {
             queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
             setSelectedForMerge(new Set());
             setMergeMode(false);
+            setMergeConfirmModal(null);
           }).catch(() => {});
         }
       }
