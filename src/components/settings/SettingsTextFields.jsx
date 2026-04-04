@@ -1,15 +1,19 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
 export default function SettingsTextFields({ settings, onSave }) {
   const [worldName, setWorldName] = useState(settings.fictional_world_name || "");
   const [birthday, setBirthday] = useState(settings.user_birthday || "");
   const [scheduleNotes, setScheduleNotes] = useState(settings.user_schedule_notes || "");
+  const initialized = useRef(false);
 
-  // Sync if settings load async
+  // Only sync once when settings first load from the server (empty → populated)
   useEffect(() => {
-    setWorldName(settings.fictional_world_name || "");
-    setBirthday(settings.user_birthday || "");
-    setScheduleNotes(settings.user_schedule_notes || "");
+    if (!initialized.current && (settings.fictional_world_name || settings.user_birthday || settings.user_schedule_notes)) {
+      setWorldName(settings.fictional_world_name || "");
+      setBirthday(settings.user_birthday || "");
+      setScheduleNotes(settings.user_schedule_notes || "");
+      initialized.current = true;
+    }
   }, [settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes]);
 
   return (
