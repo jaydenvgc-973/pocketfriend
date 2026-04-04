@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
       const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
       character = chars?.[0] || null;
     } catch (_) {}
-    
+
     if (!character) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
@@ -34,20 +34,57 @@ Deno.serve(async (req) => {
       if (/bandcamp\.com/.test(url)) return 'bandcamp';
       if (/amazon\.com.*music|music\.amazon\.com/.test(url)) return 'amazon';
       if (/vimeo\.com/.test(url)) return 'vimeo';
+      if (/tiktok\.com/.test(url)) return 'tiktok';
       return 'generic';
     };
 
     const isVideoLink = isVideo || /youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com.*video|instagram\.com.*reel/.test(songLink);
     const platform = detectPlatform(songLink);
 
-    // VIDEO PATH
+    // ── VIDEO PATH ──────────────────────────────────────────────────────
     if (isVideoLink) {
+      let title = 'Shared Video';
+      let creator = 'Unknown';
+      let thumbnail = null;
+      let description = '';
+      let duration = '';
+
+      // YouTube oEmbed (no auth required)
+      if (platform === 'youtube') {
+        try {
+          const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(songLink)}&format=json`;
+          const res = await fetch(oembedUrl);
+          if (res.ok) {
+            const data = await res.json();
+            title = data.title || title;
+            creator = data.author_name || creator;
+            thumbnail = data.thumbnail_url || null;
+          }
+        } catch (_) {}
+      }
+
+      // Vimeo oEmbed (no auth required)
+      if (platform === 'vimeo') {
+        try {
+          const oembedUrl = `https://vimeo.com/api/oembed.json?url=${encodeURIComponent(songLink)}`;
+          const res = await fetch(oembedUrl);
+          if (res.ok) {
+            const data = await res.json();
+            title = data.title || title;
+            creator = data.author_name || creator;
+            thumbnail = data.thumbnail_url || null;
+            duration = data.duration ? `${Math.floor(data.duration / 60)}:${String(data.duration % 60).padStart(2, '0')}` : '';
+          }
+        } catch (_) {}
+      }
+
       const newVideo = {
-        title: 'Video shared',
-        creator: 'Unknown Creator',
-        description: 'Video shared',
-        platform: platform,
-        duration: 'Unknown',
+        title,
+        creator,
+        description,
+        platform,
+        duration,
+        thumbnail,
         link: songLink,
         added_date: new Date().toISOString(),
       };
@@ -60,44 +97,61 @@ Deno.serve(async (req) => {
       return Response.json({
         success: true,
         is_video: true,
-        platform: platform,
+        platform,
         video: newVideo,
       });
     }
 
-    // SPOTIFY PATH
+    // ── SPOTIFY PATH ────────────────────────────────────────────────────
     if (platform === 'spotify') {
       try {
-        // Extract ID from Spotify URL
         const trackMatch = songLink.match(/track\/([a-zA-Z0-9]+)/);
         const playlistMatch = songLink.match(/playlist\/([a-zA-Z0-9]+)/);
         const albumMatch = songLink.match(/album\/([a-zA-Z0-9]+)/);
-        
+
         const spotifyId = trackMatch?.[1] || playlistMatch?.[1] || albumMatch?.[1];
 
         if (!spotifyId) {
           return Response.json({ error: 'Could not parse Spotify link', success: false }, { status: 422 });
         }
 
-        // Use embed API which doesn't require auth
-        const embedUrl = trackMatch 
+        let title = trackMatch ? 'Song shared' : playlistMatch ? 'Playlist shared' : 'Album shared';
+        let artist = 'Spotify';
+        let coverArt = null;
+
+        // Use Spotify oEmbed (no auth required) to get real metadata
+        try {
+          const oembedUrl = `https://open.spotify.com/oembed?url=${encodeURIComponent(songLink)}`;
+          const res = await fetch(oembedUrl);
+          if (res.ok) {
+            const data = await res.json();
+            // oEmbed title is usually "Song Name - Artist Name" or "Playlist Name"
+            const rawTitle = data.title || '';
+            if (rawTitle.includes(' - ')) {
+              const parts = rawTitle.split(' - ');
+              title = parts[0].trim();
+              artist = parts.slice(1).join(' - ').trim();
+            } else {
+              title = rawTitle || title;
+            }
+            coverArt = data.thumbnail_url || null;
+          }
+        } catch (_) {}
+
+        const embedUrl = trackMatch
           ? `https://open.spotify.com/embed/track/${spotifyId}`
-          : playlistMatch 
+          : playlistMatch
           ? `https://open.spotify.com/embed/playlist/${spotifyId}`
           : `https://open.spotify.com/embed/album/${spotifyId}`;
 
-        const embedRes = await fetch(embedUrl);
-        if (!embedRes.ok) {
-          return Response.json({ error: 'Could not fetch Spotify data', success: false }, { status: 422 });
-        }
-
-        // For now, store with basic info — the character will see it was shared
         const newSong = {
-          title: trackMatch ? 'Song shared' : playlistMatch ? 'Playlist shared' : 'Album shared',
-          artist: 'Spotify',
+          title,
+          artist,
           lyrics_excerpt: '',
           full_lyrics: '',
           spotify_id: spotifyId,
+          spotify_embed_url: embedUrl,
+          cover_art: coverArt,
           preview_url: '',
           platform: 'spotify',
           link: songLink,
@@ -121,7 +175,50 @@ Deno.serve(async (req) => {
       }
     }
 
-    // OTHER PLATFORMS - placeholder
+    // ── SOUNDCLOUD oEmbed ───────────────────────────────────────────────
+    if (platform === 'soundcloud') {
+      let title = 'Song shared';
+      let artist = 'SoundCloud';
+      let coverArt = null;
+      try {
+        const oembedUrl = `https://soundcloud.com/oembed?url=${encodeURIComponent(songLink)}&format=json`;
+        const res = await fetch(oembedUrl);
+        if (res.ok) {
+          const data = await res.json();
+          const rawTitle = data.title || '';
+          if (rawTitle.includes(' by ')) {
+            const parts = rawTitle.split(' by ');
+            title = parts[0].trim();
+            artist = parts[1].trim();
+          } else {
+            title = rawTitle || title;
+          }
+          coverArt = data.thumbnail_url || null;
+        }
+      } catch (_) {}
+
+      const newSong = {
+        title,
+        artist,
+        cover_art: coverArt,
+        lyrics_excerpt: '',
+        full_lyrics: '',
+        spotify_id: '',
+        preview_url: '',
+        platform,
+        link: songLink,
+        added_date: new Date().toISOString(),
+      };
+
+      const songsHeard = character.songs_heard || [];
+      await base44.asServiceRole.entities.Character.update(characterId, {
+        songs_heard: [...songsHeard, newSong],
+      });
+
+      return Response.json({ success: true, is_playlist: false, platform, song: newSong });
+    }
+
+    // ── OTHER PLATFORMS ─────────────────────────────────────────────────
     const newSong = {
       title: 'Song shared',
       artist: 'Unknown Artist',
@@ -129,7 +226,7 @@ Deno.serve(async (req) => {
       full_lyrics: '',
       spotify_id: '',
       preview_url: '',
-      platform: platform,
+      platform,
       link: songLink,
       added_date: new Date().toISOString(),
     };
@@ -139,12 +236,7 @@ Deno.serve(async (req) => {
       songs_heard: [...songsHeard, newSong],
     });
 
-    return Response.json({
-      success: true,
-      is_playlist: false,
-      platform: platform,
-      song: newSong,
-    });
+    return Response.json({ success: true, is_playlist: false, platform, song: newSong });
 
   } catch (error) {
     console.error('[processSongLink] Error:', error.message);

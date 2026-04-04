@@ -1,57 +1,89 @@
 import { ExternalLink, Play } from "lucide-react";
 
-const platformEmojis = {
-  youtube: "▶️",
-  vimeo: "🎬",
-  tiktok: "📱",
-  instagram: "📸",
-  twitch: "🎮",
-  dailymotion: "🎥",
-  generic: "🎬"
+const platformLabels = {
+  youtube: "YouTube",
+  vimeo: "Vimeo",
+  tiktok: "TikTok",
+  instagram: "Instagram",
+  twitch: "Twitch",
+  dailymotion: "Dailymotion",
+  generic: "Video"
 };
 
-const platformColors = {
-  youtube: "bg-red-950/40",
-  vimeo: "bg-blue-950/40",
-  tiktok: "bg-black/60",
-  instagram: "bg-pink-950/40",
-  twitch: "bg-purple-950/40",
-  dailymotion: "bg-blue-900/40",
-  generic: "bg-secondary/60"
+const platformBadgeColors = {
+  youtube: "bg-red-600 text-white",
+  vimeo: "bg-blue-600 text-white",
+  tiktok: "bg-black text-white",
+  instagram: "bg-pink-600 text-white",
+  twitch: "bg-purple-600 text-white",
+  dailymotion: "bg-blue-500 text-white",
+  generic: "bg-secondary text-muted-foreground"
 };
 
 export default function VideoPreviewCard({ video, platform = 'generic' }) {
   if (!video) return null;
 
-  const emoji = platformEmojis[platform] || platformEmojis.generic;
-  const bgColor = platformColors[platform] || platformColors.generic;
+  const label = platformLabels[platform] || platform;
+  const badgeColor = platformBadgeColors[platform] || platformBadgeColors.generic;
+  const hasThumbnail = !!video.thumbnail;
 
   return (
     <a
       href={video.link}
       target="_blank"
       rel="noopener noreferrer"
-      className={`block rounded-lg border border-border ${bgColor} p-3 hover:border-primary/40 transition-all group cursor-pointer`}
+      className="block rounded-xl overflow-hidden border border-border hover:border-primary/40 transition-all group bg-card/80 max-w-sm shadow"
     >
-      <div className="flex items-start gap-3">
-        <div className="text-2xl flex-shrink-0 mt-0.5">{emoji}</div>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-foreground group-hover:text-primary transition-colors truncate">
-            {video.title}
+      {/* Thumbnail */}
+      {hasThumbnail ? (
+        <div className="relative">
+          <img
+            src={video.thumbnail}
+            alt={video.title}
+            className="w-full h-36 object-cover"
+          />
+          {/* Play overlay */}
+          <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="w-10 h-10 rounded-full bg-white/90 flex items-center justify-center">
+              <Play className="w-5 h-5 text-black ml-0.5" />
+            </div>
+          </div>
+          {/* Platform badge */}
+          <span className={`absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
+            {label}
+          </span>
+          {video.duration && (
+            <span className="absolute bottom-2 right-2 text-[10px] font-medium bg-black/70 text-white px-1.5 py-0.5 rounded">
+              {video.duration}
+            </span>
+          )}
+        </div>
+      ) : (
+        <div className="relative h-20 bg-secondary flex items-center justify-center">
+          <Play className="w-8 h-8 text-muted-foreground/50" />
+          <span className={`absolute top-2 left-2 text-[10px] font-bold px-2 py-0.5 rounded-full ${badgeColor}`}>
+            {label}
+          </span>
+        </div>
+      )}
+
+      {/* Info */}
+      <div className="p-3 space-y-0.5">
+        <p className="text-sm font-semibold text-foreground line-clamp-2 leading-snug group-hover:text-primary transition-colors">
+          {video.title || "Video"}
+        </p>
+        {video.creator && (
+          <p className="text-xs text-muted-foreground">
+            {video.creator}
           </p>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            by {video.creator}
-          </p>
+        )}
+        <div className="flex items-center justify-between pt-1">
           {video.description && (
-            <p className="text-xs text-muted-foreground/80 mt-1 line-clamp-2">
+            <p className="text-xs text-muted-foreground/60 line-clamp-1 flex-1 mr-2">
               {video.description}
             </p>
           )}
-          <div className="flex items-center gap-2 mt-2 text-[10px] text-muted-foreground/70">
-            {video.duration && <span>{video.duration}</span>}
-            {video.platform && <span className="capitalize">{video.platform}</span>}
-            <ExternalLink className="w-2.5 h-2.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
-          </div>
+          <ExternalLink className="w-3 h-3 text-muted-foreground/50 flex-shrink-0 ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
       </div>
     </a>
