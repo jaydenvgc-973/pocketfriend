@@ -119,31 +119,23 @@ Deno.serve(async (req) => {
         let artist = 'Unknown Artist';
         let coverArt = null;
 
-        // Fetch Spotify metadata via LLM with web search
+        // Fetch real Spotify metadata using LLM with web search
         try {
           const metadataRes = await base44.integrations.Core.InvokeLLM({
-            prompt: `Look up this Spotify ${trackMatch ? 'track' : albumMatch ? 'album' : 'playlist'} link and extract metadata: ${songLink}
+            prompt: `Look up this Spotify ${trackMatch ? 'track' : albumMatch ? 'album' : 'playlist'} link and extract the exact name and artist shown on the page: ${songLink}
 
-Return ONLY JSON (no markdown, no explanation):
-{
-  "name": "exact name from Spotify",
-  "artist": "primary artist/creator",
-  "image_url": "direct image URL from Spotify CDN"
-}`,
-            add_context_from_internet: true,
-            response_json_schema: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                artist: { type: "string" },
-                image_url: { type: "string" }
-              }
-            }
+Respond ONLY with this format: NAME|ARTIST
+
+Example: Shape of You|Ed Sheeran
+
+Do NOT make up information. Extract only what is actually displayed.`,
+            add_context_from_internet: true
           });
-          if (metadataRes && typeof metadataRes === 'object') {
-            title = metadataRes.name || title;
-            artist = metadataRes.artist || artist;
-            coverArt = metadataRes.image_url || null;
+          
+          if (metadataRes && typeof metadataRes === 'string') {
+            const parts = metadataRes.split('|');
+            if (parts[0]?.trim()) title = parts[0].trim();
+            if (parts[1]?.trim()) artist = parts[1].trim();
           }
         } catch (_) {}
 
