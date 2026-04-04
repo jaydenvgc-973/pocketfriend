@@ -255,6 +255,17 @@ export default function Travel() {
     ? "Go alone"
     : `Go with ${selectedCharacterIds.length} character${selectedCharacterIds.length > 1 ? "s" : ""}`;
 
+  // Sort locations: those with images first (alphabetically), then those without images (alphabetically)
+  const sortedLocations = [...locationsData].sort((a, b) => {
+    const aHasImages = (a.zones || []).some(z => z.image_urls?.length > 0);
+    const bHasImages = (b.zones || []).some(z => z.image_urls?.length > 0);
+
+    if (aHasImages !== bHasImages) {
+      return bHasImages ? 1 : -1; // images first
+    }
+    return (a.name || "").localeCompare(b.name || ""); // alphabetically within each group
+  });
+
   return (
     <div className="min-h-screen bg-background pb-28">
       <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 z-10">
@@ -297,7 +308,7 @@ export default function Travel() {
                       // Filter locations based on search input
                       const searchTerm = e.target.value.toLowerCase();
                       if (searchTerm) {
-                        const filtered = locationsData.filter(l => 
+                        const filtered = sortedLocations.filter(l => 
                           l.name.toLowerCase().includes(searchTerm)
                         );
                         if (filtered.length > 0) {
@@ -312,7 +323,7 @@ export default function Travel() {
          <div>
            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Where are you going?</p>
            <TravelLocationGrid
-             locations={locationsData}
+             locations={sortedLocations}
              selectedLocation={selectedLocation}
              onSelect={setSelectedLocation}
              style={{ zIndex: 50 }}
