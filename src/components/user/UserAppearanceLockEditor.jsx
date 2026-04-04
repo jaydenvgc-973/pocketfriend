@@ -48,9 +48,12 @@ export default function UserAppearanceLockEditor({ settings, user }) {
   };
 
   const save = async () => {
-    if (!settings.id) return;
     setSaving(true);
-    await base44.entities.UserSettings.update(settings.id, { appearance_lock: lock });
+    if (settings.id) {
+      await base44.entities.UserSettings.update(settings.id, { appearance_lock: lock });
+    } else {
+      await base44.entities.UserSettings.create({ appearance_lock: lock });
+    }
     queryClient.invalidateQueries({ queryKey: ["userSettings"] });
     setSaving(false);
     setSaved(true);
