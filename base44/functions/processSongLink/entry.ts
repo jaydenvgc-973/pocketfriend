@@ -120,91 +120,104 @@ Deno.serve(async (req) => {
         let coverArt = null;
         let tracks = [];
 
-        // Fetch Spotify metadata using Web API with credentials
+        // Attempt 1: Fetch via authenticated API (production)
         try {
           const clientId = Deno.env.get('SPOTIFY_CLIENT_ID');
           const clientSecret = Deno.env.get('SPOTIFY_CLIENT_SECRET');
 
-          console.log('[processSongLink] Spotify auth check:', { hasId: !!clientId, hasSecret: !!clientSecret });
-
           if (clientId && clientSecret) {
-            try {
-              // Get access token
-              const authHeader = btoa(`${clientId}:${clientSecret}`);
-              const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
-                method: 'POST',
-                headers: {
-                  'Authorization': `Basic ${authHeader}`,
-                  'Content-Type': 'application/x-www-form-urlencoded',
-                },
-                body: 'grant_type=client_credentials',
-              });
+            const authHeader = btoa(`${clientId}:${clientSecret}`);
+            const tokenRes = await fetch('https://accounts.spotify.com/api/token', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Basic ${authHeader}`,
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: 'grant_type=client_credentials',
+            });
 
-              console.log('[processSongLink] Spotify token response:', tokenRes.status);
+            if (tokenRes.ok) {
+              const tokenData = await tokenRes.json();
+              const accessToken = tokenData.access_token;
 
-              if (tokenRes.ok) {
-                const tokenData = await tokenRes.json();
-                const accessToken = tokenData.access_token;
-
-                // Fetch track data
-                if (trackMatch) {
-                  const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` },
-                  });
-                  if (trackRes.ok) {
-                    const trackData = await trackRes.json();
-                    title = trackData.name || title;
-                    artist = trackData.artists?.[0]?.name || artist;
-                    coverArt = trackData.album?.images?.[0]?.url || null;
-                    tracks = [{ name: trackData.name, artist: trackData.artists?.[0]?.name }];
-                  }
+              if (albumMatch) {
+                const albumRes = await fetch(`https://api.spotify.com/v1/albums/${spotifyId}`, {
+                  headers: { 'Authorization': `Bearer ${accessToken}` },
+                });
+                if (albumRes.ok) {
+                  const albumData = await albumRes.json();
+                  title = albumData.name || title;
+                  artist = albumData.artists?.[0]?.name || artist;
+                  coverArt = albumData.images?.[0]?.url || null;
+                  tracks = (albumData.tracks?.items || []).map(t => ({
+                    name: t.name,
+                    artist: t.artists?.[0]?.name,
+                  }));
                 }
-
-                // Fetch album data with tracks
-                if (albumMatch) {
-                  const albumRes = await fetch(`https://api.spotify.com/v1/albums/${spotifyId}`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` },
-                  });
-                  if (albumRes.ok) {
-                    const albumData = await albumRes.json();
-                    title = albumData.name || title;
-                    artist = albumData.artists?.[0]?.name || artist;
-                    coverArt = albumData.images?.[0]?.url || null;
-                    tracks = (albumData.tracks?.items || []).map(t => ({
-                      name: t.name,
-                      artist: t.artists?.[0]?.name,
-                    }));
-                    console.log('[processSongLink] Album fetched:', { title, trackCount: tracks.length });
-                  }
-                }
-
-                // Fetch playlist data with tracks
-                if (playlistMatch) {
-                  const playlistRes = await fetch(`https://api.spotify.com/v1/playlists/${spotifyId}`, {
-                    headers: { 'Authorization': `Bearer ${accessToken}` },
-                  });
-                  if (playlistRes.ok) {
-                    const playlistData = await playlistRes.json();
-                    title = playlistData.name || title;
-                    coverArt = playlistData.images?.[0]?.url || null;
-                    tracks = (playlistData.tracks?.items || []).map(t => ({
-                      name: t.track?.name,
-                      artist: t.track?.artists?.[0]?.name,
-                    })).filter(t => t.name);
-                    console.log('[processSongLink] Playlist fetched:', { title, trackCount: tracks.length });
-                  }
-                }
-              } else {
-                console.error('[processSongLink] Token fetch failed:', tokenRes.status);
               }
-            } catch (tokenErr) {
-              console.error('[processSongLink] Spotify API error:', tokenErr.message);
+
+              if (trackMatch) {
+                const trackRes = await fetch(`https://api.spotify.com/v1/tracks/${spotifyId}`, {
+                  headers: { 'Authorization': `Bearer ${accessToken}` },
+                });
+                if (trackRes.ok) {
+                  const trackData = await trackRes.json();
+                  title = trackData.name || title;
+                  artist = trackData.artists?.[0]?.name || artist;
+                  coverArt = trackData.album?.images?.[0]?.url || null;
+                  tracks = [{ name: trackData.name, artist: trackData.artists?.[0]?.name }];
+                }
+              }
+
+              if (playlistMatch) {
+                const playlistRes = await fetch(`https://api.spotify.com/v1/playlists/${spotifyId}`, {
+                  headers: { 'Authorization': `Bearer ${accessToken}` },
+                });
+                if (playlistRes.ok) {
+                  const playlistData = await playlistRes.json();
+                  title = playlistData.name || title;
+                  coverArt = playlistData.images?.[0]?.url || null;
+                  tracks = (playlistData.tracks?.items || []).map(t => ({
+                    name: t.track?.name,
+                    artist: t.track?.artists?.[0]?.name,
+                  })).filter(t => t.name);
+                }
+              }
             }
-          } else {
-            console.warn('[processSongLink] Spotify credentials missing - using fallback');
           }
-        } catch (spotifyErr) {
-          console.error('[processSongLink] Outer catch:', spotifyErr.message);
+        } catch (err) {
+          // Auth API failed, try fallback
+        }
+
+        // Attempt 2: Fallback to web scraping if API didn't work
+        if (title === 'Album shared' || title === 'Playlist shared' || title === 'Song shared') {
+          try {
+            const spotifyPageRes = await fetch(songLink);
+            if (spotifyPageRes.ok) {
+              const html = await spotifyPageRes.text();
+              // Try to extract title from og:title meta tag
+              const titleMatch = html.match(/<meta property="og:title" content="([^"]+)"/);
+              const descMatch = html.match(/<meta property="og:description" content="([^"]+)"/);
+              const imageMatch = html.match(/<meta property="og:image" content="([^"]+)"/);
+              
+              if (titleMatch) {
+                const fullTitle = titleMatch[1];
+                // Parse "Song Title by Artist" or "Album Title by Artist"
+                if (fullTitle.includes(' by ')) {
+                  const parts = fullTitle.split(' by ');
+                  title = parts[0].trim();
+                  artist = parts[1].trim();
+                } else {
+                  title = fullTitle;
+                }
+              }
+              if (imageMatch) {
+                coverArt = imageMatch[1];
+              }
+            }
+          } catch (err) {
+            // Scraping failed, use defaults
+          }
         }
 
         const embedUrl = trackMatch
