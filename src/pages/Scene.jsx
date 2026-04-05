@@ -17,6 +17,9 @@ import { buildUnifiedMemoryContext, formatMemoryForLLM, shouldReferenceMemory, g
 import { checkCharacterAvailability, getLocationEmployees, spawnLocationNPCs, shouldNPCApproach } from "@/lib/npcSpawner";
 import ConversationTypeSelector from "@/components/scene/ConversationTypeSelector";
 import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext } from "@/lib/sceneMemoryInjection";
+import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
+import RealtorTourModal from "@/components/scene/RealtorTourModal";
+import MoveInPopup from "@/components/travel/MoveInPopup";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -140,6 +143,10 @@ export default function Scene() {
   const [showZonePicker, setShowZonePicker] = useState(false);
   const [conversationModal, setConversationModal] = useState(null); // {npcId, npcName, hasEmployees}
   const [narratorMode, setNarratorMode] = useState(false); // toggles between dialogue and narration input
+  const [showTourModal, setShowTourModal] = useState(false);
+  const [showMoveInPopup, setShowMoveInPopup] = useState(false);
+  const [isMoveInLoading, setIsMoveInLoading] = useState(false);
+  const [extraNpcs, setExtraNpcs] = useState([]); // realtor + other added NPCs
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -328,6 +335,7 @@ export default function Scene() {
     ...(isHomeLocation ? homeResidentsPresent : []),
     ...workerCharacters,
     ...selectedNpcs,
+    ...extraNpcs,
   ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
 
   const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
@@ -654,6 +662,39 @@ Return JSON:
     }
   };
 
+  const handleMoveIn = async ({ moversToMove, newHomeName }) => {
+    if (!location) return;
+    setIsMoveInLoading(true);
+    try {
+      await base44.functions.invoke("moveCharactersToNewHome", {
+        sourceHomeId: broughtCharacters[0]?.current_home_location_id,
+        destinationHomeId: location.id,
+        characterIds: moversToMove,
+        newHomeName,
+      });
+      setShowMoveInPopup(false);
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        sender: "narrative",
+        content: `Move-in complete. ${location.name} is now home.`,
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch (err) {
+      console.error("Move-in failed:", err);
+    } finally {
+      setIsMoveInLoading(false);
+    }
+  };
+
+  const handleAskToLeave = (type, narrativeText) => {
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      sender: "narrative",
+      content: narrativeText || `You ask the ${type} to leave.`,
+      timestamp: new Date().toISOString(),
+    }]);
+  };
+
   const handleAction = async (action) => {
     if (actionCooldown) return;
     setActionCooldown(true);
@@ -733,6 +774,25 @@ Return JSON:
             {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
           </p>
         </div>
+
+        {/* Residence Options — only for home locations */}
+        {isHomeLocation && (
+          <ResidenceOptionsDropdown
+            location={location}
+            sceneCharacters={sceneCharacters}
+            isResident={!!homeResidents.find(c => characterIds.includes(c.id)) || broughtCharacters.some(c => location.resident_character_ids?.includes(c.id))}
+            currentUser={currentUser}
+            onTour={() => setShowTourModal(true)}
+            onMoveIn={() => setShowMoveInPopup(true)}
+            onAskToLeave={handleAskToLeave}
+            onKickOut={() => setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              sender: "narrative",
+              content: "You assert your authority and ask them to leave immediately.",
+              timestamp: new Date().toISOString(),
+            }])}
+          />
+        )}
 
         {/* NPC Dropdown */}
         <div className="relative z-50" ref={npcDropdownRef}>
@@ -1103,6 +1163,40 @@ Return JSON:
             displayName={displayName}
             onClose={() => setShowPhotoModal(false)}
             allCharacters={characters}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Realtor Tour Modal */}
+      <AnimatePresence>
+        {showTourModal && (
+          <RealtorTourModal
+            isOpen={showTourModal}
+            location={location}
+            onClose={() => setShowTourModal(false)}
+            onAddRealtor={(realtorNpc) => {
+              setExtraNpcs(prev => prev.find(n => n.id === realtorNpc.id) ? prev : [...prev, realtorNpc]);
+              if (selectedNpcIds === null || !selectedNpcIds.includes(realtorNpc.id)) {
+                setSelectedNpcIds(prev => [...(prev || []), realtorNpc.id]);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Move-In Popup */}
+      <AnimatePresence>
+        {showMoveInPopup && (
+          <MoveInPopup
+            isOpen={showMoveInPopup}
+            character={broughtCharacters[0]}
+            sourceHome={locationsData.find(l => l.id === broughtCharacters[0]?.current_home_location_id)}
+            destinationHome={location}
+            allCharacters={characters}
+            onApprove={handleMoveIn}
+            onReject={() => setShowMoveInPopup(false)}
+            onClose={() => setShowMoveInPopup(false)}
+            isLoading={isMoveInLoading}
           />
         )}
       </AnimatePresence>
