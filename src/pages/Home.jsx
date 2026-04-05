@@ -13,6 +13,7 @@ import BottomNav from "@/components/BottomNav";
 import DailyAchievementReminder from "@/components/home/DailyAchievementReminder";
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
 import ThomasAndersonFix from "@/components/home/ThomasAndersonFix";
+import InviteOutModal from "@/components/home/InviteOutModal";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
@@ -20,6 +21,7 @@ export default function Home() {
   const queryClient = useQueryClient();
   const [pendingDelete, setPendingDelete] = useState(null); // character being removed
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [invitations, setInvitations] = useState(null);
 
   const { data: settings = [] } = useQuery({
     queryKey: ["userSettings"],
@@ -60,6 +62,18 @@ export default function Home() {
     setTimeout(() => {
       base44.functions.invoke('backfillCharactersToDefaultLocations', {}).catch(() => {});
     }, 3000);
+  }, [currentUser?.email]);
+
+  // Check for character invites when page loads
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    base44.functions.invoke('checkAndTriggerInvites', {})
+      .then(res => {
+        if (res.data?.shouldShow && res.data?.invitations?.length > 0) {
+          setInvitations(res.data.invitations);
+        }
+      })
+      .catch(() => {});
   }, [currentUser?.email]);
 
   // Real-time: immediately reflect any character create/update/delete
@@ -267,6 +281,17 @@ export default function Home() {
         isOpen={showTroubleshooting}
         onClose={() => setShowTroubleshooting(false)}
       />
+      {invitations && (
+        <InviteOutModal
+          invitations={invitations}
+          onAccept={(invite) => {
+            navigate(`/travel?location=${invite.locationId}`);
+            setInvitations(null);
+          }}
+          onDecline={() => setInvitations(null)}
+          onClose={() => setInvitations(null)}
+        />
+      )}
       <BottomNav />
     </div>
   );
