@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn, LogOut } from "lucide-react";
+import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn, LogOut, UserPlus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
+import GuestSelectorModal from "./GuestSelectorModal";
 
 const OPTIONS_VISITOR = [
   { id: "tour",    label: "Take a Tour", icon: Navigation, color: "text-blue-400",    desc: "Get a guided walkthrough with a realtor" },
@@ -12,6 +13,7 @@ const OPTIONS_VISITOR = [
 const OPTIONS_RESIDENT = [
   { id: "tour",               label: "Take a Tour",           icon: Navigation, color: "text-blue-400",    desc: "Get a guided walkthrough" },
   { id: "move_out",           label: "Move Out",              icon: LogOut,     color: "text-rose-400",    desc: "Leave this residence" },
+  { id: "invite_guest",       label: "Invite Guest",          icon: UserPlus,   color: "text-emerald-400", desc: "Invite someone over" },
   { id: "ask_locals_leave",   label: "Ask Locals to Leave",   icon: Users,      color: "text-amber-400",   desc: "Request non-resident locals to leave" },
   { id: "ask_visitors_leave", label: "Ask Visitors to Leave", icon: DoorOpen,   color: "text-orange-400",  desc: "Ask temporary guests to leave" },
   { id: "kick_out",           label: "Kick Out",              icon: UserX,      color: "text-destructive", desc: "Remove someone forcefully" },
@@ -28,10 +30,12 @@ export default function ResidenceOptionsDropdown({
   onMoveOut,
   onKickOut,
   onAskToLeave,
+  onInviteGuest,
 }) {
   const [open, setOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [resultMsg, setResultMsg] = useState(null);
+  const [showGuestSelector, setShowGuestSelector] = useState(false);
   const ref = useRef(null);
 
   useEffect(() => {
@@ -62,6 +66,10 @@ export default function ResidenceOptionsDropdown({
       onKickOut?.();
       return;
     }
+    if (optionId === "invite_guest") {
+      setShowGuestSelector(true);
+      return;
+    }
     if (optionId === "ask_locals_leave" || optionId === "ask_visitors_leave") {
       setIsProcessing(true);
       const targetType = optionId === "ask_locals_leave" ? "locals" : "visitors";
@@ -83,6 +91,7 @@ Write one short narrative sentence (1 sentence) describing what happens. Keep it
   };
 
   return (
+    <>
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(v => !v)}
@@ -153,5 +162,18 @@ Write one short narrative sentence (1 sentence) describing what happens. Keep it
         )}
       </AnimatePresence>
     </div>
+
+    {/* Guest selector modal */}
+    {showGuestSelector && (
+      <GuestSelectorModal
+        location={location}
+        onSelect={(guest) => {
+          setShowGuestSelector(false);
+          onInviteGuest?.(guest);
+        }}
+        onClose={() => setShowGuestSelector(false)}
+      />
+    )}
+    </>
   );
 }
