@@ -4,54 +4,63 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const chars = await base44.entities.Character.filter({ created_by: user.email });
+    const ethan = chars.find(c => c.name && c.name.toLowerCase().includes('ethan'));
+
+    if (!ethan) {
+      return Response.json({ error: 'Ethan not found' }, { status: 404 });
     }
 
-    const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
-    
-    // Just get the unread messages directly
-    const allMessages = await base44.entities.Message.filter(
-      { is_read: false, sender_type: 'character' },
-      "-created_date",
-      200
-    );
-    
-    // Filter for Ethan's conversations
-    const ethanConvos = await base44.entities.Conversation.filter(
-      { character_ids: [ETHAN_ID] },
-      "-updated_date",
-      200
-    );
-    
-    const ethanConvoIds = ethanConvos.map(c => c.id);
-    const ethanUnread = allMessages.filter(m => ethanConvoIds.includes(m.conversation_id));
-    
-    console.log(`Total unread for Ethan: ${ethanUnread.length}`);
-    console.log(`Ethan's conversations: ${ethanConvos.length}`);
-    
-    // Group by conversation
-    const byConvo = {};
-    for (const msg of ethanUnread) {
-      if (!byConvo[msg.conversation_id]) {
-        byConvo[msg.conversation_id] = [];
-      }
-      byConvo[msg.conversation_id].push(msg);
-    }
-    
-    const summary = Object.entries(byConvo).map(([convoId, msgs]) => {
-      const convo = ethanConvos.find(c => c.id === convoId);
-      return `${convo?.type || 'unknown'} "${convo?.title || convoId.substring(0, 8)}": ${msgs.length} unread`;
+    // Check EVERY location-related field
+    const diagnostics = {
+      id: ethan.id,
+      name: ethan.name,
+      status: ethan.status,
+      locationFields: {
+        current_home_location_id: ethan.current_home_location_id || 'NULL',
+        current_work_location_id: ethan.current_work_location_id || 'NULL',
+        current_school_location_id: ethan.current_school_location_id || 'NULL',
+        current_location_id: ethan.current_location_id || 'NULL',
+        occupation_location_id: ethan.occupation_location_id || 'NULL',
+        education_location_id: ethan.education_location_id || 'NULL',
+      },
+      activityFields: {
+        current_activity: ethan.current_activity || 'NULL',
+        current_life_event: ethan.current_life_event || 'NULL',
+        current_education_activity: ethan.current_education_activity || 'NULL',
+        current_job_training_activity: ethan.current_job_training_activity || 'NULL',
+      },
+      scheduleFields: {
+        sleep_start_time: ethan.sleep_start_time || 'NULL',
+        wake_up_time: ethan.wake_up_time || 'NULL',
+        work_start_time: ethan.work_start_time || 'NULL',
+        work_end_time: ethan.work_end_time || 'NULL',
+        work_days: ethan.work_days || [],
+      },
+      systemFields: {
+        system_prompt: ethan.system_prompt ? 'SET' : 'NULL',
+        profile_summary: ethan.profile_summary ? 'SET' : 'NULL',
+        emotional_state: ethan.emotional_state || 'NULL',
+      },
+    };
+
+    // Find all NULLs
+    const nulls = [];
+    Object.entries(diagnostics.locationFields).forEach(([k, v]) => {
+      if (v === 'NULL') nulls.push(`location: ${k}`);
     });
-    
+    Object.entries(diagnostics.activityFields).forEach(([k, v]) => {
+      if (v === 'NULL') nulls.push(`activity: ${k}`);
+    });
+
     return Response.json({
-      total_unread: ethanUnread.length,
-      conversations_count: ethanConvos.length,
-      summary: summary,
-      message_ids: ethanUnread.map(m => m.id.substring(0, 8)),
+      timestamp: new Date().toISOString(),
+      diagnostics,
+      nullCount: nulls.length,
+      nullFields: nulls,
     });
-    
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
