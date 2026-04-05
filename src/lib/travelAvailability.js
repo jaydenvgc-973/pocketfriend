@@ -29,7 +29,17 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
     // Only block if the character actually has a defined job
     const hasJob = character?.work_details?.job_title || character?.occupation_location_id;
     if (!hasJob) return { available: true, reason: null, availableAt: null };
-    const workEnd = character.work_end_time || null;
+
+    // Look up the real shift end from the location's worker_shifts first
+    let workEnd = null;
+    if (character.occupation_location_id && locationMap[character.occupation_location_id]) {
+      const workLoc = locationMap[character.occupation_location_id];
+      const shift = workLoc.worker_shifts?.[character.id];
+      if (shift?.end) workEnd = shift.end;
+    }
+    // Fall back to character's own work_end_time only if no shift data found
+    if (!workEnd) workEnd = character.work_end_time || null;
+
     return {
       available: false,
       isBusy: true,
