@@ -7,7 +7,7 @@ const CATEGORY_EMOJIS = {
   medical: "🏨", business: "🏢", government: "🏛️", public: "🗺️", generic: "📍",
 };
 
-export default function TravelLocationGrid({ locations, selectedLocation, onSelect }) {
+export default function TravelLocationGrid({ locations, selectedLocation, onSelect, activeCharacterIds = [] }) {
   if (locations.length === 0) return null;
 
   return (
@@ -18,9 +18,16 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
           || loc.image_urls?.[0]
           || null;
         const emoji = CATEGORY_EMOJIS[loc.category] || "📍";
-        const occupants = loc.resident_character_names || [];
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
+
+        // Only show resident names for characters that still actually live here
+        const residentIds = loc.resident_character_ids || [];
+        const hasActiveResidents = activeCharacterIds.length > 0
+          ? residentIds.some(id => activeCharacterIds.includes(id))
+          : residentIds.length > 0;
+        const occupants = hasActiveResidents ? (loc.resident_character_names || []) : [];
+        const isVacant = loc.category === 'home' && residentIds.length > 0 && !hasActiveResidents;
 
         return (
           <button
@@ -45,9 +52,11 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
             {/* Name */}
             <div className="absolute bottom-0 left-0 right-0 p-2.5">
               <p className="text-xs font-semibold text-white leading-tight truncate">{loc.name}</p>
-              {occupants.length > 0 && (
+              {occupants.length > 0 ? (
                 <p className="text-[10px] text-white/70 truncate">{occupants.slice(0, 2).join(", ")}</p>
-              )}
+              ) : isVacant ? (
+                <p className="text-[10px] text-white/40 italic">Vacant</p>
+              ) : null}
             </div>
 
             {/* Closed badge */}

@@ -19,6 +19,7 @@ export default function Travel() {
   const navigate = useNavigate();
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
+  const [convincedCharacterIds, setConvincedCharacterIds] = useState([]); // chars who agreed despite being busy
   const [unavailablePopup, setUnavailablePopup] = useState(null); // array of { character, reason, availableAt }
   const [busyPopup, setBusyPopup] = useState(null); // { character, reason, charId }
   const [isTraveling, setIsTraveling] = useState(false);
@@ -156,6 +157,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         setSelectedCharacterIds(prev =>
           prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]
         );
+        setConvincedCharacterIds(prev =>
+          prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]
+        );
         setBusyPopup(null);
       } else {
         // Show their response
@@ -277,8 +281,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       return;
     }
 
-    // Validate all selected characters before traveling
+    // Validate selected characters — skip ones who were already convinced
     const unavailable = selectedCharacterIds
+      .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
         const char = characters.find(c => c.id === id);
         if (!char) return null;
@@ -381,7 +386,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              locations={sortedLocations}
              selectedLocation={selectedLocation}
              onSelect={setSelectedLocation}
-             style={{ zIndex: 50 }}
+             activeCharacterIds={characters.map(c => c.id)}
            />
          </div>
 
