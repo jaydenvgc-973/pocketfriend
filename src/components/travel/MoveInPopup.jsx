@@ -17,7 +17,7 @@ export default function MoveInPopup({
   onClose,
   isLoading = false,
 }) {
-  // Build full candidate list — real characters + NPC family members from the source home
+  // Build full candidate list — real characters from source home + NPCs from BOTH homes
   const candidates = useMemo(() => {
     const seen = new Set();
     const list = [];
@@ -35,26 +35,44 @@ export default function MoveInPopup({
       if (char) list.push({ id, name: char.name, isNpc: false, char });
     });
 
-    // NPC family members living at the source home
+    // NPC family members from source home
     (sourceHome?.resident_family_members || []).forEach((fm, idx) => {
       if (!fm.name) return;
-      const npcId = `npc_fm_${idx}_${fm.name}`;
+      const npcId = `npc_src_fm_${idx}_${fm.name}`;
       if (seen.has(npcId)) return;
       seen.add(npcId);
-      list.push({ id: npcId, name: fm.name, role: fm.relationship_type, isNpc: true });
+      list.push({ id: npcId, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, sourceLabel: "Source home" });
     });
 
-    // NPC owner (if any)
+    // NPC owner from source home
     if (sourceHome?.owner_is_npc && sourceHome?.owner_npc_name) {
-      const npcId = `npc_owner_${sourceHome.id}`;
+      const npcId = `npc_src_owner_${sourceHome.id}`;
       if (!seen.has(npcId)) {
         seen.add(npcId);
         list.push({ id: npcId, name: sourceHome.owner_npc_name, role: sourceHome.owner_role || "Resident", isNpc: true });
       }
     }
 
+    // NPC family members from DESTINATION home (the place being moved into)
+    (destinationHome?.resident_family_members || []).forEach((fm, idx) => {
+      if (!fm.name) return;
+      const npcId = `npc_dest_fm_${idx}_${fm.name}`;
+      if (seen.has(npcId)) return;
+      seen.add(npcId);
+      list.push({ id: npcId, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, sourceLabel: "Lives here" });
+    });
+
+    // NPC owner from destination home
+    if (destinationHome?.owner_is_npc && destinationHome?.owner_npc_name) {
+      const npcId = `npc_dest_owner_${destinationHome.id}`;
+      if (!seen.has(npcId)) {
+        seen.add(npcId);
+        list.push({ id: npcId, name: destinationHome.owner_npc_name, role: destinationHome.owner_role || "Owner", isNpc: true, sourceLabel: "Lives here" });
+      }
+    }
+
     return list;
-  }, [sourceHome?.id, broughtCharacters.length, character?.id, allCharacters.length]);
+  }, [sourceHome?.id, destinationHome?.id, broughtCharacters.length, character?.id, allCharacters.length]);
 
   const [selectedIds, setSelectedIds] = useState(() => new Set(candidates.map(c => c.id)));
   const [destinationName, setDestinationName] = useState(destinationHome?.name || "");
@@ -189,7 +207,9 @@ export default function MoveInPopup({
                         <p className="text-[10px] text-muted-foreground">{candidate.role}</p>
                       )}
                       {candidate.isNpc && (
-                        <span className="text-[9px] text-amber-400/80">NPC</span>
+                        <span className="text-[9px] text-amber-400/80">
+                          {candidate.sourceLabel || "NPC"}
+                        </span>
                       )}
                     </div>
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
