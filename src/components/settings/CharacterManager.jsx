@@ -220,37 +220,7 @@ export default function CharacterManager() {
     const npcIds = selected.filter(id => id.startsWith('npc_'));
     const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
     
-    // NPC + active character: auto-merge with active character as master
-    if (charIds.length === 1 && npcIds.length === 1) {
-      const activeCharId = charIds[0];
-      const npcId = npcIds[0];
-      const npcMatch = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
-      if (npcMatch) {
-        const [, sourceCharId, personName] = npcMatch;
-        const sourceChar = roster.find(c => c.id === sourceCharId && c.is_character);
-        const activeChar = roster.find(c => c.id === activeCharId && c.is_character);
-        const npcData = sourceChar?.fictional_relationships?.find(r => r.person_name === personName);
-
-        if (sourceChar && activeChar && npcData) {
-          const updatedSourceRels = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
-          const mergedNPC = { ...npcData, related_character_id: activeCharId };
-          const updatedActiveRels = [...(activeChar.fictional_relationships || []), mergedNPC];
-
-          Promise.all([
-            base44.entities.Character.update(sourceCharId, { fictional_relationships: updatedSourceRels }),
-            base44.entities.Character.update(activeCharId, { fictional_relationships: updatedActiveRels }),
-            updatedSourceRels.length === 0 ? base44.entities.Character.update(sourceCharId, { status: 'soft_deleted' }) : Promise.resolve(),
-          ]).then(() => {
-            queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-            setSelectedForMerge(new Set());
-            setMergeMode(false);
-          }).catch(() => {});
-        }
-      }
-      return;
-    }
-    
-    // Show confirmation modal for other merges
+    // Always show confirmation modal so user picks the master
     const selectedItems = allManageableItems
       .map((item, idx) => {
         const isNPC = item.type === 'world_person' || item.type === 'family';
@@ -274,89 +244,114 @@ export default function CharacterManager() {
     // Ensure masterItemId is in the selected set
     if (!selected.includes(masterItemId)) return;
 
-    // User as master: merge NPCs into user by removing them
-    if (masterItemId === 'user' && hasUser) {
-      const promises = npcIds.map(npcId => {
-        const match = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
-        if (match) {
-          const [, sourceCharId, personName] = match;
-          const sourceChar = roster.find(c => c.id === sourceCharId);
-          if (sourceChar) {
-            const updated = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
-            return base44.entities.Character.update(sourceCharId, { fictional_relationships: updated });
-          }
-        }
-        return Promise.resolve();
-      });
+    // Determine if the master is an NPC composite id or a real character id
+    const masterIsNpc = masterItemId.startsWith('npc_');
+    const masterIsUser = masterItemId === 'user';
+    const masterIsChar = !masterIsNpc && !masterIsUser;
 
-      Promise.all(promises).then(() => {
-        queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-        setSelectedForMerge(new Set());
-        setMergeMode(false);
-        setMergeConfirmModal(null);
-      }).catch(() => {});
+    // Helper: remove an NPC from its source character's fictional_relationships
+    const removeNpc = (npcId) => {
+      // Support both npc_sourceId_name_idx and npc_sourceId_name formats
+      const match = npcId.match(/^npc_(.+?)_(.+?)(?:_\d+)?$/);
+      if (!match) return Promise.resolve();
+      const [, sourceCharId, personName] = match;
+      const sourceChar = roster.find(c => c.id === sourceCharId);
+      if (!sourceChar) return Promise.resolve();
+      const updated = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
+      return base44.entities.Character.update(sourceCharId, { fictional_relationships: updated });
+    };
 
-    // Character as master: merge all others into it
-    } else if (charIds.includes(masterItemId)) {
-      const masterChar = roster.find(c => c.id === masterItemId && c.is_character);
+    const finish = () => {
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+      setSelectedForMerge(new Set());
+      setMergeMode(false);
+      setMergeConfirmModal(null);
+    };
+
+    // ── Case 1: User as master ──────────────────────────────────────────────
+    if (masterIsUser && hasUser) {
+      Promise.all(npcIds.map(removeNpc)).then(finish).catch(() => {});
+      return;
+    }
+
+    // ── Case 2: NPC chosen as master — treat its ACTIVE counterpart as master ─
+    // When an NPC is chosen as "keep this one", we actually promote the active
+    // character to master and wipe the NPC entry (since real character wins).
+    if (masterIsNpc) {
+      // The other selected item should be the active character
+      const activeCharId = charIds[0] || null;
+      if (!activeCharId) return;
+      const masterChar = roster.find(c => c.id === activeCharId);
       if (!masterChar) return;
 
-      // Other character IDs to merge into master
-      const otherCharIds = charIds.filter(id => id !== masterItemId);
+      const otherCharIds = charIds.filter(id => id !== activeCharId);
+      const allNpcIds = npcIds; // includes masterItemId (the chosen NPC)
 
-      // Process NPCs by removing them from source characters
-      const npcPromises = npcIds.map(npcId => {
-        const match = npcId.match(/^npc_(.+?)_(.+?)_\d+$/);
-        if (match) {
-          const [, sourceCharId, personName] = match;
-          const sourceChar = roster.find(c => c.id === sourceCharId);
-          if (sourceChar) {
-            const updated = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
-            return base44.entities.Character.update(sourceCharId, { fictional_relationships: updated });
-          }
-        }
-        return Promise.resolve();
-      });
-
-      // Consolidate other characters' relationships into master
       let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
       otherCharIds.forEach(charId => {
-        const secondaryChar = roster.find(c => c.id === charId);
-        if (secondaryChar) {
-          const secondaryRels = secondaryChar.fictional_relationships || [];
-          secondaryRels.forEach(rel => {
-            const existingIdx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
-            if (existingIdx >= 0) {
-              masterRels[existingIdx] = {
-                ...masterRels[existingIdx],
-                friendship_level: Math.max(masterRels[existingIdx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                user_respect_level: Math.max(masterRels[existingIdx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                romantic_level: Math.max(masterRels[existingIdx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                attraction_level: Math.max(masterRels[existingIdx].attraction_level ?? 0, rel.attraction_level ?? 0),
+        const sec = roster.find(c => c.id === charId);
+        if (sec) {
+          (sec.fictional_relationships || []).forEach(rel => {
+            const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
+            if (idx >= 0) {
+              masterRels[idx] = { ...masterRels[idx],
+                friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
+                user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
+                romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
+                attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
               };
             } else {
-              masterRels.push({...rel});
+              masterRels.push({ ...rel });
             }
           });
         }
       });
 
-      // Update master, run NPC cleanup, then soft-delete secondaries
-      const updateChain = npcPromises.length > 0 
-        ? Promise.all(npcPromises)
-        : Promise.resolve();
+      Promise.all(allNpcIds.map(removeNpc))
+        .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
+        .then(() => otherCharIds.length > 0
+          ? Promise.all(otherCharIds.map(id => base44.entities.Character.update(id, { status: 'merged', merged_into_character_id: activeCharId })))
+          : Promise.resolve()
+        )
+        .then(finish)
+        .catch(() => {});
+      return;
+    }
 
-      updateChain
+    // ── Case 3: Active character as master ──────────────────────────────────
+    if (masterIsChar) {
+      const masterChar = roster.find(c => c.id === masterItemId);
+      if (!masterChar) return;
+
+      const otherCharIds = charIds.filter(id => id !== masterItemId);
+
+      let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
+      otherCharIds.forEach(charId => {
+        const sec = roster.find(c => c.id === charId);
+        if (sec) {
+          (sec.fictional_relationships || []).forEach(rel => {
+            const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
+            if (idx >= 0) {
+              masterRels[idx] = { ...masterRels[idx],
+                friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
+                user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
+                romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
+                attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
+              };
+            } else {
+              masterRels.push({ ...rel });
+            }
+          });
+        }
+      });
+
+      Promise.all(npcIds.map(removeNpc))
         .then(() => base44.entities.Character.update(masterItemId, { fictional_relationships: masterRels }))
-        .then(() => otherCharIds.length > 0 ? Promise.all(otherCharIds.map(charId => 
-          base44.entities.Character.update(charId, { status: 'merged', merged_into_character_id: masterItemId })
-        )) : Promise.resolve())
-        .then(() => {
-          queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-          setSelectedForMerge(new Set());
-          setMergeMode(false);
-          setMergeConfirmModal(null);
-        })
+        .then(() => otherCharIds.length > 0
+          ? Promise.all(otherCharIds.map(id => base44.entities.Character.update(id, { status: 'merged', merged_into_character_id: masterItemId })))
+          : Promise.resolve()
+        )
+        .then(finish)
         .catch(() => {});
     }
   };
