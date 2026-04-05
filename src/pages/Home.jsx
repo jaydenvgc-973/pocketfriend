@@ -285,7 +285,8 @@ export default function Home() {
         <InviteOutModal
           invitations={invitations}
           onAccept={(invite) => {
-            navigate(`/travel?location=${invite.locationId}`);
+            const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
+            navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
             setInvitations(null);
           }}
           onDecline={() => setInvitations(null)}
