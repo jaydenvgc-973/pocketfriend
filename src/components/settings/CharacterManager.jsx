@@ -274,47 +274,55 @@ export default function CharacterManager() {
       return;
     }
 
-    // ── Case 2: NPC chosen as master — treat its ACTIVE counterpart as master ─
-    // When an NPC is chosen as "keep this one", we actually promote the active
-    // character to master and wipe the NPC entry (since real character wins).
+    // ── Case 2: NPC chosen as master ───────────────────────────────────────────
     if (masterIsNpc) {
-      // The other selected item should be the active character
-      const activeCharId = charIds[0] || null;
-      if (!activeCharId) return;
-      const masterChar = roster.find(c => c.id === activeCharId);
-      if (!masterChar) return;
+      if (charIds.length >= 1) {
+        // NPC + active character: active character wins, NPC entries get removed
+        const activeCharId = charIds[0];
+        const masterChar = roster.find(c => c.id === activeCharId);
+        if (!masterChar) return;
 
-      const otherCharIds = charIds.filter(id => id !== activeCharId);
-      const allNpcIds = npcIds; // includes masterItemId (the chosen NPC)
+        const otherCharIds = charIds.filter(id => id !== activeCharId);
+        let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
+        otherCharIds.forEach(charId => {
+          const sec = roster.find(c => c.id === charId);
+          if (sec) {
+            (sec.fictional_relationships || []).forEach(rel => {
+              const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
+              if (idx >= 0) {
+                masterRels[idx] = { ...masterRels[idx],
+                  friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
+                  user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
+                  romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
+                  attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
+                };
+              } else {
+                masterRels.push({ ...rel });
+              }
+            });
+          }
+        });
 
-      let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
-      otherCharIds.forEach(charId => {
-        const sec = roster.find(c => c.id === charId);
-        if (sec) {
-          (sec.fictional_relationships || []).forEach(rel => {
-            const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
-            if (idx >= 0) {
-              masterRels[idx] = { ...masterRels[idx],
-                friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
-              };
-            } else {
-              masterRels.push({ ...rel });
-            }
-          });
-        }
-      });
+        Promise.all(npcIds.map(removeNpc))
+          .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
+          .then(() => otherCharIds.length > 0
+            ? Promise.all(otherCharIds.map(id => base44.entities.Character.update(id, { status: 'merged', merged_into_character_id: activeCharId })))
+            : Promise.resolve()
+          )
+          .then(finish)
+          .catch(() => {});
 
-      Promise.all(allNpcIds.map(removeNpc))
-        .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
-        .then(() => otherCharIds.length > 0
-          ? Promise.all(otherCharIds.map(id => base44.entities.Character.update(id, { status: 'merged', merged_into_character_id: activeCharId })))
-          : Promise.resolve()
-        )
-        .then(finish)
-        .catch(() => {});
+      } else {
+        // Both are NPCs: keep the master NPC, remove the others
+        const masterMatch = masterItemId.match(/^npc_(.+?)_(.+?)(?:_\d+)?$/);
+        if (!masterMatch) return;
+        const [, masterSourceCharId, masterPersonName] = masterMatch;
+
+        const otherNpcIds = npcIds.filter(id => id !== masterItemId);
+        Promise.all(otherNpcIds.map(removeNpc))
+          .then(finish)
+          .catch(() => {});
+      }
       return;
     }
 
@@ -586,8 +594,8 @@ export default function CharacterManager() {
                       {description && (
                         <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{description}</p>
                       )}
-                      <p className="text-xs text-muted-foreground/70 mt-1 font-medium">
-                        {isNPC ? `NPC — merge into` : isUser ? `You — merge into` : `Active character — merge into`}
+                      <p className="text-xs text-primary/80 mt-1 font-medium">
+                        👆 Tap to keep this one as master
                       </p>
                     </div>
                   </button>
