@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search } from "lucide-react";
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +20,7 @@ import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import CharacterManager from "@/components/settings/CharacterManager";
 import SettingsTextFields from "@/components/settings/SettingsTextFields";
+import DiagnosticReportViewer from "@/components/settings/DiagnosticReportViewer";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -28,6 +29,7 @@ export default function Settings() {
   const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
   const [charVoiceForms, setCharVoiceForms] = useState({});
   const [savingCharIds, setSavingCharIds] = useState(new Set());
+  const [showDiagnostic, setShowDiagnostic] = useState(false);
 
   const { data: settingsList = [], isLoading: isLoadingSettings } = useQuery({
     queryKey: ["userSettings"],
@@ -340,7 +342,29 @@ export default function Settings() {
         )}
 
         <div className="pt-4 border-t border-border">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">Characters</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">System & Data</p>
+          
+          {/* Diagnostic button */}
+          <button
+            onClick={() => setShowDiagnostic(!showDiagnostic)}
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-amber-500/40 transition-colors text-left mb-3"
+          >
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+              <Search className="w-4 h-4 text-amber-500" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Run Character Diagnostic</p>
+              <p className="text-xs text-muted-foreground">Find duplicates, ghosts, and broken references</p>
+            </div>
+          </button>
+
+          {showDiagnostic && (
+            <div className="mb-6 bg-secondary/30 border border-border rounded-xl p-4">
+              <DiagnosticReportViewer />
+            </div>
+          )}
+          
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Characters</p>
           <div className="mb-6 bg-card border border-border rounded-2xl p-4">
             <CharacterManager />
           </div>
