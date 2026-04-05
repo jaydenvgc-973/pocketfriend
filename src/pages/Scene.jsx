@@ -20,6 +20,7 @@ import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
+import InviteOutModal from "@/components/home/InviteOutModal";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -152,6 +153,7 @@ export default function Scene() {
   const [showMoveInPopup, setShowMoveInPopup] = useState(false);
   const [isMoveInLoading, setIsMoveInLoading] = useState(false);
   const [extraNpcs, setExtraNpcs] = useState([]); // realtor + other added NPCs
+  const [pendingInvitations, setPendingInvitations] = useState(null);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -392,6 +394,18 @@ export default function Scene() {
       setActions(newActions);
     }
   }, [location?.id, activeZone]);
+
+  // Check for pending invitations when scene loads
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    base44.functions.invoke('checkAndTriggerInvites', {})
+      .then(res => {
+        if (res.data?.shouldShow && res.data?.invitations?.length > 0) {
+          setPendingInvitations(res.data.invitations);
+        }
+      })
+      .catch(() => {});
+  }, [currentUser?.email]);
 
   // Auto-scroll
   useEffect(() => {
@@ -1166,15 +1180,15 @@ Return JSON:
         <div ref={bottomRef} />
       </div>
 
-      {/* Action buttons */}
-      <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0">
-        <div className="grid grid-cols-4 gap-1.5">
-          {actions.slice(0, 4).map(action => (
+      {/* Action buttons — horizontal scroll */}
+      <div className="px-3 py-2 border-t border-border bg-card/50 flex-shrink-0 overflow-hidden">
+        <div className="flex gap-1.5 overflow-x-auto pb-1 snap-x snap-mandatory scrollbar-hide">
+          {actions.map(action => (
             <button
               key={action.id}
               onClick={() => handleAction(action)}
               disabled={actionCooldown}
-              className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center disabled:opacity-50 ${
+              className={`flex flex-col items-center gap-1 p-2 rounded-xl border transition-all text-center disabled:opacity-50 flex-shrink-0 snap-center ${
                 action.type === "negative"
                   ? "bg-destructive/10 border-destructive/30 hover:bg-destructive/20"
                   : action.cost > 0
@@ -1183,7 +1197,7 @@ Return JSON:
               }`}
             >
               <span className="text-base leading-none">{action.emoji}</span>
-              <span className="text-[9px] text-foreground font-medium leading-tight">{action.label}</span>
+              <span className="text-[9px] text-foreground font-medium leading-tight whitespace-nowrap">{action.label}</span>
               {action.cost > 0 && (
                 <span className="text-[9px] text-green-500">
                   {action.payer === "character" ? "they pay" : `$${action.cost}`}
@@ -1295,6 +1309,41 @@ Return JSON:
         hasEmployees={conversationModal?.hasEmployees || false}
         isGroup={conversationModal?.isGroup || false}
       />
+
+      {/* Invite notifications */}
+      {pendingInvitations && (
+        <InviteOutModal
+          invitations={pendingInvitations}
+          onAccept={(invite) => {
+            base44.functions.invoke('recordCharacterInviteAccepted', {
+              characterId: invite.characterId,
+              locationId: invite.locationId,
+              inviteType: invite.inviteType,
+            }).catch(() => {});
+            const remaining = pendingInvitations.filter(i => i.characterId !== invite.characterId);
+            setPendingInvitations(remaining.length > 0 ? remaining : null);
+            const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
+            navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
+          }}
+          onDecline={() => {
+            if (pendingInvitations.length > 0) {
+              base44.functions.invoke('recordCharacterInviteDeclined', {
+                characterId: pendingInvitations[0].characterId,
+                locationId: pendingInvitations[0].locationId,
+              }).catch(() => {});
+            }
+            setPendingInvitations(null);
+          }}
+          onClose={() => {
+            if (settings.id) {
+              base44.entities.UserSettings.update(settings.id, {
+                pending_character_invites: [],
+              }).catch(() => {});
+            }
+            setPendingInvitations(null);
+          }}
+        />
+      )}
     </div>
   );
 }

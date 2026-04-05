@@ -108,3 +108,12 @@
 .typing-dot-1 { animation: typing-dot 1.4s infinite 0s; }
 .typing-dot-2 { animation: typing-dot 1.4s infinite 0.2s; }
 .typing-dot-3 { animation: typing-dot 1.4s infinite 0.4s; }
+
+/* Hide scrollbar for horizontal scroll */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
