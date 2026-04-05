@@ -205,7 +205,7 @@ export default function CharacterManager() {
 
   // selectedForMerge stores objects: { key, type, charId, sourceCharId, personName }
   const toggleMergeSelection = (entry) => {
-    const updated = new Map([...selectedForMerge].map(e => [e.key, e]));
+    const updated = new Map(selectedForMerge);
     if (updated.has(entry.key)) {
       updated.delete(entry.key);
     } else {
