@@ -667,17 +667,20 @@ Return JSON:
     setIsMoveInLoading(true);
     try {
       await base44.functions.invoke("moveCharactersToNewHome", {
-        sourceHomeId: broughtCharacters[0]?.current_home_location_id,
+        sourceHomeId: broughtCharacters[0]?.current_home_location_id || null,
         destinationHomeId: location.id,
         moversToMove,
         npcMovers,
         newHomeName,
       });
       setShowMoveInPopup(false);
+      // Refresh location + character data so resident list updates immediately
+      queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
         sender: "narrative",
-        content: `Move-in complete. ${location.name} is now home.`,
+        content: `Move-in complete. ${newHomeName || location.name} is now home.`,
         timestamp: new Date().toISOString(),
       }]);
     } catch (err) {
@@ -781,7 +784,7 @@ Return JSON:
           <ResidenceOptionsDropdown
             location={location}
             sceneCharacters={sceneCharacters}
-            isResident={!!homeResidents.find(c => characterIds.includes(c.id)) || broughtCharacters.some(c => location.resident_character_ids?.includes(c.id))}
+            isResident={broughtCharacters.some(c => location.resident_character_ids?.includes(c.id))}
             currentUser={currentUser}
             onTour={() => setShowTourModal(true)}
             onMoveIn={() => setShowMoveInPopup(true)}

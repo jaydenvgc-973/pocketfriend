@@ -4,12 +4,16 @@ import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn } from "lu
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 
-const OPTIONS = [
-  { id: "tour",             label: "Take a Tour",         icon: Navigation, color: "text-blue-400",       desc: "Get a guided walkthrough with a realtor" },
-  { id: "move_in",          label: "Move In",              icon: LogIn,      color: "text-emerald-400",    desc: "Make this your residence" },
-  { id: "ask_locals_leave", label: "Ask Locals to Leave",  icon: Users,      color: "text-amber-400",      desc: "Request non-resident locals to leave" },
-  { id: "ask_visitors_leave", label: "Ask Visitors to Leave", icon: DoorOpen, color: "text-orange-400",   desc: "Ask temporary guests to leave" },
-  { id: "kick_out",         label: "Kick Out",             icon: UserX,      color: "text-destructive",    desc: "Remove someone forcefully" },
+const OPTIONS_VISITOR = [
+  { id: "tour",    label: "Take a Tour", icon: Navigation, color: "text-blue-400",    desc: "Get a guided walkthrough with a realtor" },
+  { id: "move_in", label: "Move In",     icon: LogIn,      color: "text-emerald-400", desc: "Make this your residence" },
+];
+
+const OPTIONS_RESIDENT = [
+  { id: "tour",               label: "Take a Tour",           icon: Navigation, color: "text-blue-400",    desc: "Get a guided walkthrough" },
+  { id: "ask_locals_leave",   label: "Ask Locals to Leave",   icon: Users,      color: "text-amber-400",   desc: "Request non-resident locals to leave" },
+  { id: "ask_visitors_leave", label: "Ask Visitors to Leave", icon: DoorOpen,   color: "text-orange-400",  desc: "Ask temporary guests to leave" },
+  { id: "kick_out",           label: "Kick Out",              icon: UserX,      color: "text-destructive", desc: "Remove someone forcefully" },
 ];
 
 export default function ResidenceOptionsDropdown({
@@ -101,27 +105,19 @@ Write one short narrative sentence (1 sentence) describing what happens. Keep it
               <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Residence Options</p>
             </div>
             <div className="py-1">
-              {OPTIONS.map(opt => {
+              {(isResident ? OPTIONS_RESIDENT : OPTIONS_VISITOR).map(opt => {
                 const Icon = opt.icon;
-                // Disable authority-based actions if not resident
-                const requiresAuthority = ["kick_out", "ask_locals_leave", "ask_visitors_leave"].includes(opt.id);
-                const disabled = requiresAuthority && !isResident;
                 return (
                   <button
                     key={opt.id}
-                    onClick={() => !disabled && handleOption(opt.id)}
-                    disabled={disabled || isProcessing}
-                    className={`w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors ${
-                      disabled
-                        ? "opacity-40 cursor-not-allowed"
-                        : "hover:bg-secondary cursor-pointer"
-                    }`}
+                    onClick={() => handleOption(opt.id)}
+                    disabled={isProcessing}
+                    className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary cursor-pointer"
                   >
                     <Icon className={`w-4 h-4 flex-shrink-0 mt-0.5 ${opt.color}`} />
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-medium text-foreground">{opt.label}</p>
                       <p className="text-[10px] text-muted-foreground mt-0.5">{opt.desc}</p>
-                      {disabled && <p className="text-[10px] text-amber-400 mt-0.5">Residents only</p>}
                     </div>
                   </button>
                 );
