@@ -420,7 +420,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const handleSave = () => {
     if (!canSave) return;
-    const charObj = form.location_type === "character_specific"
+    // If character_specific but no character selected, treat it as global
+    const effectiveType = (form.location_type === "character_specific" && !form.character_id)
+      ? "global"
+      : form.location_type;
+    const charObj = effectiveType === "character_specific"
       ? characters.find(c => c.id === form.character_id)
       : null;
     const ownerChar = !form.owner_is_npc && form.owner_character_id
@@ -428,6 +432,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       : null;
     onSave({
       ...form,
+      location_type: effectiveType,
       keywords: form.keywords.split(",").map(k => k.trim()).filter(Boolean),
       character_name: charObj?.name || "",
       owner_character_name: ownerChar?.name || form.owner_character_name || "",
