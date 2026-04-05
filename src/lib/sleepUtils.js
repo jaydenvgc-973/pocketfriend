@@ -1,8 +1,17 @@
 /**
  * Determines if a character is currently asleep based on their personal sleep schedule.
+ * If character decided to stay up, they are NOT asleep even during sleep hours.
  * Falls back to a default schedule (23:00 - 07:00) if none is set.
  */
 export function isCharacterAsleep(character) {
+  // If character decided to stay up, check if that decision is still valid
+  if (character?.decided_to_stay_up_until) {
+    const stayUpUntil = new Date(character.decided_to_stay_up_until);
+    if (new Date() < stayUpUntil) {
+      return false; // Character is awake by decision
+    }
+  }
+
   const sleepStart = character?.sleep_start_time || "23:00";
   const wakeUp = character?.wake_up_time || "07:00";
 

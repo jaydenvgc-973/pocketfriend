@@ -32,8 +32,16 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     gymLocation = null,
   } = locationData;
 
-  // 1. SLEEPING — always top priority
+  // 1. SLEEPING — always top priority (unless decided to stay up)
   if (isCharacterAsleep(character)) {
+    // But if they decided to stay up, show their location instead
+    if (character?.decided_to_stay_up_until) {
+      const stayUpUntil = new Date(character.decided_to_stay_up_until);
+      if (new Date() < stayUpUntil) {
+        // Still in "decided to stay up" window — show home location if available
+        return { iconType: 'home', label: `at ${character.current_home_location_id ? 'home' : 'home'}`, color: 'text-pink-400' };
+      }
+    }
     return { iconType: 'sleep', label: 'sleeping', color: 'text-blue-300' };
   }
 
