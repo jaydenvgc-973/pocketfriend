@@ -771,7 +771,7 @@ Return JSON:
           <h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2>
           <p className="text-xs text-muted-foreground capitalize">
             {CATEGORY_EMOJIS[location.category]} {location.category?.replace("_", " ")} ·{" "}
-            {new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+            {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
           </p>
         </div>
 
@@ -904,7 +904,7 @@ Return JSON:
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
       {/* Scene image */}
-      <div className="relative h-40 flex-shrink-0 overflow-hidden" style={{ zIndex: 0 }}>
+      <div className="relative h-40 flex-shrink-0" style={{ zIndex: 0 }}>
         {isGeneratingImage ? (
           <div className="w-full h-full bg-secondary flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -928,7 +928,7 @@ Return JSON:
 
         {/* Zone picker */}
         {locationZones.length > 1 && (
-          <div className="absolute top-2 left-2 z-10" ref={zonPickerRef}>
+          <div className="absolute top-2 left-2 z-[200]" ref={zonPickerRef}>
             <button
               onClick={() => setShowZonePicker(v => !v)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/50 text-white text-xs font-medium hover:bg-black/70 transition-colors"
@@ -944,7 +944,7 @@ Return JSON:
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -4, scale: 0.97 }}
                   transition={{ duration: 0.12 }}
-                  className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden min-w-[140px]"
+                  className="absolute left-0 top-full mt-1 bg-card border border-border rounded-xl shadow-xl overflow-hidden min-w-[140px] z-[200]"
                 >
                   {locationZones.map(zone => (
                     <button

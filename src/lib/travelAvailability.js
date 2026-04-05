@@ -1,6 +1,7 @@
 import { getCharacterStatusDisplay } from './characterStatusUtils';
 import { isCharacterAsleep } from './sleepUtils';
 import { isCharacterAtWork } from './workScheduleUtils';
+import { toDisplay12h } from './timeFormat';
 
 /**
  * Returns availability info for a character for travel.
@@ -20,7 +21,7 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
     return {
       available: false,
       reason: { iconType: 'sleep', message: `${character.name} is asleep right now and can't join.`, color: 'text-blue-300' },
-      availableAt: `May be free after ${wakeTime}`,
+      availableAt: `May be free after ${toDisplay12h(wakeTime)}`,
     };
   }
 
@@ -32,8 +33,8 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
     return {
       available: false,
       isBusy: true,
-      reason: `${character.name} is at work${workEnd ? ` until ${workEnd}` : ''}`,
-      availableAt: workEnd ? `May be free after ${workEnd}` : null,
+      reason: `${character.name} is at work${workEnd ? ` until ${toDisplay12h(workEnd)}` : ''}`,
+      availableAt: workEnd ? `May be free after ${toDisplay12h(workEnd)}` : null,
     };
   }
 

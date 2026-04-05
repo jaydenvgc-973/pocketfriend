@@ -3,6 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, MapPin, Users, Navigation } from "lucide-react";
+import { toDisplay12h } from "@/lib/timeFormat";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
@@ -63,13 +64,7 @@ export default function Travel() {
     const hours = location?.operating_hours;
     if (!hours || hours.length === 0) return null;
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const fmt = (t) => {
-      if (!t) return "";
-      const [h, m] = t.split(":").map(Number);
-      const suffix = h >= 12 ? "PM" : "AM";
-      const hour = h % 12 || 12;
-      return m ? `${hour}:${String(m).padStart(2, "0")} ${suffix}` : `${hour} ${suffix}`;
-    };
+    const fmt = (t) => toDisplay12h(t);
     // Group days with same hours
     const unique = hours.map(w => `${fmt(w.open_time)} – ${fmt(w.close_time)}`);
     const first = unique[0];

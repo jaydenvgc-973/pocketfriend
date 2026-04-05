@@ -2,6 +2,7 @@ import { Plus, X, Clock } from 'lucide-react';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { toDisplay12h } from '@/lib/timeFormat';
 
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -42,7 +43,7 @@ export default function LocationHoursEditor({ hours = [], onChange }) {
             <span className="text-xs flex-1">
               {hour.day_of_week !== null ? DAYS[hour.day_of_week] : 'All Days'}
               <span className="text-muted-foreground ml-2">
-                {hour.open_time} – {hour.close_time}
+                {toDisplay12h(hour.open_time)} – {toDisplay12h(hour.close_time)}
               </span>
               {hour.note && <span className="text-muted-foreground/60 ml-2">({hour.note})</span>}
             </span>
