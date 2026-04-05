@@ -30,29 +30,32 @@ const CATEGORY_EMOJIS = {
 // Categories that serve food/drinks
 const FOOD_VENUE_CATEGORIES = ["food_drink", "social", "home"];
 
-// Actions where the image MUST update to reflect the action
+// Actions where the image MUST update to reflect the action.
+// These are now functions that accept (loc, presentNames) where presentNames is a string
+// describing who is physically there — used to avoid generating random strangers.
 const ACTION_IMAGE_PROMPTS = {
-  sit:         (loc) => `People sitting comfortably on the couch or chairs in a ${loc} setting, relaxed posture, photorealistic`,
-  relax:       (loc) => `People relaxing casually in a ${loc}, laid-back atmosphere, photorealistic`,
-  eat:         (loc) => `Homemade meal on a table in a cozy home kitchen, food clearly visible, photorealistic`,
-  drink:       (loc) => `Person holding a refreshing drink in a glass in a home kitchen, close-up, photorealistic`,
-  order_takeout: () => `Takeout food containers being opened on a coffee table, cozy home setting, photorealistic`,
-  lay_down:    (loc) => `Person lying down relaxing on a couch or bed in a ${loc}, comfortable, photorealistic`,
-  dance:       ()    => `Two people dancing together on a nightclub dance floor, energetic, bokeh lights, photorealistic`,
-  buy_round:   ()    => `Glasses of beer and cocktails being held up for a toast at a bar counter, bokeh lights, photorealistic`,
-  flirt:       (loc) => `Two people laughing and leaning toward each other in a ${loc}, flirty chemistry, photorealistic`,
-  argue:       (loc) => `Tense confrontational body language between two people at a ${loc}, dramatic, photorealistic`,
-  workout:     ()    => `Two people working out together with gym equipment, athletic energy, photorealistic`,
-  spot:        ()    => `Person spotting someone on the bench press at the gym, gym setting, photorealistic`,
-  challenge:   ()    => `Friendly fitness challenge at the gym, competitive energy, photorealistic`,
-  order:       (loc) => `Beautifully plated restaurant meal arriving at a table, warm lighting, photorealistic`,
-  drinks:      (loc) => `Colorful cocktails or drinks on a restaurant table, ${loc} setting, photorealistic`,
-  check:       ()    => `Person paying the bill at a restaurant table, relaxed end-of-meal, photorealistic`,
-  walk:        ()    => `Two people walking together outdoors, relaxed stroll, natural surroundings, photorealistic`,
-  sit_outside: ()    => `Two people sitting outside together on a bench or steps, enjoying the fresh air, photorealistic`,
-  buy:         (loc) => `Person completing a purchase at a checkout counter, ${loc} setting, photorealistic`,
-  checkout:    ()    => `Person checking out at a grocery store register, photorealistic`,
-  study:       ()    => `Two people studying together at a desk with books and notes spread out, focused, photorealistic`,
+  sit:         (loc, who) => `${who} sitting comfortably on the couch or chairs in a ${loc} interior, relaxed posture, photorealistic. No other people.`,
+  relax:       (loc, who) => `${who} relaxing casually in a ${loc} living room, laid-back atmosphere, photorealistic. No other people.`,
+  eat:         (loc, who) => `Homemade meal on a table in a cozy home kitchen, food clearly visible, ${who} eating, photorealistic. No strangers.`,
+  drink:       (loc, who) => `${who} holding a refreshing drink in a glass in a home kitchen, close-up, photorealistic. No other people.`,
+  order_takeout: (loc, who) => `Takeout food containers being opened on a coffee table, cozy home setting, ${who} present, photorealistic. No strangers.`,
+  lay_down:    (loc, who) => `${who} lying down relaxing on a couch or bed in a ${loc}, comfortable, photorealistic. No other people.`,
+  talk:        (loc, who) => `${who} having a conversation in a ${loc} living room, natural and warm, photorealistic. No strangers or extra people.`,
+  dance:       (loc, who) => `${who} dancing on a nightclub dance floor, energetic, bokeh lights, photorealistic`,
+  buy_round:   (loc, who) => `Glasses of beer and cocktails being held up for a toast at a bar counter, bokeh lights, photorealistic`,
+  flirt:       (loc, who) => `${who} laughing and leaning toward each other in a ${loc}, flirty chemistry, photorealistic. No strangers.`,
+  argue:       (loc, who) => `${who} with tense confrontational body language at a ${loc}, dramatic, photorealistic. No strangers.`,
+  workout:     (loc, who) => `${who} working out with gym equipment, athletic energy, photorealistic`,
+  spot:        (loc, who) => `${who} spotting someone on the bench press at the gym, photorealistic`,
+  challenge:   (loc, who) => `${who} in a friendly fitness challenge at the gym, competitive energy, photorealistic`,
+  order:       (loc, who) => `Beautifully plated restaurant meal arriving at a table, warm lighting, photorealistic`,
+  drinks:      (loc, who) => `Colorful cocktails or drinks on a restaurant table, ${loc} setting, photorealistic`,
+  check:       (loc, who) => `Person paying the bill at a restaurant table, relaxed end-of-meal, photorealistic`,
+  walk:        (loc, who) => `${who} walking together outdoors, relaxed stroll, natural surroundings, photorealistic`,
+  sit_outside: (loc, who) => `${who} sitting outside together on a bench or steps, enjoying fresh air, photorealistic`,
+  buy:         (loc, who) => `Person completing a purchase at a checkout counter, ${loc} setting, photorealistic`,
+  checkout:    (loc, who) => `Person checking out at a grocery store register, photorealistic`,
+  study:       (loc, who) => `${who} studying together at a desk with books and notes spread out, focused, photorealistic`,
 };
 
 function getLocationActions(category, isHome = false) {
@@ -756,8 +759,16 @@ Return JSON:
 
     // Determine if this action should trigger a scene image update
     const actionImageFn = ACTION_IMAGE_PROMPTS[action.id];
-    const imagePrompt = actionImageFn ? actionImageFn(location?.name || location?.category) : null;
-    if (imagePrompt) {
+    if (actionImageFn) {
+      // Build a description of only the people physically present
+      const presentPeople = [
+        ...homeResidentsPresent,
+        ...broughtCharacters,
+      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+      const whoDesc = presentPeople.length > 0
+        ? presentPeople.map(c => c.name).join(" and ")
+        : "a person alone";
+      const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
       generateSceneImage(imagePrompt);
     }
 
