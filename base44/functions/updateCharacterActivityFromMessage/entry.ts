@@ -16,71 +16,45 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
-    const msg = messageContent.toLowerCase();
+    const text = messageContent.toLowerCase().trim();
 
-    // Extract explicit location/activity statements from the message
-    // Pattern: "I'm [at/in/going to] [location/activity]"
+    // MASTER REASONING RULE: Read for context, not keywords
+    // Determine tense FIRST: Is this present, past, future, or hypothetical?
     
+    const isPastTense = /^(i was|i went|i had been|just|earlier|before|yesterday|last|ago)\b/.test(text);
+    const isFutureTense = /\b(will|going to|later|tomorrow|next|planning|supposed to|have to)\b/.test(text);
+    const isHypothetical = /\b(would|could|might|usually|normally|sometimes|if i)\b/.test(text);
+
+    // RULE: Only extract PRESENT tense statements
+    // Past, future, or hypothetical are memories/plans, not current activity
+    if (isPastTense || isFutureTense || isHypothetical) {
+      return Response.json({
+        success: false,
+        characterId,
+        message: 'This is not a present statement. It should be stored as memory, not activity.',
+        tense: isPastTense ? 'past' : isFutureTense ? 'future' : 'hypothetical',
+      });
+    }
+
+    // Now extract PRESENT context by reading full sentence structure
     let extractedActivity = null;
 
-    // EXPLICIT "at work" statements
-    if (msg.includes('at work') || msg.includes('at the') || msg.includes('at my work')) {
-      extractedActivity = 'at work';
-    }
-    // EXPLICIT "at home" statements
-    else if (msg.includes('at home') || msg.includes('im home') || msg.includes('i\'m home')) {
-      extractedActivity = 'at home';
-    }
-    // EXPLICIT "at bar/club" statements
-    else if (msg.includes('at the bar') || msg.includes('at a bar') || msg.includes('at bar')) {
-      extractedActivity = 'at the bar, hanging out';
-    }
-    else if (msg.includes('at club') || msg.includes('at the club') || msg.includes('nightclub')) {
-      extractedActivity = 'at club';
-    }
-    // EXPLICIT "at gym" statements
-    else if (msg.includes('at gym') || msg.includes('at the gym') || msg.includes('working out')) {
-      extractedActivity = 'at gym, working out';
-    }
-    // EXPLICIT "at school/class" statements
-    else if (msg.includes('at school') || msg.includes('in class') || msg.includes('at class')) {
-      extractedActivity = 'in class';
-    }
-    // EXPLICIT "at church/worship" statements
-    else if (msg.includes('church') || msg.includes('mosque') || msg.includes('temple') || msg.includes('worship')) {
-      extractedActivity = 'at worship';
-    }
-    // EXPLICIT "reading" / "hanging out" / "relaxing" at a location
-    else if ((msg.includes('reading') || msg.includes('hanging out') || msg.includes('relaxing')) && 
-             (msg.includes('bar') || msg.includes('home') || msg.includes('coffee'))) {
-      if (msg.includes('bar')) {
-        extractedActivity = 'at the bar, hanging out, reading';
-      } else if (msg.includes('home')) {
-        extractedActivity = 'at home, relaxing';
-      } else if (msg.includes('coffee')) {
-        extractedActivity = 'at coffee shop, relaxing';
-      }
-    }
-    // EXPLICIT "praying" statements
-    else if (msg.includes('pray') || msg.includes('praying')) {
-      extractedActivity = 'praying';
-    }
-    // EXPLICIT "sleeping/asleep" statements
-    else if (msg.includes('sleep') || msg.includes('bed') || msg.includes('asleep')) {
-      extractedActivity = 'asleep';
-    }
-    // General activity extraction: "I'm [activity]-ing" or "I'm [doing] [activity]"
-    else if (msg.includes('i\'m') || msg.includes('im ')) {
-      const match = msg.match(/i[\'m]*\s+([a-z\s]+?)(?:\.|,|!|\?|$)/);
-      if (match && match[1]) {
-        const activity = match[1].trim();
-        if (activity.length < 50) { // Avoid capturing entire sentences
-          extractedActivity = activity;
-        }
+    // Pattern: "I'm [at/in] [place/doing]" — read the full context
+    const presentMatch = text.match(/i[\'m]*\s+(.+?)(?:\.|,|!|\?|$)/i);
+    if (presentMatch && presentMatch[1]) {
+      const contextPhrase = presentMatch[1].trim();
+      
+      // Validate this is actually a present activity, not a fragment
+      if (contextPhrase.length > 2 && contextPhrase.length < 100) {
+        // Check if the context makes sense as a current activity
+        // Example: "at work reading" or "at home relaxing" or "in class"
+        
+        // Rule: Don't filter based on keywords. Read what they're actually saying.
+        extractedActivity = contextPhrase;
       }
     }
 
-    // Only update if we extracted something
+    // Only update if we extracted something meaningful
     if (extractedActivity) {
       await base44.entities.Character.update(characterId, {
         current_activity: extractedActivity,
@@ -89,6 +63,7 @@ Deno.serve(async (req) => {
       return Response.json({
         success: true,
         characterId,
+        characterName: character.name,
         extractedActivity,
         message: `Updated ${character.name}'s activity to: "${extractedActivity}"`,
       });
@@ -97,7 +72,8 @@ Deno.serve(async (req) => {
     return Response.json({
       success: false,
       characterId,
-      message: 'No activity extracted from message',
+      characterName: character.name,
+      message: 'No present-tense activity extracted from message. (Check: is this a past statement, future plan, or hypothetical?)',
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
