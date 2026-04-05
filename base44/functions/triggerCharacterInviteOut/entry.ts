@@ -6,11 +6,16 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Get 1-3 random active characters
-    const characters = await base44.entities.Character.filter({
+    const payload = await req.json().catch(() => ({}));
+    const excludeCharacterIds = payload.excludeCharacterIds || [];
+
+    // Get 1-3 random active characters (exclude recently invited)
+    const allCharacters = await base44.entities.Character.filter({
       created_by: user.email,
       status: 'active',
     });
+
+    const characters = allCharacters.filter(c => !excludeCharacterIds.includes(c.id));
 
     if (characters.length === 0) {
       return Response.json({ invitations: [] });

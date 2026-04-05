@@ -26,29 +26,46 @@ Deno.serve(async (req) => {
     const canTrigger = minutesSinceLastInvite === Infinity || minutesSinceLastInvite >= minMinutesBetween;
     const hasCapacity = recentInviteCount < maxInvitesPerHour;
 
-    // NEVER show pending invites automatically — they stay in storage until cleared by user
+    // Track characters invited in last 24 hours (prevent re-inviting same character repeatedly)
+    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const recentlyInvitedCharacterIds = (settings.recently_invited_character_ids || []).filter(entry => {
+      const entryTime = new Date(entry.timestamp);
+      return entryTime > oneDayAgo;
+    }).map(entry => entry.character_id);
+
+    // Never show pending invites automatically — they only appear on first page load
     const pendingInvites = settings.pending_character_invites || [];
 
     // Only trigger if both conditions met: enough time passed AND haven't hit 2/hour limit
     if (canTrigger && hasCapacity) {
-      const invitationResponse = await base44.functions.invoke('triggerCharacterInviteOut', {});
+      const invitationResponse = await base44.functions.invoke('triggerCharacterInviteOut', {
+        excludeCharacterIds: recentlyInvitedCharacterIds,
+      });
       let newInvitations = invitationResponse.data?.invitations || [];
 
       // Strict cap: max 2 total per trigger
       newInvitations = newInvitations.slice(0, 2);
 
       if (newInvitations.length > 0) {
+        // Record these characters as invited in the last 24 hours
+        const updatedInvitedList = [
+          ...recentlyInvitedCharacterIds.map(id => ({ character_id: id, timestamp: new Date(oneDayAgo.getTime() + 1000).toISOString() })),
+          ...newInvitations.map(inv => ({ character_id: inv.characterId, timestamp: now.toISOString() })),
+        ];
+
         if (settings.id) {
           await base44.entities.UserSettings.update(settings.id, {
             pending_character_invites: newInvitations,
             last_invite_out_timestamp: now.toISOString(),
             invite_trigger_history: [...inviteHistory, now.toISOString()],
+            recently_invited_character_ids: updatedInvitedList,
           });
         } else {
           await base44.entities.UserSettings.create({
             pending_character_invites: newInvitations,
             last_invite_out_timestamp: now.toISOString(),
             invite_trigger_history: [now.toISOString()],
+            recently_invited_character_ids: updatedInvitedList,
           });
         }
 

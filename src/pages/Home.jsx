@@ -64,9 +64,13 @@ export default function Home() {
     }, 3000);
   }, [currentUser?.email]);
 
-  // Check for character invites when page loads (once per session)
+  // Check for character invites on first mount only (session-based guard)
   useEffect(() => {
-    if (!currentUser?.email || invitations) return; // Don't re-check if invitations already shown
+    if (!currentUser?.email) return;
+    const hasCheckedThisSession = sessionStorage.getItem(`invites_checked_${currentUser.email}`);
+    if (hasCheckedThisSession) return;
+
+    sessionStorage.setItem(`invites_checked_${currentUser.email}`, 'true');
     base44.functions.invoke('checkAndTriggerInvites', {})
       .then(res => {
         if (res.data?.shouldShow && res.data?.invitations?.length > 0) {
@@ -74,7 +78,7 @@ export default function Home() {
         }
       })
       .catch(() => {});
-  }, [currentUser?.email, invitations]);
+  }, [currentUser?.email]);
 
   // Real-time: immediately reflect any character create/update/delete
   useEffect(() => {
@@ -300,12 +304,14 @@ export default function Home() {
             navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
           }}
           onDecline={() => {
-            // Record decline for character memory (they might mention it)
+            // Record decline and mark characters as "already invited"
             if (invitations.length > 0) {
-              base44.functions.invoke('recordCharacterInviteDeclined', {
-                characterId: invitations[0].characterId,
-                locationId: invitations[0].locationId,
-              }).catch(() => {});
+              invitations.forEach(inv => {
+                base44.functions.invoke('recordCharacterInviteDeclined', {
+                  characterId: inv.characterId,
+                  locationId: inv.locationId,
+                }).catch(() => {});
+              });
             }
             setInvitations(null);
           }}
