@@ -109,12 +109,10 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
 
   // 5. PATIENT / SICK (only if NOT at work)
   // Do NOT show hospital icon if they work there
+  // STRICT: Only show hospital if health_status explicitly says 'sick' or 'patient', NOT activity text
   const isPatient =
-    character.health_status?.toLowerCase().includes('sick') ||
-    character.health_status?.toLowerCase().includes('patient') ||
-    (activity.includes('hospital') && !activity.includes('work') && !activity.includes('job') && !workLocation?.name?.toLowerCase().includes('hospital')) ||
-    activity.includes('sick') ||
-    (activity.includes('patient') && !workLocation);
+    (character.health_status?.toLowerCase().includes('sick') && !character.health_status?.toLowerCase().includes('hospital worker')) ||
+    (character.health_status?.toLowerCase().includes('patient') && !character.health_status?.toLowerCase().includes('hospital worker'));
 
   if (isPatient) {
     return { iconType: 'hospital', label: 'at hospital', color: 'text-red-400' };
