@@ -33,16 +33,18 @@ const FOOD_VENUE_CATEGORIES = ["food_drink", "social", "home"];
 // Actions where the image MUST update to reflect the action.
 // These are now functions that accept (loc, presentNames) where presentNames is a string
 // describing who is physically there — used to avoid generating random strangers.
+// Helper: build a people-aware scene description
+// If who === "no one — the space is empty", generate an empty room/object-focused image
 const ACTION_IMAGE_PROMPTS = {
-  sit:         (loc, who) => `${who} sitting comfortably on the couch or chairs in a ${loc} interior, relaxed posture, photorealistic. No other people.`,
-  relax:       (loc, who) => `${who} relaxing casually in a ${loc} living room, laid-back atmosphere, photorealistic. No other people.`,
-  eat:         (loc, who) => `Homemade meal on a table in a cozy home kitchen, food clearly visible, ${who} eating, photorealistic. No strangers.`,
-  drink:       (loc, who) => `${who} holding a refreshing drink in a glass in a home kitchen, close-up, photorealistic. No other people.`,
-  order_takeout: (loc, who) => `Takeout food containers being opened on a coffee table, cozy home setting, ${who} present, photorealistic. No strangers.`,
-  lay_down:    (loc, who) => `${who} lying down relaxing on a couch or bed in a ${loc}, comfortable, photorealistic. No other people.`,
-  talk:        (loc, who) => `${who} having a conversation in a ${loc} living room, natural and warm, photorealistic. No strangers or extra people.`,
+  sit:         (loc, who) => who.includes("empty") ? `Empty couch in a ${loc} living room, warm lighting, photorealistic. No people.` : `${who} sitting comfortably on the couch in a ${loc} interior, relaxed posture, photorealistic. No other people.`,
+  relax:       (loc, who) => who.includes("empty") ? `Cozy ${loc} living room, soft lighting, empty and peaceful, photorealistic. No people.` : `${who} relaxing casually in a ${loc} living room, laid-back atmosphere, photorealistic. No other people.`,
+  eat:         (loc, who) => who.includes("empty") ? `Homemade meal on a table in a cozy kitchen, food clearly visible, no people, photorealistic.` : `${who} eating a meal at the kitchen table in a ${loc}, photorealistic. No strangers.`,
+  drink:       (loc, who) => who.includes("empty") ? `Glass of water or juice on a kitchen counter, cozy home, no people, photorealistic.` : `${who} holding a refreshing drink in a ${loc} kitchen, close-up, photorealistic. No other people.`,
+  order_takeout: (loc, who) => who.includes("empty") ? `Takeout food containers on a coffee table in a cozy home, no people, photorealistic.` : `Takeout food containers being opened on a coffee table, ${who} present, cozy home, photorealistic. No strangers.`,
+  lay_down:    (loc, who) => who.includes("empty") ? `Empty couch or bed in a ${loc}, cozy and peaceful, no people, photorealistic.` : `${who} lying down relaxing on a couch or bed in a ${loc}, comfortable, photorealistic. No other people.`,
+  talk:        (loc, who) => who.includes("empty") ? `Quiet ${loc} living room, empty, warm lighting, photorealistic. No people.` : `${who} having a conversation in a ${loc} living room, natural and warm, photorealistic. No strangers or extra people.`,
   dance:       (loc, who) => `${who} dancing on a nightclub dance floor, energetic, bokeh lights, photorealistic`,
-  buy_round:   (loc, who) => `Glasses of beer and cocktails being held up for a toast at a bar counter, bokeh lights, photorealistic`,
+  buy_round:   (loc, who) => `Glasses of beer and cocktails on a bar counter, bokeh lights, photorealistic`,
   flirt:       (loc, who) => `${who} laughing and leaning toward each other in a ${loc}, flirty chemistry, photorealistic. No strangers.`,
   argue:       (loc, who) => `${who} with tense confrontational body language at a ${loc}, dramatic, photorealistic. No strangers.`,
   workout:     (loc, who) => `${who} working out with gym equipment, athletic energy, photorealistic`,
@@ -50,12 +52,12 @@ const ACTION_IMAGE_PROMPTS = {
   challenge:   (loc, who) => `${who} in a friendly fitness challenge at the gym, competitive energy, photorealistic`,
   order:       (loc, who) => `Beautifully plated restaurant meal arriving at a table, warm lighting, photorealistic`,
   drinks:      (loc, who) => `Colorful cocktails or drinks on a restaurant table, ${loc} setting, photorealistic`,
-  check:       (loc, who) => `Person paying the bill at a restaurant table, relaxed end-of-meal, photorealistic`,
-  walk:        (loc, who) => `${who} walking together outdoors, relaxed stroll, natural surroundings, photorealistic`,
-  sit_outside: (loc, who) => `${who} sitting outside together on a bench or steps, enjoying fresh air, photorealistic`,
-  buy:         (loc, who) => `Person completing a purchase at a checkout counter, ${loc} setting, photorealistic`,
-  checkout:    (loc, who) => `Person checking out at a grocery store register, photorealistic`,
-  study:       (loc, who) => `${who} studying together at a desk with books and notes spread out, focused, photorealistic`,
+  check:       (loc, who) => `Restaurant bill on a table, relaxed end-of-meal atmosphere, photorealistic`,
+  walk:        (loc, who) => `${who} walking outdoors, relaxed stroll, natural surroundings, photorealistic`,
+  sit_outside: (loc, who) => `${who} sitting outside on a bench or steps, enjoying fresh air, photorealistic`,
+  buy:         (loc, who) => `Items being purchased at a checkout counter, ${loc} setting, photorealistic`,
+  checkout:    (loc, who) => `Grocery items at a checkout register, photorealistic`,
+  study:       (loc, who) => `${who} studying at a desk with books and notes spread out, focused, photorealistic`,
 };
 
 function getLocationActions(category, isHome = false) {
@@ -428,9 +430,22 @@ export default function Scene() {
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
+      // For home locations, always append a hard ban on random people
+      let finalPrompt = actionOverridePrompt;
+      if (isHomeLocation) {
+        const physicallyPresent = [
+          ...homeResidentsPresent,
+          ...broughtCharacters,
+        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+        if (physicallyPresent.length === 0) {
+          finalPrompt += ` CRITICAL: This is an empty home. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
+        } else {
+          finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
+        }
+      }
       try {
         const result = await base44.integrations.Core.GenerateImage({
-          prompt: `${actionOverridePrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
+          prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
           existing_image_urls: firstImage ? [firstImage] : undefined,
         });
         setSceneImage(result.url);
@@ -765,9 +780,11 @@ Return JSON:
         ...homeResidentsPresent,
         ...broughtCharacters,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+      // If no one else is present, the user is alone — describe as "the space" not a person,
+      // since the user is the camera POV and we never want to generate random strangers
       const whoDesc = presentPeople.length > 0
         ? presentPeople.map(c => c.name).join(" and ")
-        : "a person alone";
+        : "no one — the space is empty";
       const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
       generateSceneImage(imagePrompt);
     }
