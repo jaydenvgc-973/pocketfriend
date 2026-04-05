@@ -469,6 +469,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Character</label>
           <div className="space-y-2 max-h-48 overflow-y-auto">
+            <button
+              onClick={() => update("character_id", "")}
+              className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${!form.character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+            >
+              <span className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs flex-shrink-0">—</span>
+              <span className="text-sm">No character</span>
+            </button>
             {characters.map(c => (
               <button key={c.id} onClick={() => update("character_id", c.id)}
                 className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
