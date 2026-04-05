@@ -217,17 +217,8 @@ export default function CharacterManager() {
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
     const selectedEntries = Array.from(selectedForMerge.values());
-    // Find the corresponding items for the modal
-    const selectedItems = selectedEntries.map(entry => {
-      const item = allManageableItems.find((item, idx) => {
-        const isNPC = item.type === 'world_person' || item.type === 'family';
-        const isUser = item.type === 'user';
-        if (isUser) return entry.key === 'user';
-        if (isNPC) return entry.key === `npc_${item.data.source_character_id}_${item.data.person_name}`;
-        return item.data.id === entry.key;
-      });
-      return item ? { item, entry } : null;
-    }).filter(Boolean);
+    // item is stored directly on the entry — no lookup needed
+    const selectedItems = selectedEntries.map(entry => ({ item: entry.item, entry })).filter(e => e.item);
     setMergeConfirmModal({ selectedItems, selectedEntries });
   };
 
@@ -427,10 +418,10 @@ export default function CharacterManager() {
             const npcName = itemData.person_name || itemData.name || `unnamed_${index}`;
             const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${npcName}_${index}` : itemData.id);
             const mergeEntry = isUser
-              ? { key: 'user', type: 'user' }
+              ? { key: 'user', type: 'user', item }
               : isNPC
-              ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: npcName }
-              : { key: itemKey, type: 'char', charId: itemData.id };
+              ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: npcName, item }
+              : { key: itemKey, type: 'char', charId: itemData.id, item };
             // For user, always use the in-world name from settings if set
             const itemName = isUser
               ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
