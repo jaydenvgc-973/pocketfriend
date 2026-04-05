@@ -438,27 +438,30 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      const homeKnownPeople = [
-        ...broughtCharacters,
+      // Only people physically present in the house right now:
+      // - brought characters (user's companions who traveled here)
+      // - residents who are currently home (not away)
+      // The user themselves is NOT included as a character to render (they're the camera POV)
+      const physicallyPresent = [
         ...homeResidentsPresent,
+        ...broughtCharacters,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
 
-      let peopleDesc;
-      if (homeKnownPeople.length > 0) {
-        peopleDesc = `Only these specific people are present: ${homeKnownPeople.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`;
-      } else {
-        peopleDesc = `A person relaxing alone in the space. No other people visible — no strangers, no background figures.`;
-      }
       const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
+
+      let peopleDesc;
+      if (physicallyPresent.length > 0) {
+        peopleDesc = `Only these specific people are visible: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`;
+      } else {
+        // No one is home — generate empty room, absolutely no people
+        peopleDesc = `The room is completely empty. No people at all — no silhouettes, no background figures, no one visible anywhere in the image.`;
+      }
+
       prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. IMPORTANT: Do NOT generate any random or unrecognized people in this image.`;
 
-      // Gather reference images: location + resident avatars + family member photos for face grounding
-      const residentAvatars = homeKnownPeople.map(c => c.avatar_url).filter(Boolean);
-      const familyFaceRefs = homeKnownPeople.flatMap(c =>
-        (c.family_members || []).filter(fm => fm.photo_url).map(fm => fm.photo_url)
-      );
-      const refs = [...(firstImage ? [firstImage] : []), ...residentAvatars, ...familyFaceRefs].slice(0, 4);
+      const residentAvatars = physicallyPresent.map(c => c.avatar_url).filter(Boolean);
+      const refs = [...(firstImage ? [firstImage] : []), ...residentAvatars].slice(0, 4);
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
