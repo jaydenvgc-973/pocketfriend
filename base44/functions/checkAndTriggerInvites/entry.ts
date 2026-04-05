@@ -33,11 +33,15 @@ Deno.serve(async (req) => {
     // If we can trigger and have capacity, generate new invites
     if (canTrigger && hasCapacity) {
       const invitationResponse = await base44.functions.invoke('triggerCharacterInviteOut', {});
-      const newInvitations = invitationResponse.data?.invitations || [];
+      let newInvitations = invitationResponse.data?.invitations || [];
+      
+      // Cap at 2 max per trigger
+      newInvitations = newInvitations.slice(0, 2);
 
       if (newInvitations.length > 0) {
-        // Merge with pending and update settings
-        const allPending = [...pendingInvites, ...newInvitations];
+        // Merge with pending (but don't let pending exceed 2 either)
+        let allPending = [...pendingInvites, ...newInvitations];
+        allPending = allPending.slice(0, 2);
         
         if (settings.id) {
           await base44.entities.UserSettings.update(settings.id, {
