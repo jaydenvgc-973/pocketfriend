@@ -219,10 +219,6 @@ export default function Scene() {
           avatar_url: null,
         });
       });
-      // NPC owner when no one is home
-      if (location.owner_is_npc && location.owner_npc_name && homeResidentsPresent.length === 0) {
-        npcs.push({ id: `npc_owner_${location.id}`, name: location.owner_npc_name, role: location.owner_role || "Resident", isNpc: true, avatar_url: null });
-      }
     }
 
     // Any venue: NPC owner/operator
@@ -255,6 +251,12 @@ export default function Scene() {
         });
       }
     });
+
+    // For home locations, stop here — no generic venue NPCs, no strangers, no locals.
+    // Only residents explicitly listed on the location record are ever present in a home.
+    if (isHomeLocation) {
+      return npcs.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
+    }
 
     // Generic venue NPCs — fill in any staff roles not covered by real workers, plus customers
     const venueNpcs = {
