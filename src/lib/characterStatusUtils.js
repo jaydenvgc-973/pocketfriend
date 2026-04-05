@@ -92,6 +92,14 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'work', label: 'in training', color: 'text-amber-400' };
   }
 
+  // 6.5. AT HOME — high priority check (before activity string parsing which may be stale)
+  // If character is in bed, sleeping in, sprawled out, etc. they're clearly at home
+  const homeKeywords = ['bed', 'bedroom', 'in bed', 'laying', 'sprawled', 'asleep', 'waking', 'morning routine', 'home', 'house', 'apartment'];
+  const isHomeActivity = homeKeywords.some(k => activity.includes(k));
+  if (isHomeActivity) {
+    return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
+  }
+
   // 7. RELIGIOUS ATTENDANCE — location-aware service attendance
   const religiousResult = isCharacterAtReligiousLocation(character, religionLocation);
   if (religiousResult.attending) {
