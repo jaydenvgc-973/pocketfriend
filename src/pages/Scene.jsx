@@ -690,6 +690,30 @@ Return JSON:
     }
   };
 
+  const handleMoveOut = async () => {
+    if (!location || broughtCharacters.length === 0) return;
+    const mover = broughtCharacters[0];
+    try {
+      const newResidents = (location.resident_character_ids || []).filter(id => id !== mover.id);
+      const newNames = (location.resident_character_names || []).filter(n => n !== mover.name);
+      await base44.entities.LocationReference.update(location.id, {
+        resident_character_ids: newResidents,
+        resident_character_names: newNames,
+      });
+      await base44.entities.Character.update(mover.id, { current_home_location_id: "" });
+      queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        sender: "narrative",
+        content: `${mover.name} has moved out of ${location.name}.`,
+        timestamp: new Date().toISOString(),
+      }]);
+    } catch (err) {
+      console.error("Move-out failed:", err);
+    }
+  };
+
   const handleAskToLeave = (type, narrativeText) => {
     setMessages(prev => [...prev, {
       id: Date.now().toString(),
@@ -788,6 +812,7 @@ Return JSON:
             currentUser={currentUser}
             onTour={() => setShowTourModal(true)}
             onMoveIn={() => setShowMoveInPopup(true)}
+            onMoveOut={handleMoveOut}
             onAskToLeave={handleAskToLeave}
             onKickOut={() => setMessages(prev => [...prev, {
               id: Date.now().toString(),

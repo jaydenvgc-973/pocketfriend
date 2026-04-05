@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn } from "lucide-react";
+import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn, LogOut } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 
@@ -11,6 +11,7 @@ const OPTIONS_VISITOR = [
 
 const OPTIONS_RESIDENT = [
   { id: "tour",               label: "Take a Tour",           icon: Navigation, color: "text-blue-400",    desc: "Get a guided walkthrough" },
+  { id: "move_out",           label: "Move Out",              icon: LogOut,     color: "text-rose-400",    desc: "Leave this residence" },
   { id: "ask_locals_leave",   label: "Ask Locals to Leave",   icon: Users,      color: "text-amber-400",   desc: "Request non-resident locals to leave" },
   { id: "ask_visitors_leave", label: "Ask Visitors to Leave", icon: DoorOpen,   color: "text-orange-400",  desc: "Ask temporary guests to leave" },
   { id: "kick_out",           label: "Kick Out",              icon: UserX,      color: "text-destructive", desc: "Remove someone forcefully" },
@@ -24,6 +25,7 @@ export default function ResidenceOptionsDropdown({
   currentUser,
   onTour,
   onMoveIn,
+  onMoveOut,
   onKickOut,
   onAskToLeave,
 }) {
@@ -50,6 +52,10 @@ export default function ResidenceOptionsDropdown({
     }
     if (optionId === "move_in") {
       onMoveIn?.();
+      return;
+    }
+    if (optionId === "move_out") {
+      onMoveOut?.();
       return;
     }
     if (optionId === "kick_out") {
