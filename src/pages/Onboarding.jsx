@@ -127,7 +127,14 @@ Return JSON matching this schema exactly:
     data.system_prompt = buildSystemPrompt(data);
 
     await base44.entities.Character.create(data);
-    await base44.entities.UserSettings.create({ has_completed_onboarding: true });
+
+    // Upsert UserSettings — update if a record already exists, otherwise create
+    const existingSettingsId = userSettings?.id;
+    if (existingSettingsId) {
+      await base44.entities.UserSettings.update(existingSettingsId, { has_completed_onboarding: true });
+    } else {
+      await base44.entities.UserSettings.create({ has_completed_onboarding: true });
+    }
     navigate("/home");
   };
 

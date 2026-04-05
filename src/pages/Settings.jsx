@@ -29,7 +29,7 @@ export default function Settings() {
   const [charVoiceForms, setCharVoiceForms] = useState({});
   const [savingCharIds, setSavingCharIds] = useState(new Set());
 
-  const { data: settingsList = [] } = useQuery({
+  const { data: settingsList = [], isLoading: isLoadingSettings } = useQuery({
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
   });
@@ -64,10 +64,17 @@ export default function Settings() {
   const settings = settingsList[0] || {};
 
   const mutation = useMutation({
-    mutationFn: (data) =>
-      settings.id
-        ? base44.entities.UserSettings.update(settings.id, data)
-        : base44.entities.UserSettings.create(data),
+    mutationFn: async (data) => {
+      // Always wait for settings to be loaded before writing
+      // If we have an existing record, update it (merge). If not, create one.
+      const existingId = settingsList[0]?.id;
+      if (existingId) {
+        return base44.entities.UserSettings.update(existingId, data);
+      } else {
+        // Only create if we're sure there's no existing record (list returned empty)
+        return base44.entities.UserSettings.create(data);
+      }
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["userSettings"] }),
   });
 
@@ -148,7 +155,7 @@ export default function Settings() {
       <div className="max-w-lg mx-auto px-6 py-6 space-y-8">
         <div className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Response Length</p>
-          <Select value={settings.response_length || "medium"} onValueChange={v => mutation.mutate({ response_length: v })}>
+          <Select value={settings.response_length || "medium"} onValueChange={v => { if (!isLoadingSettings) mutation.mutate({ response_length: v }); }}>
             <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="short">Short</SelectItem>
@@ -159,7 +166,7 @@ export default function Settings() {
         </div>
         <div className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Emotional Intensity</p>
-          <Select value={settings.emotional_intensity || "medium"} onValueChange={v => mutation.mutate({ emotional_intensity: v })}>
+          <Select value={settings.emotional_intensity || "medium"} onValueChange={v => { if (!isLoadingSettings) mutation.mutate({ emotional_intensity: v }); }}>
             <SelectTrigger className="rounded-xl"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="low">Low</SelectItem>
@@ -172,7 +179,7 @@ export default function Settings() {
           <Label className="text-sm text-foreground">Voice Input</Label>
           <Switch
             checked={settings.voice_enabled || false}
-            onCheckedChange={v => mutation.mutate({ voice_enabled: v })}
+            onCheckedChange={v => { if (!isLoadingSettings) mutation.mutate({ voice_enabled: v }); }}
           />
         </div>
         <div className="space-y-4 pt-2 border-t border-border">
@@ -184,7 +191,7 @@ export default function Settings() {
             </div>
             <Switch
               checked={settings.response_lag_enabled !== false}
-              onCheckedChange={v => mutation.mutate({ response_lag_enabled: v })}
+              onCheckedChange={v => { if (!isLoadingSettings) mutation.mutate({ response_lag_enabled: v }); }}
             />
           </div>
           <div className="flex items-center justify-between">
@@ -194,7 +201,7 @@ export default function Settings() {
             </div>
             <Switch
               checked={settings.typing_speed_enabled !== false}
-              onCheckedChange={v => mutation.mutate({ typing_speed_enabled: v })}
+              onCheckedChange={v => { if (!isLoadingSettings) mutation.mutate({ typing_speed_enabled: v }); }}
             />
           </div>
           {settings.typing_speed_enabled !== false && (
@@ -209,7 +216,7 @@ export default function Settings() {
                 max={120}
                 step={1}
                 value={settings.words_per_minute || 41}
-                onChange={e => mutation.mutate({ words_per_minute: Number(e.target.value) })}
+                onChange={e => { if (!isLoadingSettings) mutation.mutate({ words_per_minute: Number(e.target.value) }); }}
                 className="w-full accent-primary"
               />
               <div className="flex justify-between text-[10px] text-muted-foreground">
