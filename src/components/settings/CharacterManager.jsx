@@ -15,7 +15,7 @@ export default function CharacterManager() {
   const [newName, setNewName] = useState('');
   const [renamingId, setRenamingId] = useState(null);
   const [mergeMode, setMergeMode] = useState(false);
-  const [selectedForMerge, setSelectedForMerge] = useState(new Set());
+  const [selectedForMerge, setSelectedForMerge] = useState(new Map()); // key -> entry object
 
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
@@ -203,139 +203,74 @@ export default function CharacterManager() {
   const duplicates = detectDuplicates();
   const { orphans, ghosts } = detectOrphanNPCs();
 
-  const toggleMergeSelection = (charId) => {
-    const updated = new Set(selectedForMerge);
-    if (updated.has(charId)) {
-      updated.delete(charId);
+  // selectedForMerge stores objects: { key, type, charId, sourceCharId, personName }
+  const toggleMergeSelection = (entry) => {
+    const updated = new Map([...selectedForMerge].map(e => [e.key, e]));
+    if (updated.has(entry.key)) {
+      updated.delete(entry.key);
     } else {
-      updated.add(charId);
+      updated.set(entry.key, entry);
     }
     setSelectedForMerge(updated);
   };
 
   const submitMerge = () => {
     if (selectedForMerge.size < 2) return;
-    
-    const selected = Array.from(selectedForMerge);
-    const npcIds = selected.filter(id => id.startsWith('npc_'));
-    const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
-    
-    // Always show confirmation modal so user picks the master
-    const selectedItems = allManageableItems
-      .map((item, idx) => {
+    const selectedEntries = Array.from(selectedForMerge.values());
+    // Find the corresponding items for the modal
+    const selectedItems = selectedEntries.map(entry => {
+      const item = allManageableItems.find((item, idx) => {
         const isNPC = item.type === 'world_person' || item.type === 'family';
-        const itemId = item.type === 'user'
-          ? 'user'
-          : (isNPC ? `npc_${item.data.source_character_id}_${item.data.person_name}_${idx}` : item.data.id);
-        return selected.includes(itemId) ? { item, itemId } : null;
-      })
-      .filter(Boolean);
-    
-    setMergeConfirmModal({ selectedItems, selected });
+        const isUser = item.type === 'user';
+        if (isUser) return entry.key === 'user';
+        if (isNPC) return entry.key === `npc_${item.data.source_character_id}_${item.data.person_name}`;
+        return item.data.id === entry.key;
+      });
+      return item ? { item, entry } : null;
+    }).filter(Boolean);
+    setMergeConfirmModal({ selectedItems, selectedEntries });
   };
 
-  const confirmMerge = (masterItemId) => {
+  const confirmMerge = (masterEntry) => {
     if (!mergeConfirmModal) return;
-    const selected = mergeConfirmModal.selected;
-    const hasUser = selected.includes('user');
-    const npcIds = selected.filter(id => id.startsWith('npc_'));
-    const charIds = selected.filter(id => !id.startsWith('npc_') && id !== 'user');
-
-    // Ensure masterItemId is in the selected set
-    if (!selected.includes(masterItemId)) return;
-
-    // Determine if the master is an NPC composite id or a real character id
-    const masterIsNpc = masterItemId.startsWith('npc_');
-    const masterIsUser = masterItemId === 'user';
-    const masterIsChar = !masterIsNpc && !masterIsUser;
-
-    // Helper: remove an NPC from its source character's fictional_relationships
-    const removeNpc = (npcId) => {
-      // Support both npc_sourceId_name_idx and npc_sourceId_name formats
-      const match = npcId.match(/^npc_(.+?)_(.+?)(?:_\d+)?$/);
-      if (!match) return Promise.resolve();
-      const [, sourceCharId, personName] = match;
-      const sourceChar = roster.find(c => c.id === sourceCharId);
-      if (!sourceChar) return Promise.resolve();
-      const updated = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== personName);
-      return base44.entities.Character.update(sourceCharId, { fictional_relationships: updated });
-    };
+    const { selectedEntries } = mergeConfirmModal;
 
     const finish = () => {
       queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-      setSelectedForMerge(new Set());
+      setSelectedForMerge(new Map());
       setMergeMode(false);
       setMergeConfirmModal(null);
     };
 
-    // ── Case 1: User as master ──────────────────────────────────────────────
-    if (masterIsUser && hasUser) {
-      Promise.all(npcIds.map(removeNpc)).then(finish).catch(() => {});
+    // Helper: remove an NPC by its exact sourceCharId + personName
+    const removeNpcEntry = (entry) => {
+      const sourceChar = roster.find(c => c.id === entry.sourceCharId);
+      if (!sourceChar) return Promise.resolve();
+      const updated = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== entry.personName);
+      return base44.entities.Character.update(entry.sourceCharId, { fictional_relationships: updated });
+    };
+
+    const npcEntries = selectedEntries.filter(e => e.type === 'npc');
+    const charEntries = selectedEntries.filter(e => e.type === 'char');
+    const isUserMaster = masterEntry.type === 'user';
+    const isNpcMaster = masterEntry.type === 'npc';
+    const isCharMaster = masterEntry.type === 'char';
+
+    // ── Case 1: User as master — remove all NPC duplicates ─────────────────
+    if (isUserMaster) {
+      Promise.all(npcEntries.map(removeNpcEntry)).then(finish).catch(() => {});
       return;
     }
 
-    // ── Case 2: NPC chosen as master ───────────────────────────────────────────
-    if (masterIsNpc) {
-      if (charIds.length >= 1) {
-        // NPC + active character: active character wins, NPC entries get removed
-        const activeCharId = charIds[0];
-        const masterChar = roster.find(c => c.id === activeCharId);
-        if (!masterChar) return;
-
-        const otherCharIds = charIds.filter(id => id !== activeCharId);
-        let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
-        otherCharIds.forEach(charId => {
-          const sec = roster.find(c => c.id === charId);
-          if (sec) {
-            (sec.fictional_relationships || []).forEach(rel => {
-              const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
-              if (idx >= 0) {
-                masterRels[idx] = { ...masterRels[idx],
-                  friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                  user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                  romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                  attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
-                };
-              } else {
-                masterRels.push({ ...rel });
-              }
-            });
-          }
-        });
-
-        Promise.all(npcIds.map(removeNpc))
-          .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
-          .then(() => otherCharIds.length > 0
-            ? Promise.all(otherCharIds.map(id => base44.entities.Character.update(id, { status: 'merged', merged_into_character_id: activeCharId })))
-            : Promise.resolve()
-          )
-          .then(finish)
-          .catch(() => {});
-
-      } else {
-        // Both are NPCs: keep the master NPC, remove the others
-        const masterMatch = masterItemId.match(/^npc_(.+?)_(.+?)(?:_\d+)?$/);
-        if (!masterMatch) return;
-        const [, masterSourceCharId, masterPersonName] = masterMatch;
-
-        const otherNpcIds = npcIds.filter(id => id !== masterItemId);
-        Promise.all(otherNpcIds.map(removeNpc))
-          .then(finish)
-          .catch(() => {});
-      }
-      return;
-    }
-
-    // ── Case 3: Active character as master ──────────────────────────────────
-    if (masterIsChar) {
-      const masterChar = roster.find(c => c.id === masterItemId);
+    // ── Case 2: Active character as master ──────────────────────────────────
+    if (isCharMaster) {
+      const masterChar = roster.find(c => c.id === masterEntry.charId);
       if (!masterChar) return;
-
-      const otherCharIds = charIds.filter(id => id !== masterItemId);
+      const otherCharEntries = charEntries.filter(e => e.charId !== masterEntry.charId);
 
       let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
-      otherCharIds.forEach(charId => {
-        const sec = roster.find(c => c.id === charId);
+      otherCharEntries.forEach(e => {
+        const sec = roster.find(c => c.id === e.charId);
         if (sec) {
           (sec.fictional_relationships || []).forEach(rel => {
             const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
@@ -353,14 +288,59 @@ export default function CharacterManager() {
         }
       });
 
-      Promise.all(npcIds.map(removeNpc))
-        .then(() => base44.entities.Character.update(masterItemId, { fictional_relationships: masterRels }))
-        .then(() => otherCharIds.length > 0
-          ? Promise.all(otherCharIds.map(id => base44.entities.Character.update(id, { status: 'merged', merged_into_character_id: masterItemId })))
+      Promise.all(npcEntries.map(removeNpcEntry))
+        .then(() => base44.entities.Character.update(masterEntry.charId, { fictional_relationships: masterRels }))
+        .then(() => otherCharEntries.length > 0
+          ? Promise.all(otherCharEntries.map(e => base44.entities.Character.update(e.charId, { status: 'merged', merged_into_character_id: masterEntry.charId })))
           : Promise.resolve()
         )
         .then(finish)
         .catch(() => {});
+      return;
+    }
+
+    // ── Case 3: NPC chosen as master ────────────────────────────────────────
+    if (isNpcMaster) {
+      if (charEntries.length >= 1) {
+        // There's an active character — it becomes the real master, NPC gets removed
+        const activeCharId = charEntries[0].charId;
+        const masterChar = roster.find(c => c.id === activeCharId);
+        if (!masterChar) return;
+        const otherCharEntries = charEntries.filter(e => e.charId !== activeCharId);
+
+        let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
+        otherCharEntries.forEach(e => {
+          const sec = roster.find(c => c.id === e.charId);
+          if (sec) {
+            (sec.fictional_relationships || []).forEach(rel => {
+              const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
+              if (idx >= 0) {
+                masterRels[idx] = { ...masterRels[idx],
+                  friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
+                  user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
+                  romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
+                  attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
+                };
+              } else {
+                masterRels.push({ ...rel });
+              }
+            });
+          }
+        });
+
+        Promise.all(npcEntries.map(removeNpcEntry))
+          .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
+          .then(() => otherCharEntries.length > 0
+            ? Promise.all(otherCharEntries.map(e => base44.entities.Character.update(e.charId, { status: 'merged', merged_into_character_id: activeCharId })))
+            : Promise.resolve()
+          )
+          .then(finish)
+          .catch(() => {});
+      } else {
+        // Both are NPCs: remove all except the master
+        const otherNpcEntries = npcEntries.filter(e => e.key !== masterEntry.key);
+        Promise.all(otherNpcEntries.map(removeNpcEntry)).then(finish).catch(() => {});
+      }
     }
   };
 
@@ -378,7 +358,7 @@ export default function CharacterManager() {
             size="sm"
             onClick={() => {
               setMergeMode(false);
-              setSelectedForMerge(new Set());
+              setSelectedForMerge(new Map());
             }}
             variant="outline"
             className="rounded-lg"
@@ -396,23 +376,28 @@ export default function CharacterManager() {
             const isNPC = item.type === 'world_person' || item.type === 'family';
             const isUser = item.type === 'user';
             const itemData = item.data;
-            // Create truly unique IDs: user prefix, character ID for active, or source_character_id_person_name_index for NPCs
-            const itemId = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}_${index}` : itemData.id);
+            // Stable key — use sourceCharId+personName for NPCs (no index suffix to avoid fragile parsing)
+            const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}` : itemData.id);
+            const mergeEntry = isUser
+              ? { key: 'user', type: 'user' }
+              : isNPC
+              ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: itemData.person_name }
+              : { key: itemKey, type: 'char', charId: itemData.id };
             // For user, always use the in-world name from settings if set
             const itemName = isUser
               ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
               : itemData.name;
-            const isSelected = selectedForMerge.has(itemId);
+            const isSelected = selectedForMerge.has(itemKey);
             
             return (
               <motion.div
-                 key={`${item.type}-${itemId}`}
+                 key={`${item.type}-${itemKey}`}
                  layout
                  className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
                    isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/40'
                  } ${isUser ? 'ring-2 ring-primary/30' : ''}`}
-                 onClick={() => mergeMode && toggleMergeSelection(itemId)}
-               >
+                 onClick={() => mergeMode && toggleMergeSelection(mergeEntry)}
+                >
                  <div className="flex items-center gap-3">
                   {mergeMode && (
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
@@ -447,7 +432,7 @@ export default function CharacterManager() {
                     </div>
                   )}
                   <div className="flex-1 min-w-0 flex flex-col gap-1">
-                   {renamingId === itemId ? (
+                   {renamingId === itemKey ? (
                      <div className="flex gap-1">
                        <Input
                          value={newName}
@@ -455,13 +440,13 @@ export default function CharacterManager() {
                          className="h-8 text-sm flex-1"
                          autoFocus
                          onKeyDown={e => {
-                           if (e.key === 'Enter') submitRename(itemId, isNPC);
+                           if (e.key === 'Enter') submitRename(itemKey, isNPC);
                            if (e.key === 'Escape') setRenamingId(null);
                          }}
                        />
                        <Button
                          size="sm"
-                         onClick={() => submitRename(itemId, isNPC)}
+                         onClick={() => submitRename(itemKey, isNPC)}
                          className="h-8 px-2 rounded-lg"
                        >
                          Save
@@ -488,7 +473,7 @@ export default function CharacterManager() {
                   {!mergeMode && (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleRename(itemId, itemName, isNPC)}
+                        onClick={() => handleRename(itemKey, itemName, isNPC)}
                         className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors flex-shrink-0"
                         title="Rename"
                       >
@@ -496,7 +481,7 @@ export default function CharacterManager() {
                       </button>
                       {!isUser && (
                         <button
-                          onClick={() => handleDelete(itemId, isNPC)}
+                          onClick={() => handleDelete(itemKey, isNPC)}
                           className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors flex-shrink-0"
                           title="Delete"
                         >
@@ -541,7 +526,7 @@ export default function CharacterManager() {
           size="sm"
           className="w-full rounded-lg"
         >
-          Merge {selectedForMerge.size} Characters
+          Merge {selectedForMerge.size} Selected
         </Button>
       )}
 
@@ -560,7 +545,7 @@ export default function CharacterManager() {
           >
             <h3 className="text-sm font-semibold text-foreground">Merge Characters</h3>
             <div className="space-y-3 max-h-60 overflow-y-auto">
-              {mergeConfirmModal.selectedItems.map(({ item, itemId }) => {
+              {mergeConfirmModal.selectedItems.map(({ item, entry }) => {
                 const isNPC = item.type === 'world_person' || item.type === 'family';
                 const isUser = item.type === 'user';
                 const itemData = item.data;
@@ -576,8 +561,8 @@ export default function CharacterManager() {
 
                 return (
                   <button
-                    key={itemId}
-                    onClick={() => confirmMerge(itemId)}
+                    key={entry.key}
+                    onClick={() => confirmMerge(entry)}
                     className="w-full text-left p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 transition-colors flex gap-3 items-start"
                   >
                     {avatarUrl ? (
