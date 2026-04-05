@@ -51,11 +51,12 @@ const holidays = [
     recurring: true,
     type: 'religious',
     closures: ['school'], // some offices close, varies
-    staysOpen: ['hospital', 'grocery', 'park'],
-    emotionalThemes: ['faith', 'family', 'joy', 'renewal'],
-    eventTypes: ['family_gathering', 'worship', 'celebration', 'egg_hunt'],
-    likelihood: { family: 0.6, worship: 0.5, celebration: 0.4 },
+    staysOpen: ['hospital', 'grocery', 'park', 'church'],
+    emotionalThemes: ['faith', 'family', 'joy', 'renewal', 'spirituality'],
+    eventTypes: ['worship', 'church_service', 'family_gathering', 'celebration', 'egg_hunt'],
+    likelihood: { family: 0.6, worship: 0.5, celebration: 0.4, church_attendance: 0.45 },
     requiresCalendarCalculation: true, // Easter is variable
+    churchRelevant: true, // Many attend church on Easter morning
   },
   {
     id: 'memorial_day',
@@ -254,6 +255,29 @@ const holidays = [
 ];
 
 /**
+ * Calculate Easter Sunday using Computus algorithm
+ * @param {Number} year
+ * @returns {Date}
+ */
+function calculateEaster(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+/**
  * Get holiday for a given date
  * @param {Date} date
  * @returns {Object|null}
@@ -262,10 +286,17 @@ export function getHolidayForDate(date) {
   const month = date.getMonth() + 1;
   const dayOfMonth = date.getDate();
   const dayOfWeek = date.getDay();
+  const year = date.getFullYear();
+
+  // Check Easter specifically
+  const easterDate = calculateEaster(year);
+  if (month === easterDate.getMonth() + 1 && dayOfMonth === easterDate.getDate()) {
+    return holidays.find(h => h.id === 'easter');
+  }
 
   for (const holiday of holidays) {
     if (holiday.requiresCalendarCalculation) {
-      // Skip for now—Easter, Passover, Ramadan, etc. need special calculation
+      // Skip other calculated holidays for now
       continue;
     }
 

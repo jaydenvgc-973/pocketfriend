@@ -96,7 +96,9 @@ export default function HolidayPopup({ isEnabled = true, onClose }) {
               )}
 
               <p className="text-xs italic">
-                Some characters may celebrate, others may work, volunteer, grieve, or isolate. Participate authentically.
+                {holiday.id === 'easter'
+                  ? "Some characters may attend church, gather with family, celebrate at home, or observe quietly—depending on faith, mood, and plans."
+                  : "Some characters may celebrate, others may work, volunteer, grieve, or isolate. Participate authentically."}
               </p>
             </div>
 
