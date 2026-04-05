@@ -1193,6 +1193,7 @@ Return JSON:
             sourceHome={locationsData.find(l => l.id === broughtCharacters[0]?.current_home_location_id)}
             destinationHome={location}
             allCharacters={characters}
+            broughtCharacters={broughtCharacters}
             onApprove={handleMoveIn}
             onReject={() => setShowMoveInPopup(false)}
             onClose={() => setShowMoveInPopup(false)}

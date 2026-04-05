@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion } from "framer-motion";
 import { X, Home, Users, AlertCircle } from "lucide-react";
@@ -12,23 +12,36 @@ export default function MoveInPopup({
   sourceHome,
   destinationHome,
   allCharacters = [],
+  broughtCharacters = [],
   onApprove,
   onReject,
   onClose,
   isLoading = false,
 }) {
+  // Build the full candidate list: source home residents + brought characters (deduplicated)
+  const candidateIds = useMemo(() => {
+    const ids = new Set();
+    (sourceHome?.resident_character_ids || []).forEach(id => ids.add(id));
+    broughtCharacters.forEach(c => ids.add(c.id));
+    if (character?.id) ids.add(character.id);
+    return [...ids];
+  }, [sourceHome?.id, broughtCharacters.length, character?.id]);
+
   const [selectedResidents, setSelectedResidents] = useState(
-    sourceHome?.resident_character_ids?.map(id => ({ id, selected: true })) || []
+    () => candidateIds.map(id => ({ id, selected: true }))
   );
+
+  // Sync if candidates change (e.g. popup opens with different characters)
+  React.useEffect(() => {
+    setSelectedResidents(candidateIds.map(id => ({ id, selected: true })));
+  }, [candidateIds.join(",")]);
+
   const [destinationName, setDestinationName] = useState(destinationHome?.name || "");
   const [showRename, setShowRename] = useState(false);
 
   if (!isOpen) return null;
 
   const moversCount = selectedResidents.filter(r => r.selected).length;
-  const movingCharacters = allCharacters.filter(c =>
-    selectedResidents.find(r => r.id === c.id && r.selected)
-  );
 
   const handleToggleResident = (charId) => {
     setSelectedResidents(prev =>
@@ -90,7 +103,9 @@ export default function MoveInPopup({
             Moving from
           </p>
           <div className="p-3 rounded-lg bg-secondary/50 border border-border">
-            <p className="text-sm font-medium text-foreground">{sourceHome?.name}</p>
+            <p className="text-sm font-medium text-foreground">
+              {sourceHome?.name || (character?.name ? `${character.name}'s current place` : "Current residence")}
+            </p>
           </div>
         </div>
 
