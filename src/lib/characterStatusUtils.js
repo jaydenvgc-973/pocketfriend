@@ -89,11 +89,28 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
   }
 
   // 5. AT WORK — location-aware (uses shift + location hours if available)
+  // BUT: Check if activity string contradicts work context (e.g., "hanging out at work" = NOT work icon)
   const unemployedKeywords = ['unemployed', 'between jobs'];
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   const isUnemployed = unemployedKeywords.some(k => workType.includes(k));
 
   if (!isUnemployed && isCharacterAtWork(character, workLocation)) {
+    // Check if activity suggests NOT working despite being at work location
+    const hangingOutKeywords = ['hanging out', 'hanging', 'chillin', 'chilling', 'relaxing', 'taking a break', 'off the clock', 'off work', 'after work'];
+    const isHangingOut = hangingOutKeywords.some(k => activity.includes(k));
+    
+    if (isHangingOut && workLocation) {
+      // They're at a venue (bar, restaurant, etc.) but hanging out, not working
+      const catIconMap = {
+        social: 'bar',
+        food_drink: 'out',
+        bar: 'bar',
+      };
+      const icon = catIconMap[workLocation.category] || 'out';
+      return { iconType: icon, label: `at ${workLocation.name}`, color: 'text-orange-400' };
+    }
+
+    // Otherwise, they're actually working
     const jobTitle = character.work_details?.job_title;
     const locationName = workLocation?.name;
     let label = 'at work';
@@ -124,10 +141,25 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
   }
 
   // 9. RELIGIOUS ATTENDANCE — location-aware service attendance
+  // BUT: "worship" keyword alone doesn't mean they're AT church — they could be worshipping at home
   const religiousResult = isCharacterAtReligiousLocation(character, religionLocation);
   if (religiousResult.attending) {
     const label = religiousResult.label || 'at worship';
     return { iconType: 'prayer', label, color: 'text-violet-300' };
+  }
+
+  // IMPORTANT: If activity mentions "worship" but current_location is HOME, show home instead
+  const worshipPhrase = activity.toLowerCase().includes('worship') || 
+                        activity.toLowerCase().includes('praying') ||
+                        activity.toLowerCase().includes('praise');
+  if (worshipPhrase) {
+    const isAtHome = activity.includes('home') || activity.includes('at home');
+    if (isAtHome || (character.current_home_location_id && !religionLocation)) {
+      // Worship activity at home = show home icon, not prayer icon
+      return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
+    }
+    // Otherwise worship at unspecified location = prayer
+    return { iconType: 'prayer', label: 'worshipping', color: 'text-violet-300' };
   }
 
   // Non-blocking prayer (still show it if active)
@@ -163,10 +195,11 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     if (activity.includes('laundromat') || activity.includes('laundry') || activity.includes('dry cleaning')) {
       return { iconType: 'out', label: 'at laundromat', color: 'text-blue-400' };
     }
-    if (activity.includes('church') || activity.includes('mosque') || activity.includes('temple') || activity.includes('synagogue') || activity.includes('worship') || activity.includes('service') || activity.includes('prayer') || activity.includes('kingdom hall') || activity.includes('mass')) {
+    if (activity.includes('church') || activity.includes('mosque') || activity.includes('temple') || activity.includes('synagogue') || activity.includes('service') || activity.includes('prayer') || activity.includes('kingdom hall') || activity.includes('mass')) {
       const label = religionLocation ? `at ${religionLocation.name}` : 'at worship';
       return { iconType: 'prayer', label, color: 'text-violet-300' };
     }
+    // NOTE: "worship" keyword handled separately above (Step 9) to distinguish home worship vs church attendance
     if (activity.includes('support group') || activity.includes('therapy') || activity.includes('therapist') || activity.includes('counseling')) {
       return { iconType: 'prayer', label: 'at a meeting', color: 'text-violet-300' };
     }
