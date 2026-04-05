@@ -9,24 +9,27 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 export default function MoveInPopup({
   isOpen,
   character,
-  sourceHome,
-  destinationHome,
+  sourceHome,        // LocationReference of the character's current home
+  destinationHome,   // LocationReference of the home being moved into
   allCharacters = [],
   broughtCharacters = [],
   onApprove,
   onClose,
   isLoading = false,
 }) {
-  // Build full candidate list — real characters from source home + NPCs from BOTH homes
+  // Build full candidate list from the SOURCE home:
+  // - Active characters who live there
+  // - NPC / family members (resident_family_members) listed at source home
+  // Also include any brought characters not already in the source home
   const candidates = useMemo(() => {
     const seen = new Set();
     const list = [];
 
-    // Real characters: brought + source home residents
+    // 1. Active characters from source home + brought characters
     const realIds = new Set();
+    (sourceHome?.resident_character_ids || []).forEach(id => realIds.add(id));
     broughtCharacters.forEach(c => realIds.add(c.id));
     if (character?.id) realIds.add(character.id);
-    (sourceHome?.resident_character_ids || []).forEach(id => realIds.add(id));
 
     realIds.forEach(id => {
       if (seen.has(id)) return;
@@ -35,54 +38,36 @@ export default function MoveInPopup({
       if (char) list.push({ id, name: char.name, isNpc: false, char });
     });
 
-    // NPC family members from source home
+    // 2. NPC / family members living at source home
     (sourceHome?.resident_family_members || []).forEach((fm, idx) => {
       if (!fm.name) return;
-      const npcId = `npc_src_fm_${idx}_${fm.name}`;
+      const npcId = `npc_fm_${fm.name.replace(/\s+/g, "_")}`;
       if (seen.has(npcId)) return;
       seen.add(npcId);
-      list.push({ id: npcId, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, sourceLabel: "Source home" });
+      list.push({
+        id: npcId,
+        name: fm.name,
+        role: fm.relationship_type || "Family",
+        isNpc: true,
+        fmData: fm,
+      });
     });
-
-    // NPC owner from source home
-    if (sourceHome?.owner_is_npc && sourceHome?.owner_npc_name) {
-      const npcId = `npc_src_owner_${sourceHome.id}`;
-      if (!seen.has(npcId)) {
-        seen.add(npcId);
-        list.push({ id: npcId, name: sourceHome.owner_npc_name, role: sourceHome.owner_role || "Resident", isNpc: true });
-      }
-    }
-
-    // NPC family members from DESTINATION home (the place being moved into)
-    (destinationHome?.resident_family_members || []).forEach((fm, idx) => {
-      if (!fm.name) return;
-      const npcId = `npc_dest_fm_${idx}_${fm.name}`;
-      if (seen.has(npcId)) return;
-      seen.add(npcId);
-      list.push({ id: npcId, name: fm.name, role: fm.relationship_type || "Family", isNpc: true, sourceLabel: "Lives here" });
-    });
-
-    // NPC owner from destination home
-    if (destinationHome?.owner_is_npc && destinationHome?.owner_npc_name) {
-      const npcId = `npc_dest_owner_${destinationHome.id}`;
-      if (!seen.has(npcId)) {
-        seen.add(npcId);
-        list.push({ id: npcId, name: destinationHome.owner_npc_name, role: destinationHome.owner_role || "Owner", isNpc: true, sourceLabel: "Lives here" });
-      }
-    }
 
     return list;
-  }, [sourceHome?.id, destinationHome?.id, broughtCharacters.length, character?.id, allCharacters.length]);
+  }, [sourceHome?.id, JSON.stringify(sourceHome?.resident_family_members), broughtCharacters.map(c=>c.id).join(","), character?.id]);
 
   const [selectedIds, setSelectedIds] = useState(() => new Set(candidates.map(c => c.id)));
   const [destinationName, setDestinationName] = useState(destinationHome?.name || "");
   const [showRename, setShowRename] = useState(false);
 
-  // Sync when candidates change (popup reopens with different data)
+  // Sync when popup opens with different data
   useEffect(() => {
     setSelectedIds(new Set(candidates.map(c => c.id)));
+  }, [candidates.map(c => c.id).join(",")]);
+
+  useEffect(() => {
     setDestinationName(destinationHome?.name || "");
-  }, [candidates.map(c => c.id).join(","), destinationHome?.id]);
+  }, [destinationHome?.id]);
 
   if (!isOpen) return null;
 
@@ -102,12 +87,14 @@ export default function MoveInPopup({
       .map(c => c.id);
     const npcMovers = candidates
       .filter(c => c.isNpc && selectedIds.has(c.id))
-      .map(c => ({ id: c.id, name: c.name, role: c.role }));
+      .map(c => ({ name: c.name, relationship_type: c.fmData?.relationship_type, source_character_id: c.fmData?.source_character_id, isNPC: c.fmData?.isNPC }));
 
     onApprove({ moversToMove: realMovers, npcMovers, newHomeName: destinationName });
   };
 
-  const sourceLabel = sourceHome?.name || (character?.name ? `${character.name}'s current place` : "Current residence");
+  // The "moving from" label — use source home name if available, fall back to character's known home
+  const sourceLabel = sourceHome?.name
+    || (character?.name ? `${character.name}'s current home` : "Current residence");
 
   return createPortal(
     <motion.div
@@ -138,7 +125,7 @@ export default function MoveInPopup({
         <div className="bg-primary/10 border border-primary/30 rounded-lg p-3 flex gap-2">
           <AlertCircle className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
           <p className="text-xs text-foreground">
-            Choose who moves to the new home. Unselected characters and NPCs will remain at {sourceLabel}.
+            Select who moves to the new home. Those not selected will remain at <strong>{sourceLabel}</strong>.
           </p>
         </div>
 
@@ -148,6 +135,11 @@ export default function MoveInPopup({
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Moving from</p>
             <div className="p-3 rounded-lg bg-secondary/50 border border-border">
               <p className="text-sm font-medium text-foreground">{sourceLabel}</p>
+              {sourceHome && (
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {candidates.length} resident{candidates.length !== 1 ? "s" : ""}
+                </p>
+              )}
             </div>
           </div>
           <div>
@@ -181,9 +173,12 @@ export default function MoveInPopup({
           </p>
 
           {candidates.length === 0 ? (
-            <p className="text-xs text-muted-foreground py-2 text-center">No residents found at the current home.</p>
+            <div className="py-4 text-center">
+              <p className="text-xs text-muted-foreground">No residents found at {sourceLabel}.</p>
+              <p className="text-xs text-muted-foreground/60 mt-1">Only the active character will move.</p>
+            </div>
           ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto">
+            <div className="space-y-2 max-h-52 overflow-y-auto">
               {candidates.map(candidate => {
                 const isSelected = selectedIds.has(candidate.id);
                 return (
@@ -203,14 +198,14 @@ export default function MoveInPopup({
                     )}
                     <div className="flex-1 text-left">
                       <p className="text-sm font-medium text-foreground">{candidate.name}</p>
-                      {candidate.role && (
-                        <p className="text-[10px] text-muted-foreground">{candidate.role}</p>
-                      )}
-                      {candidate.isNpc && (
-                        <span className="text-[9px] text-amber-400/80">
-                          {candidate.sourceLabel || "NPC"}
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        {candidate.role && (
+                          <span className="text-[10px] text-muted-foreground capitalize">{candidate.role}</span>
+                        )}
+                        {candidate.isNpc && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-400 font-medium">NPC</span>
+                        )}
+                      </div>
                     </div>
                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${
                       isSelected ? "bg-primary border-primary" : "border-border"

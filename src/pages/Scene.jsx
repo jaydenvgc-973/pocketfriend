@@ -662,14 +662,15 @@ Return JSON:
     }
   };
 
-  const handleMoveIn = async ({ moversToMove, newHomeName }) => {
+  const handleMoveIn = async ({ moversToMove, npcMovers = [], newHomeName }) => {
     if (!location) return;
     setIsMoveInLoading(true);
     try {
       await base44.functions.invoke("moveCharactersToNewHome", {
         sourceHomeId: broughtCharacters[0]?.current_home_location_id,
         destinationHomeId: location.id,
-        characterIds: moversToMove,
+        moversToMove,
+        npcMovers,
         newHomeName,
       });
       setShowMoveInPopup(false);

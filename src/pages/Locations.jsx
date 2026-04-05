@@ -89,15 +89,22 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
                 <User className="w-3 h-3" /> {location.character_name || "Character"}
               </span>
             )}
-            {(location.category === 'home' || location.category === 'generic') && (
-              location.resident_character_ids?.length > 0 ? (
+            {(location.category === 'home' || location.category === 'generic') && (() => {
+              // Resolve names: prefer resident_character_names, fall back to looking up by ID
+              const activeNames = (location.resident_character_ids || []).map(id => {
+                const found = characters.find(c => c.id === id);
+                return found?.name || null;
+              }).filter(Boolean);
+              const npcNames = (location.resident_family_members || []).map(f => f.name).filter(Boolean);
+              const allNames = [...activeNames, ...npcNames];
+              return allNames.length > 0 ? (
                 <span className="text-xs text-blue-400/80 font-medium">
-                  {location.resident_character_names?.join(', ') || `${location.resident_character_ids.length} resident${location.resident_character_ids.length > 1 ? "s" : ""}`}
+                  {allNames.join(', ')}
                 </span>
               ) : (
                 <span className="text-xs text-muted-foreground/60 italic">vacant</span>
-              )
-            )}
+              );
+            })()}
             {location.category !== 'home' && location.category !== 'generic' && location.resident_character_ids?.length > 0 && (
               <span className="text-xs text-blue-400/80 font-medium">
                 {location.resident_character_ids.length} resident{location.resident_character_ids.length > 1 ? "s" : ""}
