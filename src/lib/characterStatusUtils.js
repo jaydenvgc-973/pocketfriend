@@ -83,28 +83,10 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
   const isUnemployed = unemployedKeywords.some(k => workType.includes(k));
 
   if (!isUnemployed && isCharacterAtWork(character, workLocation)) {
-    // Check if activity suggests NOT working despite being at work location
-    // Only show as "hanging out" if activity explicitly says they're off duty
-    const hangingOutKeywords = ['hanging out', 'hanging', 'chillin', 'chilling', 'taking a break', 'off the clock', 'off work', 'after work'];
-    const isHangingOut = hangingOutKeywords.some(k => activity.includes(k));
-    
-    if (isHangingOut && workLocation) {
-      // They're at a venue (bar, restaurant, etc.) but hanging out, not working
-      const catIconMap = {
-        social: 'bar',
-        food_drink: 'out',
-        bar: 'bar',
-      };
-      const icon = catIconMap[workLocation.category] || 'out';
-      return { iconType: icon, label: `at ${workLocation.name}`, color: 'text-orange-400' };
-    }
-
-    // Otherwise, they're actually working (including at hospital)
-    const jobTitle = character.work_details?.job_title;
+    // Shift schedule is authoritative — if they're on shift, they're working
+    // Activity keywords don't override verified shift status
     const locationName = workLocation?.name;
-    let label = 'at work';
-    if (jobTitle) label = `at work`;
-    if (locationName) label = `at ${locationName}`;
+    const label = locationName ? `at ${locationName}` : 'at work';
     return { iconType: 'work', label, color: 'text-blue-400' };
   }
 
