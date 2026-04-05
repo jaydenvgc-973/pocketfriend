@@ -193,7 +193,11 @@ export default function Settings() {
             </div>
             <Switch
               checked={settings.holiday_observation_enabled !== false}
-              onCheckedChange={v => { if (!isLoadingSettings) mutation.mutate({ holiday_observation_enabled: v }); }}
+              onCheckedChange={v => {
+                if (!isLoadingSettings && settings.id) {
+                  mutation.mutate({ holiday_observation_enabled: v });
+                }
+              }}
             />
           </div>
         </div>
