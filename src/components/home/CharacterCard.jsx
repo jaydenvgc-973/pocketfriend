@@ -82,6 +82,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     staleTime: 30000, // 30s — don't re-fetch on every render
   });
 
+  const { data: currentLocationData = null } = useQuery({
+    queryKey: ['characterCurrentLocation', character.current_location_id],
+    queryFn: () => character.current_location_id
+      ? base44.entities.LocationReference.filter({ id: character.current_location_id }).then(r => r[0] || null)
+      : Promise.resolve(null),
+    enabled: !!character.current_location_id,
+    staleTime: 30000,
+  });
+
   // Single batched query: fetch ALL unread character messages for this character at once
   // instead of N queries per conversation (which caused 429 rate limit storms)
   const debounceRef = useRef(null);
@@ -239,7 +248,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
               {!isMovedAway && (() => {
                 const workLocation = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
                 const educationLocation = character.education_location_id ? locationMap[character.education_location_id] : null;
-                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: null, gymLocation: null });
+                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: null, gymLocation: null, currentLocation: currentLocationData });
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,

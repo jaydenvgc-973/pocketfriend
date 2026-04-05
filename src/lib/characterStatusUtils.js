@@ -9,15 +9,16 @@ import { isCharacterInPrayer } from './religionUtils';
  * Priority (highest to lowest):
  *   1. Sleeping
  *   2. Prayer (blocking)
- *   3. Patient / hospital
- *   4. At Work (location-aware)
- *   5. At School / In Class (same weight as work)
- *   6. In Job Training
- *   7. At Religious Location (service attendance)
- *   8. Activity-string inference
- *   9. Default
+ *   3. Explicit current_location_id (real-time authoritative location tracking)
+ *   4. Patient / hospital
+ *   5. At Work (location-aware)
+ *   6. At School / In Class (same weight as work)
+ *   7. In Job Training
+ *   8. At Religious Location (service attendance)
+ *   9. Activity-string inference (fallback)
+ *   10. Default
  *
- * Accepts optional `locationData` = { workLocation, educationLocation, religionLocation, gymLocation }
+ * Accepts optional `locationData` = { workLocation, educationLocation, religionLocation, gymLocation, currentLocation }
  * These are LocationReference records — pass them in from the character card if available.
  *
  * Returns: { iconType: string, label: string, color: string }
@@ -30,6 +31,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     educationLocation = null,
     religionLocation = null,
     gymLocation = null,
+    currentLocation = null,
   } = locationData;
 
   // 1. SLEEPING — always top priority (unless decided to stay up)
@@ -51,7 +53,28 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'prayer', label: 'praying', color: 'text-violet-300' };
   }
 
-  // 3. PATIENT / HOSPITAL
+  // 3. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
+  // This overrides all inference and is the source of truth for where character physically is
+  if (character?.current_location_id && currentLocation) {
+    const catIconMap = {
+      home: { icon: 'home', label: `at ${currentLocation.name}`, color: 'text-pink-400' },
+      work: { icon: 'work', label: `at ${currentLocation.name}`, color: 'text-blue-400' },
+      school: { icon: 'school', label: `at ${currentLocation.name}`, color: 'text-amber-400' },
+      gym: { icon: 'gym', label: `at ${currentLocation.name}`, color: 'text-emerald-400' },
+      food_drink: { icon: 'out', label: `at ${currentLocation.name}`, color: 'text-orange-400' },
+      social: { icon: 'bar', label: `at ${currentLocation.name}`, color: 'text-pink-400' },
+      medical: { icon: 'hospital', label: `at ${currentLocation.name}`, color: 'text-red-400' },
+      outdoor: { icon: 'out', label: `at ${currentLocation.name}`, color: 'text-emerald-400' },
+    };
+    const result = catIconMap[currentLocation.category];
+    if (result) {
+      return { iconType: result.icon, label: result.label, color: result.color };
+    }
+    // Fallback for unknown categories
+    return { iconType: 'out', label: `at ${currentLocation.name}`, color: 'text-blue-400' };
+  }
+
+  // 4. PATIENT / HOSPITAL
   const activity = character.current_activity?.toLowerCase().trim() || '';
   const isPatient =
     character.health_status?.toLowerCase().includes('sick') ||
@@ -65,7 +88,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'hospital', label: 'at hospital', color: 'text-red-400' };
   }
 
-  // 4. AT WORK — location-aware (uses shift + location hours if available)
+  // 5. AT WORK — location-aware (uses shift + location hours if available)
   const unemployedKeywords = ['unemployed', 'between jobs'];
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   const isUnemployed = unemployedKeywords.some(k => workType.includes(k));
@@ -79,7 +102,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'work', label, color: 'text-blue-400' };
   }
 
-  // 5. AT SCHOOL / IN CLASS — same weight as work
+  // 6. AT SCHOOL / IN CLASS — same weight as work
   const schoolResult = isCharacterAtSchool(character, educationLocation);
   if (schoolResult.attending) {
     const eduLocationName = educationLocation?.name;
@@ -87,12 +110,12 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'school', label, color: 'text-amber-400' };
   }
 
-  // 6. IN JOB TRAINING
+  // 7. IN JOB TRAINING
   if (character.current_job_training_activity && character.current_job_training_activity !== 'none') {
     return { iconType: 'work', label: 'in training', color: 'text-amber-400' };
   }
 
-  // 6.5. AT HOME — high priority check (before activity string parsing which may be stale)
+  // 8. AT HOME — activity keyword fallback (only if explicit location not set)
   // If character is in bed, sleeping in, sprawled out, etc. they're clearly at home
   const homeKeywords = ['bed', 'bedroom', 'in bed', 'laying', 'sprawled', 'asleep', 'waking', 'morning routine', 'home', 'house', 'apartment'];
   const isHomeActivity = homeKeywords.some(k => activity.includes(k));
@@ -100,7 +123,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
   }
 
-  // 7. RELIGIOUS ATTENDANCE — location-aware service attendance
+  // 9. RELIGIOUS ATTENDANCE — location-aware service attendance
   const religiousResult = isCharacterAtReligiousLocation(character, religionLocation);
   if (religiousResult.attending) {
     const label = religiousResult.label || 'at worship';
@@ -112,7 +135,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'prayer', label: 'praying', color: 'text-violet-300' };
   }
 
-  // 8. MAP CURRENT_ACTIVITY TO DISPLAY STATUS
+  // 10. MAP CURRENT_ACTIVITY TO DISPLAY STATUS (fallback only — stale data ignored if explicit location set)
   if (activity) {
     if (activity.includes('doctor') || activity.includes('clinic') || activity.includes('appointment') || activity.includes('procedure') || activity.includes('surgery')) {
       return { iconType: 'hospital', label: 'at appointment', color: 'text-red-400' };
@@ -170,7 +193,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     }
   }
 
-  // 9. DEFAULT
+  // 11. DEFAULT
   return { iconType: 'calm', label: 'available', color: 'text-muted-foreground' };
 }
 
