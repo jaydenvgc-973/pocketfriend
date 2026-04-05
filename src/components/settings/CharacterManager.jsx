@@ -423,12 +423,13 @@ export default function CharacterManager() {
             const isNPC = item.type === 'world_person' || item.type === 'family';
             const isUser = item.type === 'user';
             const itemData = item.data;
-            // Stable key — use sourceCharId+personName for NPCs (no index suffix to avoid fragile parsing)
-            const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${itemData.person_name}` : itemData.id);
+            // Stable key — use sourceCharId+personName for NPCs; fall back to index to avoid duplicate key crashes
+            const npcName = itemData.person_name || itemData.name || `unnamed_${index}`;
+            const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${npcName}_${index}` : itemData.id);
             const mergeEntry = isUser
               ? { key: 'user', type: 'user' }
               : isNPC
-              ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: itemData.person_name }
+              ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: npcName }
               : { key: itemKey, type: 'char', charId: itemData.id };
             // For user, always use the in-world name from settings if set
             const itemName = isUser
