@@ -226,160 +226,52 @@ export default function CharacterManager() {
     if (!mergeConfirmModal) return;
     const { selectedEntries } = mergeConfirmModal;
 
-    const finish = async () => {
-      await queryClient.refetchQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
-      setSelectedForMerge(new Map());
-      setMergeMode(false);
-      setMergeConfirmModal(null);
-    };
-
-    // Helper: remove an NPC by name from ALL characters that reference them, and rename occurrences to masterName if provided
-    const removeNpcEntry = (entry, masterName = null) => {
+    // Handle character-to-character merges only (not NPC deduplication)
+    const charEntries = selectedEntries.filter(e => e.type === 'char');
+    
+    if (charEntries.length >= 2) {
+      // Character-to-character merge: call backend function
+      const charIds = charEntries.map(e => e.charId);
+      mergeMutation.mutate({ 
+        characterIds: charIds, 
+        primaryCharacterId: masterEntry.charId 
+      });
+    } else {
+      // NPC-only merge (deduplication)
+      const npcEntries = selectedEntries.filter(e => e.type === 'npc');
+      const masterName = masterEntry.personName;
+      
       const allChars = roster.filter(c => c.is_character || c.fictional_relationships);
-      const promises = allChars.map(char => {
+      Promise.all(allChars.map(char => {
         const rels = char.fictional_relationships || [];
-        let changed = false;
-        const updated = rels.map(r => {
-          if (r.person_name === entry.personName) {
-            changed = true;
-            if (masterName && masterName !== entry.personName) {
-              // Replace this NPC reference with the master's name instead of removing it
-              return { ...r, person_name: masterName };
-            }
-            return null; // remove
-          }
-          return r;
-        }).filter(Boolean);
-        if (!changed) return Promise.resolve();
-        return base44.entities.Character.update(char.id, { fictional_relationships: updated });
-      });
-      return Promise.all(promises);
-    };
-
-    const npcEntries = selectedEntries.filter(e => e.type === 'npc' && e.key !== masterEntry.key);
-    const charEntries = selectedEntries.filter(e => e.type === 'char' && e.key !== masterEntry.key);
-    const isUserMaster = masterEntry.type === 'user';
-    const isNpcMaster = masterEntry.type === 'npc';
-    const isCharMaster = masterEntry.type === 'char';
-
-    // ── Case 1: User as master — remove all NPC duplicates ─────────────────
-    if (isUserMaster) {
-      Promise.all(npcEntries.map(e => removeNpcEntry(e))).then(finish).catch(() => {});
-      return;
-    }
-
-    // ── Case 2: Active character as master ──────────────────────────────────
-    if (isCharMaster) {
-      const masterChar = roster.find(c => c.id === masterEntry.charId);
-      if (!masterChar) return;
-      const otherCharEntries = charEntries.filter(e => e.charId !== masterEntry.charId);
-
-      let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
-      otherCharEntries.forEach(e => {
-        const sec = roster.find(c => c.id === e.charId);
-        if (sec) {
-          (sec.fictional_relationships || []).forEach(rel => {
-            const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
-            if (idx >= 0) {
-              masterRels[idx] = { ...masterRels[idx],
-                friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
-              };
-            } else {
-              masterRels.push({ ...rel });
-            }
-          });
-        }
-      });
-
-      // Remove all NPC entries that aren't the master (pass null = remove entirely)
-      Promise.all(npcEntries.map(e => removeNpcEntry(e, null)))
-        .then(() => base44.entities.Character.update(masterEntry.charId, { fictional_relationships: masterRels }))
-        .then(() => otherCharEntries.length > 0
-          ? Promise.all(otherCharEntries.map(e => base44.entities.Character.update(e.charId, { status: 'merged', merged_into_character_id: masterEntry.charId })))
-          : Promise.resolve()
-        )
-        .then(finish)
-        .catch(() => {});
-      return;
-    }
-
-    // ── Case 3: NPC chosen as master ────────────────────────────────────────
-    if (isNpcMaster) {
-      if (charEntries.length >= 1) {
-        // There's an active character — it becomes the real master, NPC entries get cleaned up
-        const activeCharId = charEntries[0].charId;
-        const masterChar = roster.find(c => c.id === activeCharId);
-        if (!masterChar) return;
-        const otherCharEntries = charEntries.filter(e => e.charId !== activeCharId);
-
-        let masterRels = JSON.parse(JSON.stringify(masterChar.fictional_relationships || []));
-        otherCharEntries.forEach(e => {
-          const sec = roster.find(c => c.id === e.charId);
-          if (sec) {
-            (sec.fictional_relationships || []).forEach(rel => {
-              const idx = masterRels.findIndex(r => r.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
-              if (idx >= 0) {
-                masterRels[idx] = { ...masterRels[idx],
-                  friendship_level: Math.max(masterRels[idx].friendship_level ?? 50, rel.friendship_level ?? 50),
-                  user_respect_level: Math.max(masterRels[idx].user_respect_level ?? 50, rel.user_respect_level ?? 50),
-                  romantic_level: Math.max(masterRels[idx].romantic_level ?? 0, rel.romantic_level ?? 0),
-                  attraction_level: Math.max(masterRels[idx].attraction_level ?? 0, rel.attraction_level ?? 0),
-                };
-              } else {
-                masterRels.push({ ...rel });
-              }
+        const seen = new Map();
+        rels.forEach(r => {
+          const key = r.person_name?.toLowerCase();
+          if (!key) return;
+          if (!seen.has(key)) {
+            seen.set(key, { ...r });
+          } else {
+            const existing = seen.get(key);
+            seen.set(key, {
+              ...existing,
+              friendship_level: Math.max(existing.friendship_level ?? 50, r.friendship_level ?? 50),
+              user_respect_level: Math.max(existing.user_respect_level ?? 50, r.user_respect_level ?? 50),
+              romantic_level: Math.max(existing.romantic_level ?? 0, r.romantic_level ?? 0),
+              attraction_level: Math.max(existing.attraction_level ?? 0, r.attraction_level ?? 0),
             });
           }
         });
-
-        Promise.all(npcEntries.map(e => removeNpcEntry(e, null)))
-          .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
-          .then(() => otherCharEntries.length > 0
-            ? Promise.all(otherCharEntries.map(e => base44.entities.Character.update(e.charId, { status: 'merged', merged_into_character_id: activeCharId })))
-            : Promise.resolve()
-          )
-          .then(finish)
-          .catch(() => {});
-      } else {
-        // Both are NPCs: remove duplicates with different names; same names deduplicate naturally
-        const masterName = masterEntry.personName;
-        // Only call removeNpcEntry for NPCs with different names; same names will be deduplicated below
-        const differentNameNpcs = npcEntries.filter(e => e.personName.toLowerCase() !== masterName.toLowerCase());
-        const removePhase = differentNameNpcs.length > 0
-          ? Promise.all(differentNameNpcs.map(e => removeNpcEntry(e, masterName)))
-          : Promise.resolve();
-        
-        removePhase.then(() => {
-            // Now deduplicate: for each character, collapse duplicate person_name entries (keep first, merge levels)
-            const allChars = roster.filter(c => c.is_character || c.fictional_relationships);
-            return Promise.all(allChars.map(char => {
-              const rels = char.fictional_relationships || [];
-              const seen = new Map();
-              rels.forEach(r => {
-                const key = r.person_name?.toLowerCase();
-                if (!key) return;
-                if (!seen.has(key)) {
-                  seen.set(key, { ...r });
-                } else {
-                  const existing = seen.get(key);
-                  seen.set(key, {
-                    ...existing,
-                    friendship_level: Math.max(existing.friendship_level ?? 50, r.friendship_level ?? 50),
-                    user_respect_level: Math.max(existing.user_respect_level ?? 50, r.user_respect_level ?? 50),
-                    romantic_level: Math.max(existing.romantic_level ?? 0, r.romantic_level ?? 0),
-                    attraction_level: Math.max(existing.attraction_level ?? 0, r.attraction_level ?? 0),
-                  });
-                }
-              });
-              const deduped = Array.from(seen.values());
-              if (deduped.length === rels.length) return Promise.resolve(); // no change
-              return base44.entities.Character.update(char.id, { fictional_relationships: deduped });
-            }));
-        }).then(finish).catch(() => {});
-      }
+        const deduped = Array.from(seen.values());
+        if (deduped.length === rels.length) return Promise.resolve();
+        return base44.entities.Character.update(char.id, { fictional_relationships: deduped });
+      }))
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+        setSelectedForMerge(new Map());
+        setMergeMode(false);
+        setMergeConfirmModal(null);
+      })
+      .catch(() => {});
     }
   };
 
