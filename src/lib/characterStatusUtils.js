@@ -84,7 +84,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
 
   if (!isUnemployed && isCharacterAtWork(character, workLocation)) {
     // Check if activity suggests NOT working despite being at work location
-    const hangingOutKeywords = ['hanging out', 'hanging', 'chillin', 'chilling', 'relaxing', 'taking a break', 'off the clock', 'off work', 'after work'];
+    const hangingOutKeywords = ['hanging out', 'hanging', 'chillin', 'chilling', 'relaxing', 'taking a break', 'off the clock', 'off work', 'after work', 'reading', 'book'];
     const isHangingOut = hangingOutKeywords.some(k => activity.includes(k));
     
     if (isHangingOut && workLocation) {

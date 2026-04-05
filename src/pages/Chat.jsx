@@ -1672,7 +1672,14 @@ Reply with ONLY the single emoji or the word "none".`,
       }).catch(() => {});
     }
 
-    // Update character location if they mention being somewhere (fire-and-forget)
+    // Update character location/activity from USER message (fire-and-forget)
+    // This extracts activity like "I'm at work" from what the user sends
+    base44.functions.invoke("updateCharacterActivityFromMessage", {
+      characterId,
+      messageContent: text,
+    }).catch(() => {});
+
+    // Update character location if character response mentions being somewhere (fire-and-forget)
     if (responseText) {
       base44.functions.invoke("updateCharacterLocationFromMessage", {
         characterId,
