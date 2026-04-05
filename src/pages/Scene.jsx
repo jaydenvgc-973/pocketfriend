@@ -430,15 +430,17 @@ export default function Scene() {
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
-      // For home locations, always append a hard ban on random people
       let finalPrompt = actionOverridePrompt;
-      if (isHomeLocation) {
+      const isGlobal = location.location_type === "global";
+
+      if (!isGlobal) {
+        // Character-specific or residential: enforce strict no-strangers rule
         const physicallyPresent = [
           ...homeResidentsPresent,
           ...broughtCharacters,
         ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
         if (physicallyPresent.length === 0) {
-          finalPrompt += ` CRITICAL: This is an empty home. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
+          finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
         } else {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
         }
@@ -492,9 +494,24 @@ export default function Scene() {
     } else {
       const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
-      const charNames = sceneCharacters.map(c => c.name).join(", ");
-      const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames}` : "with people";
-      prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} present. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
+      const isGlobal = location.location_type === "global";
+
+      if (isGlobal) {
+        // Global location: ambient people are fine, just mention who the user is with
+        const charNames = sceneCharacters.map(c => c.name).join(", ");
+        const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames} among other patrons` : "with other people around";
+        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
+      } else {
+        // Character-specific location: ONLY the exact people present, no strangers ever
+        const physicallyPresent = sceneCharacters.filter(c => !c.isNpc || selectedNpcIds?.includes(c.id));
+        let peopleDesc;
+        if (physicallyPresent.length > 0) {
+          peopleDesc = `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures whatsoever.`;
+        } else {
+          peopleDesc = `The space is completely empty. No people at all — no silhouettes, no background figures, nobody visible anywhere in the image.`;
+        }
+        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
+      }
     }
 
     try {
