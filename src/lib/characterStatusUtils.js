@@ -75,23 +75,9 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'out', label: `at ${currentLocation.name}`, color: 'text-blue-400' };
   }
 
-  // 4. PATIENT / HOSPITAL
+  // 4. AT WORK FIRST (higher priority than patient status)
+  // Check work status BEFORE patient status, because a character can work at a hospital
   const activity = character.current_activity?.toLowerCase().trim() || '';
-  const isPatient =
-    character.health_status?.toLowerCase().includes('sick') ||
-    character.health_status?.toLowerCase().includes('hospitali') ||
-    character.health_status?.toLowerCase().includes('patient') ||
-    activity.includes('hospital') ||
-    activity.includes('sick') ||
-    activity.includes('patient');
-
-  if (isPatient) {
-    return { iconType: 'hospital', label: 'at hospital', color: 'text-red-400' };
-  }
-
-  // 5. AT WORK — location-aware (uses shift + location hours if available)
-  // BUT: Check if activity string contradicts work context (e.g., "hanging out at work" = NOT work icon)
-  // CRITICAL: Only infer work if NO explicit current_location_id is set
   const unemployedKeywords = ['unemployed', 'between jobs'];
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   const isUnemployed = unemployedKeywords.some(k => workType.includes(k));
@@ -112,13 +98,26 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
       return { iconType: icon, label: `at ${workLocation.name}`, color: 'text-orange-400' };
     }
 
-    // Otherwise, they're actually working
+    // Otherwise, they're actually working (including at hospital)
     const jobTitle = character.work_details?.job_title;
     const locationName = workLocation?.name;
     let label = 'at work';
     if (jobTitle) label = `at work`;
     if (locationName) label = `at ${locationName}`;
     return { iconType: 'work', label, color: 'text-blue-400' };
+  }
+
+  // 5. PATIENT / SICK (only if NOT at work)
+  // Do NOT show hospital icon if they work there
+  const isPatient =
+    character.health_status?.toLowerCase().includes('sick') ||
+    character.health_status?.toLowerCase().includes('patient') ||
+    (activity.includes('hospital') && !activity.includes('work') && !activity.includes('job') && !workLocation?.name?.toLowerCase().includes('hospital')) ||
+    activity.includes('sick') ||
+    (activity.includes('patient') && !workLocation);
+
+  if (isPatient) {
+    return { iconType: 'hospital', label: 'at hospital', color: 'text-red-400' };
   }
 
   // 6. AT SCHOOL / IN CLASS — same weight as work
@@ -129,12 +128,26 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'school', label, color: 'text-amber-400' };
   }
 
-  // 7. IN JOB TRAINING
+  // 8. IN JOB TRAINING
   if (character.current_job_training_activity && character.current_job_training_activity !== 'none') {
     return { iconType: 'work', label: 'in training', color: 'text-amber-400' };
   }
 
-  // 8. AT HOME — activity keyword fallback (only if explicit location not set)
+  // 9. PRAYING / WORSHIP ACTIVITY (regardless of location)
+  // "Worship" and "praying" are ACTIVITIES, not locations
+  // Show prayer icon when actively praying/worshipping, even at home
+  if (prayer.active && !prayer.blocks_response) {
+    return { iconType: 'prayer', label: 'praying', color: 'text-violet-300' };
+  }
+
+  // ONLY show "at worship" if actually AT a religious location (service attendance)
+  const religiousResult = isCharacterAtReligiousLocation(character, religionLocation);
+  if (religiousResult.attending) {
+    const label = religiousResult.label || 'at worship';
+    return { iconType: 'prayer', label, color: 'text-violet-300' };
+  }
+
+  // 10. AT HOME — activity keyword fallback (only if explicit location not set)
   // If character is in bed, sleeping in, sprawled out, etc. they're clearly at home
   const homeKeywords = ['bed', 'bedroom', 'in bed', 'laying', 'sprawled', 'asleep', 'waking', 'morning routine', 'home', 'house', 'apartment'];
   const isHomeActivity = homeKeywords.some(k => activity.includes(k));
@@ -142,20 +155,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
   }
 
-  // 9. RELIGIOUS ATTENDANCE — location-aware service attendance ONLY
-  // CRITICAL: "worship" is an ACTIVITY, not a location claim. Only show prayer icon if actually AT a religious location.
-  const religiousResult = isCharacterAtReligiousLocation(character, religionLocation);
-  if (religiousResult.attending) {
-    const label = religiousResult.label || 'at worship';
-    return { iconType: 'prayer', label, color: 'text-violet-300' };
-  }
-
-  // Non-blocking prayer (still show it if active)
-  if (prayer.active) {
-    return { iconType: 'prayer', label: 'praying', color: 'text-violet-300' };
-  }
-
-  // 10. MAP CURRENT_ACTIVITY TO DISPLAY STATUS (fallback only — stale data ignored if explicit location set)
+  // 11. MAP CURRENT_ACTIVITY TO DISPLAY STATUS (fallback only — stale data ignored if explicit location set)
   if (activity) {
     if (activity.includes('doctor') || activity.includes('clinic') || activity.includes('appointment') || activity.includes('procedure') || activity.includes('surgery')) {
       return { iconType: 'hospital', label: 'at appointment', color: 'text-red-400' };
@@ -214,7 +214,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     }
   }
 
-  // 11. DEFAULT
+  // 12. DEFAULT
   return { iconType: 'calm', label: 'available', color: 'text-muted-foreground' };
 }
 
