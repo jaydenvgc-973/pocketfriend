@@ -39,22 +39,10 @@ import { LocationEditProvider } from '@/components/location/LocationEditConflict
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 
-const AuthenticatedApp = () => {
+const AuthenticatedApp = ({ holidaysEnabled }) => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const [holidaysEnabled, setHolidaysEnabled] = useState(false);
-
-  // Check if holidays are enabled in user settings
-  useEffect(() => {
-    const checkHolidaysSetting = async () => {
-      const settings = await base44.entities.UserSettings.list();
-      if (settings[0]) {
-        setHolidaysEnabled(settings[0].holiday_observation_enabled !== false);
-      }
-    };
-    checkHolidaysSetting();
-  }, []);
   
   // Preserve current route across orientation changes and remounts
   useRoutePreservation();
@@ -120,6 +108,19 @@ const AuthenticatedApp = () => {
 };
 
 function App() {
+  const [holidaysEnabled, setHolidaysEnabled] = useState(false);
+
+  // Check if holidays are enabled in user settings
+  useEffect(() => {
+    const checkHolidaysSetting = async () => {
+      const settings = await base44.entities.UserSettings.list();
+      if (settings[0]) {
+        setHolidaysEnabled(settings[0].holiday_observation_enabled !== false);
+      }
+    };
+    checkHolidaysSetting();
+  }, []);
+
   // Prevent navigation on orientation change — block any history manipulation triggered by resize/rotate
   useEffect(() => {
     const handleOrientationChange = () => {
@@ -142,7 +143,7 @@ function App() {
           <QueryClientProvider client={queryClientInstance}>
             <Router>
               <PlayAsCharacterBanner />
-              <AuthenticatedApp />
+              <AuthenticatedApp holidaysEnabled={holidaysEnabled} />
             </Router>
             <HolidayPopup isEnabled={holidaysEnabled} />
             <AchievementUnlockModal />
