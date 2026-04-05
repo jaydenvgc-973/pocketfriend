@@ -126,25 +126,38 @@ export function isCharacterAtWork(character, workplaceLocation = null) {
     return isInWindow(currentMinutes, workStartDefault, workEndDefault);
   }
 
-  // Layer 1: Location-specific shift
+  // Layer 1: Location-specific shift (MOST AUTHORITATIVE)
   if (workplaceLocation && character?.id) {
     const onShift = isCharacterOnShift(character.id, workplaceLocation);
     if (onShift) return true;
-    // If location has hours, check those too
-    const locationActive = isLocationActiveNow(workplaceLocation);
-    if (locationActive === true) {
-      // Location is open — use character's own work schedule as fallback
+    
+    // If location tracks shifts and character is NOT on the roster → NOT at work
+    if (workplaceLocation.worker_character_ids?.includes(character.id) && !onShift) {
+      // Character works here but not on shift right now
+      return false;
     }
+    
+    // Check if location is even open
+    const locationActive = isLocationActiveNow(workplaceLocation);
+    if (locationActive === false) {
+      // Location is explicitly closed — character cannot be at work
+      return false;
+    }
+    // If locationActive === true or null, continue to Layer 2
   }
 
-  // Layer 2: Character's own work schedule
+  // Layer 2: Character's own work schedule (fallback only if no location shift data)
+  // CRITICAL: Only return true if character is scheduled to work TODAY at a TIME that's within work hours
   const workDays = character?.work_days || [1, 2, 3, 4, 5];
   const workStart = character?.work_start_time || '09:00';
   const workEnd = character?.work_end_time || '17:00';
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
 
+  // Not a work day — return false
   if (!workDays.includes(currentDay)) return false;
+  
+  // Is a work day AND within work hours — return true
   return isInWindow(currentMinutes, workStart, workEnd);
 }
 
