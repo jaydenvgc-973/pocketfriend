@@ -242,12 +242,27 @@ export default function CharacterManager() {
       setMergeConfirmModal(null);
     };
 
-    // Helper: remove an NPC by its exact sourceCharId + personName
-    const removeNpcEntry = (entry) => {
-      const sourceChar = roster.find(c => c.id === entry.sourceCharId);
-      if (!sourceChar) return Promise.resolve();
-      const updated = (sourceChar.fictional_relationships || []).filter(r => r.person_name !== entry.personName);
-      return base44.entities.Character.update(entry.sourceCharId, { fictional_relationships: updated });
+    // Helper: remove an NPC by name from ALL characters that reference them, and rename occurrences to masterName if provided
+    const removeNpcEntry = (entry, masterName = null) => {
+      const allChars = roster.filter(c => c.is_character || c.fictional_relationships);
+      const promises = allChars.map(char => {
+        const rels = char.fictional_relationships || [];
+        let changed = false;
+        const updated = rels.map(r => {
+          if (r.person_name === entry.personName) {
+            changed = true;
+            if (masterName && masterName !== entry.personName) {
+              // Replace this NPC reference with the master's name instead of removing it
+              return { ...r, person_name: masterName };
+            }
+            return null; // remove
+          }
+          return r;
+        }).filter(Boolean);
+        if (!changed) return Promise.resolve();
+        return base44.entities.Character.update(char.id, { fictional_relationships: updated });
+      });
+      return Promise.all(promises);
     };
 
     const npcEntries = selectedEntries.filter(e => e.type === 'npc');
@@ -258,7 +273,7 @@ export default function CharacterManager() {
 
     // ── Case 1: User as master — remove all NPC duplicates ─────────────────
     if (isUserMaster) {
-      Promise.all(npcEntries.map(removeNpcEntry)).then(finish).catch(() => {});
+      Promise.all(npcEntries.map(e => removeNpcEntry(e))).then(finish).catch(() => {});
       return;
     }
 
@@ -288,7 +303,8 @@ export default function CharacterManager() {
         }
       });
 
-      Promise.all(npcEntries.map(removeNpcEntry))
+      // Remove all NPC entries that aren't the master (pass null = remove entirely)
+      Promise.all(npcEntries.map(e => removeNpcEntry(e, null)))
         .then(() => base44.entities.Character.update(masterEntry.charId, { fictional_relationships: masterRels }))
         .then(() => otherCharEntries.length > 0
           ? Promise.all(otherCharEntries.map(e => base44.entities.Character.update(e.charId, { status: 'merged', merged_into_character_id: masterEntry.charId })))
@@ -302,7 +318,7 @@ export default function CharacterManager() {
     // ── Case 3: NPC chosen as master ────────────────────────────────────────
     if (isNpcMaster) {
       if (charEntries.length >= 1) {
-        // There's an active character — it becomes the real master, NPC gets removed
+        // There's an active character — it becomes the real master, NPC entries get cleaned up
         const activeCharId = charEntries[0].charId;
         const masterChar = roster.find(c => c.id === activeCharId);
         if (!masterChar) return;
@@ -328,7 +344,7 @@ export default function CharacterManager() {
           }
         });
 
-        Promise.all(npcEntries.map(removeNpcEntry))
+        Promise.all(npcEntries.map(e => removeNpcEntry(e, null)))
           .then(() => base44.entities.Character.update(activeCharId, { fictional_relationships: masterRels }))
           .then(() => otherCharEntries.length > 0
             ? Promise.all(otherCharEntries.map(e => base44.entities.Character.update(e.charId, { status: 'merged', merged_into_character_id: activeCharId })))
@@ -337,9 +353,40 @@ export default function CharacterManager() {
           .then(finish)
           .catch(() => {});
       } else {
-        // Both are NPCs: remove all except the master
+        // Both are NPCs: rename all references to the non-master entries to the master's name, then deduplicate
+        const masterName = masterEntry.personName;
         const otherNpcEntries = npcEntries.filter(e => e.key !== masterEntry.key);
-        Promise.all(otherNpcEntries.map(removeNpcEntry)).then(finish).catch(() => {});
+        // Rename other NPC occurrences to master's name across all characters, then deduplicate
+        Promise.all(otherNpcEntries.map(e => removeNpcEntry(e, masterName)))
+          .then(() => {
+            // Now deduplicate: for each character, collapse duplicate person_name entries (keep first, merge levels)
+            const allChars = roster.filter(c => c.is_character || c.fictional_relationships);
+            return Promise.all(allChars.map(char => {
+              const rels = char.fictional_relationships || [];
+              const seen = new Map();
+              rels.forEach(r => {
+                const key = r.person_name?.toLowerCase();
+                if (!key) return;
+                if (!seen.has(key)) {
+                  seen.set(key, { ...r });
+                } else {
+                  const existing = seen.get(key);
+                  seen.set(key, {
+                    ...existing,
+                    friendship_level: Math.max(existing.friendship_level ?? 50, r.friendship_level ?? 50),
+                    user_respect_level: Math.max(existing.user_respect_level ?? 50, r.user_respect_level ?? 50),
+                    romantic_level: Math.max(existing.romantic_level ?? 0, r.romantic_level ?? 0),
+                    attraction_level: Math.max(existing.attraction_level ?? 0, r.attraction_level ?? 0),
+                  });
+                }
+              });
+              const deduped = Array.from(seen.values());
+              if (deduped.length === rels.length) return Promise.resolve(); // no change
+              return base44.entities.Character.update(char.id, { fictional_relationships: deduped });
+            }));
+          })
+          .then(finish)
+          .catch(() => {});
       }
     }
   };
@@ -526,7 +573,7 @@ export default function CharacterManager() {
           size="sm"
           className="w-full rounded-lg"
         >
-          Merge {selectedForMerge.size} Selected
+          Merge {selectedForMerge.size} Characters
         </Button>
       )}
 
