@@ -14,6 +14,7 @@ import { useRoutePreservation } from '@/lib/useRoutePreservation';
 import Onboarding from './pages/Onboarding';
 import Home from './pages/Home';
 import Chat from './pages/Chat';
+import HolidayPopup from '@/components/holidays/HolidayPopup';
 import GroupChat from './pages/GroupChat';
 import Groups from './pages/Groups';
 import CreateCharacter from './pages/CreateCharacter.jsx';
@@ -35,11 +36,25 @@ import EditCharacterTraits from './pages/EditCharacterTraits';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
+import { useState } from 'react';
+import { base44 } from '@/api/base44Client';
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const [holidaysEnabled, setHolidaysEnabled] = useState(false);
+
+  // Check if holidays are enabled in user settings
+  useEffect(() => {
+    const checkHolidaysSetting = async () => {
+      const settings = await base44.entities.UserSettings.list();
+      if (settings[0]) {
+        setHolidaysEnabled(settings[0].holiday_observation_enabled !== false);
+      }
+    };
+    checkHolidaysSetting();
+  }, []);
   
   // Preserve current route across orientation changes and remounts
   useRoutePreservation();
@@ -129,6 +144,7 @@ function App() {
               <PlayAsCharacterBanner />
               <AuthenticatedApp />
             </Router>
+            <HolidayPopup isEnabled={holidaysEnabled} />
             <AchievementUnlockModal />
             <Toaster />
           </QueryClientProvider>

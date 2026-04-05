@@ -185,6 +185,20 @@ export default function Settings() {
           />
         </div>
         <div className="space-y-4 pt-2 border-t border-border">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">World & Holidays</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm text-foreground">Holiday Observation</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">Real U.S. holidays affect schedules, closures, and character behavior</p>
+            </div>
+            <Switch
+              checked={settings.holiday_observation_enabled !== false}
+              onCheckedChange={v => { if (!isLoadingSettings) mutation.mutate({ holiday_observation_enabled: v }); }}
+            />
+          </div>
+        </div>
+
+        <div className="space-y-4 pt-2 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Response Timing</p>
           <div className="flex items-center justify-between">
             <div>
