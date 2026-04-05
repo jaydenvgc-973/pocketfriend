@@ -1413,9 +1413,9 @@ export default function Locations() {
     );
     
     if (filter === "all") {
-      // For "All" tab: separate into global and character-specific, each sorted alphabetically
-      const global = allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l));
+      // For "All" tab: separate into character-specific and global (everything else)
       const characterSpecific = allFiltered.filter(isCharacterHome);
+      const global = allFiltered.filter(l => !isCharacterHome(l));
       return { global, characterSpecific };
     }
     
