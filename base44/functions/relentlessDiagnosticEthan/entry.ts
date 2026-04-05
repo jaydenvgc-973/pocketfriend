@@ -4,157 +4,66 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const characters = await base44.entities.Character.filter({ created_by: user.email });
+    const ethan = characters.find(c => c.name.toLowerCase().includes('ethan'));
     
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!ethan) {
+      return Response.json({ error: 'Ethan not found' }, { status: 404 });
     }
 
-    const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
-    const allDiagnostics = [];
-    const allFixes = [];
-    const allDeletedMessages = [];
-    let loopCount = 0;
-    let finalUnreadCount = 0;
+    const issues = [];
+    const fixes = [];
 
-    // RELENTLESS LOOP: Keep going until unread count is 0 and stays 0
-    for (let mainLoop = 1; mainLoop <= 15; mainLoop++) {
-      loopCount = mainLoop;
-      allDiagnostics.push(`\n========== MAIN LOOP ${mainLoop} ==========`);
+    // Issue 1: currentLocationId is null
+    if (!ethan.current_location_id) {
+      issues.push('CRITICAL: current_location_id is null');
       
-      // Get all Ethan conversations (including NPC chat)
-      const convos = await base44.entities.Conversation.filter(
-        { character_ids: [ETHAN_ID] },
-        "-updated_date",
-        200
-      );
-      allDiagnostics.push(`Total conversations for Ethan: ${convos.length}`);
-      
-      let loopUnreadCount = 0;
-      const loopDeletedMessages = [];
-      
-      // 1. SCAN ALL CONVERSATIONS FOR UNREAD
-      for (const convo of convos) {
-        const unreadMsgs = await base44.entities.Message.filter(
-          { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-        );
-        
-        if (unreadMsgs.length > 0) {
-          allDiagnostics.push(`  [${convo.type}] "${convo.title}": ${unreadMsgs.length} unread`);
-          
-          for (const msg of unreadMsgs) {
-            const ageMinutes = Math.round((new Date() - new Date(msg.created_date)) / 60000);
-            allDiagnostics.push(`    - ${msg.id.substring(0, 8)}: age=${ageMinutes}m | content="${(msg.content || '(empty)').substring(0, 40)}"`);
-            
-            loopUnreadCount += 1;
-            
-            // IMMEDIATE MARK AS READ
-            await base44.entities.Message.update(msg.id, { is_read: true });
-            allFixes.push(`Loop ${mainLoop}: Marked ${msg.id.substring(0, 8)} as read`);
-          }
-        }
-      }
-      
-      // 2. CHECK PENDING MESSAGES (these shouldn't count as unread yet)
-      const pending = await base44.entities.PendingMessage.filter(
-        { character_id: ETHAN_ID, delivered: false }
-      );
-      if (pending.length > 0) {
-        allDiagnostics.push(`  ⚠️ Pending (not yet delivered): ${pending.length}`);
-      }
-      
-      // 3. VERIFY ALL NPC CONVERSATIONS
-      const npcConvos = convos.filter(c => c.type === 'npc');
-      if (npcConvos.length > 0) {
-        allDiagnostics.push(`  Special: ${npcConvos.length} NPC conversations - checking thoroughly`);
-        
-        for (const npcConvo of npcConvos) {
-          // Force mark ALL character messages as read in NPC convos
-          const allCharMsgs = await base44.entities.Message.filter(
-            { conversation_id: npcConvo.id, sender_type: 'character' }
-          );
-          
-          for (const msg of allCharMsgs) {
-            if (!msg.is_read) {
-              await base44.entities.Message.update(msg.id, { is_read: true });
-              loopUnreadCount += 1;
-            }
-          }
-        }
-      }
-      
-      allDiagnostics.push(`Loop ${mainLoop} total unread processed: ${loopUnreadCount}`);
-      
-      // 4. FINAL COUNT FOR THIS LOOP
-      let verifyUnreadCount = 0;
-      for (const convo of convos) {
-        const verify = await base44.entities.Message.filter(
-          { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-        );
-        verifyUnreadCount += verify.length;
-      }
-      
-      finalUnreadCount = verifyUnreadCount;
-      allDiagnostics.push(`After processing: ${verifyUnreadCount} unread remaining`);
-      
-      // 5. IF ZERO, VERIFY TWICE MORE THEN STOP
-      if (verifyUnreadCount === 0) {
-        allDiagnostics.push(`✓ Loop ${mainLoop}: ZERO unread found!`);
-        
-        // Verify again in next loop (extra check)
-        if (mainLoop < 15) {
-          allDiagnostics.push(`Continuing for extra verification...`);
-          continue;
-        } else {
-          break;
-        }
-      }
+      // Use work location as the primary location
+      const updatePayload = { current_location_id: ethan.occupation_location_id };
+      await base44.entities.Character.update(ethan.id, updatePayload);
+      fixes.push(`Set current_location_id to ${ethan.occupation_location_id}`);
     }
-    
-    // FINAL EXHAUSTIVE CHECK
-    allDiagnostics.push(`\n========== FINAL EXHAUSTIVE CHECK ==========`);
-    
-    const finalConvos = await base44.entities.Conversation.filter(
-      { character_ids: [ETHAN_ID] }
-    );
-    
-    let absoluteFinalUnread = 0;
-    for (const convo of finalConvos) {
-      const msgs = await base44.entities.Message.filter(
-        { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-      );
-      absoluteFinalUnread += msgs.length;
-      
-      if (msgs.length > 0) {
-        allDiagnostics.push(`⚠️ Still unread in ${convo.type} "${convo.title}": ${msgs.length}`);
-        
-        // FORCE mark everything as read one final time
-        for (const msg of msgs) {
-          await base44.entities.Message.update(msg.id, { is_read: true });
-          allFixes.push(`FINAL: Force marked ${msg.id.substring(0, 8)} as read`);
-        }
-      }
+
+    // Issue 2: current_activity is stale ("sleeping" when it's 14:40 and he should be at work)
+    if (ethan.current_activity === 'sleeping') {
+      issues.push('current_activity is stale (sleeping at 14:40 on work day)');
+      await base44.entities.Character.update(ethan.id, {
+        current_activity: 'at work',
+      });
+      fixes.push('Updated current_activity to "at work"');
     }
-    
-    allDiagnostics.push(`Final unread count: ${absoluteFinalUnread}`);
-    allDiagnostics.push(`Total loops executed: ${loopCount}`);
-    
-    if (absoluteFinalUnread === 0) {
-      allDiagnostics.push(`✓✓✓ SUCCESS: Ethan's unread is completely clear. Red dot MUST disappear.`);
-    } else {
-      allDiagnostics.push(`✗✗✗ FAILED: Still ${absoluteFinalUnread} unread. Investigating further...`);
-    }
-    
+
+    // Issue 3: Check if character schema has location data properly saved
+    const allChars = await base44.entities.Character.filter({ created_by: user.email });
+    const ethanRefresh = allChars.find(c => c.id === ethan.id);
+
     return Response.json({
-      success: absoluteFinalUnread === 0,
-      loops_executed: loopCount,
-      final_unread_count: absoluteFinalUnread,
-      deleted_message_count: allDeletedMessages.length,
-      fixes_count: allFixes.length,
-      diagnostics: allDiagnostics.join('\n'),
-      fixes: allFixes.slice(0, 50), // Return first 50 fixes
+      timestamp: new Date().toISOString(),
+      characterName: ethan.name,
+      characterId: ethan.id,
+      issues,
+      fixes,
+      beforeUpdate: {
+        currentLocationId: ethan.current_location_id,
+        currentActivity: ethan.current_activity,
+        occupationLocationId: ethan.occupation_location_id,
+      },
+      afterUpdate: {
+        currentLocationId: ethanRefresh?.current_location_id,
+        currentActivity: ethanRefresh?.current_activity,
+        occupationLocationId: ethanRefresh?.occupation_location_id,
+      },
+      dataConsistency: {
+        locationsMatch: ethanRefresh?.current_location_id === ethan.occupation_location_id,
+        activityUpdated: ethanRefresh?.current_activity === 'at work',
+      },
+      recommendation: ethanRefresh?.current_location_id ? 
+        'Location data is now set correctly. Refresh the app to see changes.' :
+        'WARNING: Location data did not persist. This indicates a deeper database issue.',
     });
-    
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 });

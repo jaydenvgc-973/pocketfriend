@@ -4,172 +4,108 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Find Ethan
+    const characters = await base44.entities.Character.filter({ created_by: user.email });
+    const ethan = characters.find(c => c.name.toLowerCase().includes('ethan'));
     
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!ethan) {
+      return Response.json({ error: 'Ethan not found' }, { status: 404 });
     }
 
-    const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
-    const diagnostics = [];
-    const fixes = [];
-    const deletedMessages = [];
+    // Get all locations
+    const locations = await base44.entities.LocationReference.list();
+    const locMap = Object.fromEntries(locations.map(l => [l.id, l]));
+
+    // Deep check on Ethan
+    const check = {
+      characterId: ethan.id,
+      name: ethan.name,
+      status: ethan.status,
+      currentLocationId: ethan.current_location_id,
+      currentLocationName: ethan.current_location_id ? locMap[ethan.current_location_id]?.name : null,
+      currentHomeLocationId: ethan.current_home_location_id,
+      currentHomeLocationName: ethan.current_home_location_id ? locMap[ethan.current_home_location_id]?.name : null,
+      occupationLocationId: ethan.occupation_location_id,
+      occupationLocationName: ethan.occupation_location_id ? locMap[ethan.occupation_location_id]?.name : null,
+      currentActivity: ethan.current_activity,
+      emotionalState: ethan.emotional_state,
+      sleepStartTime: ethan.sleep_start_time,
+      wakeUpTime: ethan.wake_up_time,
+      workStartTime: ethan.work_start_time,
+      workEndTime: ethan.work_end_time,
+      workDays: ethan.work_days,
+      decidedToStayUpUntil: ethan.decided_to_stay_up_until,
+    };
+
+    // Check sleep logic
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes();
+    const sleepTimes = ethan.sleep_start_time ? ethan.sleep_start_time.split(':').map(Number) : null;
+    const wakeTimes = ethan.wake_up_time ? ethan.wake_up_time.split(':').map(Number) : null;
     
-    // DIAGNOSTIC LOOP: Run up to 10 times checking for issues
-    for (let iteration = 1; iteration <= 10; iteration++) {
-      diagnostics.push(`\n=== ITERATION ${iteration} ===`);
-      
-      // 1. GET ALL ETHAN CONVERSATIONS
-      const convos = await base44.entities.Conversation.filter(
-        { character_ids: [ETHAN_ID], created_by: user.email },
-        "-updated_date",
-        100
-      );
-      diagnostics.push(`Found ${convos.length} Ethan conversations`);
-      
-      let iterationUnreadCount = 0;
-      let foundIssues = false;
-      
-      for (const convo of convos) {
-        // 2. COUNT UNREAD MESSAGES
-        const unreadMsgs = await base44.entities.Message.filter(
-          { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-        );
-        iterationUnreadCount += unreadMsgs.length;
-        
-        if (unreadMsgs.length > 0) {
-          diagnostics.push(`  [${convo.type}] ${convo.title}: ${unreadMsgs.length} unread`);
-          foundIssues = true;
-          
-          // 3. ANALYZE EACH UNREAD MESSAGE FOR ISSUES
-          for (const msg of unreadMsgs) {
-            const createdDate = new Date(msg.created_date);
-            const now = new Date();
-            const ageMinutes = Math.round((now - createdDate) / 60000);
-            
-            diagnostics.push(`    Message ID: ${msg.id.substring(0, 8)} | Age: ${ageMinutes}m | Sent: ${msg.sender_type}`);
-            
-            // CHECK FOR STUCK/PHANTOM MESSAGES
-            // - Very old unread messages (stuck for days)
-            // - Messages with no content
-            // - Messages that appear to be duplicates
-            // - Messages sent out of chronological order
-            
-            if (ageMinutes > 10080) { // older than 7 days
-              diagnostics.push(`    ⚠️ STUCK: Message is ${ageMinutes} minutes old (7+ days)`);
-              foundIssues = true;
-              
-              // Delete stuck message
-              await base44.entities.Message.delete(msg.id);
-              deletedMessages.push(msg.id);
-              fixes.push(`Deleted stuck message ${msg.id.substring(0, 8)} (age: ${ageMinutes}m)`);
-            }
-            
-            if (!msg.content || msg.content.trim() === '') {
-              diagnostics.push(`    ⚠️ PHANTOM: Message has no content`);
-              foundIssues = true;
-              
-              // Delete phantom message
-              await base44.entities.Message.delete(msg.id);
-              deletedMessages.push(msg.id);
-              fixes.push(`Deleted phantom message ${msg.id.substring(0, 8)} (no content)`);
-            }
-          }
-          
-          // 4. CHECK CHRONOLOGICAL ORDER
-          const allCharMsgs = await base44.entities.Message.filter(
-            { conversation_id: convo.id, sender_type: 'character' },
-            "-created_date",
-            100
-          );
-          
-          for (let i = 0; i < allCharMsgs.length - 1; i++) {
-            const curr = new Date(allCharMsgs[i].created_date);
-            const next = new Date(allCharMsgs[i + 1].created_date);
-            
-            // Check if messages are out of order (should be descending in the array)
-            if (curr < next) {
-              diagnostics.push(`    ⚠️ OUT-OF-ORDER: Messages ${i} and ${i+1} are not in chronological order`);
-              foundIssues = true;
-            }
-          }
-        }
-      }
-      
-      diagnostics.push(`Total unread in iteration ${iteration}: ${iterationUnreadCount}`);
-      
-      // 5. RESET ALL UNREAD IF NOT ALREADY DONE
-      if (iterationUnreadCount > 0) {
-        diagnostics.push(`  Marking ${iterationUnreadCount} unread messages as read...`);
-        
-        for (const convo of convos) {
-          const unread = await base44.entities.Message.filter(
-            { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-          );
-          
-          for (const msg of unread) {
-            await base44.entities.Message.update(msg.id, { is_read: true });
-          }
-        }
-        
-        fixes.push(`Iteration ${iteration}: Marked ${iterationUnreadCount} messages as read`);
-      }
-      
-      // If no issues found in this iteration, stop looping
-      if (!foundIssues && iterationUnreadCount === 0) {
-        diagnostics.push(`✓ Iteration ${iteration}: No issues found. Stopping checks.`);
-        break;
+    let isSleeping = false;
+    if (sleepTimes && wakeTimes) {
+      const sleepTime = sleepTimes[0] * 60 + sleepTimes[1];
+      const wakeTime = wakeTimes[0] * 60 + wakeTimes[1];
+      if (sleepTime > wakeTime) {
+        isSleeping = currentTime >= sleepTime || currentTime < wakeTime;
+      } else {
+        isSleeping = currentTime >= sleepTime && currentTime < wakeTime;
       }
     }
+
+    // Check work logic
+    const workTimes = ethan.work_start_time ? ethan.work_start_time.split(':').map(Number) : null;
+    const workEndTimes = ethan.work_end_time ? ethan.work_end_time.split(':').map(Number) : null;
+    const dayOfWeek = now.getDay();
     
-    // FINAL VERIFICATION
-    diagnostics.push(`\n=== FINAL VERIFICATION ===`);
-    
-    let finalUnreadCount = 0;
-    const finalConvos = await base44.entities.Conversation.filter(
-      { character_ids: [ETHAN_ID], created_by: user.email },
-      "-updated_date",
-      100
-    );
-    
-    for (const convo of finalConvos) {
-      const unread = await base44.entities.Message.filter(
-        { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-      );
-      finalUnreadCount += unread.length;
+    let atWork = false;
+    if (workTimes && workEndTimes && ethan.work_days) {
+      const workStart = workTimes[0] * 60 + workTimes[1];
+      const workEnd = workEndTimes[0] * 60 + workEndTimes[1];
+      atWork = ethan.work_days.includes(dayOfWeek) && currentTime >= workStart && currentTime < workEnd;
     }
-    
-    diagnostics.push(`Final unread count: ${finalUnreadCount}`);
-    
-    if (finalUnreadCount === 0) {
-      diagnostics.push(`✓ SUCCESS: Ethan's notification is clear. Red dot should not appear.`);
-    } else {
-      diagnostics.push(`⚠️ WARNING: Still have ${finalUnreadCount} unread messages. Check for new undelivered messages.`);
-    }
-    
-    // Check for pending messages
-    const pending = await base44.entities.PendingMessage.filter(
-      { character_id: ETHAN_ID, delivered: false }
-    );
-    
-    diagnostics.push(`\nPending messages (not yet delivered): ${pending.length}`);
-    if (pending.length > 0) {
-      diagnostics.push(`Note: Pending messages will count as unread once delivered. This is expected behavior.`);
-      for (const p of pending) {
-        diagnostics.push(`  - Pending: "${p.content.substring(0, 50)}..."`);
-      }
-    }
-    
+
+    check.sleepLogic = {
+      isSleeping,
+      currentTime: `${Math.floor(currentTime / 60)}:${String(currentTime % 60).padStart(2, '0')}`,
+      sleepWindow: sleepTimes ? `${sleepTimes[0]}:${String(sleepTimes[1]).padStart(2, '0')} - ${wakeTimes[0]}:${String(wakeTimes[1]).padStart(2, '0')}` : 'Not set',
+    };
+
+    check.workLogic = {
+      atWork,
+      currentDayOfWeek: dayOfWeek,
+      workWindow: workTimes ? `${workTimes[0]}:${String(workTimes[1]).padStart(2, '0')} - ${workEndTimes[0]}:${String(workEndTimes[1]).padStart(2, '0')}` : 'Not set',
+      workDays: ethan.work_days || [],
+    };
+
+    // Check what status display logic should show
+    const shouldShowHome = !isSleeping && !atWork;
+    const activityIndicatesHome = ethan.current_activity?.toLowerCase().includes('home') || 
+                                   ethan.current_activity?.toLowerCase().includes('bed') ||
+                                   ethan.current_activity?.toLowerCase().includes('apartment');
+
+    check.statusLogic = {
+      shouldShowHome,
+      activityIndicatesHome,
+      reasonShowingHome: isSleeping ? 'sleeping' : atWork ? 'at work' : 'default/home',
+      hasExplicitLocation: !!ethan.current_location_id,
+      explicitLocationOverridesOther: 'YES - should use current_location_id if set',
+    };
+
+    // Get conversation count
+    const convs = await base44.entities.Conversation.filter({ character_ids: [ethan.id] });
+    check.conversationCount = convs.length;
+
     return Response.json({
-      success: finalUnreadCount === 0,
-      final_unread_count: finalUnreadCount,
-      deleted_message_count: deletedMessages.length,
-      deleted_messages: deletedMessages,
-      pending_messages_count: pending.length,
-      diagnostics: diagnostics.join('\n'),
-      fixes: fixes,
+      timestamp: new Date().toISOString(),
+      ethanDiagnostics: check,
+      homeLocationData: check.currentHomeLocationId ? locMap[check.currentHomeLocationId] : null,
+      workLocationData: check.occupationLocationId ? locMap[check.occupationLocationId] : null,
     });
-    
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 });

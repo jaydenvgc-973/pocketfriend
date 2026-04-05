@@ -4,58 +4,68 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Get Ethan with fresh query
+    const chars = await base44.entities.Character.filter({ 
+      created_by: user.email 
+    });
+    const ethan = chars.find(c => c.name && c.name.toLowerCase().includes('ethan'));
     
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!ethan) {
+      return Response.json({ error: 'Ethan not found' }, { status: 404 });
     }
 
-    const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
-    
-    // Wait to avoid rate limit
-    await new Promise(r => setTimeout(r, 500));
-    
-    // Get all unread character messages across entire app
-    const allUnread = await base44.entities.Message.filter({
-      is_read: false,
-      sender_type: 'character'
-    });
-    
-    // Get Ethan conversations to check which unread belong to him
-    await new Promise(r => setTimeout(r, 500));
-    
-    const ethanConvos = await base44.entities.Conversation.filter({
-      character_ids: [ETHAN_ID]
-    });
-    
-    const ethanConvoIds = new Set(ethanConvos.map(c => c.id));
-    const ethanUnreadIds = allUnread
-      .filter(m => ethanConvoIds.has(m.conversation_id))
-      .map(m => m.id);
-    
-    console.log(`Found ${ethanUnreadIds.length} unread Ethan messages`);
-    
-    // Mark each as read with delay
-    let marked = 0;
-    for (const id of ethanUnreadIds) {
-      try {
-        await base44.entities.Message.update(id, { is_read: true });
-        marked++;
-      } catch (e) {
-        console.error(`Failed to mark ${id.substring(0, 8)}`);
-      }
-      
-      // Delay between updates
-      if (marked % 5 === 0) {
-        await new Promise(r => setTimeout(r, 200));
-      }
+    // Just read back his current state without updating anything yet
+    const state = {
+      id: ethan.id,
+      name: ethan.name,
+      hasCurrentLocationId: !!ethan.current_location_id,
+      currentLocationId: ethan.current_location_id || null,
+      hasOccupationId: !!ethan.occupation_location_id,
+      occupationLocationId: ethan.occupation_location_id || null,
+      currentActivity: ethan.current_activity || 'unset',
+      hasSystemPrompt: !!ethan.system_prompt,
+    };
+
+    // The real issue: backfill set home location but NOT work location as current
+    // Let's check if the earlier backfill accidentally set current_location_id to HOME instead of WORK
+    const locations = await base44.entities.LocationReference.list();
+    const homeLocation = locations.find(l => l.id === ethan.current_home_location_id);
+    const workLocation = locations.find(l => l.id === ethan.occupation_location_id);
+
+    // Now actually try the update with explicit field setting
+    try {
+      await base44.entities.Character.update(ethan.id, {
+        current_location_id: ethan.occupation_location_id, // Force work location as current
+        current_activity: 'working',
+      });
+    } catch (updateErr) {
+      return Response.json({
+        error: 'Update failed',
+        updateError: updateErr.message,
+        ethanState: state,
+        homeLocation: homeLocation?.name,
+        workLocation: workLocation?.name,
+      }, { status: 500 });
     }
-    
+
+    // Re-fetch to confirm
+    const refetch = await base44.entities.Character.filter({ id: ethan.id });
+    const confirmed = refetch[0];
+
     return Response.json({
-      marked: marked,
-      total_found: ethanUnreadIds.length,
-      success: marked === ethanUnreadIds.length,
+      ethanId: ethan.id,
+      beforeState: state,
+      afterState: {
+        currentLocationId: confirmed.current_location_id,
+        currentActivity: confirmed.current_activity,
+        home: homeLocation?.name,
+        work: workLocation?.name,
+      },
+      updateSucceeded: !!confirmed.current_location_id,
+      status: confirmed.current_location_id ? 'FIXED' : 'STILL BROKEN',
     });
-    
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

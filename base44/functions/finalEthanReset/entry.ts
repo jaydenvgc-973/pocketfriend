@@ -4,92 +4,76 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // Find Ethan
+    const characters = await base44.entities.Character.filter({ created_by: user.email });
+    const ethan = characters.find(c => c.name.toLowerCase().includes('ethan'));
     
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!ethan) {
+      return Response.json({ error: 'Ethan not found' }, { status: 404 });
     }
 
-    const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
-    const report = [];
-    
-    // GET ALL UNREAD IN ONE PASS
-    report.push('=== ETHAN FINAL RESET ===');
-    report.push('Getting all conversations...');
-    
-    const allConvos = await base44.entities.Conversation.filter(
-      { character_ids: [ETHAN_ID] },
-      "-updated_date",
-      200
-    );
-    report.push(`Total conversations: ${allConvos.length}`);
-    
-    let totalUnreadFound = 0;
-    let totalMarked = 0;
-    const convoSummary = [];
-    
-    // COLLECT ALL UNREAD MESSAGES FIRST
-    const allUnreadMessages = [];
-    
-    for (const convo of allConvos) {
-      const unread = await base44.entities.Message.filter(
-        { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-      );
-      
-      if (unread.length > 0) {
-        convoSummary.push(`${convo.type}: "${convo.title}" = ${unread.length} unread`);
-        totalUnreadFound += unread.length;
-        allUnreadMessages.push(...unread.map(m => ({ id: m.id, convoType: convo.type })));
-      }
+    const fixes = [];
+
+    // Fix 1: Set current_location_id to work location (he's at work right now)
+    if (ethan.occupation_location_id && !ethan.current_location_id) {
+      await base44.entities.Character.update(ethan.id, {
+        current_location_id: ethan.occupation_location_id,
+      });
+      fixes.push({
+        field: 'current_location_id',
+        oldValue: null,
+        newValue: ethan.occupation_location_id,
+        reason: 'Set to work location (Anderson\'s Bar) since it\'s during work hours',
+      });
     }
-    
-    report.push(`Total unread found: ${totalUnreadFound}`);
-    report.push('Conversations with unread:');
-    convoSummary.forEach(s => report.push(`  - ${s}`));
-    
-    // MARK ALL AS READ IN ONE BATCH
-    report.push('\nMarking all as read...');
-    for (const msg of allUnreadMessages) {
-      try {
-        await base44.entities.Message.update(msg.id, { is_read: true });
-        totalMarked++;
-      } catch (e) {
-        report.push(`Failed to mark ${msg.id.substring(0, 8)}: ${e.message}`);
-      }
+
+    // Fix 2: Ensure current_activity reflects location
+    if (ethan.current_activity === 'sleeping' && ethan.occupation_location_id) {
+      await base44.entities.Character.update(ethan.id, {
+        current_activity: 'working at Anderson\'s Bar',
+      });
+      fixes.push({
+        field: 'current_activity',
+        oldValue: 'sleeping',
+        newValue: 'working at Anderson\'s Bar',
+        reason: 'Updated stale activity to match work schedule',
+      });
     }
-    
-    report.push(`Marked as read: ${totalMarked}/${totalUnreadFound}`);
-    
-    // VERIFY FINAL STATE
-    report.push('\nFinal verification...');
-    let finalUnread = 0;
-    
-    for (const convo of allConvos) {
-      const verify = await base44.entities.Message.filter(
-        { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-      );
-      if (verify.length > 0) {
-        report.push(`⚠️ STILL UNREAD: ${convo.type} "${convo.title}": ${verify.length}`);
-        finalUnread += verify.length;
-      }
+
+    // Fix 3: Ensure system_prompt is set (complete character data)
+    if (!ethan.system_prompt) {
+      const systemPrompt = `You are ${ethan.name}. ${ethan.profile_summary || ''}`;
+      await base44.entities.Character.update(ethan.id, {
+        system_prompt: systemPrompt,
+      });
+      fixes.push({
+        field: 'system_prompt',
+        oldValue: null,
+        newValue: systemPrompt.substring(0, 50) + '...',
+        reason: 'Generated missing system prompt',
+      });
     }
-    
-    report.push(`\nFinal unread count: ${finalUnread}`);
-    
-    if (finalUnread === 0) {
-      report.push('✓ SUCCESS: Red dot should be gone now');
-    } else {
-      report.push(`✗ ERROR: ${finalUnread} messages still unread`);
-    }
-    
+
+    // Verify all fixes applied
+    const ethanVerify = await base44.entities.Character.filter({ id: ethan.id });
+    const updated = ethanVerify[0];
+
     return Response.json({
-      success: finalUnread === 0,
-      total_found: totalUnreadFound,
-      total_marked: totalMarked,
-      final_unread: finalUnread,
-      report: report.join('\n'),
+      timestamp: new Date().toISOString(),
+      character: ethan.name,
+      characterId: ethan.id,
+      fixes,
+      verification: {
+        hasCurrentLocationId: !!updated.current_location_id,
+        currentLocationId: updated.current_location_id,
+        currentActivity: updated.current_activity,
+        hasSystemPrompt: !!updated.system_prompt,
+      },
+      status: 'COMPLETE: Ethan location and activity data restored',
     });
-    
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 });
