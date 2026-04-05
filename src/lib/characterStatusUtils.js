@@ -55,6 +55,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
 
   // 3. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
   // This overrides all inference and is the source of truth for where character physically is
+  // CRITICAL: If set, use this and STOP. Do not continue to work/school inference below.
   if (character?.current_location_id && currentLocation) {
     const catIconMap = {
       home: { icon: 'home', label: `at ${currentLocation.name}`, color: 'text-pink-400' },
@@ -90,6 +91,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
 
   // 5. AT WORK — location-aware (uses shift + location hours if available)
   // BUT: Check if activity string contradicts work context (e.g., "hanging out at work" = NOT work icon)
+  // CRITICAL: Only infer work if NO explicit current_location_id is set
   const unemployedKeywords = ['unemployed', 'between jobs'];
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   const isUnemployed = unemployedKeywords.some(k => workType.includes(k));
@@ -140,26 +142,12 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
   }
 
-  // 9. RELIGIOUS ATTENDANCE — location-aware service attendance
-  // BUT: "worship" keyword alone doesn't mean they're AT church — they could be worshipping at home
+  // 9. RELIGIOUS ATTENDANCE — location-aware service attendance ONLY
+  // CRITICAL: "worship" is an ACTIVITY, not a location claim. Only show prayer icon if actually AT a religious location.
   const religiousResult = isCharacterAtReligiousLocation(character, religionLocation);
   if (religiousResult.attending) {
     const label = religiousResult.label || 'at worship';
     return { iconType: 'prayer', label, color: 'text-violet-300' };
-  }
-
-  // IMPORTANT: If activity mentions "worship" but current_location is HOME, show home instead
-  const worshipPhrase = activity.toLowerCase().includes('worship') || 
-                        activity.toLowerCase().includes('praying') ||
-                        activity.toLowerCase().includes('praise');
-  if (worshipPhrase) {
-    const isAtHome = activity.includes('home') || activity.includes('at home');
-    if (isAtHome || (character.current_home_location_id && !religionLocation)) {
-      // Worship activity at home = show home icon, not prayer icon
-      return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
-    }
-    // Otherwise worship at unspecified location = prayer
-    return { iconType: 'prayer', label: 'worshipping', color: 'text-violet-300' };
   }
 
   // Non-blocking prayer (still show it if active)

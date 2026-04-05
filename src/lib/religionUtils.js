@@ -104,21 +104,24 @@ export function getReligionLabel(character) {
 
 /**
  * Check if character is currently in a prayer/practice window.
- * Returns { active: boolean, name: string|null }
+ * Returns { active: boolean, name: string|null, blocks_response: boolean }
+ * Uses America/New_York timezone (ET) not UTC
  */
 export function isCharacterInPrayer(character) {
   const influence = getBeliefInfluence(character);
-  if (influence === 0) return { active: false, name: null };
+  if (influence === 0) return { active: false, name: null, blocks_response: false };
 
   const schedule = PRAYER_SCHEDULES[character.religion];
-  if (!schedule) return { active: false, name: null };
+  if (!schedule) return { active: false, name: null, blocks_response: false };
 
   const levelSchedule =
     character.belief_level === "devout" ? schedule.devout : schedule.moderate;
-  if (!levelSchedule?.length) return { active: false, name: null };
+  if (!levelSchedule?.length) return { active: false, name: null, blocks_response: false };
 
+  // Use ET timezone, not UTC
   const now = new Date();
-  const currentMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const currentMinutes = et.getHours() * 60 + et.getMinutes();
 
   for (const p of levelSchedule) {
     const [h, m] = p.time.split(":").map(Number);
@@ -129,11 +132,12 @@ export function isCharacterInPrayer(character) {
     }
   }
 
-  return { active: false, name: null };
+  return { active: false, name: null, blocks_response: false };
 }
 
 /**
  * Check if today is a religious service day for a devout/moderate character.
+ * Uses America/New_York timezone (ET) not UTC
  */
 export function isReligiousServiceDay(character) {
   const influence = getBeliefInfluence(character);
@@ -144,8 +148,10 @@ export function isReligiousServiceDay(character) {
 
   const level = character.belief_level === "devout" ? "devout" : "moderate";
   const days = serviceDays[level] || [];
-  const todayUTC = new Date().getUTCDay(); // 0=Sunday
-  return days.includes(todayUTC);
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const todayET = et.getDay(); // 0=Sunday
+  return days.includes(todayET);
 }
 
 /**

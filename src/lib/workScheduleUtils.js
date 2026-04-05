@@ -96,13 +96,22 @@ export function isCharacterOnShift(characterId, location) {
 /**
  * Determines if a character is currently at work.
  *
+ * CRITICAL: If current_activity contains "home", "house", "in bed" → NOT at work
+ * "Worship" in activity ≠ work — worship is a separate activity
+ *
  * Priority:
- *   1. If a linked workplace location has shift data for this character → use that
- *   2. Fall back to character's own work_start_time / work_end_time / work_days
+ *   1. Check if activity explicitly says they're home → return false
+ *   2. If a linked workplace location has shift data for this character → use that
+ *   3. Fall back to character's own work_start_time / work_end_time / work_days
  *
  * Accepts optional `workplaceLocation` (LocationReference record) for richer data.
  */
 export function isCharacterAtWork(character, workplaceLocation = null) {
+  // CRITICAL: If activity says they're home, they're not at work
+  const activity = (character?.current_activity || '').toLowerCase();
+  const homeKeywords = ['home', 'house', 'apartment', 'in bed', 'bedroom', 'bed'];
+  if (homeKeywords.some(k => activity.includes(k))) return false;
+
   const unemployedKeywords = ['unemployed', 'between jobs', 'crime', 'none'];
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   if (unemployedKeywords.some(k => workType.includes(k))) return false;

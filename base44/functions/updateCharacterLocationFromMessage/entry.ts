@@ -47,10 +47,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // If location detected, update character's current_activity
+    // If location detected, update BOTH current_activity AND current_location_id
     if (detectedLocation && detectedLocationName !== character.current_activity) {
       await base44.entities.Character.update(characterId, {
-        current_activity: detectedLocationName
+        current_activity: detectedLocationName,
+        current_location_id: detectedLocation
       });
       
       return Response.json({ 
