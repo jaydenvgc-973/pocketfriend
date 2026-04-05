@@ -64,9 +64,9 @@ export default function Home() {
     }, 3000);
   }, [currentUser?.email]);
 
-  // Check for character invites when page loads
+  // Check for character invites when page loads (once per session)
   useEffect(() => {
-    if (!currentUser?.email) return;
+    if (!currentUser?.email || invitations) return; // Don't re-check if invitations already shown
     base44.functions.invoke('checkAndTriggerInvites', {})
       .then(res => {
         if (res.data?.shouldShow && res.data?.invitations?.length > 0) {
@@ -74,7 +74,7 @@ export default function Home() {
         }
       })
       .catch(() => {});
-  }, [currentUser?.email]);
+  }, [currentUser?.email, invitations]);
 
   // Real-time: immediately reflect any character create/update/delete
   useEffect(() => {
@@ -311,8 +311,8 @@ export default function Home() {
           }}
           onClose={() => {
             // Clear pending invites from settings when modal is dismissed
-            if (settingsList[0]?.id) {
-              base44.entities.UserSettings.update(settingsList[0].id, {
+            if (settings[0]?.id) {
+              base44.entities.UserSettings.update(settings[0].id, {
                 pending_character_invites: [],
               }).catch(() => {});
             }

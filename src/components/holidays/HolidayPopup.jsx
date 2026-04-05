@@ -9,12 +9,16 @@ import { hasAcknowledgedHoliday, acknowledgeHoliday } from '@/lib/holidayState';
 export default function HolidayPopup({ isEnabled = true, onClose }) {
   const [holiday, setHoliday] = useState(null);
   const [showPopup, setShowPopup] = useState(false);
+  const [checked, setChecked] = useState(false); // Track if we've already checked today
 
   useEffect(() => {
-    if (!isEnabled) {
+    if (!isEnabled || checked) {
       setShowPopup(false);
       return;
     }
+
+    // Mark that we've checked so we don't re-run on every render
+    setChecked(true);
 
     const now = new Date();
     const currentHoliday = getHolidayForDate(now);
@@ -24,7 +28,7 @@ export default function HolidayPopup({ isEnabled = true, onClose }) {
       setHoliday(currentHoliday);
       setShowPopup(true);
     }
-  }, [isEnabled]);
+  }, [isEnabled, checked]);
 
   const handleDismiss = () => {
     if (holiday) {
