@@ -21,12 +21,18 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
 
-        // Only show resident names for characters that still actually live here
+        // Only show names of residents whose IDs are in activeCharacterIds
         const residentIds = loc.resident_character_ids || [];
-        const hasActiveResidents = activeCharacterIds.length > 0
-          ? residentIds.some(id => activeCharacterIds.includes(id))
-          : residentIds.length > 0;
-        const occupants = hasActiveResidents ? (loc.resident_character_names || []) : [];
+        const residentNames = loc.resident_character_names || [];
+        const activeResidentIds = residentIds.filter(id => activeCharacterIds.includes(id));
+        const hasActiveResidents = activeResidentIds.length > 0;
+        // Pair IDs with names by index to filter accurately
+        const occupants = hasActiveResidents
+          ? residentIds.reduce((acc, id, i) => {
+              if (activeCharacterIds.includes(id) && residentNames[i]) acc.push(residentNames[i]);
+              return acc;
+            }, [])
+          : [];
         const isVacant = loc.category === 'home' && residentIds.length > 0 && !hasActiveResidents;
 
         return (
