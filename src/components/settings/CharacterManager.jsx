@@ -256,8 +256,8 @@ export default function CharacterManager() {
       return Promise.all(promises);
     };
 
-    const npcEntries = selectedEntries.filter(e => e.type === 'npc');
-    const charEntries = selectedEntries.filter(e => e.type === 'char');
+    const npcEntries = selectedEntries.filter(e => e.type === 'npc' && e.key !== masterEntry.key);
+    const charEntries = selectedEntries.filter(e => e.type === 'char' && e.key !== masterEntry.key);
     const isUserMaster = masterEntry.type === 'user';
     const isNpcMaster = masterEntry.type === 'npc';
     const isCharMaster = masterEntry.type === 'char';
