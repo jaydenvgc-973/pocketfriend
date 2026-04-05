@@ -395,9 +395,14 @@ export default function Scene() {
     }
   }, [location?.id, activeZone]);
 
-  // Check for pending invitations when scene loads
+  // Check for pending invitations on first mount only (not on every render)
   useEffect(() => {
     if (!currentUser?.email) return;
+    // Only check once per session using sessionStorage
+    const hasCheckedThisSession = sessionStorage.getItem('invites_checked_this_session');
+    if (hasCheckedThisSession) return;
+
+    sessionStorage.setItem('invites_checked_this_session', 'true');
     base44.functions.invoke('checkAndTriggerInvites', {})
       .then(res => {
         if (res.data?.shouldShow && res.data?.invitations?.length > 0) {

@@ -6,78 +6,64 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Get user settings
     const userSettings = await base44.entities.UserSettings.filter({ created_by: user.email });
     const settings = userSettings[0] || {};
 
     const now = new Date();
     const lastInviteTime = settings.last_invite_out_timestamp ? new Date(settings.last_invite_out_timestamp) : null;
 
-    // Track pending invites (invites shown but not yet accepted/declined)
-    const pendingInvites = settings.pending_character_invites || [];
-    
-    // Space invites: 4 hours minimum between triggers, max 8 per day
-    const minHoursBetween = 4;
-    const maxInvitesPerDay = 8;
-    
-    // Count invites triggered in last 24 hours
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // STRICT RATE LIMIT: Max 2 invitations per hour (TOTAL, not per character)
+    const minMinutesBetween = 30; // At least 30 minutes between trigger attempts
+    const maxInvitesPerHour = 2;
+
+    // Count invites triggered in last hour (60 minutes)
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
     const inviteHistory = settings.invite_trigger_history || [];
-    const recentInviteCount = inviteHistory.filter(time => new Date(time) > oneDayAgo).length;
+    const recentInviteCount = inviteHistory.filter(time => new Date(time) > oneHourAgo).length;
 
     // Check if enough time has passed since last trigger
-    const hoursSinceLastInvite = lastInviteTime ? (now.getTime() - lastInviteTime.getTime()) / (1000 * 60 * 60) : Infinity;
-    const canTrigger = hoursSinceLastInvite === Infinity || hoursSinceLastInvite >= minHoursBetween;
-    const hasCapacity = recentInviteCount < maxInvitesPerDay;
+    const minutesSinceLastInvite = lastInviteTime ? (now.getTime() - lastInviteTime.getTime()) / (1000 * 60) : Infinity;
+    const canTrigger = minutesSinceLastInvite === Infinity || minutesSinceLastInvite >= minMinutesBetween;
+    const hasCapacity = recentInviteCount < maxInvitesPerHour;
 
-    // If we can trigger and have capacity, generate new invites
+    // NEVER show pending invites automatically — they stay in storage until cleared by user
+    const pendingInvites = settings.pending_character_invites || [];
+
+    // Only trigger if both conditions met: enough time passed AND haven't hit 2/hour limit
     if (canTrigger && hasCapacity) {
       const invitationResponse = await base44.functions.invoke('triggerCharacterInviteOut', {});
       let newInvitations = invitationResponse.data?.invitations || [];
-      
-      // Cap at 2 max per trigger
+
+      // Strict cap: max 2 total per trigger
       newInvitations = newInvitations.slice(0, 2);
 
       if (newInvitations.length > 0) {
-        // Merge with pending (but don't let pending exceed 2 either)
-        let allPending = [...pendingInvites, ...newInvitations];
-        allPending = allPending.slice(0, 2);
-        
         if (settings.id) {
           await base44.entities.UserSettings.update(settings.id, {
-            pending_character_invites: allPending,
+            pending_character_invites: newInvitations,
             last_invite_out_timestamp: now.toISOString(),
             invite_trigger_history: [...inviteHistory, now.toISOString()],
           });
         } else {
           await base44.entities.UserSettings.create({
-            pending_character_invites: allPending,
+            pending_character_invites: newInvitations,
             last_invite_out_timestamp: now.toISOString(),
             invite_trigger_history: [now.toISOString()],
           });
         }
 
         return Response.json({
-          shouldShow: allPending.length > 0,
-          invitations: allPending,
+          shouldShow: true,
+          invitations: newInvitations,
           triggeredAt: now.toISOString(),
         });
       }
     }
 
-    // If we can't trigger, show pending invites (if any)
-    if (pendingInvites.length > 0) {
-      return Response.json({
-        shouldShow: true,
-        invitations: pendingInvites,
-        reason: canTrigger ? `${recentInviteCount}/${maxInvitesPerDay} invites today` : `Next invite in ${Math.ceil(minHoursBetween - hoursSinceLastInvite)} hours`,
-      });
-    }
-
     return Response.json({
       shouldShow: false,
       invitations: [],
-      reason: canTrigger ? `${recentInviteCount}/${maxInvitesPerDay} invites today` : `Next invite in ${Math.ceil(minHoursBetween - hoursSinceLastInvite)} hours`,
+      reason: `${recentInviteCount}/${maxInvitesPerHour} invites this hour. ${canTrigger ? 'Ready for more.' : `Wait ${Math.ceil(minMinutesBetween - minutesSinceLastInvite)} more minutes.`}`,
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
