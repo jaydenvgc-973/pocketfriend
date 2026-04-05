@@ -5,7 +5,10 @@ import { MapPin, Home, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
 export default function InviteOutModal({ invitations, onAccept, onDecline, onClose }) {
+  const [selectedIdx, setSelectedIdx] = React.useState(0);
+  
   if (!invitations || invitations.length === 0) return null;
+  const selectedInv = invitations[selectedIdx];
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/60 p-4">
@@ -27,14 +30,19 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onClo
           </button>
         </div>
 
-        <div className="space-y-2 max-h-56 overflow-y-auto">
+        <div className="space-y-2">
           {invitations.map((inv, idx) => (
-            <motion.div
+            <motion.button
               key={`${inv.characterId}-${idx}`}
+              onClick={() => setSelectedIdx(idx)}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.1 }}
-              className="bg-secondary/50 border border-border/50 rounded-xl p-3 space-y-2"
+              className={`w-full text-left rounded-xl p-3 border transition-all ${
+                selectedIdx === idx
+                  ? "bg-primary/10 border-primary/40"
+                  : "bg-secondary/50 border-border/50 hover:border-primary/30"
+              }`}
             >
               <div className="flex items-start gap-3">
                 <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center flex-shrink-0 overflow-hidden">
@@ -50,7 +58,7 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onClo
                     {inv.inviteType === 'home' ? (
                       <>
                         <Home className="w-3 h-3 text-blue-400" />
-                        <span className="text-xs text-muted-foreground">wants you over to their place</span>
+                        <span className="text-xs text-muted-foreground">wants you over</span>
                       </>
                     ) : (
                       <>
@@ -62,7 +70,7 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onClo
                   <p className="text-xs text-primary mt-1 font-medium">📍 {inv.locationName}</p>
                 </div>
               </div>
-            </motion.div>
+            </motion.button>
           ))}
         </div>
 
@@ -76,7 +84,7 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onClo
             Not now
           </Button>
           <Button
-            onClick={() => onAccept(invitations[0])}
+            onClick={() => onAccept(selectedInv)}
             size="sm"
             className="flex-1 rounded-lg gap-2"
           >

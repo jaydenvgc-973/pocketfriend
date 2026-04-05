@@ -285,12 +285,39 @@ export default function Home() {
         <InviteOutModal
           invitations={invitations}
           onAccept={(invite) => {
+            // Record that user accepted this invite (for character memory)
+            base44.functions.invoke('recordCharacterInviteAccepted', {
+              characterId: invite.characterId,
+              locationId: invite.locationId,
+              inviteType: invite.inviteType,
+            }).catch(() => {});
+
+            // Clear this invite and navigate
+            const remaining = invitations.filter(i => i.characterId !== invite.characterId);
+            setInvitations(remaining.length > 0 ? remaining : null);
+            
             const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
             navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
+          }}
+          onDecline={() => {
+            // Record decline for character memory (they might mention it)
+            if (invitations.length > 0) {
+              base44.functions.invoke('recordCharacterInviteDeclined', {
+                characterId: invitations[0].characterId,
+                locationId: invitations[0].locationId,
+              }).catch(() => {});
+            }
             setInvitations(null);
           }}
-          onDecline={() => setInvitations(null)}
-          onClose={() => setInvitations(null)}
+          onClose={() => {
+            // Clear pending invites from settings when modal is dismissed
+            if (settingsList[0]?.id) {
+              base44.entities.UserSettings.update(settingsList[0].id, {
+                pending_character_invites: [],
+              }).catch(() => {});
+            }
+            setInvitations(null);
+          }}
         />
       )}
       <BottomNav />

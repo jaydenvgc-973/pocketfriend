@@ -35,25 +35,43 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get all locations and pick random ones
+    // Get all locations
     const locations = await base44.entities.LocationReference.list();
+    
     const invitations = selected.map(char => {
-      // Character can invite to a location they know (home, work, or any random location)
       const charHome = locations.find(l => l.id === char.current_home_location_id);
       const charWork = locations.find(l => l.id === char.occupation_location_id);
       
-      // Prefer home or work, otherwise random
-      const inviteLocation = charHome || charWork || locations[Math.floor(Math.random() * locations.length)];
+      // Social venues (places to "go out")
+      const socialVenues = locations.filter(l => 
+        ['social', 'food_drink', 'gym', 'outdoor'].includes(l.category)
+      );
       
-      // 50/50 chance: invite to location or to their home
-      const inviteType = Math.random() > 0.5 ? 'location' : 'home';
-      const targetLocation = inviteType === 'home' && charHome ? charHome : inviteLocation;
+      // Decide invite type based on character preference
+      const rand = Math.random();
+      let inviteType, targetLocation;
+      
+      if (rand < 0.4 && charHome) {
+        // 40%: invite to their home
+        inviteType = 'home';
+        targetLocation = charHome;
+      } else if (rand < 0.7 && charWork) {
+        // 30%: invite to their workplace (meet them there)
+        inviteType = 'goout';
+        targetLocation = charWork;
+      } else {
+        // 30%: invite to a social venue
+        inviteType = 'goout';
+        targetLocation = socialVenues.length > 0 
+          ? socialVenues[Math.floor(Math.random() * socialVenues.length)]
+          : locations[Math.floor(Math.random() * locations.length)];
+      }
 
       return {
         characterId: char.id,
         characterName: char.name,
         characterAvatar: char.avatar_url,
-        inviteType, // 'home' or 'location'
+        inviteType, // 'home' or 'goout'
         locationId: targetLocation.id,
         locationName: targetLocation.name,
         locationCategory: targetLocation.category,
