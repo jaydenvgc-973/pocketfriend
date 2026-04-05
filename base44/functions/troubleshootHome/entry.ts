@@ -64,50 +64,65 @@ Deno.serve(async (req) => {
       }
     }
 
-    // AVAILABILITY DISPLAY CHECK — validate ALL activity type detection
+    // AVAILABILITY DISPLAY CHECK + AUTO-FIX
     if (selectedIssues.includes('availability_display')) {
       results.checked.push('Availability and status display (all activity types)');
-      
-      const issues = [];
+
+      // Expanded activity keywords to match characterStatusUtils.js
+      const activityKeywords = [
+        'work', 'school', 'class', 'gym', 'bar', 'club', 'mall', 'home', 'hospital',
+        'prayer', 'worship', 'doctor', 'coffee', 'café', 'cafe', 'park', 'trail', 'hike',
+        'restaurant', 'dinner', 'lunch', 'brunch', 'store', 'errand', 'grocery', 'pharmacy',
+        'church', 'mosque', 'temple', 'synagogue', 'mass', 'kingdom hall',
+        'training', 'internship', 'shadowing', 'outside', 'outdoor', 'laundromat', 'laundry',
+        'shopping', 'evening', 'out for', 'friend', 'event', 'support group', 'therapy',
+        'therapist', 'counseling', 'appointment', 'procedure', 'surgery', 'clinic',
+        'workout', 'exercise', 'yoga', 'pilates', 'crossfit', 'spin class',
+        'resting', 'cooking', 'watching', 'cleaning', 'winding down', 'morning routine',
+        'sleeping', 'asleep', 'apartment', 'house', 'studying', 'tutoring', 'library', 'campus',
+        'sick', 'patient'
+      ];
+
       for (const char of characters) {
+        const fixes = {};
         const issues_for_char = [];
-        
-        // Check for missing schedule basics
+
+        // Fix missing sleep schedule
         if (!char.sleep_start_time || !char.wake_up_time) {
-          issues_for_char.push('missing sleep schedule');
+          fixes.sleep_start_time = '23:00';
+          fixes.wake_up_time = '07:00';
+          issues_for_char.push('missing sleep schedule → set to 11pm–7am');
         }
-        
-        // Check work schedule
+
+        // Fix missing work hours
         if (char.work_details?.job_title && (!char.work_start_time || !char.work_end_time)) {
-          issues_for_char.push('has job but no work hours');
+          fixes.work_start_time = '09:00';
+          fixes.work_end_time = '17:00';
+          issues_for_char.push('missing work hours → set to 9am–5pm');
         }
-        
-        // Check education schedule
-        if (char.current_education_activity && char.current_education_activity !== 'none' && !char.education_expected_completion_date) {
-          issues_for_char.push('in education but no completion date');
+
+        // Fix missing work days
+        if (char.work_details?.job_title && (!char.work_days || char.work_days.length === 0)) {
+          fixes.work_days = [1, 2, 3, 4, 5];
+          issues_for_char.push('missing work days → set to Mon–Fri');
         }
-        
-        // Check job training schedule
-        if (char.current_job_training_activity && char.current_job_training_activity !== 'none' && !char.job_training_expected_completion_date) {
-          issues_for_char.push('in training but no completion date');
-        }
-        
-        // Check current_activity is being mapped (at least one activity keyword check)
-        const activity = (char.current_activity || '').toLowerCase();
-        const activityKeywords = ['work', 'school', 'class', 'gym', 'bar', 'club', 'mall', 'home', 'hospital', 'prayer', 'worship', 'doctor', 'coffee', 'park', 'restaurant', 'store', 'errand'];
-        const hasDetectable = activityKeywords.some(kw => activity.includes(kw)) || activity.trim() === '';
-        
+
+        // Fix unrecognized current_activity — clear it so "available" shows instead of broken state
+        const activity = (char.current_activity || '').toLowerCase().trim();
+        const hasDetectable = !activity || activityKeywords.some(kw => activity.includes(kw));
         if (activity && !hasDetectable) {
-          issues_for_char.push(`current_activity "${activity}" not recognized by status detector`);
+          fixes.current_activity = '';
+          issues_for_char.push(`unrecognized activity "${char.current_activity}" → cleared`);
         }
-        
-        if (issues_for_char.length > 0) {
-          results.issues_found.push(`${char.name}: ${issues_for_char.join(', ')}`);
+
+        if (Object.keys(fixes).length > 0) {
+          await base44.entities.Character.update(char.id, fixes);
+          results.fixed.push(`${char.name}: ${issues_for_char.join('; ')}`);
         }
       }
-      
-      if (results.issues_found.length === 0) {
-        results.fixed.push('All characters have complete availability/activity data');
+
+      if (results.fixed.length === 0) {
+        results.fixed.push('All characters have complete availability/activity data — nothing to fix');
       }
     }
 

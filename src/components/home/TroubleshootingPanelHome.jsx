@@ -153,7 +153,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                       disabled={selectedIssues.length === 0 || isRunning}
                       className="flex-1 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Check Selected Issues
+                      Fix Selected Issues
                     </button>
                     <button
                       onClick={onClose}
