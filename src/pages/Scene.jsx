@@ -208,17 +208,15 @@ export default function Scene() {
   const allPossibleNpcs = (() => {
     const npcs = [];
 
-    // Home: family members of away residents
+    // Home: only show family members explicitly listed as residents of THIS location
     if (isHomeLocation) {
-      homeResidentsAway.forEach(c => {
-        (c.family_members || []).forEach(fm => {
-          if (fm.name) npcs.push({
-            id: `npc_${fm.name.replace(/\s+/g, "_")}`,
-            name: fm.name,
-            role: fm.relationship_type || "Family",
-            isNpc: true,
-            avatar_url: null,
-          });
+      (location.resident_family_members || []).forEach(fm => {
+        if (fm.name) npcs.push({
+          id: `npc_${fm.name.replace(/\s+/g, "_")}`,
+          name: fm.name,
+          role: fm.relationship_type || "Family",
+          isNpc: true,
+          avatar_url: null,
         });
       });
       // NPC owner when no one is home
