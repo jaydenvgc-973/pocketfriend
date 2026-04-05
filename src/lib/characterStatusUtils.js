@@ -183,8 +183,8 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     if (activity.includes('laundromat') || activity.includes('laundry') || activity.includes('dry cleaning')) {
       return { iconType: 'out', label: 'at laundromat', color: 'text-blue-400' };
     }
-    if (activity.includes('church') || activity.includes('mosque') || activity.includes('temple') || activity.includes('synagogue') || activity.includes('service') || activity.includes('prayer') || activity.includes('kingdom hall') || activity.includes('mass')) {
-      const label = religionLocation ? `at ${religionLocation.name}` : 'at worship';
+    if ((activity.includes('church') || activity.includes('mosque') || activity.includes('temple') || activity.includes('synagogue') || activity.includes('kingdom hall') || activity.includes('mass')) && religionLocation) {
+      const label = `at ${religionLocation.name}`;
       return { iconType: 'prayer', label, color: 'text-violet-300' };
     }
     // NOTE: "worship" keyword handled separately above (Step 9) to distinguish home worship vs church attendance
