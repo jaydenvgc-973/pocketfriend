@@ -436,8 +436,8 @@ export default function Scene() {
     workerCharacters.forEach(char => {
       const updates = { current_location_id: location.id };
       
-      // If worker is asleep, force them awake and make them angry/tired
-      if (isCharacterAsleep(char)) {
+      // If Brian Anderson is asleep, force him awake and make him angry/tired
+      if (char.name === "Brian Anderson" && isCharacterAsleep(char)) {
         updates.emotional_state = "irritated"; // angry/tired from being woken up
         // Clear sleep indicators
         if (char.sleep_start_time) {
