@@ -110,21 +110,25 @@ export async function fetchUnifiedRoster(base44, userEmail) {
 
   // ── FAMILY MEMBERS ──────────────────────────────────────────────────────
   // Collect family members from all active characters
-  const familyMembersMap = new Map(); // Deduplicate by name + source character
+  // Deduplicate: same name + source character = same family member, keep only one
+  const familyMembersMap = new Map();
 
   activeCharacters.forEach(char => {
     (char.family_members || []).forEach(fm => {
-      if (fm.name) {
-        const key = `${fm.name.toLowerCase()}_${char.id}`;
-        if (!familyMembersMap.has(key)) {
-          familyMembersMap.set(key, {
-            name: fm.name,
-            relationship_type: fm.relationship_type || 'Family',
-            avatar_url: fm.photo_url || null,
-            source_character_id: char.id,
-            source_character_name: char.name,
-          });
-        }
+      // Skip empty/unnamed entries (ghosts)
+      if (!fm.name || fm.name.trim() === '' || fm.name.toLowerCase().includes('unnamed')) {
+        return;
+      }
+      const key = `${fm.name.toLowerCase()}_${char.id}`;
+      // Only keep the first instance; later duplicates are ignored
+      if (!familyMembersMap.has(key)) {
+        familyMembersMap.set(key, {
+          name: fm.name,
+          relationship_type: fm.relationship_type || 'Family',
+          avatar_url: fm.photo_url || null,
+          source_character_id: char.id,
+          source_character_name: char.name,
+        });
       }
     });
   });
