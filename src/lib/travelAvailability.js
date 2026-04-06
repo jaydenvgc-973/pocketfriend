@@ -1,4 +1,5 @@
 import { getCharacterStatusDisplay } from './characterStatusUtils';
+import { getAuthoritativeCharacterLocation } from './authoritativeLocationResolver';
 import { isCharacterAsleep } from './sleepUtils';
 import { isCharacterAtWork } from './workScheduleUtils';
 import { toDisplay12h } from './timeFormat';
@@ -10,10 +11,18 @@ import { toDisplay12h } from './timeFormat';
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
+  // Build complete locationData for proper resolution
+  const homeLocation = character.current_home_location_id ? locationMap[character.current_home_location_id] : null;
   const workLocation = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
   const educationLocation = character.education_location_id ? locationMap[character.education_location_id] : null;
+  const currentLocation = character.current_location_id ? locationMap[character.current_location_id] : null;
 
-  const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation });
+  const statusDisplay = getCharacterStatusDisplay(character, { 
+    homeLocation, 
+    workLoc: workLocation, 
+    eduLoc: educationLocation, 
+    currentLoc: currentLocation 
+  });
   const iconType = statusDisplay?.iconType || 'calm';
 
   if (iconType === 'sleep') {
@@ -80,9 +89,11 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
 
 /**
  * Returns true if a character is currently at home (not at work, school, etc.)
+ * CRITICAL: Uses authoritative resolver to determine actual location
  */
 export function isCharacterHome(character, locationMap = {}) {
-  const avail = getCharacterTravelAvailability(character, locationMap);
-  // If they're available (not blocked by work/school/sleep/etc.), they're home
-  return avail.available;
+  const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
+  // They're home only if their authoritative location is their home location
+  if (!authLoc || !character.current_home_location_id) return false;
+  return authLoc.id === character.current_home_location_id;
 }
