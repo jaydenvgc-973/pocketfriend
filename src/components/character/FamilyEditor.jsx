@@ -41,6 +41,7 @@ export function calcFamilyMemberAge(member, characterCreatedDate, index = 0) {
 const RELATIONSHIP_TYPES = [
   "mother", "father", "grandmother", "grandfather",
   "great-grandmother", "great-grandfather", "aunt", "uncle",
+  "mother-in-law", "father-in-law", "sister-in-law", "brother-in-law",
   "sister", "brother", "half-sister", "half-brother",
   "step-mother", "step-father", "step-sister", "step-brother",
   "cousin", "niece", "nephew", "daughter", "son", "spouse",
@@ -544,8 +545,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                 })()}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-foreground font-medium">{member.name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">
-                    {member.relationship_type}
+                  <p className="text-xs text-muted-foreground">
                     {(() => {
                       const bd = userSettings?.user_birthday;
                       if (bd) {
@@ -553,13 +553,27 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                         const d = new Date(bd);
                         let age = today.getFullYear() - d.getFullYear();
                         if (today < new Date(today.getFullYear(), d.getMonth(), d.getDate())) age--;
-                        return ` · ${age} yrs`;
+                        return `${age} yrs`;
                       }
-                      return member.age_at_creation != null ? ` · ${calcFamilyMemberAge(member, member.age_set_date, 0)} yrs` : "";
+                      return member.age_at_creation != null ? `${calcFamilyMemberAge(member, member.age_set_date, 0)} yrs` : "";
                     })()}
                   </p>
                 </div>
-                <span className="text-[10px] text-pink-400 border border-pink-400/30 rounded px-1.5 py-0.5">You</span>
+                {!readOnly && (
+                  <select
+                    value={member.relationship_type}
+                    onChange={e => updateMember(idx, "relationship_type", e.target.value)}
+                    className="bg-secondary text-foreground text-xs rounded-xl px-2 py-1.5 outline-none border border-transparent focus:border-primary/50 capitalize"
+                  >
+                    {RELATIONSHIP_TYPES.map(type => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                )}
+                {readOnly && (
+                  <span className="text-xs text-muted-foreground capitalize">{member.relationship_type}</span>
+                )}
+                <span className="text-[10px] text-pink-400 border border-pink-400/30 rounded px-1.5 py-0.5 flex-shrink-0">You</span>
               </div>
             ) : readOnly ? (
               /* Read-only view with photo */
