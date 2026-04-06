@@ -22,36 +22,37 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'At least 2 characterIds required' }, { status: 400 });
     }
 
-    // ── FETCH ALL CHARACTERS ─────────────────────────────────────────────
-    const chars = (await Promise.all(
-      characterIds.map(id =>
-        base44.asServiceRole.entities.Character.list('-updated_date', 1000)
-          .then(all => all.find(c => c.id === id) || null)
-          .catch(() => null)
-      )
-    ));
-
-    // Simpler approach: fetch all chars once, find by ID
+    // ── FETCH ALL CHARACTERS (single list, find by ID) ───────────────────
     const allCharsForUser = await base44.asServiceRole.entities.Character.list('-updated_date', 1000);
     const charMap = Object.fromEntries(allCharsForUser.map(c => [c.id, c]));
 
-    const resolvedChars = characterIds.map(id => charMap[id]).filter(Boolean);
-    if (resolvedChars.length < 2) {
-      return Response.json({ error: `Could not find enough characters. Found: ${resolvedChars.length} of ${characterIds.length}` }, { status: 404 });
-    }
-
-    // SELECT PRIMARY
-    let primary = primaryCharacterId
-      ? resolvedChars.find(c => c.id === primaryCharacterId)
-      : recommendPrimary(resolvedChars);
+    // SELECT PRIMARY — must exist and be the designated master
+    let primary = primaryCharacterId ? charMap[primaryCharacterId] : null;
 
     if (!primary) {
-      return Response.json({ error: 'Invalid primary character ID' }, { status: 400 });
+      // Primary was already deleted or never existed — nothing to merge into
+      return Response.json({ 
+        error: `Primary character ${primaryCharacterId} not found. It may have already been merged or deleted.` 
+      }, { status: 404 });
     }
 
+    // Secondaries: all the duplicate IDs that are NOT the primary
+    // Skip any that don't exist (already deleted from a prior merge attempt)
     const secondaryIds = characterIds.filter(id => id !== primary.id && charMap[id]);
+    
+    if (secondaryIds.length === 0) {
+      // Nothing left to merge — duplicates already gone, master exists. Success.
+      return Response.json({
+        success: true,
+        primary_character_id: primary.id,
+        primary_character_name: primary.name,
+        merged_character_ids: [],
+        message: 'Duplicates were already removed. Master character is intact.',
+      });
+    }
+
     const secondaryChars = secondaryIds.map(id => charMap[id]).filter(Boolean);
-    const oldNames = resolvedChars.map(c => c.name);
+    const oldNames = [primary, ...secondaryChars].map(c => c.name);
     const secondaryNames = secondaryChars.map(c => c.name.toLowerCase());
 
     // The final avatar and name for the master
