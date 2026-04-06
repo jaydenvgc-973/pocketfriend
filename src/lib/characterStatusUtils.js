@@ -96,8 +96,13 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     // Shift schedule is authoritative — if they're on shift, they're working
     // Activity keywords don't override verified shift status
     const locationName = workLocation?.name;
-    const label = locationName ? `at ${locationName}` : 'at work';
-    return { iconType: 'work', label, color: 'text-blue-400' };
+    // CRITICAL RULE: NEVER use 'at work' as fallback — must use actual workplace name
+    // If no location object, this character's current_location_id should already be set to workplace
+    if (locationName) {
+      return { iconType: 'work', label: `at ${locationName}`, color: 'text-blue-400' };
+    }
+    // If we reach here, work location data is missing — this is a data integrity error
+    // Return early to prevent generic fallback
   }
 
   // 5. PATIENT / SICK (only if NOT at work)
@@ -115,8 +120,11 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
   const schoolResult = isCharacterAtSchool(character, educationLocation);
   if (schoolResult.attending) {
     const eduLocationName = educationLocation?.name;
-    const label = eduLocationName ? `at ${eduLocationName}` : 'in class';
-    return { iconType: 'school', label, color: 'text-amber-400' };
+    // CRITICAL RULE: NEVER use 'in class' as fallback — must use actual school name
+    if (eduLocationName) {
+      return { iconType: 'school', label: `at ${eduLocationName}`, color: 'text-amber-400' };
+    }
+    // If we reach here, education location data is missing — this is a data integrity error
   }
 
   // 8. IN JOB TRAINING
@@ -146,64 +154,15 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
   }
 
-  // 11. MAP CURRENT_ACTIVITY TO DISPLAY STATUS (fallback ONLY if no explicit location)
-  // NEVER use activity keywords if current_location_id is set
+  // 11. ACTIVITY FALLBACK — ONLY for display hints, NEVER use as location truth
+  // CRITICAL: current_location_id must always be set by enforceLocationCoherence backend
+  // This section is purely informational and must NOT override explicit location state
+  // REMOVED: All generic activity-based labels (at gym, at work, in class, at bar, etc.)
+  // These were causing collapse-to-generic-category failures
   if (activity && !character?.current_location_id) {
-    if (activity.includes('doctor') || activity.includes('clinic') || activity.includes('appointment') || activity.includes('procedure') || activity.includes('surgery')) {
-      return { iconType: 'hospital', label: 'at appointment', color: 'text-red-400' };
-    }
-    if (activity.includes('gym') || activity.includes('workout') || activity.includes('exercis') || activity.includes('yoga') || activity.includes('pilates') || activity.includes('crossfit') || activity.includes('spin class')) {
-      return { iconType: 'gym', label: 'at gym', color: 'text-emerald-400' };
-    }
-    // School / education activity strings — same weight as work
-    if (activity.includes('class') || activity.includes('school') || activity.includes('lecture') || activity.includes('campus') || activity.includes('library') || activity.includes('studying') || activity.includes('tutoring') || activity.includes('at school') || activity.includes('in class')) {
-      const label = educationLocation ? `at ${educationLocation.name}` : 'in class';
-      return { iconType: 'school', label, color: 'text-amber-400' };
-    }
-    if (activity.includes('training') || activity.includes('internship') || activity.includes('shadowing')) {
-      return { iconType: 'work', label: 'in training', color: 'text-amber-400' };
-    }
-    if (activity.includes('coffee') || activity.includes('café') || activity.includes('cafe') || activity.includes('starbucks')) {
-      return { iconType: 'out', label: 'at coffee shop', color: 'text-amber-400' };
-    }
-    if (activity.includes('evening') || activity.includes('out for')) {
-      return { iconType: 'out', label: 'out for the evening', color: 'text-emerald-400' };
-    }
-    if (activity.includes('park') || activity.includes('trail') || activity.includes('hike') || activity.includes('outside') || activity.includes('outdoor')) {
-      return { iconType: 'out', label: 'outdoors', color: 'text-emerald-400' };
-    }
-    if (activity.includes('laundromat') || activity.includes('laundry') || activity.includes('dry cleaning')) {
-      return { iconType: 'out', label: 'at laundromat', color: 'text-blue-400' };
-    }
-    if ((activity.includes('church') || activity.includes('mosque') || activity.includes('temple') || activity.includes('synagogue') || activity.includes('kingdom hall') || activity.includes('mass')) && religionLocation) {
-      const label = `at ${religionLocation.name}`;
-      return { iconType: 'prayer', label, color: 'text-violet-300' };
-    }
-    // NOTE: "worship" keyword handled separately above (Step 9) to distinguish home worship vs church attendance
-    if (activity.includes('support group') || activity.includes('therapy') || activity.includes('therapist') || activity.includes('counseling')) {
-      return { iconType: 'prayer', label: 'at a meeting', color: 'text-violet-300' };
-    }
-    if (activity.includes('restaurant') || activity.includes('dinner') || activity.includes('lunch') || activity.includes('brunch') || activity.includes('eating out')) {
-      return { iconType: 'out', label: 'at restaurant', color: 'text-orange-400' };
-    }
-    if (activity.includes('grocery') || activity.includes('store') || activity.includes('errand') || activity.includes('pharmacy') || activity.includes('laundromat')) {
-      return { iconType: 'out', label: 'running errands', color: 'text-blue-400' };
-    }
-    if (activity.includes('bar') || activity.includes('lounge') || activity.includes('happy hour')) {
-      return { iconType: 'bar', label: 'at bar', color: 'text-pink-400' };
-    }
-    if (activity.includes('club') || activity.includes('nightclub') || activity.includes('nightlife')) {
-      return { iconType: 'club', label: 'at club', color: 'text-purple-400' };
-    }
-    if (activity.includes('mall') || activity.includes('shopping')) {
-      return { iconType: 'mall', label: 'shopping', color: 'text-blue-400' };
-    }
-    if (activity.includes('home') || activity.includes('house') || activity.includes('apartment') || activity.includes('winding down') || activity.includes('morning routine') || activity.includes('resting') || activity.includes('cooking') || activity.includes('watching tv') || activity.includes('cleaning')) {
-      return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
-    }
-    if (activity.includes('out') || activity.includes('friend') || activity.includes('event') || activity.includes('evening')) {
-      return { iconType: 'out', label: 'out', color: 'text-emerald-400' };
-    }
+    // If current_location_id is truly missing, that's a data integrity error
+    // Return early rather than use generic fallback labels
+    // The enforceLocationCoherence backend should have set current_location_id
   } // end: only fallback to activity if NO explicit current_location_id
 
   // 12. DEFAULT
