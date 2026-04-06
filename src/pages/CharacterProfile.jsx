@@ -694,16 +694,16 @@ export default function CharacterProfile() {
                             <div className="flex items-center gap-3">
                               {rel.avatar_url || rel.photo_url ? (
                                 <div className="relative group">
-                                  <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                                  <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-8 h-8 rounded-full object-cover flex-shrink-0 ring-2 ring-primary/20" />
                                   <div className="absolute inset-0 rounded-full bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                    <ZoomIn className="w-4 h-4 text-white" />
+                                    <ZoomIn className="w-3 h-3 text-white" />
                                   </div>
-                                </div>
-                              ) : (
-                                <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                                  </div>
+                                  ) : (
+                                  <div className="w-8 h-8 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
                                   <span className="text-xs font-semibold text-primary">{rel.person_name?.[0]?.toUpperCase() || "?"}</span>
-                                </div>
-                              )}
+                                  </div>
+                                  )}
                               <div>
                                 <p className="text-sm font-semibold text-foreground">{rel.person_name}</p>
                                 <p className="text-xs text-primary font-medium capitalize">{rel.relationship_type}</p>
