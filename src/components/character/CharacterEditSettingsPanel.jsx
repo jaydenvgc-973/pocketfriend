@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Trash2, Check } from "lucide-react";
+import { X, Plus, Trash2, Check, Link, AlertTriangle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
@@ -52,10 +52,254 @@ function TextareaField({ character, field, label, placeholder }) {
   );
 }
 
-// "Characters They Know" editor — link active characters
+// ── Fuzzy name match: score similarity between two names ──────────────────────
+function nameSimilarity(a, b) {
+  const norm = s => s.toLowerCase().trim();
+  const na = norm(a), nb = norm(b);
+  if (na === nb) return 1;
+  if (na.includes(nb) || nb.includes(na)) return 0.85;
+  // First name match
+  const fa = na.split(" ")[0], fb = nb.split(" ")[0];
+  if (fa === fb) return 0.7;
+  return 0;
+}
+
+// Returns active characters that are possible matches for an NPC name
+function findPossibleMatches(npcName, allCharacters) {
+  return allCharacters
+    .filter(c =>
+      c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged"
+    )
+    .map(c => ({ char: c, score: nameSimilarity(npcName, c.name) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .map(x => x.char);
+}
+
+// ── Ghost Link Modal — shown when user clicks "Link to character" on an NPC ──
+function GhostLinkModal({ npc, allCharacters, character, onConfirm, onCancel }) {
+  const matches = findPossibleMatches(npc.person_name, allCharacters.filter(c => c.id !== character.id));
+  const [selected, setSelected] = useState(null);
+  const [showAll, setShowAll] = useState(false);
+
+  const candidates = showAll
+    ? allCharacters.filter(c => c.id !== character.id && c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged")
+    : matches;
+
+  return createPortal(
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 bg-black/70 z-[60] flex items-center justify-center p-4"
+      onClick={onCancel}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.95, opacity: 0 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-xs bg-card border border-border rounded-2xl overflow-hidden shadow-2xl"
+      >
+        <div className="px-4 py-3 border-b border-border">
+          <p className="text-sm font-semibold text-foreground">Who is "{npc.person_name}"?</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Select the real character this NPC is a ghost of. They'll be linked and removed from "People in Their World".
+          </p>
+        </div>
+
+        {matches.length > 0 && (
+          <div className="px-3 pt-2 pb-1">
+            <p className="text-[10px] font-semibold text-amber-400/80 uppercase tracking-wider flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" /> Possible matches
+            </p>
+          </div>
+        )}
+
+        <div className="max-h-56 overflow-y-auto">
+          {candidates.length === 0 && (
+            <p className="text-xs text-muted-foreground italic px-4 py-3">No active characters found.</p>
+          )}
+          {candidates.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setSelected(c)}
+              className={`w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-secondary transition-colors text-left ${selected?.id === c.id ? "bg-primary/10" : ""}`}
+            >
+              <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${selected?.id === c.id ? "bg-primary border-primary" : "border-border"}`}>
+                {selected?.id === c.id && <Check className="w-2.5 h-2.5 text-white" />}
+              </div>
+              {c.avatar_url
+                ? <img src={c.avatar_url} alt={c.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                : <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0"><span className="text-xs font-bold text-primary">{c.name?.[0]}</span></div>
+              }
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">{c.name}</p>
+                {c.personality_summary && <p className="text-[10px] text-muted-foreground truncate">{c.personality_summary.split(".")[0]}</p>}
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {!showAll && matches.length < allCharacters.filter(c => c.id !== character.id).length && (
+          <button
+            onClick={() => setShowAll(true)}
+            className="w-full text-xs text-muted-foreground hover:text-foreground py-2 border-t border-border transition-colors"
+          >
+            Show all characters…
+          </button>
+        )}
+
+        <div className="flex gap-2 p-3 border-t border-border">
+          <button
+            onClick={onCancel}
+            className="flex-1 text-xs text-muted-foreground bg-secondary rounded-xl py-2 hover:text-foreground transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            disabled={!selected}
+            onClick={() => selected && onConfirm(selected)}
+            className="flex-1 text-xs text-primary-foreground bg-primary rounded-xl py-2 hover:bg-primary/90 transition-colors disabled:opacity-40 flex items-center justify-center gap-1"
+          >
+            <Link className="w-3 h-3" /> Link
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>,
+    document.body
+  );
+}
+
+// ── People In Their World Editor ──────────────────────────────────────────────
+function WorldPeopleEditor({ character, allCharacters }) {
+  const queryClient = useQueryClient();
+  const [linkingNpc, setLinkingNpc] = useState(null); // the NPC rel being linked
+
+  // NPCs: fictional_relationships with NO related_character_id
+  const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+  const npcRels = (character.fictional_relationships || []).filter(r =>
+    !r.related_character_id && !r._from_family && !familyNames.has(r.person_name?.toLowerCase())
+  );
+
+  // Deduplicate by person_name
+  const seen = new Set();
+  const deduped = npcRels.filter(r => {
+    const key = r.person_name?.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  const deleteNpc = async (personName) => {
+    const updated = (character.fictional_relationships || []).filter(
+      r => r.person_name?.toLowerCase() !== personName.toLowerCase()
+    );
+    await base44.entities.Character.update(character.id, { fictional_relationships: updated });
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+  };
+
+  const linkNpcToCharacter = async (npc, targetChar) => {
+    // Replace the NPC entry: add related_character_id, update avatar/name to match the real character
+    const updated = (character.fictional_relationships || []).map(r => {
+      if (r.person_name?.toLowerCase() === npc.person_name?.toLowerCase() && !r.related_character_id) {
+        return {
+          ...r,
+          person_name: targetChar.name,
+          related_character_id: targetChar.id,
+          avatar_url: targetChar.avatar_url || r.avatar_url || null,
+        };
+      }
+      return r;
+    });
+    // Deduplicate: if targetChar is already linked separately, merge & keep the one with more data
+    const linkedToTarget = updated.filter(r => r.related_character_id === targetChar.id);
+    let finalRels = updated;
+    if (linkedToTarget.length > 1) {
+      // Keep the first (now updated) one, remove subsequent duplicates
+      let kept = false;
+      finalRels = updated.filter(r => {
+        if (r.related_character_id === targetChar.id) {
+          if (!kept) { kept = true; return true; }
+          return false;
+        }
+        return true;
+      });
+    }
+    await base44.entities.Character.update(character.id, { fictional_relationships: finalRels });
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    setLinkingNpc(null);
+  };
+
+  return (
+    <div className="space-y-2">
+      {deduped.length === 0 && (
+        <p className="text-xs text-muted-foreground italic">No unlinked people in their world.</p>
+      )}
+      {deduped.map((rel, i) => {
+        // Check if this NPC name loosely matches any active character → flag as possible ghost
+        const possibleMatches = findPossibleMatches(rel.person_name, allCharacters.filter(c => c.id !== character.id));
+        const isGhost = possibleMatches.length > 0;
+
+        return (
+          <div key={i} className={`rounded-xl border px-3 py-2.5 space-y-1.5 ${isGhost ? "border-amber-500/40 bg-amber-500/5" : "border-border bg-secondary/30"}`}>
+            <div className="flex items-center gap-2">
+              {rel.avatar_url || rel.photo_url
+                ? <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                : <div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{rel.person_name?.[0]?.toUpperCase()}</span></div>
+              }
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-foreground truncate">{rel.person_name}</p>
+                <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}</p>
+              </div>
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {/* Link to character button */}
+                <button
+                  onClick={() => setLinkingNpc(rel)}
+                  title="Link to active character"
+                  className={`p-1.5 rounded-lg transition-colors ${isGhost ? "text-amber-400 hover:bg-amber-500/20" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+                >
+                  <Link className="w-3.5 h-3.5" />
+                </button>
+                {/* Delete button */}
+                <button
+                  onClick={() => deleteNpc(rel.person_name)}
+                  title="Remove from world"
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+            {isGhost && (
+              <p className="text-[10px] text-amber-400/80 flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" />
+                Possible ghost of: {possibleMatches.map(c => c.name).join(", ")}
+              </p>
+            )}
+          </div>
+        );
+      })}
+
+      {/* Ghost link modal */}
+      <AnimatePresence>
+        {linkingNpc && (
+          <GhostLinkModal
+            npc={linkingNpc}
+            allCharacters={allCharacters}
+            character={character}
+            onConfirm={(targetChar) => linkNpcToCharacter(linkingNpc, targetChar)}
+            onCancel={() => setLinkingNpc(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// ── Characters They Know Editor ───────────────────────────────────────────────
 function KnownCharactersEditor({ character, allCharacters }) {
   const queryClient = useQueryClient();
-  const [adding, setAdding] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef(null);
 
@@ -101,7 +345,6 @@ function KnownCharactersEditor({ character, allCharacters }) {
     await base44.entities.Character.update(character.id, { fictional_relationships: updated });
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
     setPickerOpen(false);
-    setAdding(false);
   };
 
   const removeLinked = async (charId) => {
@@ -213,6 +456,7 @@ function CharacterPickerDropdown({ characters, onSelect }) {
   );
 }
 
+// ── Main Panel ────────────────────────────────────────────────────────────────
 export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters }) {
   if (!isOpen || !character) return null;
 
@@ -278,9 +522,21 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                 <TextareaField character={character} field="criminal_record" label="Criminal Record" placeholder="None" />
               </section>
 
+              {/* People In Their World */}
+              <section className="space-y-3">
+                <div>
+                  <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">People In Their World</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Unlinked NPCs. Delete or link them to a real active character.</p>
+                </div>
+                <WorldPeopleEditor character={character} allCharacters={allCharacters} />
+              </section>
+
               {/* Characters They Know */}
               <section className="space-y-3">
-                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Characters They Know</p>
+                <div>
+                  <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Characters They Know</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Active characters with a direct link.</p>
+                </div>
                 <KnownCharactersEditor character={character} allCharacters={allCharacters} />
               </section>
 
