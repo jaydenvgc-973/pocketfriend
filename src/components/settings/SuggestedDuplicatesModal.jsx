@@ -61,10 +61,20 @@ export default function SuggestedDuplicatesModal({ isOpen, onClose, duplicates =
                     {merging === dupeGroup.name ? 'Merging...' : 'Merge'}
                   </Button>
                 </div>
-                <div className="text-xs text-muted-foreground space-y-1">
-                  {dupeGroup.records.map((r, i) => (
-                    <div key={r.id} className="pl-3 border-l border-border/50">
-                      ID: {r.id.slice(0, 8)}... | Created: {new Date(r.created_date).toLocaleDateString()}
+                <div className="space-y-2 mt-3">
+                  {dupeGroup.records.map((r) => (
+                    <div key={r.id} className="flex items-center gap-3 p-2 bg-secondary/40 rounded-lg">
+                      {r.avatar_url ? (
+                        <img src={r.avatar_url} alt={r.name} className="w-8 h-8 rounded object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded bg-primary/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-semibold text-primary">{r.name?.[0]?.toUpperCase()}</span>
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{r.name}</p>
+                        <p className="text-[10px] text-muted-foreground">Created: {new Date(r.created_date).toLocaleDateString()}</p>
+                      </div>
                     </div>
                   ))}
                 </div>
