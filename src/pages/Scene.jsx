@@ -422,12 +422,20 @@ export default function Scene() {
   }, [location?.id, activeZone]);
 
   // When characters arrive at the scene, update their current_location_id so their card reflects the venue
+  // Also update worker characters to reflect they're at this location while on shift
   useEffect(() => {
-    if (!location || broughtCharacters.length === 0) return;
+    if (!location) return;
+    
+    // Update brought characters
     broughtCharacters.forEach(char => {
       base44.entities.Character.update(char.id, { current_location_id: location.id }).catch(() => {});
     });
-  }, [location?.id]);
+    
+    // Update worker characters who are on shift at this location
+    workerCharacters.forEach(char => {
+      base44.entities.Character.update(char.id, { current_location_id: location.id }).catch(() => {});
+    });
+  }, [location?.id, workerCharacters]);
 
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
