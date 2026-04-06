@@ -30,6 +30,9 @@ export function createVisualEntity(data, entityType) {
     is_character: entityType === 'character',
     is_family: entityType === 'family',
     is_world_person: entityType === 'world_person',
+    is_active_character: data.is_active_character || false,
+    status: data.status || null,
+    created_date: data.created_date || null,
     // Appearance data for generation reference
     appearance_notes: data.appearance_notes || '',
     age_range: data.age_range || '',
@@ -104,9 +107,16 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   } : null;
 
   // ── ALL CHARACTERS ──────────────────────────────────────────────────
-  const allChars = activeCharacters
-    .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))
-    .map(c => createVisualEntity(c, 'character'));
+  // Convert all characters to visual entities first, preserving is_active_character flag
+  const allCharsAsEntities = activeCharacters.map(c => createVisualEntity(c, 'character'));
+
+  // Separate active and inactive characters
+  const activeCharsEntities = allCharsAsEntities.filter(c => c.is_active_character).sort((a, b) => 
+    new Date(b.created_date) - new Date(a.created_date)
+  );
+  const inactiveCharsEntities = allCharsAsEntities.filter(c => !c.is_active_character).sort((a, b) => 
+    new Date(b.created_date) - new Date(a.created_date)
+  );
 
   // ── FAMILY MEMBERS ──────────────────────────────────────────────────────
   // Collect family members from all active characters
@@ -181,20 +191,11 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  // Sort allChars: active first, then by creation date
-  allChars.sort((a, b) => {
-    const aOrig = activeCharacters.find(c => c.id === a.id);
-    const bOrig = activeCharacters.find(c => c.id === b.id);
-    const aActive = aOrig?.is_active_character ? 0 : 1;
-    const bActive = bOrig?.is_active_character ? 0 : 1;
-    if (aActive !== bActive) return aActive - bActive;
-    return new Date(bOrig?.created_date || 0) - new Date(aOrig?.created_date || 0);
-  });
-
-  // Order: user first, then all characters (sorted), then family members, then world people
+  // Order: user first, then active characters (by creation date desc), then inactive characters (by creation date desc), then family members, then world people
   const roster = [
     ...(userEntity ? [userEntity] : []),
-    ...allChars,
+    ...activeCharsEntities,
+    ...inactiveCharsEntities,
     ...familyMembers,
     ...worldPeople,
   ];
