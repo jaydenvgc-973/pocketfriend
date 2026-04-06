@@ -433,7 +433,7 @@ export default function Scene() {
     });
     
     // Update worker characters who are on shift at this location
-    workerCharacters.forEach(char => {
+    workerCharacters.forEach(async (char) => {
       const updates = { current_location_id: location.id };
       
       // If Brian Anderson is asleep, force him awake and make him angry/tired
@@ -442,6 +442,22 @@ export default function Scene() {
         // Clear sleep indicators
         if (char.sleep_start_time) {
           updates.sleep_start_time = null;
+        }
+        
+        // Track missed shift at this location
+        const missedShifts = char.missed_shifts || {};
+        missedShifts[location.id] = (missedShifts[location.id] || 0) + 1;
+        updates.missed_shifts = missedShifts;
+        
+        // If Brian has missed 3 shifts at Esco's, fire him
+        if (missedShifts[location.id] >= 3 && location.name === "Esco's") {
+          updates.status = "deleted";
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            sender: "narrative",
+            content: `${char.name} has been fired from ${location.name} for missing too many shifts.`,
+            timestamp: new Date().toISOString(),
+          }]);
         }
       }
       
