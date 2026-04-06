@@ -31,6 +31,7 @@ export function createVisualEntity(data, entityType) {
     is_family: entityType === 'family',
     is_world_person: entityType === 'world_person',
     is_active_character: data.is_active_character || false,
+    character_type: data.character_type || (entityType === 'character' ? 'active' : null), // 'active' | 'npc' | 'family_npc' | etc.
     status: data.status || null,
     created_date: data.created_date || null,
     // Appearance data for generation reference
