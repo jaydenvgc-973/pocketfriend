@@ -48,7 +48,7 @@ export default function Settings() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", user?.email],
     queryFn: () => user?.email
-      ? base44.entities.Character.filter({ created_by: user.email }, "-created_date")
+      ? base44.entities.Character.filter({ created_by: user.email }, "-created_date", 100)
       : [],
     enabled: !!user?.email,
   });
