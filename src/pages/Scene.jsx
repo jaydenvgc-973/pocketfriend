@@ -24,6 +24,7 @@ import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
+import { isNPCOnShift } from "@/lib/npcShiftUtils";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -269,6 +270,26 @@ export default function Scene() {
     if (isHomeLocation) {
       return npcs.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
     }
+
+    // NPC staff workers defined on the location record — check if on shift
+    const npcWorkerKeys = Object.keys(location?.worker_job_titles || {}).filter(k => k.startsWith("npc_"));
+    npcWorkerKeys.forEach(key => {
+      // Only add if on shift at this location
+      if (isNPCOnShift(location, key)) {
+        const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
+        const jobTitle = location.worker_job_titles[key];
+        if (!npcs.find(x => x.id === key)) {
+          npcs.push({
+            id: key,
+            name: npcName,
+            role: jobTitle || "Staff",
+            isNpc: true,
+            npcType: "staff",
+            avatar_url: null,
+          });
+        }
+      }
+    });
 
     // Generic venue NPCs — fill in any staff roles not covered by real workers, plus customers
     const venueNpcs = {
