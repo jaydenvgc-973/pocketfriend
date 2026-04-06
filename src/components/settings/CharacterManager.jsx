@@ -437,7 +437,7 @@ export default function CharacterManager() {
               sections.user.items.push({ item, index, itemKey });
             } else if (category) {
               sections[category].items.push({ item, index, itemKey });
-            } else {
+            } else if (!categorizations.get(itemKey) || categorizations.get(itemKey) !== 'duplicate') {
               sections.uncategorized.items.push({ item, index, itemKey });
             }
           });
