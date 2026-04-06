@@ -10,31 +10,52 @@ export default function NPCContactPanel() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
-  const { data: npcCharacters = [] } = useQuery({
-    queryKey: ['npcCharacters'],
-    queryFn: async () => {
-      const chars = await base44.entities.Character.filter({
-        character_type: 'npc',
-        status: 'active'
-      });
-      return chars;
-    },
-    staleTime: 30000,
+  const { data: currentUser = null } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => base44.auth.me(),
   });
+
+  const { data: characters = [] } = useQuery({
+    queryKey: ['characters', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
+  });
+
+  // Extract fictional NPCs from all characters' fictional_relationships
+  const npcCharacters = characters.flatMap(char => 
+    (char.fictional_relationships || []).map(rel => ({
+      ...rel,
+      characterId: rel.related_character_id,
+      name: rel.person_name,
+      id: `${char.id}-${rel.related_character_id}` // Unique key for the list
+    }))
+  );
 
   const handleContactNPC = (characterId) => {
     setIsOpen(false);
-    navigate(`/chat/${characterId}`);
+    if (characterId) {
+      navigate(`/chat/${characterId}`);
+    }
   };
 
-  const handleDeleteNPC = async (e, characterId) => {
+  const handleDeleteNPC = async (e, sourceCharId, targetCharId) => {
     e.stopPropagation();
     
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
 
     try {
-      await base44.entities.Character.delete(characterId);
-      queryClient.invalidateQueries({ queryKey: ['npcCharacters'] });
+      const char = characters.find(c => c.id === sourceCharId);
+      if (char) {
+        const updated = {
+          fictional_relationships: (char.fictional_relationships || []).filter(
+            rel => rel.related_character_id !== targetCharId
+          )
+        };
+        await base44.entities.Character.update(sourceCharId, updated);
+        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      }
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }
@@ -65,21 +86,28 @@ export default function NPCContactPanel() {
               </div>
             ) : (
               <div className="max-h-64 overflow-y-auto">
-                {npcCharacters.map((npc) => (
+                {npcCharacters.map((npc, idx) => (
                   <motion.button
-                    key={npc.id}
-                    onClick={() => handleContactNPC(npc.id)}
+                    key={idx}
+                    onClick={() => handleContactNPC(npc.characterId)}
                     className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0"
                     whileHover={{ x: 2 }}
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">{npc.name}</p>
-                      {npc.occupation && (
-                        <p className="text-xs text-muted-foreground truncate">{npc.occupation}</p>
+                      {npc.relationship_type && (
+                        <p className="text-xs text-muted-foreground truncate">{npc.relationship_type}</p>
                       )}
                     </div>
                     <button
-                      onClick={(e) => handleDeleteNPC(e, npc.id)}
+                      onClick={(e) => {
+                        const sourceChar = characters.find(c => 
+                          (c.fictional_relationships || []).some(r => r.person_name === npc.name)
+                        );
+                        if (sourceChar) {
+                          handleDeleteNPC(e, sourceChar.id, npc.characterId);
+                        }
+                      }}
                       className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
                       title="Delete NPC"
                     >
