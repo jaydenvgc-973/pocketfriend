@@ -181,17 +181,20 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── UNIFIED ROSTER ───────────────────────────────────────────────────────
-  // Order: user first, then active characters, then inactive characters, then family members, then world people
-  const activeChars = allChars.filter(c => {
-    const origChar = activeCharacters.find(ac => ac.id === c.id);
-    return origChar?.is_active_character;
+  // Sort allChars: active first, then by creation date
+  allChars.sort((a, b) => {
+    const aOrig = activeCharacters.find(c => c.id === a.id);
+    const bOrig = activeCharacters.find(c => c.id === b.id);
+    const aActive = aOrig?.is_active_character ? 0 : 1;
+    const bActive = bOrig?.is_active_character ? 0 : 1;
+    if (aActive !== bActive) return aActive - bActive;
+    return new Date(bOrig?.created_date || 0) - new Date(aOrig?.created_date || 0);
   });
-  const inactiveChars = allChars.filter(c => !activeChars.find(ac => ac.id === c.id));
 
+  // Order: user first, then all characters (sorted), then family members, then world people
   const roster = [
     ...(userEntity ? [userEntity] : []),
-    ...activeChars,
-    ...inactiveChars,
+    ...allChars,
     ...familyMembers,
     ...worldPeople,
   ];
