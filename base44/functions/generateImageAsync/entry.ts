@@ -666,10 +666,16 @@ Deno.serve(async (req) => {
     let resolvedLocationName = null;
     let resolvedZoneName = null;
 
+    // ── AUTO-INJECT DIVERSITY FOR LOCATION-BASED IMAGES ──
+    // All location-based images automatically enforce diversity: 1% Caucasian, 99% other
+    const AUTO_DIVERSITY_CONSTRAINT = resolvedSubjectType === 'character' || resolvedSubjectType === 'joint'
+      ? `\n\n════════════════════════════════════════════════════════════\nDIVERSITY DIRECTIVE (AUTO-ENFORCED):\nRepresentation must be: 1% Caucasian/White, 99% Latino, African American, Indian, Native American, and multicultural individuals.\nEnsure diverse skin tones, facial features, body types, and cultural authenticity.\nNO whitewashing. Maintain authentic representation.\n════════════════════════════════════════════════════════════`
+      : '';
+
     if (resolvedSubjectType !== "user") {
       try {
-        // ── MANUAL SELECTION PATH (highest priority — bypasses all text parsing) ──
-        if (manualLocationId) {
+         // ── MANUAL SELECTION PATH (highest priority — bypasses all text parsing) ──
+         if (manualLocationId) {
           const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
@@ -741,9 +747,9 @@ Deno.serve(async (req) => {
       ].filter(Boolean);
 
       const roomNote = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = the USER (replicate exactly). Both people must be placed inside the locked room.`
-        : `CRITICAL: Features BOTH ${characterName} AND the user. Replicate both faces and appearances with pristine accuracy.`;
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}`;
+         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = the USER (replicate exactly). Both people must be placed inside the locked room.`
+         : `CRITICAL: Features BOTH ${characterName} AND the user. Replicate both faces and appearances with pristine accuracy.`;
+       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${AUTO_DIVERSITY_CONSTRAINT}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       // User identity-lock mode: prioritize user refs, strong identity preservation
@@ -786,15 +792,15 @@ Deno.serve(async (req) => {
         ? `\n\n════════════════════════════════════════════════════════════\nCHARACTER IDENTITY LOCK - 100% ACCURACY REQUIRED:\nWhen generating a photo of ${characterName} sending/showing this image:\n- Facial features: MUST match exactly\n- Skin tone: MUST match exactly (no variation)\n- Hair type, color, and style: MUST match exactly\n- Body type: MUST match exactly\n${characterName} must be INSTANTLY RECOGNIZABLE\nNO ARTISTIC INTERPRETATION - strict character consistency\n════════════════════════════════════════════════════════════`
         : '';
 
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}${characterAppearanceStrict}`;
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}${characterAppearanceStrict}${AUTO_DIVERSITY_CONSTRAINT}`;
 
     } else if (hasLocationImages) {
-      // No character refs at all — use location refs + strong appearance text
-      referenceImages = locationImages.slice(0, 5);
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}`;
-      if (characterAppearanceNote) {
-        console.log(`[CHAR-REFS] No reference images available — using appearance text description only`);
-      }
+       // No character refs at all — use location refs + strong appearance text
+       referenceImages = locationImages.slice(0, 5);
+       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${AUTO_DIVERSITY_CONSTRAINT}`;
+       if (characterAppearanceNote) {
+         console.log(`[CHAR-REFS] No reference images available — using appearance text description only`);
+       }
 
     } else {
       referenceImages = undefined;
