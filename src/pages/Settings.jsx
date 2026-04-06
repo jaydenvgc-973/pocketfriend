@@ -22,6 +22,7 @@ import CharacterManager from "@/components/settings/CharacterManager";
 import SettingsTextFields from "@/components/settings/SettingsTextFields";
 import DiagnosticReportViewer from "@/components/settings/DiagnosticReportViewer";
 import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesModal";
+import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -364,6 +365,8 @@ export default function Settings() {
 
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">System & Data</p>
+          
+          <GenericLocationFixer />
           
           {/* Suggested duplicates */}
           <button
