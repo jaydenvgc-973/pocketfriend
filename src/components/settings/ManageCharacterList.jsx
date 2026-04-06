@@ -43,7 +43,7 @@ export default function ManageCharacterList() {
   const userItem = currentUser ? { type: 'user', data: { ...currentUser, worldName: userWorldName, avatar_url: userAvatar } } : null;
   
   const activeChars = characters.filter(c => 
-    (c.character_type === 'active' || !c.character_type) && c.status === 'active'
+    (c.character_type === 'active' || c.character_type === 'user_created' || !c.character_type) && c.status === 'active'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   const npcFictitious = characters.filter(c => 
