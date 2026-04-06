@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, MapPin, Users, Navigation } from "lucide-react";
+import { ArrowLeft, MapPin, Users, Navigation, Plus } from "lucide-react";
 import { toDisplay12h } from "@/lib/timeFormat";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import TravelCharacterSelector from "@/components/travel/TravelCharacterSelector
 import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilityPopup";
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
+import RealLocationModal from "@/components/travel/RealLocationModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
@@ -27,6 +28,7 @@ export default function Travel() {
   const [isConvincing, setIsConvincing] = useState(false);
   const [wakeUpModal, setWakeUpModal] = useState(null); // { character, pendingCharacterId }
   const [isWakingUp, setIsWakingUp] = useState(false);
+  const [showRealLocationModal, setShowRealLocationModal] = useState(false);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -254,6 +256,31 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     setWakeUpModal(null);
   };
 
+  const handleRealLocationConfirm = async (locationData) => {
+    if (!selectedLocation) return;
+    
+    // Create a temporary location record for the real place
+    setIsTraveling(true);
+    try {
+      // Travel takes realistic time: 2–8 seconds simulated delay
+      const travelMs = 2000 + Math.random() * 6000;
+      await new Promise(r => setTimeout(r, travelMs));
+
+      // For now, show message that they're visiting a real location
+      setUnavailablePopup([{
+        character: { id: "real_location", name: locationData.name, avatar_url: null },
+        reason: {
+          iconType: "info",
+          message: `Heading to ${locationData.name}...`,
+          color: "text-green-400",
+        },
+        availableAt: locationData.address || "Real location visit",
+      }]);
+    } finally {
+      setIsTraveling(false);
+    }
+  };
+
   const handleTravel = async () => {
     if (!selectedLocation) return;
 
@@ -384,8 +411,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                 </div>
 
          {/* Location grid */}
-         <div>
-           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Where are you going?</p>
+         <div className="space-y-3">
+           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Where are you going?</p>
            <TravelLocationGrid
              locations={sortedLocations}
              selectedLocation={selectedLocation}
@@ -397,6 +424,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                return acc;
              }, {})}
            />
+           
+           {/* Visit a real location button */}
+           <Button
+             onClick={() => setShowRealLocationModal(true)}
+             variant="outline"
+             size="sm"
+             className="w-full rounded-xl gap-2"
+           >
+             <Plus className="w-4 h-4" />
+             Visit a Real Location
+           </Button>
          </div>
 
         {/* Travel button */}
@@ -550,6 +588,12 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         onLeaveAsleep={handleLeaveAsleep}
         onWakeUp={handleWakeUp}
         isProcessing={isWakingUp}
+      />
+
+      <RealLocationModal
+        isOpen={showRealLocationModal}
+        onClose={() => setShowRealLocationModal(false)}
+        onConfirm={handleRealLocationConfirm}
       />
 
       <BottomNav />
