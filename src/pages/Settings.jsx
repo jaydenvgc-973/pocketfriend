@@ -21,6 +21,7 @@ import VoiceSettings from "@/components/character/VoiceSettings";
 import CharacterManager from "@/components/settings/CharacterManager";
 import SettingsTextFields from "@/components/settings/SettingsTextFields";
 import DiagnosticReportViewer from "@/components/settings/DiagnosticReportViewer";
+import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesModal";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -30,6 +31,8 @@ export default function Settings() {
   const [charVoiceForms, setCharVoiceForms] = useState({});
   const [savingCharIds, setSavingCharIds] = useState(new Set());
   const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [showSuggestedDupes, setShowSuggestedDupes] = useState(false);
+  const [suggestedDupes, setSuggestedDupes] = useState([]);
 
   const { data: settingsList = [], isLoading: isLoadingSettings } = useQuery({
     queryKey: ["userSettings"],
@@ -362,6 +365,29 @@ export default function Settings() {
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">System & Data</p>
           
+          {/* Suggested duplicates */}
+          <button
+            onClick={async () => {
+              try {
+                const res = await base44.functions.invoke('comprehensiveCharacterDiagnostic', {});
+                const dupes = res.data?.issues?.duplicateNames || [];
+                setSuggestedDupes(dupes);
+                setShowSuggestedDupes(true);
+              } catch (err) {
+                alert('Failed to load duplicates');
+              }
+            }}
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-amber-500/40 transition-colors text-left mb-3"
+          >
+            <div className="w-9 h-9 rounded-xl bg-amber-500/10 flex items-center justify-center flex-shrink-0">
+              <GitMerge className="w-4 h-4 text-amber-500" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Suggested Duplicates</p>
+              <p className="text-xs text-muted-foreground">Review and merge duplicate characters</p>
+            </div>
+          </button>
+
           {/* Auto-merge duplicates */}
           <button
             onClick={async () => {
@@ -571,6 +597,16 @@ export default function Settings() {
       </div>
       <div className="pb-28" />
       <BottomNav />
+
+      <SuggestedDuplicatesModal 
+        isOpen={showSuggestedDupes} 
+        onClose={() => setShowSuggestedDupes(false)}
+        duplicates={suggestedDupes}
+        onMergeComplete={() => {
+          queryClient.invalidateQueries({ queryKey: ['characters', user?.email] });
+          setShowSuggestedDupes(false);
+        }}
+      />
     </div>
   );
 }
