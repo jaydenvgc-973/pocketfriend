@@ -113,9 +113,14 @@ function App() {
   // Check if holidays are enabled in user settings
   useEffect(() => {
     const checkHolidaysSetting = async () => {
-      const settings = await base44.entities.UserSettings.list();
-      if (settings[0]) {
-        setHolidaysEnabled(settings[0].holiday_observation_enabled !== false);
+      try {
+        const settings = await base44.entities.UserSettings.list();
+        if (settings[0]) {
+          setHolidaysEnabled(settings[0].holiday_observation_enabled !== false);
+        }
+      } catch (error) {
+        // Silently fail on rate limit or other errors
+        console.error('Failed to check holiday setting:', error);
       }
     };
     checkHolidaysSetting();
