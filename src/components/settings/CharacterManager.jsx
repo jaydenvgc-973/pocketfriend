@@ -396,8 +396,21 @@ export default function CharacterManager() {
                        {isNPC && itemData.appearance_notes && (
                          <p className="text-sm text-muted-foreground">{itemData.appearance_notes}</p>
                        )}
-                       {!isUser && !isNPC && itemData.personality_summary && (
-                         <p className="text-xs text-muted-foreground line-clamp-1">{itemData.personality_summary}</p>
+                       {!isUser && !isNPC && (
+                         <div className="flex flex-wrap gap-1 mt-0.5">
+                           {itemData.character_type && (
+                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{itemData.character_type}</span>
+                           )}
+                           {itemData.created_by && itemData.created_by !== currentUser?.email && (
+                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 font-medium">service-created</span>
+                           )}
+                           {!itemData.personality_summary && !itemData.backstory && (
+                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500 font-medium">undefined</span>
+                           )}
+                           {itemData.personality_summary && (
+                             <p className="text-xs text-muted-foreground line-clamp-1 w-full">{itemData.personality_summary}</p>
+                           )}
+                         </div>
                        )}
                      </>
                    )}

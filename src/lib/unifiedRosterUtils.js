@@ -51,7 +51,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   const [user, settingsList, all] = await Promise.all([
     base44.auth.me().catch(() => null),
     base44.entities.UserSettings.list().catch(() => []),
-    base44.entities.Character.filter({ created_by: userEmail }).catch(() => []),
+    base44.entities.Character.list('-created_date', 200).catch(() => []),
   ]);
 
   const settings = settingsList?.[0] || {};
