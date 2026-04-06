@@ -449,12 +449,27 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       .filter(c => selectedLocation.worker_character_ids?.includes(c.id) && isCharacterAtWork(c, selectedLocation))
                       .forEach(c => lines.push({ name: c.name, status: "working", color: "text-blue-400" }));
 
-                    // NPC workers (keyed by npc_ prefix in worker_job_titles)
+                    // NPC workers — ONLY show if currently on shift at THIS location
                     const realCharIds = new Set(characters.map(c => c.id));
+                    const workerShifts = selectedLocation.worker_shifts || {};
+                    const now = new Date();
+                    const dayOfWeek = now.getDay();
+                    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                    
                     Object.entries(selectedLocation.worker_job_titles || {}).forEach(([key, jobTitle]) => {
                       if (!realCharIds.has(key) && key.startsWith("npc_")) {
-                        const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
-                        lines.push({ name: npcName, status: jobTitle || "working", color: "text-blue-400" });
+                        // Check if this NPC has a shift defined at THIS location
+                        const shift = workerShifts[key];
+                        const isOnShift = shift && 
+                          shift.days?.includes(dayOfWeek) && 
+                          currentTime >= shift.start && 
+                          currentTime <= shift.end;
+                        
+                        // Only show if on shift
+                        if (isOnShift) {
+                          const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
+                          lines.push({ name: npcName, status: jobTitle || "working", color: "text-blue-400" });
+                        }
                       }
                     });
                   }
