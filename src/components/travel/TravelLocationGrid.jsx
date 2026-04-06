@@ -21,27 +21,16 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
 
-        // Active character residents
-        const residentIds = loc.resident_character_ids || [];
-        const residentNames = loc.resident_character_names || [];
-        const activeResidentIds = residentIds.filter(id => activeCharacterIds.includes(id));
-        const hasActiveResidents = activeResidentIds.length > 0;
-        const occupants = hasActiveResidents
-          ? residentIds.reduce((acc, id, i) => {
-              if (activeCharacterIds.includes(id) && residentNames[i]) acc.push(residentNames[i]);
-              return acc;
-            }, [])
-          : [];
+        // AUTHORITATIVE: Derive occupants from current_location_id only
+         // Never trust stale resident_character_ids or worker_character_ids arrays
+         const currentlyHere = charactersByLocationId[loc.id] || [];
 
-        // NPC/family residents listed directly on the location
-        const npcResidents = (loc.resident_family_members || []).map(n => n.name).filter(Boolean);
+         // NPC/family residents listed directly on the location (these are non-character NPCs)
+         const npcResidents = (loc.resident_family_members || []).map(n => n.name).filter(Boolean);
 
-        // Combined: active character residents + NPC residents
-        const allOccupants = [...occupants, ...npcResidents];
-        const isVacant = loc.category === 'home' && residentIds.length === 0 && npcResidents.length === 0;
-
-        // For non-home locations, show characters currently there via current_location_id
-        const currentlyHere = charactersByLocationId[loc.id] || [];
+         // Combined: active character occupants (from current_location) + NPC residents
+         const allOccupants = [...currentlyHere, ...npcResidents];
+         const isVacant = loc.category === 'home' && currentlyHere.length === 0 && npcResidents.length === 0;
 
         return (
           <button
@@ -68,8 +57,6 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
               <p className="text-xs font-semibold text-white leading-tight truncate">{loc.name}</p>
               {allOccupants.length > 0 ? (
                 <p className="text-[10px] text-white/70 truncate">{allOccupants.slice(0, 2).join(", ")}</p>
-              ) : currentlyHere.length > 0 ? (
-                <p className="text-[10px] text-white/70 truncate">{currentlyHere.slice(0, 2).join(", ")}</p>
               ) : isVacant ? (
                 <p className="text-[10px] text-white/40 italic">Vacant</p>
               ) : null}

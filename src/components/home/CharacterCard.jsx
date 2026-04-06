@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
-import { getCharacterStatusDisplay } from "@/lib/characterStatusUtils";
 import { getAuthoritativeCharacterLocation } from "@/lib/authoritativeLocationResolver";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
@@ -242,7 +241,55 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                 const statusDisplay = getCharacterStatusDisplay(character, { locationMap });
+                const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
+                const locationObj = locationMap[authLoc?.id];
+                const category = locationObj?.category || 'generic';
+                const isSleeping = authLoc?.source === 'sleeping_at_home';
+                const isPraying = authLoc?.source === 'praying_at_home';
+                
+                // Map category/source to icon and color
+                let iconType = 'calm';
+                let label = 'available';
+                let color = 'text-muted-foreground';
+                
+                if (isSleeping) {
+                  iconType = 'sleep';
+                  label = 'sleeping';
+                  color = 'text-blue-300';
+                } else if (isPraying) {
+                  iconType = 'prayer';
+                  label = 'praying';
+                  color = 'text-violet-300';
+                } else if (category === 'work') {
+                  iconType = 'work';
+                  label = `at ${authLoc.name}`;
+                  color = 'text-blue-400';
+                } else if (category === 'school') {
+                  iconType = 'school';
+                  label = `at ${authLoc.name}`;
+                  color = 'text-amber-400';
+                } else if (category === 'gym') {
+                  iconType = 'gym';
+                  label = `at ${authLoc.name}`;
+                  color = 'text-emerald-400';
+                } else if (category === 'home') {
+                  iconType = 'home';
+                  label = 'at home';
+                  color = 'text-pink-400';
+                } else if (category === 'social' || category === 'food_drink') {
+                  iconType = 'out';
+                  label = `at ${authLoc.name}`;
+                  color = 'text-orange-400';
+                } else if (category === 'medical') {
+                  iconType = 'hospital';
+                  label = `at ${authLoc.name}`;
+                  color = 'text-red-400';
+                } else {
+                  iconType = 'out';
+                  label = `at ${authLoc.name}`;
+                  color = 'text-blue-400';
+                }
+                
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,
@@ -257,16 +304,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   'prayer': Sparkles,
                   'calm': null
                 };
-                const IconComponent = iconComponents[statusDisplay?.iconType];
+                const IconComponent = iconComponents[iconType];
 
                 return (
                   <div className="flex items-center gap-1.5">
                     {IconComponent ? (
-                      <IconComponent className={`w-3 h-3 ${statusDisplay.color}`} />
+                      <IconComponent className={`w-3 h-3 ${color}`} />
                     ) : (
                       <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
                     )}
-                    <span className={`text-xs ${statusDisplay.color}`}>{statusDisplay.label}</span>
+                    <span className={`text-xs ${color}`}>{label}</span>
                   </div>
                 );
               })()}

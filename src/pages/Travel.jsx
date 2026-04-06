@@ -78,42 +78,36 @@ export default function Travel() {
 
   /**
    * For a given location, check if we're allowed to visit it.
-   * CRITICAL: Only residents actually at home (not at work/school/travel) count as "homeResidents"
-   * Returns:
-   *   { canVisit, activeResidents (all), homeResidents (home now), awayResidents (away now), npcResidents, blockedBy }
+   * AUTHORITATIVE: Uses current_location_id to determine who's actually home.
+   * Returns: { canVisit, blockedBy, homeResidents, npcResidents }
    */
   const checkHomeAccess = (location) => {
     if (!location || location.category !== "home") {
-      return { canVisit: true, blockedBy: null, activeResidents: [], homeResidents: [], awayResidents: [], npcResidents: [] };
+      return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
 
-    // Active characters who live here
-    const activeResidents = characters.filter(c => location.resident_character_ids?.includes(c.id));
-    // CRITICAL: homeResidents = those actually at their home RIGHT NOW
-    const homeResidents = activeResidents.filter(c => isCharacterHome(c, locationMap));
-    // CRITICAL: awayResidents = those scheduled to be elsewhere (work/school/travel)
-    // These should NOT be shown as "not home" — they have an active obligation
-    // Only show truly missing/traveling residents
-    const awayResidents = [];
+    // AUTHORITATIVE: Characters who are actually at this home location RIGHT NOW
+    const homeResidents = characters.filter(c => {
+      const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
+      return authLoc?.id === location.id;
+    });
 
-    // NPC residents actually listed ON the location record
+    // NPC residents listed on the location
     const npcResidents = location.resident_family_members || [];
 
-    // Can visit if any active resident is home, there are NPC residents, OR the user has a key
+    // Can visit if any character is home, there are NPC residents, OR user has a key
     const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
     const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || userHasKey;
 
-    // If no one at all lives here, always allow entry
-    if (activeResidents.length === 0 && npcResidents.length === 0) {
-      return { canVisit: true, blockedBy: null, activeResidents: [], homeResidents: [], awayResidents: [], npcResidents: [] };
+    // If no one lives here, always allow entry
+    if (homeResidents.length === 0 && npcResidents.length === 0) {
+      return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
 
     return {
       canVisit,
-      blockedBy: !canVisit ? awayResidents[0] : null,
-      activeResidents,
+      blockedBy: !canVisit ? { name: location.name } : null,
       homeResidents,
-      awayResidents,
       npcResidents,
     };
   };
@@ -486,19 +480,24 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    homeAccess.homeResidents.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
-                    // CRITICAL: Do NOT show away residents — they're at work/school, shown in their actual location, not home
+                    // AUTHORITATIVE: Show characters who are actually at home right now
+                    const charactersAtHome = characters.filter(c => {
+                      const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
+                      return authLoc?.id === selectedLocation.id;
+                    });
+                    charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
+
+                    // NPC/family residents (non-characters) that live here
                     (selectedLocation.resident_family_members || []).forEach(n => {
                       if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
                     });
                   } else {
-                    // CRITICAL: Use authoritative charactersByLocationId, NOT stale worker_character_ids
-                    // This prevents showing characters who are no longer actually at this location
+                    // AUTHORITATIVE: Show characters currently at this location
                     const currentlyAtLocation = characters.filter(c => {
                       const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
                       return authLoc?.id === selectedLocation.id;
                     });
-                    currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "working", color: "text-blue-400" }));
+                    currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
                     // NPC workers — ONLY show if currently on shift at THIS location
                     const realCharIds = new Set(characters.map(c => c.id));
@@ -506,20 +505,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const now = new Date();
                     const dayOfWeek = now.getDay();
                     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-                    
+
                     Object.entries(selectedLocation.worker_job_titles || {}).forEach(([key, jobTitle]) => {
                       if (!realCharIds.has(key) && key.startsWith("npc_")) {
-                        // Check if this NPC has a shift defined at THIS location
                         const shift = workerShifts[key];
                         const isOnShift = shift && 
                           shift.days?.includes(dayOfWeek) && 
                           currentTime >= shift.start && 
                           currentTime <= shift.end;
-                        
-                        // Only show if on shift
+
                         if (isOnShift) {
                           const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
-                          lines.push({ name: npcName, status: jobTitle || "working", color: "text-blue-400" });
+                          lines.push({ name: npcName, status: "working", color: "text-blue-400" });
                         }
                       }
                     });

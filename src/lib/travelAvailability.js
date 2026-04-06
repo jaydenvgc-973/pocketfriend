@@ -1,7 +1,5 @@
-import { getCharacterStatusDisplay } from './characterStatusUtils';
 import { getAuthoritativeCharacterLocation } from './authoritativeLocationResolver';
 import { isCharacterAsleep } from './sleepUtils';
-import { isCharacterAtWork } from './workScheduleUtils';
 import { toDisplay12h } from './timeFormat';
 
 /**
@@ -11,19 +9,20 @@ import { toDisplay12h } from './timeFormat';
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
-  // Build complete locationData for proper resolution
-  const homeLocation = character.current_home_location_id ? locationMap[character.current_home_location_id] : null;
-  const workLocation = character.occupation_location_id ? locationMap[character.occupation_location_id] : null;
-  const educationLocation = character.education_location_id ? locationMap[character.education_location_id] : null;
-  const currentLocation = character.current_location_id ? locationMap[character.current_location_id] : null;
-
-  const statusDisplay = getCharacterStatusDisplay(character, { 
-    homeLocation, 
-    workLoc: workLocation, 
-    eduLoc: educationLocation, 
-    currentLoc: currentLocation 
-  });
-  const iconType = statusDisplay?.iconType || 'calm';
+  // Use authoritative location resolver to determine current state
+  const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
+  const locationObj = locationMap[authLoc?.id];
+  const isSleeping = authLoc?.source === 'sleeping_at_home';
+  const isPraying = authLoc?.source === 'praying_at_home';
+  const category = locationObj?.category || 'generic';
+  
+  // Determine travel blockage based on authoritative state
+  let iconType = 'calm';
+  if (isSleeping) iconType = 'sleep';
+  else if (isPraying) iconType = 'prayer';
+  else if (authLoc?.source === 'active_work_schedule') iconType = 'work';
+  else if (authLoc?.source === 'active_school_schedule') iconType = 'school';
+  else if (category === 'medical') iconType = 'hospital';
 
   if (iconType === 'sleep') {
     const wakeTime = character.wake_up_time || '07:00';
