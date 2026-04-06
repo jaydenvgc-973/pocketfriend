@@ -53,16 +53,8 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'prayer', label: 'praying', color: 'text-violet-300' };
   }
 
-  // 3. HOME LOCATION (if no explicit current location)
-  // If current_location_id is not set, but current_home_location_id is, use the home location name
-  // This ensures world-specific location names (e.g., "VGC Gym") are shown, not generic labels
-  if (!character?.current_location_id && character?.current_home_location_id && locationData?.homeLocation) {
-    const homeLoc = locationData.homeLocation;
-    return { iconType: 'home', label: `at ${homeLoc.name}`, color: 'text-pink-400' };
-  }
-
-  // 4. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
-  // This overrides all inference and is the source of truth for where character physically is
+  // 3. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
+  // THIS IS HIGHEST PRIORITY after sleep/prayer — overrides ALL activity inference
   // CRITICAL: NAMED LOCATION RULE — Always use location.name, NEVER collapse to category type
   if (character?.current_location_id && currentLocation) {
     const catIconMap = {
@@ -83,6 +75,14 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     const color = result?.color || 'text-blue-400';
     
     return { iconType, label: `at ${displayName}`, color };
+  }
+
+  // 4. HOME LOCATION (if no explicit current location)
+  // If current_location_id is not set, but current_home_location_id is, use the home location name
+  // This ensures world-specific location names (e.g., "VGC Gym") are shown, not generic labels
+  if (!character?.current_location_id && character?.current_home_location_id && locationData?.homeLocation) {
+    const homeLoc = locationData.homeLocation;
+    return { iconType: 'home', label: `at ${homeLoc.name}`, color: 'text-pink-400' };
   }
 
   // 4. AT WORK FIRST (higher priority than patient status)
@@ -146,8 +146,9 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'home', label: 'at home', color: 'text-pink-400' };
   }
 
-  // 11. MAP CURRENT_ACTIVITY TO DISPLAY STATUS (fallback only — stale data ignored if explicit location set)
-  if (activity) {
+  // 11. MAP CURRENT_ACTIVITY TO DISPLAY STATUS (fallback ONLY if no explicit location)
+  // NEVER use activity keywords if current_location_id is set
+  if (activity && !character?.current_location_id) {
     if (activity.includes('doctor') || activity.includes('clinic') || activity.includes('appointment') || activity.includes('procedure') || activity.includes('surgery')) {
       return { iconType: 'hospital', label: 'at appointment', color: 'text-red-400' };
     }
@@ -203,7 +204,7 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     if (activity.includes('out') || activity.includes('friend') || activity.includes('event') || activity.includes('evening')) {
       return { iconType: 'out', label: 'out', color: 'text-emerald-400' };
     }
-  }
+  } // end: only fallback to activity if NO explicit current_location_id
 
   // 12. DEFAULT
   return { iconType: 'calm', label: 'available', color: 'text-muted-foreground' };
