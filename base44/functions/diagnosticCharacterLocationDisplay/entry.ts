@@ -19,6 +19,12 @@ Deno.serve(async (req) => {
       diagnostics: [],
       issues: [],
       summary: {},
+      rules: {
+        homeLocation: 'ALL active characters (except NPC/background) must have current_home_location_id',
+        displayName: 'Home location must have a specific display_name (e.g., "VGC Gym", "Nathan and Lila\'s House") — NO generic types',
+        noGenericCollapse: 'Private world locations must NEVER be collapsed into generic venue types like "gym", "bar", "home"',
+        currentLocation: 'current_location_id tracks real-time position; current_home_location_id is the authoritative home'
+      }
     };
 
     // Check each character
@@ -26,71 +32,77 @@ Deno.serve(async (req) => {
       const charDiag = {
         characterId: char.id,
         characterName: char.name,
+        characterType: char.character_type,
+        status: char.status,
         checks: {},
+        violations: []
       };
 
-      // Check 1: Does character have current_location_id set?
-      charDiag.checks.has_current_location_id = !!char.current_location_id;
-      if (!char.current_location_id) {
-        charDiag.checks.current_location_id_value = null;
-        charDiag.checks.status = "MISSING: current_location_id not set";
-      } else {
-        charDiag.checks.current_location_id_value = char.current_location_id;
-        
-        // Check 2: Does that location exist?
-        const location = locationMap[char.current_location_id];
-        charDiag.checks.location_exists = !!location;
-        
-        if (location) {
-          charDiag.checks.location_name = location.name;
-          charDiag.checks.location_category = location.category;
-          charDiag.checks.status = "OK: Location found and accessible";
-        } else {
-          charDiag.checks.location_name = "NOT FOUND";
-          charDiag.checks.status = "ERROR: location_id references non-existent location";
-          report.issues.push(`Character "${char.name}" has current_location_id "${char.current_location_id}" but location doesn't exist`);
-        }
-      }
-
-      // Check 3: Does character have home location set?
+      // RULE 1: Active characters MUST have current_home_location_id
       charDiag.checks.has_current_home_location_id = !!char.current_home_location_id;
-      if (char.current_home_location_id) {
-        const homeExists = locationMap[char.current_home_location_id];
-        charDiag.checks.home_location_exists = !!homeExists;
-        if (homeExists) {
-          charDiag.checks.home_location_name = homeExists.name;
+      if (char.status === 'active' && char.character_type !== 'npc' && char.character_type !== 'background') {
+        if (!char.current_home_location_id) {
+          charDiag.violations.push('CRITICAL: Active character missing current_home_location_id');
+          report.issues.push(`"${char.name}" (active) missing home location assignment`);
+        } else {
+          const homeLocation = locationMap[char.current_home_location_id];
+          if (!homeLocation) {
+            charDiag.violations.push('CRITICAL: current_home_location_id references non-existent location');
+            report.issues.push(`"${char.name}" home location ID "${char.current_home_location_id}" not found in database`);
+          } else if (!homeLocation.name) {
+            charDiag.violations.push('CRITICAL: Home location missing display_name');
+            report.issues.push(`"${char.name}" home location has no display_name (location ID: ${homeLocation.id})`);
+          } else {
+            charDiag.checks.home_location_name = homeLocation.name;
+            charDiag.checks.home_location_ok = true;
+          }
         }
       }
 
-      // Check 4: Does character have work location set?
+      // Check current location (real-time position tracking)
+      charDiag.checks.has_current_location_id = !!char.current_location_id;
+      if (char.current_location_id) {
+        const location = locationMap[char.current_location_id];
+        if (location) {
+          charDiag.checks.current_location_name = location.name;
+          charDiag.checks.current_location_ok = true;
+        } else {
+          charDiag.violations.push('ERROR: current_location_id references non-existent location');
+          report.issues.push(`"${char.name}" current location ID "${char.current_location_id}" not found`);
+        }
+      }
+
+      // Check work location
       charDiag.checks.has_occupation_location_id = !!char.occupation_location_id;
       if (char.occupation_location_id) {
-        const workExists = locationMap[char.occupation_location_id];
-        charDiag.checks.work_location_exists = !!workExists;
-        if (workExists) {
-          charDiag.checks.work_location_name = workExists.name;
+        const workLocation = locationMap[char.occupation_location_id];
+        if (workLocation) {
+          charDiag.checks.work_location_name = workLocation.name;
+        } else {
+          charDiag.violations.push('WARNING: occupation_location_id references non-existent location');
         }
       }
 
-      // Check 5: Stale activity string
       charDiag.checks.current_activity = char.current_activity || "(not set)";
-      charDiag.checks.activity_last_updated = char.life_last_updated || "(never)";
-
       report.diagnostics.push(charDiag);
     }
 
     // Summary
-    const withLocation = characters.filter(c => !!c.current_location_id).length;
-    const missingLocation = characters.filter(c => !c.current_location_id).length;
+    const activeCharsWithHome = characters.filter(c => 
+      c.status === 'active' && 
+      (c.character_type === 'npc' || c.character_type === 'background' || !!c.current_home_location_id)
+    ).length;
+    const activeCharsTotal = characters.filter(c => c.status === 'active').length;
     
     report.summary = {
-      charactersWithCurrentLocation: withLocation,
-      charactersWithoutCurrentLocation: missingLocation,
-      percentageWithLocation: characters.length > 0 ? ((withLocation / characters.length) * 100).toFixed(1) + '%' : '0%',
+      totalCharacters: characters.length,
+      activeCharacters: activeCharsTotal,
+      activeWithValidHome: activeCharsWithHome,
+      compliancePercentage: activeCharsTotal > 0 ? ((activeCharsWithHome / activeCharsTotal) * 100).toFixed(1) + '%' : '0%',
       totalLocations: locations.length,
-      recommendation: missingLocation > 0 
-        ? `${missingLocation} characters missing current_location_id. Call updateCharacterLocation() after travel.`
-        : 'All characters have current_location_id set. Location tracking is working.',
+      recommendation: activeCharsWithHome === activeCharsTotal 
+        ? 'All active characters have valid home locations with display names.'
+        : `${activeCharsTotal - activeCharsWithHome} active character(s) missing home location or location data.`
     };
 
     return Response.json(report);

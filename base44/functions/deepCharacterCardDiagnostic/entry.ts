@@ -191,6 +191,7 @@ Deno.serve(async (req) => {
         workLocationDataExists: !!charReport.locations.work,
         homeLocationIdExists: !!char.current_home_location_id,
         homeLocationDataExists: !!charReport.locations.home,
+        homeLocationHasDisplayName: charReport.locations.home?.name !== undefined,
         workScheduleConfigured: !!char.work_start_time && !!char.work_end_time
       };
 
@@ -202,17 +203,23 @@ Deno.serve(async (req) => {
       if (!displayChecks.workLocationDataExists && displayChecks.workLocationIdExists) {
         charReport.issues.push(`CRITICAL: current_work_location_id set but location data missing in database`);
       }
+      if (!displayChecks.homeLocationDataExists && displayChecks.homeLocationIdExists) {
+        charReport.issues.push(`CRITICAL: current_home_location_id set but home location data missing in database`);
+      }
+      if (displayChecks.homeLocationIdExists && !displayChecks.homeLocationHasDisplayName) {
+        charReport.issues.push(`CRITICAL: home location missing display_name`);
+      }
 
       // CHECK FOR GAPS
       const gaps = [];
       if (!char.current_activity && char.status === 'active') {
         gaps.push('No current_activity set');
       }
-      if (!char.current_location_id && char.status === 'active') {
-        gaps.push('No current_location_id set');
+      if (!char.current_home_location_id && char.status === 'active' && char.character_type !== 'npc' && char.character_type !== 'background') {
+        gaps.push('CRITICAL: No current_home_location_id set for active character');
       }
-      if (!char.current_home_location_id && char.character_type !== 'npc' && char.character_type !== 'background') {
-        gaps.push('No current_home_location_id set');
+      if (char.current_home_location_id && !charReport.locations.home) {
+        gaps.push('CRITICAL: current_home_location_id references missing location in database');
       }
       if (!char.current_work_location_id && char.occupation && !char.occupation.includes('unemployed') && !char.occupation.includes('student')) {
         gaps.push('Occupation set but no work_location_id');
