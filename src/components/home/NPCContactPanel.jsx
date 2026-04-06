@@ -38,12 +38,14 @@ export default function NPCContactPanel() {
   // Close dropdown when clicking outside
   React.useEffect(() => {
     const handleClickOutside = (e) => {
-      if (isOpen && e.target.closest('[data-npc-panel]') === null) {
+      if (isOpen && !e.target.closest('[data-npc-panel]')) {
         setIsOpen(false);
       }
     };
-    document.addEventListener('click', handleClickOutside);
-    return () => document.removeEventListener('click', handleClickOutside);
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
   }, [isOpen]);
 
   const handleContactNPC = (npc) => {
