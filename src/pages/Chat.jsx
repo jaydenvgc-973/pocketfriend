@@ -1125,14 +1125,29 @@ ${songsInfo}`;
       const sleepContext = charStatus === 'asleep' ? buildSleepInterruptionContext(character) : "";
 
       // Awareness context: if character was unavailable and is now responding, acknowledge it naturally
-      const awarenessContext = (() => {
-        if (charStatus === 'work') return `\n\nAWARENESS: You are at work right now. If this is the first reply since being at work, you may briefly and naturally acknowledge it (e.g. "I'm at work rn" or "just got a sec"). Do NOT repeat this every message.`;
-        if (charStatus === 'school') return `\n\nAWARENESS: You are at school right now. If this is the first reply since being at school, you may briefly and naturally acknowledge it. Do NOT repeat this every message.`;
-        if (charStatus === 'gym') return `\n\nAWARENESS: You are at the gym. You can briefly mention it if natural, but don't force it or repeat it.`;
-        if (charStatus === 'bar') return `\n\nAWARENESS: You are at the bar. You can briefly mention it if natural, but don't force it or repeat it.`;
-        if (charStatus === 'out') return `\n\nAWARENESS: You are out right now. You can briefly mention it if natural, but don't force it or repeat it.`;
-        return '';
-      })();
+      let awarenessContext = '';
+      if (charStatus === 'work') {
+        const workLocId = character.occupation_location_id;
+        const workLoc = workLocId
+          ? await base44.functions.invoke("fetchAllLocationsForUser", {})
+              .then(r => (r?.data?.locations || []).find(l => l.id === workLocId))
+              .catch(() => null)
+          : null;
+        const workplaceName = workLoc?.name || character.occupation_location_name || character.work_details?.workplace_type || "work";
+        // Keep current_location_id in sync so the travel map and character cards reflect their work location
+        if (workLocId && character.current_location_id !== workLocId) {
+          base44.entities.Character.update(characterId, { current_location_id: workLocId }).catch(() => {});
+        }
+        awarenessContext = `\n\nAWARENESS: You are currently at work — specifically at ${workplaceName}. If asked where you are, say you're at ${workplaceName} or at work. If this is the first reply since being at work, you may briefly and naturally acknowledge it (e.g. "I'm at ${workplaceName} rn" or "just got a sec, I'm at work"). Do NOT repeat this every message.`;
+      } else if (charStatus === 'school') {
+        awarenessContext = `\n\nAWARENESS: You are at school right now. If asked where you are, say you're at school or class. If this is the first reply since being at school, you may briefly and naturally acknowledge it. Do NOT repeat this every message.`;
+      } else if (charStatus === 'gym') {
+        awarenessContext = `\n\nAWARENESS: You are at the gym. If asked where you are, say you're at the gym. You can briefly mention it if natural, but don't force it or repeat it.`;
+      } else if (charStatus === 'bar') {
+        awarenessContext = `\n\nAWARENESS: You are at the bar. If asked where you are, say you're at the bar. You can briefly mention it if natural, but don't force it or repeat it.`;
+      } else if (charStatus === 'out') {
+        awarenessContext = `\n\nAWARENESS: You are out right now. If asked where you are, say you're out. You can briefly mention it if natural, but don't force it or repeat it.`;
+      }
 
       let playAsInstruction = "";
       if (activeCharacter) {
