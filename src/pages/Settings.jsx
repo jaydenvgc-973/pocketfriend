@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search, GitMerge } from "lucide-react";
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
@@ -362,6 +362,29 @@ export default function Settings() {
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">System & Data</p>
           
+          {/* Auto-merge duplicates */}
+          <button
+            onClick={async () => {
+              if (!window.confirm('Auto-merge all detected duplicate characters into their masters?\n\nThis uses creation date to pick the strongest version.')) return;
+              try {
+                const res = await base44.functions.invoke('autoMergeDuplicates', {});
+                alert(`✓ Merged ${res.data?.merged || 0} duplicate character(s)`);
+                queryClient.invalidateQueries({ queryKey: ['characters', user?.email] });
+              } catch (err) {
+                alert('Auto-merge failed. Try manually in Character Manager.');
+              }
+            }}
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-green-500/40 transition-colors text-left mb-3"
+          >
+            <div className="w-9 h-9 rounded-xl bg-green-500/10 flex items-center justify-center flex-shrink-0">
+              <GitMerge className="w-4 h-4 text-green-500" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Auto-merge Duplicates</p>
+              <p className="text-xs text-muted-foreground">Automatically merge all detected duplicate characters</p>
+            </div>
+          </button>
+
           {/* Diagnostic button */}
           <button
             onClick={() => setShowDiagnostic(!showDiagnostic)}
