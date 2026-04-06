@@ -18,7 +18,7 @@ import CommonQuestions from "@/components/settings/CommonQuestions";
 import StorageBackup from "@/components/settings/StorageBackup";
 import VoiceAudioSettings from "@/components/settings/VoiceAudioSettings";
 import VoiceSettings from "@/components/character/VoiceSettings";
-import CharacterManager from "@/components/settings/CharacterManager";
+import ManageCharacterList from "@/components/settings/ManageCharacterList";
 import SettingsTextFields from "@/components/settings/SettingsTextFields";
 import DiagnosticReportViewer from "@/components/settings/DiagnosticReportViewer";
 import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesModal";
@@ -624,12 +624,17 @@ export default function Settings() {
           </button>
 
           {showDiagnostic && (
-            <div className="mb-6 bg-secondary/30 border border-border rounded-xl p-4">
-              <DiagnosticReportViewer />
-            </div>
-          )}
+             <div className="mb-6 bg-secondary/30 border border-border rounded-xl p-4">
+               <DiagnosticReportViewer />
+             </div>
+           )}
 
-          <button
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>
+          <div className="mb-6 bg-card border border-border rounded-2xl p-4">
+            <ManageCharacterList />
+          </div>
+
+           <button
             onClick={handleForcePayday}
             disabled={isProcessingPayday}
             className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left mb-2 disabled:opacity-50"
