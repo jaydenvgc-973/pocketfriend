@@ -15,7 +15,7 @@ export default function CharacterInteractionSimulator({ characters }) {
   const [isApprovalMode, setIsApprovalMode] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
 
-  const activeCharacters = characters.filter(c => c.status !== 'deleted' && c.character_type === 'active');
+  const activeCharacters = characters.filter(c => c.status !== 'deleted');
 
   const toggleSelect = (id) => {
     if (selected.includes(id)) {
