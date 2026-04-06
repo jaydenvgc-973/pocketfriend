@@ -12,6 +12,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import OccupationLocationPicker from "@/components/character/OccupationLocationPicker";
+import { filterOutTemporaryNPCs } from "@/lib/temporaryNPCUtils";
 
 const JOB_TYPES = [
   "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
@@ -263,6 +264,11 @@ export default function EditCharacterProfile() {
   };
 
   const otherChars = characters.filter(c => c.id !== selectedChar?.id && c.status !== "deleted");
+  
+  // Filter out temporary NPCs from fictional relationships (don't show them in the list)
+  const filteredCharRelationships = selectedChar 
+    ? filterOutTemporaryNPCs(form.char_relationships || [])
+    : [];
 
   return (
     <div className="min-h-screen bg-background">
@@ -440,7 +446,7 @@ export default function EditCharacterProfile() {
               <div className="space-y-4">
                 <p className="text-xs text-muted-foreground">Define how {selectedChar.name} relates to other characters. Both characters will be updated.</p>
                 {/* Linked characters */}
-                {(form.char_relationships || []).map(rel => {
+                {filteredCharRelationships.map(rel => {
                   const otherChar = characters.find(c => c.id === rel.related_character_id);
                   if (!otherChar) return null;
                   const isExpanded = expandedRelId === rel.related_character_id;
