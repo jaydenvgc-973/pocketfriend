@@ -35,16 +35,39 @@ export default function CharacterManager() {
     enabled: !!currentUser?.email,
   });
 
-  // All items from unified roster (user + characters + family + world people)
-  // EXCLUDE merged/deleted characters from the list
-  const allManageableItems = roster
-    .filter(e => e.entity_type !== undefined && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
-    .map(c => {
-      if (c.is_user) return { type: 'user', data: c };
-      if (c.is_family) return { type: 'family', data: c };
-      if (c.is_world_person) return { type: 'world_person', data: c };
-      return { type: 'character', data: c };
-    });
+  // Organize roster into ordered categories
+  // 1. User, 2. Active Characters (created_by_user: true), 3. Inactive Characters (created_by_user: true but not active), 4. Family Members, 5. NPCs
+  const userItem = roster.find(e => e.is_user) ? { type: 'user', data: roster.find(e => e.is_user) } : null;
+  
+  const characterItems = roster
+    .filter(e => e.is_character && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
+    .map(c => ({ type: 'character', data: c }));
+  
+  const activeCharacters = characterItems
+    .filter(item => item.data.created_by_user === true && item.data.status === 'active')
+    .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
+  
+  const inactiveCharacters = characterItems
+    .filter(item => item.data.created_by_user === true && item.data.status !== 'active')
+    .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
+  
+  const familyMembers = roster
+    .filter(e => e.is_family && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
+    .map(f => ({ type: 'family', data: f }))
+    .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
+  
+  const npcItems = roster
+    .filter(e => e.is_world_person && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
+    .map(n => ({ type: 'world_person', data: n }))
+    .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
+  
+  const allManageableItems = [
+    ...(userItem ? [userItem] : []),
+    ...activeCharacters,
+    ...inactiveCharacters,
+    ...familyMembers,
+    ...npcItems
+  ];
 
   const renameMutation = useMutation({
     mutationFn: (data) => base44.functions.invoke('renameCharacter', data),
