@@ -471,10 +471,8 @@ export default function CharacterManager() {
                   const categoryColor = currentCategory ? CATEGORY_OPTIONS.find(c => c.id === currentCategory)?.color : '';
 
                   return (
-            
-            return (
-              <motion.div
-                 key={`${item.type}-${itemKey}`}
+                    <motion.div
+                       key={`${item.type}-${itemKeyFromSection}`}
                  layout
                  className={`rounded-xl border-2 p-4 transition-all ${
                    categorizationMode
@@ -522,7 +520,7 @@ export default function CharacterManager() {
                     </div>
                   )}
                   <div className="flex-1 min-w-0 flex flex-col gap-1">
-                   {renamingId === itemKey ? (
+                   {renamingId === itemKeyFromSection ? (
                      <div className="flex gap-1">
                        <Input
                          value={newName}
@@ -530,13 +528,13 @@ export default function CharacterManager() {
                          className="h-8 text-sm flex-1"
                          autoFocus
                          onKeyDown={e => {
-                           if (e.key === 'Enter') submitRename(itemKey, isNPC);
+                           if (e.key === 'Enter') submitRename(itemKeyFromSection, isNPC);
                            if (e.key === 'Escape') setRenamingId(null);
                          }}
                        />
                        <Button
                          size="sm"
-                         onClick={() => submitRename(itemKey, isNPC)}
+                         onClick={() => submitRename(itemKeyFromSection, isNPC)}
                          className="h-8 px-2 rounded-lg"
                        >
                          Save
@@ -588,10 +586,10 @@ export default function CharacterManager() {
                     </div>
                   )}
                 </div>
-              </motion.div>
+                </motion.div>
                 );
-              })}
-              </div>
+                })}
+                </div>
             );
           }).filter(Boolean);
         })()}
