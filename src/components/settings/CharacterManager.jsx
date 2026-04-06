@@ -444,7 +444,19 @@ export default function CharacterManager() {
             if (isUser) {
               sections.user.items.push({ item, index, itemKey });
             } else if (category) {
+              // User explicitly categorized it
               sections[category].items.push({ item, index, itemKey });
+            } else if (item.type === 'character') {
+              // Auto-organize characters by active/inactive status
+              if (itemData.is_active_character || itemData.status === 'active') {
+                sections.active.items.push({ item, index, itemKey });
+              } else {
+                sections.inactive.items.push({ item, index, itemKey });
+              }
+            } else if (item.type === 'family') {
+              sections.npc_family.items.push({ item, index, itemKey });
+            } else if (item.type === 'world_person') {
+              sections.npc_fictional.items.push({ item, index, itemKey });
             } else {
               sections.uncategorized.items.push({ item, index, itemKey });
             }
