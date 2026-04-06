@@ -10,6 +10,7 @@ import { fetchUnifiedRoster, getInitial } from '@/lib/unifiedRosterUtils';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
 const CATEGORY_OPTIONS = [
+  { id: 'user', label: 'User', color: 'bg-primary/10 border-primary/30' },
   { id: 'active', label: 'Active Character', color: 'bg-green-500/10 border-green-500/30' },
   { id: 'npc_family', label: 'NPC Family', color: 'bg-blue-500/10 border-blue-500/30' },
   { id: 'npc_fictional', label: 'NPC Fictional Person', color: 'bg-purple-500/10 border-purple-500/30' },
