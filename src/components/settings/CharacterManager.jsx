@@ -408,30 +408,69 @@ export default function CharacterManager() {
         </div>
       )}
 
-      <div className="space-y-2 max-h-96 overflow-y-auto">
+      {/* Section-based organization */}
+      <div className="space-y-6 max-h-96 overflow-y-auto">
         {allManageableItems.length === 0 ? (
           <p className="text-xs text-muted-foreground text-center py-6">No characters or NPCs</p>
-        ) : (
-          allManageableItems.map((item, index) => {
+        ) : (() => {
+          // Group items by their categorization
+          const sections = {
+            user: { label: 'You', items: [] },
+            active: { label: 'Active Characters', items: [] },
+            inactive: { label: 'Inactive Characters', items: [] },
+            npc_family: { label: 'Family Members', items: [] },
+            npc_fictional: { label: 'People in Their World', items: [] },
+            duplicate: { label: 'Duplicates', items: [] },
+            delete: { label: 'Delete', items: [] },
+            uncategorized: { label: 'Uncategorized', items: [] },
+          };
+
+          allManageableItems.forEach((item, index) => {
             const isNPC = item.type === 'world_person' || item.type === 'family';
             const isUser = item.type === 'user';
             const itemData = item.data;
-            // Stable key — use sourceCharId+personName for NPCs; fall back to index to avoid duplicate key crashes
             const npcName = itemData.person_name || itemData.name || `unnamed_${index}`;
             const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${npcName}_${index}` : itemData.id);
-            const mergeEntry = isUser
-              ? { key: 'user', type: 'user', item }
-              : isNPC
-              ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: npcName, item }
-              : { key: itemKey, type: 'character', charId: itemData.id, item };
-            // For user, always use the in-world name from settings if set
-            const itemName = isUser
-              ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
-              : itemData.name;
-            const isSelected = selectedForMerge.has(itemKey);
-            const isCategorizeSelected = selectedForCategorization.has(itemKey);
-            const currentCategory = categorizations.get(itemKey);
-            const categoryColor = currentCategory ? CATEGORY_OPTIONS.find(c => c.id === currentCategory)?.color : '';
+
+            const category = categorizations.get(itemKey);
+            if (isUser) {
+              sections.user.items.push({ item, index, itemKey });
+            } else if (category) {
+              sections[category].items.push({ item, index, itemKey });
+            } else {
+              sections.uncategorized.items.push({ item, index, itemKey });
+            }
+          });
+
+          return Object.entries(sections).map(([sectionKey, section]) => {
+            if (section.items.length === 0) return null;
+            return (
+              <div key={sectionKey} className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{section.label}</p>
+                {section.items.map(({ item, index, itemKey: itemKeyFromSection }) => {
+                  // Handle renaming within mapped context
+                  const handleRenameLocal = (charId, oldName, isNpc = false) => {
+                    setRenamingId(charId);
+                    setNewName(oldName);
+                  };
+                  const isNPC = item.type === 'world_person' || item.type === 'family';
+                  const isUser = item.type === 'user';
+                  const itemData = item.data;
+                  const npcName = itemData.person_name || itemData.name || `unnamed_${index}`;
+                  const mergeEntry = isUser
+                    ? { key: 'user', type: 'user', item }
+                    : isNPC
+                    ? { key: itemKeyFromSection, type: 'npc', sourceCharId: itemData.source_character_id, personName: npcName, item }
+                    : { key: itemKeyFromSection, type: 'character', charId: itemData.id, item };
+                  const itemName = isUser
+                    ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
+                    : itemData.name;
+                  const isSelected = selectedForMerge.has(itemKeyFromSection);
+                  const isCategorizeSelected = selectedForCategorization.has(itemKeyFromSection);
+                  const currentCategory = categorizations.get(itemKeyFromSection);
+                  const categoryColor = currentCategory ? CATEGORY_OPTIONS.find(c => c.id === currentCategory)?.color : '';
+
+                  return (
             
             return (
               <motion.div
@@ -445,7 +484,7 @@ export default function CharacterManager() {
                      : `bg-card border-border ${categoryColor ? categoryColor : ''}`
                  } ${isUser ? 'ring-2 ring-primary/30' : ''}`}
                  onClick={() => {
-                   if (categorizationMode) toggleCategorizeSelection(itemKey);
+                   if (categorizationMode) toggleCategorizeSelection(itemKeyFromSection);
                    if (mergeMode) toggleMergeSelection(mergeEntry);
                  }}
                 >
@@ -531,7 +570,7 @@ export default function CharacterManager() {
                   {!mergeMode && !categorizationMode && (
                     <div className="flex items-center gap-1">
                       <button
-                        onClick={() => handleRename(itemKey, itemName, isNPC)}
+                        onClick={() => handleRenameLocal(itemKeyFromSection, itemName, isNPC)}
                         className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors flex-shrink-0"
                         title="Rename"
                       >
@@ -539,7 +578,7 @@ export default function CharacterManager() {
                       </button>
                       {!isUser && (
                         <button
-                          onClick={() => handleDelete(itemKey, isNPC)}
+                          onClick={() => handleDelete(itemKeyFromSection, isNPC)}
                           className="p-1.5 text-muted-foreground hover:text-destructive rounded-lg transition-colors flex-shrink-0"
                           title="Delete"
                         >
@@ -550,9 +589,12 @@ export default function CharacterManager() {
                   )}
                 </div>
               </motion.div>
+                );
+              })}
+              </div>
             );
-          })
-        )}
+          }).filter(Boolean);
+        })()}
       </div>
 
       {/* Alert duplicates & ghost NPCs */}
