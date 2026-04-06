@@ -65,31 +65,27 @@
         "type": "string"
       },
       "default": [],
-      "description": "Alternate names, nicknames, and aliases for the user. Used to prevent duplicate NPC creation."
+      "description": "Alternate names, nicknames, and aliases for the user."
     },
     "response_lag_enabled": {
       "type": "boolean",
-      "default": true,
-      "description": "Whether characters wait a realistic amount of time before responding"
+      "default": true
     },
     "typing_speed_enabled": {
       "type": "boolean",
-      "default": true,
-      "description": "Whether to simulate realistic typing speed before showing the message"
+      "default": true
     },
     "words_per_minute": {
       "type": "number",
-      "default": 41,
-      "description": "Simulated typing speed in words per minute"
+      "default": 41
     },
     "user_schedule_notes": {
-      "type": "string",
-      "description": "User's general availability or schedule in natural language."
+      "type": "string"
     },
     "user_balance": {
       "type": "number",
       "default": 6000,
-      "description": "User's in-world financial balance (USD). Starting balance is $6,000."
+      "description": "User's in-world financial balance (USD)."
     },
     "user_relatives": {
       "type": "object",
@@ -99,12 +95,11 @@
       }
     },
     "last_daily_income_date": {
-      "type": "string",
-      "description": "YYYY-MM-DD of the last time daily income ($10) was awarded. Used to prevent double-payouts."
+      "type": "string"
     },
     "appearance_lock": {
       "type": "object",
-      "description": "Locked appearance attributes for the user. Used as identity anchors in generated images.",
+      "description": "Locked appearance attributes for the user.",
       "properties": {
         "skin_tone": {
           "type": "string"
@@ -138,6 +133,32 @@
           "default": []
         }
       }
+    },
+    "home_key_holders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "granted_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": [],
+      "description": "Characters who have given the user a key to their home, allowing entry even when they are away."
     }
   },
   "required": []

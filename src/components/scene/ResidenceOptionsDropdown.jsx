@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn, LogOut, UserPlus } from "lucide-react";
+import { Home, ChevronDown, Navigation, DoorOpen, UserX, Users, LogIn, LogOut, UserPlus, MapPin, Loader2 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import GuestSelectorModal from "./GuestSelectorModal";
@@ -31,6 +31,8 @@ export default function ResidenceOptionsDropdown({
   onKickOut,
   onAskToLeave,
   onInviteGuest,
+  onCharacterPulledHome,
+  allCharacters = [],
 }) {
   const [open, setOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -64,6 +66,32 @@ export default function ResidenceOptionsDropdown({
     }
     if (optionId === "kick_out") {
       onKickOut?.();
+      return;
+    }
+    if (optionId === "character_is_here") {
+      // Find all resident characters who are NOT currently showing as home and pull them here
+      setIsProcessing(true);
+      try {
+        const residentIds = location?.resident_character_ids || [];
+        const missingResidents = allCharacters.filter(c =>
+          residentIds.includes(c.id) && c.current_location_id !== location?.id
+        );
+        for (const char of missingResidents) {
+          await base44.entities.Character.update(char.id, {
+            current_location_id: location.id,
+          });
+        }
+        setResultMsg(
+          missingResidents.length > 0
+            ? `${missingResidents.map(c => c.name).join(", ")} ${missingResidents.length === 1 ? "has been" : "have been"} pulled home.`
+            : "All residents are already showing as home."
+        );
+        onCharacterPulledHome?.();
+      } catch {
+        setResultMsg("Something went wrong. Please try again.");
+      } finally {
+        setIsProcessing(false);
+      }
       return;
     }
     if (optionId === "invite_guest") {
@@ -137,6 +165,22 @@ Write one short narrative sentence (1 sentence) describing what happens. Keep it
                   </button>
                 );
               })}
+              {/* Character is here — always visible at home locations */}
+              <button
+                onClick={() => handleOption("character_is_here")}
+                disabled={isProcessing}
+                className="w-full flex items-start gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-secondary cursor-pointer border-t border-border mt-1 pt-3"
+              >
+                {isProcessing ? (
+                  <Loader2 className="w-4 h-4 flex-shrink-0 mt-0.5 text-primary animate-spin" />
+                ) : (
+                  <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5 text-primary" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground">Character is here</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Resident isn't showing? Pull them home now.</p>
+                </div>
+              </button>
             </div>
           </motion.div>
         )}

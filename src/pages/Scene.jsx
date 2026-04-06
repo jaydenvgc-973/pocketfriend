@@ -994,10 +994,12 @@ Return JSON:
             sceneCharacters={sceneCharacters}
             isResident={broughtCharacters.some(c => location.resident_character_ids?.includes(c.id))}
             currentUser={currentUser}
+            allCharacters={characters}
             onTour={() => setShowTourModal(true)}
             onMoveIn={() => setShowMoveInPopup(true)}
             onMoveOut={handleMoveOut}
             onAskToLeave={handleAskToLeave}
+            onCharacterPulledHome={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })}
             onKickOut={() => setMessages(prev => [...prev, {
               id: Date.now().toString(),
               sender: "narrative",

@@ -93,8 +93,9 @@ export default function Travel() {
     // NPC residents actually listed ON the location record
     const npcResidents = location.resident_family_members || [];
 
-    // Can visit if any active resident is home OR there are NPC residents listed on this location
-    const canVisit = homeResidents.length > 0 || npcResidents.length > 0;
+    // Can visit if any active resident is home, there are NPC residents, OR the user has a key
+    const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
+    const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || userHasKey;
 
     // If no one at all lives here, always allow entry
     if (activeResidents.length === 0 && npcResidents.length === 0) {

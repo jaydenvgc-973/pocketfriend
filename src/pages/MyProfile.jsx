@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart } from "lucide-react";
+import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
@@ -296,10 +296,11 @@ export default function MyProfile() {
             </div>
             <div className="space-y-4">
               {characters.map(char => {
-                const currentRelative = relativeRelationships[char.id];
-                const reciprocal = currentRelative ? getReciprocalRole(currentRelative, userGender) : null;
+                 const currentRelative = relativeRelationships[char.id];
+                 const reciprocal = currentRelative ? getReciprocalRole(currentRelative, userGender) : null;
+                 const hasKey = (settings.home_key_holders || []).some(k => k.character_id === char.id);
 
-                return (
+                 return (
                   <div key={char.id} className="pb-4 border-b border-border last:border-b-0">
                     <Link to={`/profile/${char.id}`}>
                       <div className="flex items-center gap-3 hover:opacity-80 transition-opacity">
@@ -314,6 +315,12 @@ export default function MyProfile() {
                           <p className="text-sm font-medium text-foreground">{char.name}</p>
                           {char.archetype && <p className="text-xs text-muted-foreground">{char.archetype}</p>}
                         </div>
+                        {hasKey && (
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-500/10 border border-amber-500/30" title={`${char.name} gave you a key to their home`}>
+                            <Key className="w-3 h-3 text-amber-400" />
+                            <span className="text-[10px] text-amber-400 font-medium">Key</span>
+                          </div>
+                        )}
                       </div>
                     </Link>
 
@@ -329,9 +336,14 @@ export default function MyProfile() {
                         {char.name} sees you as: <span className="text-foreground font-medium capitalize">{getRelationshipLabel(reciprocal)}</span>
                       </p>
                     )}
+                    {hasKey && (
+                      <p className="ml-11 mt-1 text-[10px] text-amber-400/80 flex items-center gap-1">
+                        <Key className="w-2.5 h-2.5" />
+                        {char.name} gave you a key to their home
+                      </p>
+                    )}
                   </div>
-                );
-              })}
+                 );
             </div>
           </div>
         )}
