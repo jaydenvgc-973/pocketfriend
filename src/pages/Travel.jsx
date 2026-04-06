@@ -480,16 +480,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // READ-ONLY: Show characters whose resolved location is this home
+                    // READ-ONLY: Show ONLY characters whose resolved location is this home
                     const charactersAtHome = characters.filter(c => {
                       return c.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
-
-                    // NPC/family residents (non-characters) that live here
-                    (selectedLocation.resident_family_members || []).forEach(n => {
-                      if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
-                    });
                   } else {
                     // READ-ONLY: Show characters whose resolved location is here
                     const currentlyAtLocation = characters.filter(c => {
@@ -497,24 +492,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     });
                     currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
-                    // NPC workers — ONLY show if currently on shift at THIS location
-                    const realCharIds = new Set(characters.map(c => c.id));
-                    const workerShifts = selectedLocation.worker_shifts || {};
+                    // REAL WORKERS: Show if they have resolved location at this workplace AND are on shift
                     const now = new Date();
                     const dayOfWeek = now.getDay();
                     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-                    Object.entries(selectedLocation.worker_job_titles || {}).forEach(([key, jobTitle]) => {
-                      if (!realCharIds.has(key) && key.startsWith("npc_")) {
-                        const shift = workerShifts[key];
-                        const isOnShift = shift && 
-                          shift.days?.includes(dayOfWeek) && 
-                          currentTime >= shift.start && 
-                          currentTime <= shift.end;
-
-                        if (isOnShift) {
-                          const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
-                          lines.push({ name: npcName, status: "working", color: "text-blue-400" });
+                    characters.forEach(c => {
+                      if (c.resolved_current_location_id === selectedLocation.id) {
+                        // Character is here - check if they're on shift
+                        const workerShifts = selectedLocation.worker_shifts || {};
+                        const shift = workerShifts[c.id];
+                        if (shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end) {
+                          // Already added above, just mark as working
+                          const idx = lines.findIndex(l => l.name === c.name);
+                          if (idx >= 0) lines[idx].status = "working";
                         }
                       }
                     });
