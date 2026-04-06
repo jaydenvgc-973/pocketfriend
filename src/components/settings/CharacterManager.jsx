@@ -433,11 +433,14 @@ export default function CharacterManager() {
             const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${npcName}_${index}` : itemData.id);
 
             const category = categorizations.get(itemKey);
+            // Skip items marked as duplicates entirely
+            if (category === 'duplicate') return;
+            
             if (isUser) {
               sections.user.items.push({ item, index, itemKey });
             } else if (category) {
               sections[category].items.push({ item, index, itemKey });
-            } else if (!categorizations.get(itemKey) || categorizations.get(itemKey) !== 'duplicate') {
+            } else {
               sections.uncategorized.items.push({ item, index, itemKey });
             }
           });
