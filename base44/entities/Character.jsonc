@@ -1052,6 +1052,23 @@
     },
     "relationship_state_id": {
       "type": "string"
+    },
+    "is_sitter": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this character is assigned as a professional sitter for dependents"
+    },
+    "sitter_assignment_home_id": {
+      "type": "string",
+      "description": "ID of the home location this sitter is assigned to (null if not assigned)"
+    },
+    "sitter_assignment_dependent_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "IDs of dependents this sitter is responsible for"
     }
   },
   "required": [
