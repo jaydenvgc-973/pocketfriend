@@ -88,8 +88,8 @@ export default function Travel() {
 
     // AUTHORITATIVE: Characters who are actually at this home location RIGHT NOW
     const homeResidents = characters.filter(c => {
-      const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
-      return authLoc?.id === location.id;
+      const resolved = resolveCharacterLocation(c, locationMap);
+      return resolved.resolved_current_location_id === location.id;
     });
 
     // NPC residents listed on the location
