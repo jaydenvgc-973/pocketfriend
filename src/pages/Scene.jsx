@@ -423,6 +423,7 @@ export default function Scene() {
 
   // When characters arrive at the scene, update their current_location_id so their card reflects the venue
   // Also update worker characters to reflect they're at this location while on shift
+  // Force asleep workers to wake up and go to work (make them angry/tired)
   useEffect(() => {
     if (!location) return;
     
@@ -433,7 +434,18 @@ export default function Scene() {
     
     // Update worker characters who are on shift at this location
     workerCharacters.forEach(char => {
-      base44.entities.Character.update(char.id, { current_location_id: location.id }).catch(() => {});
+      const updates = { current_location_id: location.id };
+      
+      // If worker is asleep, force them awake and make them angry/tired
+      if (isCharacterAsleep(char)) {
+        updates.emotional_state = "irritated"; // angry/tired from being woken up
+        // Clear sleep indicators
+        if (char.sleep_start_time) {
+          updates.sleep_start_time = null;
+        }
+      }
+      
+      base44.entities.Character.update(char.id, updates).catch(() => {});
     });
   }, [location?.id, workerCharacters]);
 
