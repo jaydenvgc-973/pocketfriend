@@ -174,8 +174,13 @@ export default function CharacterManager() {
         }
       }
     } else {
-      if (window.confirm('Soft delete this character? All history is preserved and recoverable.')) {
-        deleteMutation.mutate({ characterId: itemId });
+      const isMarkedForDelete = categorizations.get(itemId) === 'delete';
+      const confirmMsg = isMarkedForDelete 
+        ? 'Permanently hard-delete this character? This cannot be undone.'
+        : 'Soft delete this character? All history is preserved and recoverable.';
+      
+      if (window.confirm(confirmMsg)) {
+        deleteMutation.mutate({ characterId: itemId, hardDelete: isMarkedForDelete });
       }
     }
   };
