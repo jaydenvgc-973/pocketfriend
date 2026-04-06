@@ -340,7 +340,7 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
 }
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
-function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [] }) {
+function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {} }) {
   // Collect all unique NPCs from fictional_relationships across all characters
   const allNPCs = [];
   const seenNames = new Set();
@@ -1510,6 +1510,7 @@ export default function Locations() {
               onCancel={() => setShowAddForm(false)}
               isWorkerTooYoung={isWorkerTooYoung}
               getNPCAge={getNPCAge}
+              currentUser={currentUser}
             />
           )}
         </AnimatePresence>
@@ -1562,25 +1563,26 @@ export default function Locations() {
                       currentUser={currentUser}
                     />
                     {inlineEditId === loc.id && (
-                      <LocationForm
-                        key={`edit-${loc.id}`}
-                        editingLocation={loc}
-                        characters={characters}
-                        allLocations={locations}
-                        onSave={(data) => handleSave(data, loc.id)}
-                        onCancel={() => setInlineEditId(null)}
-                        onDuplicate={() => handleDuplicate(loc)}
-                        isWorkerTooYoung={isWorkerTooYoung}
-                        getNPCAge={getNPCAge}
-                      />
+                        <LocationForm
+                          key={`edit-${loc.id}`}
+                          editingLocation={loc}
+                          characters={characters}
+                          allLocations={locations}
+                          onSave={(data) => handleSave(data, loc.id)}
+                          onCancel={() => setInlineEditId(null)}
+                          onDuplicate={() => handleDuplicate(loc)}
+                          isWorkerTooYoung={isWorkerTooYoung}
+                          getNPCAge={getNPCAge}
+                          currentUser={currentUser}
+                        />
+                      )}
+                    </React.Fragment>
+                    ))}
+                    </AnimatePresence>
+                    </div>
                     )}
-                  </React.Fragment>
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
 
-          {filter !== "all" && filtered.all && (
+                    {filter !== "all" && filtered.all && (
             <AnimatePresence>
               {filtered.all.map(loc => (
                 <React.Fragment key={loc.id}>
@@ -1602,14 +1604,15 @@ export default function Locations() {
                       onDuplicate={() => handleDuplicate(loc)}
                       isWorkerTooYoung={isWorkerTooYoung}
                       getNPCAge={getNPCAge}
+                      currentUser={currentUser}
                     />
                   )}
-                </React.Fragment>
-              ))}
-            </AnimatePresence>
-          )}
-        </div>
-      </div>
+                  </React.Fragment>
+                  ))}
+                  </AnimatePresence>
+                  )}
+                  </div>
+                  </div>
 
       <BottomNav />
 
