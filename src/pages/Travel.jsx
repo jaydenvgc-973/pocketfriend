@@ -78,6 +78,7 @@ export default function Travel() {
 
   /**
    * For a given location, check if we're allowed to visit it.
+   * CRITICAL: Only residents actually at home (not at work/school/travel) count as "homeResidents"
    * Returns:
    *   { canVisit, activeResidents (all), homeResidents (home now), awayResidents (away now), npcResidents, blockedBy }
    */
@@ -88,8 +89,12 @@ export default function Travel() {
 
     // Active characters who live here
     const activeResidents = characters.filter(c => location.resident_character_ids?.includes(c.id));
+    // CRITICAL: homeResidents = those actually at their home RIGHT NOW
     const homeResidents = activeResidents.filter(c => isCharacterHome(c, locationMap));
-    const awayResidents = activeResidents.filter(c => !isCharacterHome(c, locationMap));
+    // CRITICAL: awayResidents = those scheduled to be elsewhere (work/school/travel)
+    // These should NOT be shown as "not home" — they have an active obligation
+    // Only show truly missing/traveling residents
+    const awayResidents = [];
 
     // NPC residents actually listed ON the location record
     const npcResidents = location.resident_family_members || [];
@@ -482,7 +487,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
                   if (isHome) {
                     homeAccess.homeResidents.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
-                    homeAccess.awayResidents.forEach(c => lines.push({ name: c.name, status: "not home", color: "text-amber-400" }));
+                    // CRITICAL: Do NOT show away residents — they're at work/school, shown in their actual location, not home
                     (selectedLocation.resident_family_members || []).forEach(n => {
                       if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
                     });
