@@ -14,6 +14,7 @@ import DailyAchievementReminder from "@/components/home/DailyAchievementReminder
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
 import ThomasAndersonFix from "@/components/home/ThomasAndersonFix";
 import InviteOutModal from "@/components/home/InviteOutModal";
+import NPCContactPanel from "@/components/home/NPCContactPanel";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
 
 export default function Home() {
@@ -202,27 +203,30 @@ export default function Home() {
         )}
       </AnimatePresence>
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4">
-         <div className="max-w-lg mx-auto flex items-center justify-between">
-           <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
-           <div className="flex items-center gap-2">
-             <button
-               onClick={() => setShowTroubleshooting(true)}
-               className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-               title="Troubleshoot Home page"
-             >
-               <Wrench className="w-4 h-4" />
-             </button>
-             <Link to="/groups">
-               <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                 <Users className="w-5 h-5" />
-               </Button>
-             </Link>
-             <Link to="/settings">
-               <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                 <Settings className="w-5 h-5" />
-               </Button>
-             </Link>
+         <div className="max-w-lg mx-auto">
+           <div className="flex items-center justify-between mb-3">
+             <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
+             <div className="flex items-center gap-2">
+               <button
+                 onClick={() => setShowTroubleshooting(true)}
+                 className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                 title="Troubleshoot Home page"
+               >
+                 <Wrench className="w-4 h-4" />
+               </button>
+               <Link to="/groups">
+                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                   <Users className="w-5 h-5" />
+                 </Button>
+               </Link>
+               <Link to="/settings">
+                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                   <Settings className="w-5 h-5" />
+                 </Button>
+               </Link>
+             </div>
            </div>
+           <NPCContactPanel />
          </div>
        </div>
 
