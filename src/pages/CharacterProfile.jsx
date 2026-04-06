@@ -582,9 +582,9 @@ export default function CharacterProfile() {
             )}
             <div className="space-y-4">
               {(character.fictional_relationships || [])
-                .filter(r => r.related_character_id)
+                .filter(r => r.related_character_id && allCharacters.find(c => c.id === r.related_character_id && c.character_type !== "npc"))
                 .map((rel, idx) => {
-                  const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
+                   const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
                   return (
                     <div key={idx} className="pb-4 border-b border-border last:border-b-0">
                       <div className="flex items-center gap-3 mb-3">
