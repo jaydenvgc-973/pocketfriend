@@ -280,7 +280,7 @@ export default function Settings() {
 
           {/* Active Characters */}
           {(() => {
-            const activeChars = characters.filter(c => (c.character_type === "active" || !c.character_type) && c.status === "active");
+            const activeChars = characters.filter(c => (c.character_type === "active" || c.character_type === "user_created" || !c.character_type) && c.status === "active");
             return activeChars.length > 0 ? (
               <div className="space-y-3 pb-4 border-b border-border">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Characters ({activeChars.length})</p>
