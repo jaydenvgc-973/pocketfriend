@@ -53,7 +53,15 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
     return { iconType: 'prayer', label: 'praying', color: 'text-violet-300' };
   }
 
-  // 3. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
+  // 3. HOME LOCATION (if no explicit current location)
+  // If current_location_id is not set, but current_home_location_id is, use the home location name
+  // This ensures world-specific location names (e.g., "VGC Gym") are shown, not generic labels
+  if (!character?.current_location_id && character?.current_home_location_id && locationData?.homeLocation) {
+    const homeLoc = locationData.homeLocation;
+    return { iconType: 'home', label: `at ${homeLoc.name}`, color: 'text-pink-400' };
+  }
+
+  // 4. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
   // This overrides all inference and is the source of truth for where character physically is
   // CRITICAL: If set, use this and STOP. Do not continue to work/school inference below.
   if (character?.current_location_id && currentLocation) {

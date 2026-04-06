@@ -66,8 +66,9 @@ export default function Home() {
     const religionLoc = locationsData.find(l => l.category === 'religion' && !l.is_default_generic) || null;
     const gymLoc = locationsData.find(l => l.category === 'gym' && l.gym_members?.includes(char.id)) || null;
     const currentLoc = char.current_location_id ? locationMap[char.current_location_id] : null;
+    const homeLoc = char.current_home_location_id ? locationMap[char.current_home_location_id] : null;
     
-    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc };
+    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation: homeLoc };
   };
 
   // Light backfill to sync coworker inferences for existing characters
