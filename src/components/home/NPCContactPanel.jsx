@@ -23,13 +23,7 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Get active character names and the user's own character name to filter out
-  const defaultCharacter = characters.find(c => c.is_default);
-  const activeCharacterNames = characters
-    .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
-    .map(c => c.name?.toLowerCase());
-
-  // Get NPC characters directly from the Character entity where character_type === "npc"
+  // Get NPC characters with character_type === "npc"
   const npcCharacters = characters
     .filter(c => c.character_type === "npc")
     .map(npc => ({
@@ -40,6 +34,17 @@ export default function NPCContactPanel() {
       id: npc.id,
       avatar_url: npc.avatar_url,
     }));
+
+  // Close dropdown when clicking outside
+  React.useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (isOpen && e.target.closest('[data-npc-panel]') === null) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [isOpen]);
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
@@ -60,7 +65,7 @@ export default function NPCContactPanel() {
   };
 
   return (
-    <div className="relative w-full">
+    <div className="relative w-full" data-npc-panel>
       <button
         onClick={() => setIsOpen(!isOpen)}
         className="w-full flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors"
