@@ -462,8 +462,11 @@ export default function CharacterManager() {
             }
           });
 
-          return Object.entries(sections).map(([sectionKey, section]) => {
-            if (section.items.length === 0) return null;
+          const sectionOrder = ['user', 'active', 'inactive', 'npc_family', 'npc_fictional', 'delete', 'duplicate', 'uncategorized'];
+          return sectionOrder
+            .filter(key => sections[key].items.length > 0)
+            .map(sectionKey => {
+            const section = sections[sectionKey];
             return (
               <div key={sectionKey} className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{section.label}</p>
