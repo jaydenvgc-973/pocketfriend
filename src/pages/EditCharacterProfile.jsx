@@ -23,6 +23,7 @@ const JOB_TYPES = [
 const KNOWN_REL_TYPES = ["Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss", "Mentor", "Rival", "Ex", "Case manager", "Client"];
 
 const REL_LEVELS = [
+  { key: "respect_level", label: "Respect", color: "text-blue-400" },
   { key: "friendship_level", label: "Friendship", color: "text-emerald-400" },
   { key: "romantic_level", label: "Romantic", color: "text-pink-400" },
   { key: "attraction_level", label: "Attraction", color: "text-orange-400" },
@@ -137,6 +138,7 @@ export default function EditCharacterProfile() {
             person_name: otherChar.name,
             relationship_type: "Friend",
             description: "",
+            respect_level: 50,
             friendship_level: 50,
             romantic_level: 0,
             attraction_level: 0,
@@ -240,6 +242,7 @@ export default function EditCharacterProfile() {
         person_name: selectedChar.name,
         relationship_type: rel.relationship_type,
         description: rel.description || "",
+        respect_level: rel.respect_level ?? 50,
         friendship_level: rel.friendship_level ?? 50,
         romantic_level: rel.romantic_level ?? 0,
         attraction_level: rel.attraction_level ?? 0,
