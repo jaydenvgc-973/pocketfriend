@@ -57,7 +57,7 @@ const stateDots = {
 
 
 
-export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {}, locationData = {} }) {
+export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {} }) {
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditName, setShowEditName] = useState(false);
@@ -83,9 +83,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     staleTime: 30000, // 30s — don't re-fetch on every render
   });
 
-  // REMOVED: No separate currentLocationData query — use locationData.currentLoc passed from parent (Home.jsx)
-  // This ensures we use the same location map and avoid stale/duplicate queries
-  const currentLocationData = locationData?.currentLoc || null;
+
 
   // Single batched query: fetch ALL unread character messages for this character at once
   // instead of N queries per conversation (which caused 429 rate limit storms)
@@ -244,7 +242,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                const statusDisplay = getCharacterStatusDisplay(character, locationData);
+                 const statusDisplay = getCharacterStatusDisplay(character, { locationMap });
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,

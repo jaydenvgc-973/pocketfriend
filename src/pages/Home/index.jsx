@@ -253,10 +253,7 @@ export default function Home() {
           {defaultChar && (
             <div>
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
-              {(() => {
-                const locData = getLocationDataForCharacter(defaultChar);
-                return <CharacterCard character={defaultChar} locationData={{ ...locData, locationMap }} />;
-              })()}
+              <CharacterCard character={defaultChar} locationMap={locationMap} locationData={{}} />
             </div>
           )}
           {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
@@ -292,22 +289,17 @@ export default function Home() {
               </Link>
             ) : (
               <div className="grid gap-3">
-                {activeCustomChars.map(c => {
-                  const locData = getLocationDataForCharacter(c);
-                  return (
-                    <CharacterCard key={c.id} character={c}
-                      onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
-                      onMoveAway={(id) => moveAwayMutation.mutate(id)}
-                      locationData={{ ...locData, locationMap }}
-                    />
-                  );
-                })}
-                {movedAwayChars.map(c => {
-                  const locData = getLocationDataForCharacter(c);
-                  return (
-                    <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ ...locData, locationMap }} />
-                  );
-                })}
+                {activeCustomChars.map(c => (
+                  <CharacterCard key={c.id} character={c}
+                    onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
+                    onMoveAway={(id) => moveAwayMutation.mutate(id)}
+                    locationMap={locationMap}
+                    locationData={{}}
+                  />
+                ))}
+                {movedAwayChars.map(c => (
+                  <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationMap={locationMap} locationData={{}} />
+                ))}
                 <Link to="/create">
                   <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
                     <Plus className="w-4 h-4 text-muted-foreground mr-2" />
