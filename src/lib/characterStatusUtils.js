@@ -22,14 +22,17 @@ import { getAuthoritativeCharacterLocation } from './authoritativeLocationResolv
 export function getCharacterStatusDisplay(character, locationData = {}) {
   if (!character) return null;
 
-  // Build location map from locationData
-  const locationMap = {};
-  if (locationData.workLoc) locationMap[locationData.workLoc.id] = locationData.workLoc;
-  if (locationData.eduLoc) locationMap[locationData.eduLoc.id] = locationData.eduLoc;
-  if (locationData.currentLoc) locationMap[locationData.currentLoc.id] = locationData.currentLoc;
-  if (locationData.homeLocation) locationMap[locationData.homeLocation.id] = locationData.homeLocation;
-  if (locationData.gymLoc) locationMap[locationData.gymLoc.id] = locationData.gymLoc;
-  if (locationData.religionLoc) locationMap[locationData.religionLoc.id] = locationData.religionLoc;
+  // Use full locationMap if provided, otherwise build from specific locations
+  let locationMap = locationData.locationMap || {};
+  if (Object.keys(locationMap).length === 0) {
+    // Fallback: build from individual locations if full map not provided
+    if (locationData.workLoc) locationMap[locationData.workLoc.id] = locationData.workLoc;
+    if (locationData.eduLoc) locationMap[locationData.eduLoc.id] = locationData.eduLoc;
+    if (locationData.currentLoc) locationMap[locationData.currentLoc.id] = locationData.currentLoc;
+    if (locationData.homeLocation) locationMap[locationData.homeLocation.id] = locationData.homeLocation;
+    if (locationData.gymLoc) locationMap[locationData.gymLoc.id] = locationData.gymLoc;
+    if (locationData.religionLoc) locationMap[locationData.religionLoc.id] = locationData.religionLoc;
+  }
 
   // Get AUTHORITATIVE location — single source of truth
   const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
