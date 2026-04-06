@@ -54,7 +54,8 @@ export default function Home() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 0, // Force fresh data on every render to catch location name updates
+    staleTime: 5000, // Keep locations for 5s to prevent forced refetch during character updates
+    refetchOnMount: false, // Don't refetch on mount if already cached
   });
 
   // Real-time: invalidate locations when any LocationReference changes
@@ -88,9 +89,10 @@ export default function Home() {
   // Light backfill to sync coworker inferences for existing characters
   useEffect(() => {
     if (!currentUser?.email) return;
+    // Delay backfill until after locations are fully loaded to prevent render cascades
     setTimeout(() => {
       base44.functions.invoke('backfillCharactersToDefaultLocations', {}).catch(() => {});
-    }, 3000);
+    }, 8000);
   }, [currentUser?.email]);
 
   // Check for character invites on first mount only (session-based guard)
