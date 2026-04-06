@@ -507,7 +507,7 @@ export default function CharacterManager() {
             }
           });
 
-          const sectionOrder = ['user', 'active', 'inactive', 'npc_family', 'npc_fictional', 'delete', 'duplicate', 'uncategorized'];
+          const sectionOrder = ['user', 'active', 'npc_fictional', 'npc_family', 'inactive', 'delete', 'duplicate', 'uncategorized'];
           return sectionOrder
             .filter(key => sections[key].items.length > 0)
             .map(sectionKey => {
