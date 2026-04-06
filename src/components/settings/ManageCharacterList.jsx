@@ -15,10 +15,15 @@ export default function ManageCharacterList() {
     queryFn: () => base44.auth.me(),
   });
 
+  const { data: userSettings = {} } = useQuery({
+    queryKey: ['userSettings'],
+    queryFn: () => base44.entities.UserSettings.list().then(list => list[0] || {}),
+  });
+
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date')
+      ? base44.entities.Character.list('-created_date', 500)
       : [],
     enabled: !!currentUser?.email,
   });
@@ -33,7 +38,9 @@ export default function ManageCharacterList() {
   });
 
   // Organize characters by category
-  const userItem = currentUser ? { type: 'user', data: currentUser } : null;
+  const userWorldName = userSettings?.fictional_world_name || currentUser?.full_name || 'You';
+  const userAvatar = userSettings?.generated_avatar_urls?.[0] || currentUser?.avatar_url;
+  const userItem = currentUser ? { type: 'user', data: { ...currentUser, worldName: userWorldName, avatar_url: userAvatar } } : null;
   
   const activeChars = characters.filter(c => 
     (c.character_type === 'active' || !c.character_type) && c.status === 'active'
@@ -90,16 +97,20 @@ export default function ManageCharacterList() {
                     >
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         {item.type === 'user' ? (
-                          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs font-semibold text-primary">{itemName[0].toUpperCase()}</span>
-                          </div>
+                          itemData?.avatar_url ? (
+                            <img src={itemData.avatar_url} alt={itemName} className="w-8 h-8 rounded-full flex-shrink-0 object-cover" />
+                          ) : (
+                            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs font-semibold text-primary">{itemName[0].toUpperCase()}</span>
+                            </div>
+                          )
                         ) : (
                           <div className="flex-shrink-0">
                             <CharacterAvatar character={itemData} size="sm" />
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{itemName}</p>
+                          <p className="text-sm font-medium text-foreground truncate">{item.type === 'user' ? itemData.worldName : itemName}</p>
                           {item.type === 'character' && itemData.character_type && (
                             <p className="text-xs text-muted-foreground">{itemData.character_type}</p>
                           )}
