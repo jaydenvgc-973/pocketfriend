@@ -16,7 +16,7 @@ import RealLocationModal from "@/components/travel/RealLocationModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { getAuthoritativeCharacterLocation } from "@/lib/authoritativeLocationResolver";
+import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
 
 export default function Travel() {
   const navigate = useNavigate();
