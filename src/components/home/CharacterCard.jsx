@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
-import { getCharacterStatusDisplay } from "@/lib/characterStatusUtils";
+import { getCharacterStatusDisplay, isCharacterScheduledNow } from "@/lib/characterStatusUtils";
+import { getCharacterLocationDisplay } from "@/lib/realLocationDisplay";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -248,6 +249,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
               {!isMovedAway && (() => {
                 const workLocation = locationData.workLoc || (character.occupation_location_id ? locationMap[character.occupation_location_id] : null);
                 const educationLocation = locationData.eduLoc || (character.education_location_id ? locationMap[character.education_location_id] : null);
+
+                // Check if character is scheduled for work now
+                const { shouldBeAtWork } = isCharacterScheduledNow(character);
+
+                // Get real-world location display name (avoids "at bar", shows actual business name)
+                const locationDisplay = getCharacterLocationDisplay(character, locationMap);
+
                 const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: locationData.religionLoc || null, gymLocation: locationData.gymLoc || null, currentLocation: locationData.currentLoc || currentLocationData });
                 const iconComponents = {
                   'sleep': Moon,

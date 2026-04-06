@@ -217,3 +217,28 @@ export const statusIconMap = {
   prayer: 'Sparkles',
   calm: 'Circle',
 };
+
+/**
+ * Determine if a character should be at work right now.
+ * Returns { shouldBeAtWork, workLocationId, shiftTime }
+ */
+export function isCharacterScheduledNow(character) {
+  if (!character.work_start_time || !character.work_end_time || !character.work_days) {
+    return { shouldBeAtWork: false };
+  }
+
+  const now = new Date();
+  const currentHour = now.getHours();
+  const dayOfWeek = now.getDay();
+  
+  const [workStart] = character.work_start_time.split(':').map(Number);
+  const [workEnd] = character.work_end_time.split(':').map(Number);
+  const isWorkDay = character.work_days.includes(dayOfWeek);
+  const isWorkHours = currentHour >= workStart && currentHour < workEnd;
+
+  return {
+    shouldBeAtWork: isWorkDay && isWorkHours,
+    workLocationId: character.current_work_location_id,
+    shiftTime: `${character.work_start_time} - ${character.work_end_time}`
+  };
+}
