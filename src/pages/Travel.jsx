@@ -301,24 +301,24 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       return;
     }
 
-    // Check home access
+    // Check home access (read-only validation)
     const homeAccess = checkHomeAccess(selectedLocation);
     if (!homeAccess.canVisit) {
-      const awayNames = homeAccess.awayResidents.map(c => c.name).join(", ") || homeAccess.blockedBy?.name || "Everyone";
       setUnavailablePopup([{
-        character: homeAccess.blockedBy || { id: "blocked", name: selectedLocation.name, avatar_url: null },
-        reason: { iconType: "out", message: `${awayNames} ${homeAccess.awayResidents.length === 1 ? "isn't" : "aren't"} home right now.`, color: "text-amber-400" },
+        character: { id: "blocked", name: selectedLocation.name, avatar_url: null },
+        reason: { iconType: "out", message: "No one's home right now.", color: "text-amber-400" },
         availableAt: "Come back when they're home",
       }]);
       return;
     }
 
-    // Validate selected characters — skip ones who were already convinced
+    // Validate selected characters (read-only check from resolved state)
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
         const char = characters.find(c => c.id === id);
         if (!char) return null;
+        // Check resolved location state to see if they're available
         const avail = getCharacterTravelAvailability(char, locationMap);
         return avail.available ? null : { character: char, reason: avail.reason, availableAt: avail.availableAt };
       })
@@ -420,10 +420,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              onSelect={setSelectedLocation}
              activeCharacterIds={characters.map(c => c.id)}
              charactersByLocationId={characters.reduce((acc, c) => {
-               const resolved = resolveCharacterLocation(c, locationMap);
-               if (resolved.resolved_current_location_id) { 
-                 acc[resolved.resolved_current_location_id] = acc[resolved.resolved_current_location_id] || []; 
-                 acc[resolved.resolved_current_location_id].push(c.name); 
+               // READ-ONLY: Use pre-resolved location from character entity
+               if (c.resolved_current_location_id) { 
+                 acc[c.resolved_current_location_id] = acc[c.resolved_current_location_id] || []; 
+                 acc[c.resolved_current_location_id].push(c.name); 
                }
                return acc;
              }, {})}
@@ -480,10 +480,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // AUTHORITATIVE: Show characters who are actually at home right now
+                    // READ-ONLY: Show characters whose resolved location is this home
                     const charactersAtHome = characters.filter(c => {
-                      const resolved = resolveCharacterLocation(c, locationMap);
-                      return resolved.resolved_current_location_id === selectedLocation.id;
+                      return c.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
@@ -492,10 +491,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
                     });
                   } else {
-                    // AUTHORITATIVE: Show characters currently at this location
+                    // READ-ONLY: Show characters whose resolved location is here
                     const currentlyAtLocation = characters.filter(c => {
-                      const resolved = resolveCharacterLocation(c, locationMap);
-                      return resolved.resolved_current_location_id === selectedLocation.id;
+                      return c.resolved_current_location_id === selectedLocation.id;
                     });
                     currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 

@@ -16,7 +16,6 @@ import ThomasAndersonFix from "@/components/home/ThomasAndersonFix";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
-import { getAuthoritativeCharacterLocation } from "@/lib/authoritativeLocationResolver";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -75,19 +74,7 @@ export default function Home() {
   const isLocationMapReady = !isLocationsLoading && locationsData?.length > 0;
   const locationMap = isLocationMapReady ? Object.fromEntries(locationsData.map(l => [l.id, l])) : {};
 
-  // Helper to get location data
-  const getLocationDataForCharacter = (char) => {
-    const workLoc = char.occupation_location_id ? locationMap[char.occupation_location_id] : null;
-    const eduLoc = char.education_location_id ? locationMap[char.education_location_id] : null;
-    const religionLoc = locationsData.find(l => l.category === 'religion' && !l.is_default_generic) || null;
-    const gymLoc = locationsData.find(l => l.category === 'gym' && l.gym_members?.includes(char.id)) || null;
-    const homeLocation = char.current_home_location_id ? locationMap[char.current_home_location_id] : null;
-    
-    const authLoc = getAuthoritativeCharacterLocation(char, locationMap);
-    const currentLoc = authLoc && authLoc.id ? locationMap[authLoc.id] : null;
-    
-    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation };
-  };
+
 
   // Check for character invites on first mount only
   useEffect(() => {

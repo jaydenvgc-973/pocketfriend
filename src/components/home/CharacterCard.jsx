@@ -241,13 +241,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                const resolved = resolveCharacterLocation(character, locationMap);
-                const locationObj = locationMap[resolved.resolved_current_location_id];
-                const category = locationObj?.category || 'generic';
-                const isSleeping = resolved.resolved_source_reason === 'home_sleeping';
-                const isPraying = resolved.resolved_source_reason === 'praying_at_home';
+                // READ-ONLY: Use pre-computed resolved location from character entity
+                const isSleeping = character.resolved_source_reason === 'home_sleeping';
+                const isPraying = character.resolved_source_reason === 'praying_at_home';
                 
-                // Map category/source to icon and color
+                // Map resolved source reason to icon and color (READ-ONLY display)
                 let iconType = 'calm';
                 let label = 'available';
                 let color = 'text-muted-foreground';
@@ -260,33 +258,25 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   iconType = 'prayer';
                   label = 'praying';
                   color = 'text-violet-300';
-                } else if (category === 'work') {
+                } else if (character.resolved_location_type === 'work') {
                   iconType = 'work';
-                  label = `at ${resolved.resolved_current_location_name}`;
+                  label = `at ${character.resolved_current_location_name}`;
                   color = 'text-blue-400';
-                } else if (category === 'school') {
+                } else if (character.resolved_location_type === 'school') {
                   iconType = 'school';
-                  label = `at ${resolved.resolved_current_location_name}`;
+                  label = `at ${character.resolved_current_location_name}`;
                   color = 'text-amber-400';
-                } else if (category === 'gym') {
-                  iconType = 'gym';
-                  label = `at ${resolved.resolved_current_location_name}`;
-                  color = 'text-emerald-400';
-                } else if (category === 'home') {
+                } else if (character.resolved_location_type === 'home') {
                   iconType = 'home';
                   label = 'at home';
                   color = 'text-pink-400';
-                } else if (category === 'social' || category === 'food_drink') {
+                } else if (character.resolved_presence_status === 'traveling') {
                   iconType = 'out';
-                  label = `at ${resolved.resolved_current_location_name}`;
+                  label = `headed to ${character.resolved_current_location_name}`;
                   color = 'text-orange-400';
-                } else if (category === 'medical') {
-                  iconType = 'hospital';
-                  label = `at ${resolved.resolved_current_location_name}`;
-                  color = 'text-red-400';
                 } else {
                   iconType = 'out';
-                  label = `at ${resolved.resolved_current_location_name}`;
+                  label = `at ${character.resolved_current_location_name}`;
                   color = 'text-blue-400';
                 }
                 

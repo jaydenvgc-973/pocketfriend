@@ -21,9 +21,8 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
 
-        // AUTHORITATIVE: Derive occupants from current_location_id only
-         // Never trust stale resident_character_ids or worker_character_ids arrays
-         const currentlyHere = charactersByLocationId[loc.id] || [];
+        // READ-ONLY: Display occupants from resolved location data only
+        const currentlyHere = charactersByLocationId[loc.id] || [];
 
          // NPC/family residents listed directly on the location (these are non-character NPCs)
          const npcResidents = (loc.resident_family_members || []).map(n => n.name).filter(Boolean);
