@@ -57,14 +57,24 @@ export default function CharacterManager() {
     .filter(e => e.is_character && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
     .map(c => ({ type: 'character', data: c }));
   
+  // Split characters by character_type field (matches Settings.jsx logic)
   const activeCharacters = characterItems
-    .filter(item => item.data.is_active_character === true || (item.data.status === 'active' && !item.data.is_family && !item.data.is_world_person))
+    .filter(item => (item.data.character_type === 'active' || !item.data.character_type) && item.data.status !== 'moved_away')
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
-  const inactiveCharacters = characterItems
-    .filter(item => item.data.is_active_character !== true && item.data.status !== 'active')
+  const npcCharacters = characterItems
+    .filter(item => item.data.character_type === 'npc' && item.data.status !== 'moved_away')
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
+  const familyCharacters = characterItems
+    .filter(item => item.data.character_type === 'family_npc' && item.data.status !== 'moved_away')
+    .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
+  
+  const movedAwayCharacters = characterItems
+    .filter(item => item.data.status === 'moved_away')
+    .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
+  
+  // Legacy: family members and world people from roster (from unifiedRoster)
   const familyMembers = roster
     .filter(e => e.is_family && e.status !== 'merged' && e.status !== 'deleted' && e.status !== 'soft_deleted')
     .map(f => ({ type: 'family', data: f }))
@@ -96,7 +106,7 @@ export default function CharacterManager() {
 
   const allManageableItems = [
     ...(userItem ? [userItem] : []),
-    ...consolidateItems([...activeCharacters, ...inactiveCharacters, ...familyMembers, ...npcItems])
+    ...consolidateItems([...activeCharacters, ...npcCharacters, ...familyCharacters, ...movedAwayCharacters, ...familyMembers, ...npcItems])
   ];
 
   const renameMutation = useMutation({
@@ -492,11 +502,16 @@ export default function CharacterManager() {
               // User explicitly categorized it
               sections[category].items.push({ item, index, itemKey });
             } else if (item.type === 'character') {
-              // Auto-organize characters by active/inactive status
-              if (itemData.is_active_character || itemData.status === 'active') {
-                sections.active.items.push({ item, index, itemKey });
-              } else {
+              // Auto-organize characters by character_type field (active, npc, family_npc, moved_away)
+              if (itemData.character_type === 'npc') {
+                sections.npc_fictional.items.push({ item, index, itemKey });
+              } else if (itemData.character_type === 'family_npc') {
+                sections.npc_family.items.push({ item, index, itemKey });
+              } else if (itemData.status === 'moved_away') {
                 sections.inactive.items.push({ item, index, itemKey });
+              } else {
+                // Default: active characters (character_type === 'active' or undefined)
+                sections.active.items.push({ item, index, itemKey });
               }
             } else if (item.type === 'family') {
               sections.npc_family.items.push({ item, index, itemKey });
