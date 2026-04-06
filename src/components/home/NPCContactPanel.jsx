@@ -31,8 +31,7 @@ export default function NPCContactPanel() {
 
   // Extract fictional NPCs from all characters' fictional_relationships
   // Filter out NPCs that share names with active characters or the user
-  // Also deduplicate by checking if names are variations of each other
-  const seenNames = new Set();
+  // Deduplicate only exact name matches from the same source character
   const npcCharacters = characters.flatMap(char => 
     (char.fictional_relationships || []).map(rel => ({
       ...rel,
@@ -41,26 +40,27 @@ export default function NPCContactPanel() {
       sourceCharacterId: char.id,
       id: `${char.id}-${rel.related_character_id}`
     }))
-  ).filter(npc => {
+  ).reduce((acc, npc) => {
     const nameLower = npc.name?.toLowerCase().trim();
     
     // Filter out: active characters, user's own character
     if (activeCharacterNames.includes(nameLower) || 
         nameLower === defaultCharacter?.name?.toLowerCase()) {
-      return false;
+      return acc;
     }
     
-    // Check if this name is a duplicate of an already seen name
-    // (e.g., "James" and "James Anderson" are the same person)
-    for (const seenName of seenNames) {
-      if (nameLower.includes(seenName) || seenName.includes(nameLower)) {
-        return false;
-      }
+    // Only filter if exact same name from same source character already exists
+    const isDuplicate = acc.some(existing => 
+      existing.name?.toLowerCase().trim() === nameLower && 
+      existing.sourceCharacterId === npc.sourceCharacterId
+    );
+    
+    if (!isDuplicate) {
+      acc.push(npc);
     }
     
-    seenNames.add(nameLower);
-    return true;
-  });
+    return acc;
+  }, []);
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
