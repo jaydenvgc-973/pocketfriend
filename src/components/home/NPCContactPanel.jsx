@@ -23,22 +23,35 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Get active character names to filter out duplicates
+  // Get active character names and the user's own character name to filter out
+  const defaultCharacter = characters.find(c => c.is_default);
   const activeCharacterNames = characters
     .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
     .map(c => c.name?.toLowerCase());
 
   // Extract fictional NPCs from all characters' fictional_relationships
-  // Filter out NPCs that share names with active characters
+  // Filter out NPCs that share names with active characters or the user
+  // Also deduplicate by name
+  const seenNames = new Set();
   const npcCharacters = characters.flatMap(char => 
     (char.fictional_relationships || []).map(rel => ({
       ...rel,
       characterId: rel.related_character_id,
       name: rel.person_name,
       sourceCharacterId: char.id,
-      id: `${char.id}-${rel.related_character_id}` // Unique key for the list
+      id: `${char.id}-${rel.related_character_id}`
     }))
-  ).filter(npc => !activeCharacterNames.includes(npc.name?.toLowerCase()));
+  ).filter(npc => {
+    const nameLower = npc.name?.toLowerCase();
+    // Filter out: active characters, user's own character, and duplicates
+    if (activeCharacterNames.includes(nameLower) || 
+        nameLower === defaultCharacter?.name?.toLowerCase() ||
+        seenNames.has(nameLower)) {
+      return false;
+    }
+    seenNames.add(nameLower);
+    return true;
+  });
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
