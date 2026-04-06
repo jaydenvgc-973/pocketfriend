@@ -256,7 +256,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 // Get real-world location display name (avoids "at bar", shows actual business name)
                 const locationDisplay = getCharacterLocationDisplay(character, locationMap);
 
-                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: locationData.religionLoc || null, gymLocation: locationData.gymLoc || null, currentLocation: locationData.currentLoc || currentLocationData });
+                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: locationData.religionLoc || null, gymLocation: locationData.gymLoc || null, currentLocation: locationData.currentLoc || currentLocationData, homeLocation: locationData.homeLocation || null });
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,
