@@ -1,4 +1,4 @@
-import { getAuthoritativeCharacterLocation } from './authoritativeLocationResolver';
+import { resolveCharacterLocation } from './locationResolutionEngine';
 import { isCharacterAsleep } from './sleepUtils';
 import { toDisplay12h } from './timeFormat';
 
@@ -9,19 +9,19 @@ import { toDisplay12h } from './timeFormat';
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
 
-  // Use authoritative location resolver to determine current state
-  const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
-  const locationObj = locationMap[authLoc?.id];
-  const isSleeping = authLoc?.source === 'sleeping_at_home';
-  const isPraying = authLoc?.source === 'praying_at_home';
+  // Use location resolution engine to determine current state
+  const resolved = resolveCharacterLocation(character, locationMap);
+  const locationObj = locationMap[resolved.resolved_current_location_id];
+  const isSleeping = resolved.resolved_source_reason === 'home_sleeping';
+  const isPraying = resolved.resolved_source_reason === 'praying_at_home';
   const category = locationObj?.category || 'generic';
   
-  // Determine travel blockage based on authoritative state
+  // Determine travel blockage based on resolved state
   let iconType = 'calm';
   if (isSleeping) iconType = 'sleep';
   else if (isPraying) iconType = 'prayer';
-  else if (authLoc?.source === 'active_work_schedule') iconType = 'work';
-  else if (authLoc?.source === 'active_school_schedule') iconType = 'school';
+  else if (resolved.resolved_source_reason === 'work_schedule') iconType = 'work';
+  else if (resolved.resolved_source_reason === 'school_schedule') iconType = 'school';
   else if (category === 'medical') iconType = 'hospital';
 
   if (iconType === 'sleep') {
@@ -88,11 +88,11 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
 
 /**
  * Returns true if a character is currently at home (not at work, school, etc.)
- * CRITICAL: Uses authoritative resolver to determine actual location
+ * CRITICAL: Uses location resolution engine to determine actual location
  */
 export function isCharacterHome(character, locationMap = {}) {
-  const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
-  // They're home only if their authoritative location is their home location
-  if (!authLoc || !character.current_home_location_id) return false;
-  return authLoc.id === character.current_home_location_id;
+  const resolved = resolveCharacterLocation(character, locationMap);
+  // They're home only if their resolved location is their home location
+  if (!resolved.resolved_current_location_id || !character.current_home_location_id) return false;
+  return resolved.resolved_current_location_id === character.current_home_location_id;
 }
