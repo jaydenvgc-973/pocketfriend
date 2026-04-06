@@ -50,9 +50,17 @@ export default function ManageCharacterList() {
     c.character_type === 'npc' && c.status === 'active'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
-  const npcFamily = characters.filter(c => 
-    c.character_type === 'family_npc' && c.status === 'active'
-  ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
+  const npcFamily = characters.filter(c => {
+    if (c.status !== 'active') return false;
+    if (c.character_type === 'family_npc') return true;
+    // Also include npc or user_created that have family relationships
+    if (c.character_type === 'npc' || c.character_type === 'user_created') {
+      return c.fictional_relationships?.some(r => 
+        ['family', 'brother', 'sister', 'mother', 'father', 'parent', 'sibling'].includes(r.relationship_type?.toLowerCase())
+      ) || characters.some(other => other.family_members?.some(fm => fm.name === c.name));
+    }
+    return false;
+  }).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   const movedAway = characters.filter(c => 
     c.status === 'moved_away'
