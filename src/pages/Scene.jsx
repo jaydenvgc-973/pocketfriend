@@ -12,6 +12,7 @@ import { filterDashes } from "@/lib/dashFilter";
 import { isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterHome } from "@/lib/travelAvailability";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
+import { isLocationOpen } from "@/lib/locationHoursUtils";
 import { generateLocationActions } from "@/lib/actionGenerator";
 import { buildUnifiedMemoryContext, formatMemoryForLLM, shouldReferenceMemory, getLocationMemories } from "@/lib/memoryUnity";
 import { checkCharacterAvailability, getLocationEmployees, spawnLocationNPCs, shouldNPCApproach } from "@/lib/npcSpawner";
@@ -879,6 +880,9 @@ Return JSON:
     }, 1000);
   };
 
+  // Check if location is closed
+  const locationClosed = isLocationOpen(location) === false;
+
   if (!location) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -886,6 +890,22 @@ Return JSON:
           <p className="text-sm text-muted-foreground">Location not found</p>
           <Link to="/travel"><Button variant="outline" size="sm">Back to Travel</Button></Link>
         </div>
+      </div>
+    );
+  }
+
+  // If location is closed, show a closure message
+  if (locationClosed) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-4 space-y-4">
+        <div className="text-center space-y-3">
+          <span className="text-4xl">🚫</span>
+          <h2 className="text-lg font-bold text-foreground">{location.name} is currently closed</h2>
+          <p className="text-sm text-muted-foreground max-w-xs">This location is not open at the moment. Come back during operating hours.</p>
+        </div>
+        <Link to="/travel" className="w-full max-w-xs">
+          <Button variant="outline" size="lg" className="w-full rounded-xl">Back to Travel</Button>
+        </Link>
       </div>
     );
   }
