@@ -628,11 +628,7 @@ export default function Settings() {
               <DiagnosticReportViewer />
             </div>
           )}
-          
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Characters</p>
-          <div className="mb-6 bg-card border border-border rounded-2xl p-4">
-            <CharacterManager />
-          </div>
+
           <button
             onClick={handleForcePayday}
             disabled={isProcessingPayday}
