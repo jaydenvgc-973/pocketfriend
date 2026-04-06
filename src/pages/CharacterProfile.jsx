@@ -653,7 +653,6 @@ export default function CharacterProfile() {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = character.fictional_relationships?.filter(r => 
               !r.related_character_id && 
-              !r._from_family && 
               !familyNames.has(r.person_name?.toLowerCase())
             ) || [];
             // Deduplicate: keep first occurrence of each person_name (case-insensitive)
@@ -671,7 +670,6 @@ export default function CharacterProfile() {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
                 const npcRels = character.fictional_relationships?.filter(r => 
                   !r.related_character_id && 
-                  !r._from_family && 
                   !familyNames.has(r.person_name?.toLowerCase())
                 ) || [];
                 // Deduplicate: keep first occurrence of each person_name (case-insensitive)
