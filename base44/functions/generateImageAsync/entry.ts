@@ -780,7 +780,13 @@ Deno.serve(async (req) => {
       const roomInstruction = hasLocationImages
         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + (effectiveUserIncluded ? 2 : charCount)} = ${characterName} — replicate their exact face, skin tone, hair, and body with maximum fidelity.${effectiveUserIncluded ? ` Final images = THE USER — also present in this scene, replicate their exact appearance.` : ''} Do NOT redesign the room.`
         : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance.${doNotIncludeOthers}`;
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}`;
+
+      // For character-only photos in chat, enforce strict appearance consistency
+      const characterAppearanceStrict = resolvedSubjectType === 'character' 
+        ? `\n\n════════════════════════════════════════════════════════════\nCHARACTER IDENTITY LOCK - 100% ACCURACY REQUIRED:\nWhen generating a photo of ${characterName} sending/showing this image:\n- Facial features: MUST match exactly\n- Skin tone: MUST match exactly (no variation)\n- Hair type, color, and style: MUST match exactly\n- Body type: MUST match exactly\n${characterName} must be INSTANTLY RECOGNIZABLE\nNO ARTISTIC INTERPRETATION - strict character consistency\n════════════════════════════════════════════════════════════`
+        : '';
+
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}${characterAppearanceStrict}`;
 
     } else if (hasLocationImages) {
       // No character refs at all — use location refs + strong appearance text

@@ -6,6 +6,7 @@ import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { generateImageWithUserIdentity, buildUserAppearanceData, buildUserReferenceImages } from "@/lib/userImageGeneration";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
+import { addCharacterAppearanceConstraints, addDiversityConstraints } from "@/lib/imageDiversityConstraints";
 
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -259,7 +260,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       if (!newMsg?.id) throw new Error('Failed to create message');
 
       // Build the prompt for generateImageAsync
-      const fullPrompt = `[CHARACTER] ${promptText}`;
+      // If character is sending their own photo, enforce 100% appearance consistency
+      let fullPrompt = `[CHARACTER] ${promptText}`;
+      if (subjectType === 'character') {
+        fullPrompt = addCharacterAppearanceConstraints(promptText, character);
+      }
 
       // Call generateImageAsync which handles location locking, character refs, etc.
       const genRes = await base44.functions.invoke('generateImageAsync', {
