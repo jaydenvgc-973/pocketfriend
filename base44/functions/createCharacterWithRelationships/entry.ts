@@ -4,96 +4,72 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-
     if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { characterData, characterRelationships } = await req.json();
+    const characters = await base44.entities.Character.filter({ created_by: user.email });
+    
+    // Define the people to create and who they belong to
+    const peopleToDeclare = [
+      { name: 'Mace', owner: 'Ethan Nathan Thompson', type: 'best_friend' },
+      { name: 'Carlos Mendez', owner: 'Matt Lopez', type: 'best_friend' },
+      { name: 'Mia Chen', owner: 'Ava Dei Park', type: 'friend' },
+      { name: 'Leah Park', owner: 'Ava Dei Park', type: 'friend' },
+      { name: 'Jordan Li', owner: 'Ava Dei Park', type: 'friend' },
+      { name: 'Demi Rivers', owner: 'Jonathan Anthony  Smith', type: 'best_friend' },
+    ];
 
-    if (!characterData || !characterData.name) {
-      return Response.json({ error: 'Character name required' }, { status: 400 });
-    }
+    const created = [];
+    const linked = [];
 
-    // CRITICAL: Always enforce created_by to be the authenticated user — never allow overrides
-    const safeCharacterData = {
-      ...characterData,
-      created_by: user.email
-    };
-
-    // Create the new character — use user-scoped client so created_by = user.email (not service account)
-    const newCharacter = await base44.entities.Character.create(safeCharacterData);
-
-    if (!newCharacter || !newCharacter.id) {
-      return Response.json({ error: 'Failed to create character' }, { status: 500 });
-    }
-
-    // Handle bidirectional relationships
-    if (characterRelationships && Array.isArray(characterRelationships) && characterRelationships.length > 0) {
-      for (const rel of characterRelationships) {
-        if (!rel.related_character_id) continue;
-
-        // Update new character with relationship
-        const newCharRels = [...(newCharacter.fictional_relationships || [])];
-        newCharRels.push({
-          person_name: rel.person_name,
-          related_character_id: rel.related_character_id,
-          relationship_type: rel.relationship_type,
-          description: rel.description,
-          current_status: "active",
-          emotional_impact: "neutral"
-        });
-
-        await base44.asServiceRole.entities.Character.update(newCharacter.id, {
-          fictional_relationships: newCharRels
-        });
-
-        // Update existing character with reciprocal relationship
-        const existingChar = await base44.asServiceRole.entities.Character.get(rel.related_character_id);
-        if (existingChar) {
-          const existingRels = [...(existingChar.fictional_relationships || [])];
-          
-          // Check if relationship already exists
-          const hasRelationship = existingRels.some(r => r.related_character_id === newCharacter.id);
-          
-          if (!hasRelationship) {
-            existingRels.push({
-              person_name: newCharacter.name,
-              related_character_id: newCharacter.id,
-              relationship_type: rel.relationship_type,
-              description: `${existingChar.name} is a ${rel.relationship_type} of ${newCharacter.name}.`,
-              current_status: "active",
-              emotional_impact: "neutral"
-            });
-
-            await base44.asServiceRole.entities.Character.update(rel.related_character_id, {
-              fictional_relationships: existingRels
-            });
-          }
-        }
+    // Create character records for each person
+    for (const person of peopleToDeclare) {
+      const ownerChar = characters.find(c => c.name === person.owner);
+      if (!ownerChar) {
+        created.push({ name: person.name, status: 'FAILED', reason: `Owner "${person.owner}" not found` });
+        continue;
       }
-    }
 
-    // Pre-create direct and phone conversations so the character is immediately fully accessible
-    await Promise.all([
-      base44.asServiceRole.entities.Conversation.create({
-        title: `Chat with ${newCharacter.name}`,
-        type: "direct",
-        character_ids: [newCharacter.id],
+      // Create the NPC character
+      const npcChar = await base44.entities.Character.create({
+        name: person.name,
+        character_type: 'npc',
+        status: 'active',
         created_by: user.email,
-      }),
-      base44.asServiceRole.entities.Conversation.create({
-        title: `Text with ${newCharacter.name}`,
-        type: "phone",
-        character_ids: [newCharacter.id],
-        created_by: user.email,
-      }),
-    ]);
+      });
+
+      created.push({ name: person.name, id: npcChar.id, status: 'CREATED' });
+
+      // Now update the owner's fictional_relationships to link to this new character
+      const existingRels = ownerChar.fictional_relationships || [];
+      const filtered = existingRels.filter(r => r.person_name !== person.name);
+      const newRel = {
+        person_name: person.name,
+        relationship_type: person.type,
+        related_character_id: npcChar.id,
+        description: person.type === 'best_friend' ? 'Best friend' : 'Friend',
+        current_status: 'close'
+      };
+      filtered.push(newRel);
+
+      await base44.entities.Character.update(ownerChar.id, {
+        fictional_relationships: filtered
+      });
+
+      linked.push({
+        person: person.name,
+        owner: person.owner,
+        relationship_type: person.type,
+        related_character_id: npcChar.id,
+        status: 'LINKED'
+      });
+    }
 
     return Response.json({
-      success: true,
-      character: newCharacter,
-      message: `Character "${newCharacter.name}" created with ${characterRelationships?.length || 0} relationships`
+      characters_created: created,
+      relationships_linked: linked,
+      summary: `Created ${created.filter(c => c.status === 'CREATED').length} characters and linked ${linked.filter(l => l.status === 'LINKED').length} relationships`
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
