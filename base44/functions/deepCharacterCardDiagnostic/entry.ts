@@ -211,14 +211,35 @@ Deno.serve(async (req) => {
       if (!char.current_location_id && char.status === 'active') {
         gaps.push('No current_location_id set');
       }
-      if (!char.current_home_location_id && char.character_type !== 'npc') {
+      if (!char.current_home_location_id && char.character_type !== 'npc' && char.character_type !== 'background') {
         gaps.push('No current_home_location_id set');
+      }
+      if (!char.current_work_location_id && char.occupation && !char.occupation.includes('unemployed') && !char.occupation.includes('student')) {
+        gaps.push('Occupation set but no work_location_id');
+      }
+      if (!char.current_school_location_id && (char.student_status === 'enrolled' || char.education)) {
+        gaps.push('Student status enrolled but no school_location_id');
       }
       if (!char.emotional_state) {
         gaps.push('No emotional_state');
       }
       if (!char.wake_time || !char.sleep_time) {
         gaps.push('Incomplete sleep schedule');
+      }
+      if (!char.voice_enabled && char.character_type === 'active') {
+        gaps.push('Voice disabled for active character');
+      }
+      if (char.work_start_time && char.work_end_time && !char.work_days) {
+        gaps.push('Work times set but no work_days');
+      }
+      if (char.current_work_location_id && !char.work_start_time && !char.work_end_time) {
+        gaps.push('Work location set but no schedule times');
+      }
+      if (!char.gender && char.character_type !== 'npc') {
+        gaps.push('No gender set');
+      }
+      if (!char.age && !char.birth_year && char.character_type !== 'npc') {
+        gaps.push('No age or birth year set');
       }
 
       charReport.gaps = gaps;
