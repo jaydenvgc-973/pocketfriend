@@ -47,15 +47,14 @@ export default function Home() {
   });
 
   // Fetch locations for location-aware status display on character cards
-  const { data: locationsData = [] } = useQuery({
+  const { data: locationsData = [], isLoading: isLocationsLoading } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 5000, // Keep locations for 5s to prevent forced refetch during character updates
-    refetchOnMount: false, // Don't refetch on mount if already cached
+    staleTime: 0, // Never cache — always fetch fresh to ensure live state
   });
 
   // Real-time: invalidate locations when any LocationReference changes
@@ -69,7 +68,8 @@ export default function Home() {
   }, [currentUser?.email, queryClient]);
   
   // Build complete location map for all characters
-  const locationMap = Object.fromEntries((locationsData || []).map(l => [l.id, l]));
+  // CRITICAL: Only build when locations are fully loaded to prevent empty-map fallback
+  const locationMap = isLocationsLoading ? {} : Object.fromEntries((locationsData || []).map(l => [l.id, l]));
   
   // Helper to get all location data for a character using authoritative resolver
   const getLocationDataForCharacter = (char) => {
@@ -86,14 +86,8 @@ export default function Home() {
     return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation };
   };
 
-  // Light backfill to sync coworker inferences for existing characters
-  useEffect(() => {
-    if (!currentUser?.email) return;
-    // Delay backfill until after locations are fully loaded to prevent render cascades
-    setTimeout(() => {
-      base44.functions.invoke('backfillCharactersToDefaultLocations', {}).catch(() => {});
-    }, 8000);
-  }, [currentUser?.email]);
+  // Removed: backfill was causing render cascades during location loading
+  // Characters maintain their real-time location state from authoritative resolver
 
   // Check for character invites on first mount only (session-based guard)
   useEffect(() => {
@@ -246,6 +240,12 @@ export default function Home() {
          </div>
        </div>
 
+      {isLocationsLoading && (
+        <div className="max-w-lg mx-auto px-6 py-6 flex items-center justify-center min-h-[200px]">
+          <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+        </div>
+      )}
+      {!isLocationsLoading && (
       <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
         {showThomasAndersonFix && (
           <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
@@ -325,6 +325,7 @@ export default function Home() {
           )}
         </div>
       </div>
+      )}
       <DailyAchievementReminder />
       <TroubleshootingPanelHome
         isOpen={showTroubleshooting}
