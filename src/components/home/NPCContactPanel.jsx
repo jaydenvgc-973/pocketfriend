@@ -23,20 +23,32 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
+  // Get active character names to filter out duplicates
+  const activeCharacterNames = characters
+    .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
+    .map(c => c.name?.toLowerCase());
+
   // Extract fictional NPCs from all characters' fictional_relationships
+  // Filter out NPCs that share names with active characters
   const npcCharacters = characters.flatMap(char => 
     (char.fictional_relationships || []).map(rel => ({
       ...rel,
       characterId: rel.related_character_id,
       name: rel.person_name,
+      sourceCharacterId: char.id,
       id: `${char.id}-${rel.related_character_id}` // Unique key for the list
     }))
-  );
+  ).filter(npc => !activeCharacterNames.includes(npc.name?.toLowerCase()));
 
-  const handleContactNPC = (characterId) => {
+  const handleContactNPC = (npc) => {
     setIsOpen(false);
-    if (characterId) {
-      navigate(`/chat/${characterId}`);
+    // If fictional NPC has a related_character_id, navigate to that character's chat
+    // Otherwise, navigate with npc name as a parameter for fictional chat
+    if (npc.characterId) {
+      navigate(`/chat/${npc.characterId}`);
+    } else {
+      // For NPCs without a linked character, pass NPC data via state
+      navigate(`/chat?npcName=${encodeURIComponent(npc.name)}&sourceCharId=${npc.sourceCharacterId}`);
     }
   };
 
@@ -89,7 +101,7 @@ export default function NPCContactPanel() {
                 {npcCharacters.map((npc, idx) => (
                   <motion.button
                     key={idx}
-                    onClick={() => handleContactNPC(npc.characterId)}
+                    onClick={() => handleContactNPC(npc)}
                     className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0"
                     whileHover={{ x: 2 }}
                   >
@@ -101,12 +113,7 @@ export default function NPCContactPanel() {
                     </div>
                     <button
                       onClick={(e) => {
-                        const sourceChar = characters.find(c => 
-                          (c.fictional_relationships || []).some(r => r.person_name === npc.name)
-                        );
-                        if (sourceChar) {
-                          handleDeleteNPC(e, sourceChar.id, npc.characterId);
-                        }
+                        handleDeleteNPC(e, npc.sourceCharacterId, npc.characterId);
                       }}
                       className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
                       title="Delete NPC"
