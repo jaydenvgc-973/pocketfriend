@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock } from "lucide-react";
+import React, { useState, useEffect, useRef } from "react";
+import { Plus, Trash2, Camera, Loader2, ZoomIn, Lock, Unlock, User } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
@@ -369,6 +369,48 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
     }
   };
 
+  const [showAddMenu, setShowAddMenu] = useState(false);
+  const addMenuRef = useRef(null);
+
+  // Close add menu on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) setShowAddMenu(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const alreadyAddedSelf = members.some(m => m._is_user);
+
+  const addSelf = () => {
+    if (masterLocked || alreadyAddedSelf) return;
+    setShowAddMenu(false);
+    // Pull age from user birthday
+    const birthday = userSettings?.user_birthday;
+    let age = null;
+    if (birthday) {
+      const today = new Date();
+      const bd = new Date(birthday);
+      age = today.getFullYear() - bd.getFullYear();
+      if (today < new Date(today.getFullYear(), bd.getMonth(), bd.getDate())) age--;
+    }
+    const userAvatar = currentUser?.selected_avatar_url
+      || currentUser?.user_avatar_url
+      || currentUser?.generated_avatar_urls?.[0]
+      || currentUser?.reference_image_urls?.[0]
+      || null;
+    const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "Me";
+    setMembers(prev => [...prev, {
+      name: worldName,
+      relationship_type: "other",
+      photo_url: userAvatar,
+      age_at_creation: age,
+      age_set_date: new Date().toISOString(),
+      _is_user: true,
+    }]);
+  };
+
   const nonUserMembers = members.filter(m => !m._is_user);
   const originalNonUser = (character.family_members || []).filter(m => !m._is_user);
   const hasChanges = JSON.stringify(nonUserMembers) !== JSON.stringify(originalNonUser);
@@ -391,13 +433,35 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
           )}
         </div>
         {!readOnly && !masterLocked && (
-          <button
-            onClick={addMember}
-            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Add
-          </button>
+          <div className="relative" ref={addMenuRef}>
+            <button
+              onClick={() => setShowAddMenu(v => !v)}
+              className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 transition-colors font-medium"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Add
+            </button>
+            {showAddMenu && (
+              <div className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+                <button
+                  onClick={() => { addMember(); setShowAddMenu(false); }}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-foreground hover:bg-secondary transition-colors text-left"
+                >
+                  <Plus className="w-3.5 h-3.5 text-muted-foreground" />
+                  Add family member
+                </button>
+                {!alreadyAddedSelf && (
+                  <button
+                    onClick={addSelf}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-pink-400 hover:bg-secondary transition-colors text-left border-t border-border"
+                  >
+                    <User className="w-3.5 h-3.5" />
+                    Add yourself
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         )}
         {!readOnly && masterLocked && (
           <span className="text-[10px] text-amber-400/80 font-medium">List locked</span>
@@ -434,7 +498,17 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   <p className="text-sm text-foreground font-medium">{member.name}</p>
                   <p className="text-xs text-muted-foreground capitalize">
                     {member.relationship_type}
-                    {member.age_at_creation != null ? ` · ${calcFamilyMemberAge(member, member.age_set_date, 0)} yrs` : ""}
+                    {(() => {
+                      const bd = userSettings?.user_birthday;
+                      if (bd) {
+                        const today = new Date();
+                        const d = new Date(bd);
+                        let age = today.getFullYear() - d.getFullYear();
+                        if (today < new Date(today.getFullYear(), d.getMonth(), d.getDate())) age--;
+                        return ` · ${age} yrs`;
+                      }
+                      return member.age_at_creation != null ? ` · ${calcFamilyMemberAge(member, member.age_set_date, 0)} yrs` : "";
+                    })()}
                   </p>
                 </div>
                 <span className="text-[10px] text-pink-400 border border-pink-400/30 rounded px-1.5 py-0.5">You</span>
