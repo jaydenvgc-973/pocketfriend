@@ -114,7 +114,7 @@ export default function NPCContactPanel() {
             exit={{ opacity: 0, y: 8, scale: 0.95 }}
             className="fixed left-4 right-4 z-40 bg-card border border-border rounded-xl shadow-lg"
             style={{
-              top: 'calc(100vh - 200px)',
+              bottom: '80px',
               maxHeight: '200px',
               overflowY: 'auto'
             }}
