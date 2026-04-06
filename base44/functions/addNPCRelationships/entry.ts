@@ -12,11 +12,15 @@ Deno.serve(async (req) => {
     // Get all characters created by this user
     const characters = await base44.entities.Character.filter({ created_by: user.email });
     
+    // Log all character names for debugging
+    const allNames = characters.map(c => ({ id: c.id, name: c.name, type: c.character_type }));
+    console.log('All characters:', allNames);
+    
     const relationships = {
-      'Ava': ['Mia', 'Leah', 'Jordan'],
-      'Matt': ['Carlos'],
-      'Ethan': ['Mace'],
-      'Jonathan': ['Demi']
+      'Ava Dei Park': ['Mia Chen', 'Leah Park', 'Jordan Li'],
+      'Matt Lopez': ['Carlos Mendez'],
+      'Ethan Nathan Thompson': ['Mace'],
+      'Jonathan Anthony  Smith': ['Demi Rivers']
     };
 
     const results = {};
@@ -60,7 +64,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return Response.json({ success: true, results });
+    return Response.json({ success: true, results, allCharacterNames: characters.map(c => c.name) });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
