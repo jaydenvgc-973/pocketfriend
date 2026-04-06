@@ -33,18 +33,13 @@ export default function NPCContactPanel() {
   // Filter out NPCs that share names with active characters or the user
   // Deduplicate only exact name matches from the same source character
   const npcCharacters = characters.flatMap(char => 
-    (char.fictional_relationships || []).map(rel => {
-      // Find the actual NPC character to get avatar
-      const npcChar = characters.find(c => c.id === rel.related_character_id);
-      return {
-        ...rel,
-        characterId: rel.related_character_id,
-        name: rel.person_name,
-        sourceCharacterId: char.id,
-        id: `${char.id}-${rel.related_character_id}`,
-        avatar_url: npcChar?.avatar_url
-      };
-    })
+    (char.fictional_relationships || []).map(rel => ({
+      ...rel,
+      characterId: rel.related_character_id,
+      name: rel.person_name,
+      sourceCharacterId: char.id,
+      id: `${char.id}-${rel.related_character_id}`
+    }))
   ).reduce((acc, npc) => {
     const nameLower = npc.name?.toLowerCase().trim();
     
