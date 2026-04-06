@@ -89,7 +89,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
       ? base44.entities.LocationReference.filter({ id: character.current_location_id }).then(r => r[0] || null)
       : Promise.resolve(null),
     enabled: !!character.current_location_id,
-    staleTime: 30000,
+    staleTime: 0, // Force fresh data on every render to catch location name updates
   });
 
   // Single batched query: fetch ALL unread character messages for this character at once
@@ -151,6 +151,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     });
     return () => unsubscribe();
   }, [character.id, countUnread]);
+
+  // Real-time: refresh location data when character location changes
+  useEffect(() => {
+    const unsubscribe = base44.entities.Character.subscribe((event) => {
+      if (event.id === character.id && (event.type === "update" || event.type === "create")) {
+        queryClient.invalidateQueries({ queryKey: ['characterCurrentLocation', character.current_location_id] });
+      }
+    });
+    return () => unsubscribe();
+  }, [character.id, character.current_location_id, queryClient]);
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
