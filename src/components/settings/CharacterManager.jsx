@@ -228,14 +228,19 @@ export default function CharacterManager() {
     const { selectedEntries } = mergeConfirmModal;
 
     // Handle character-to-character merges only (not NPC deduplication)
-    const charEntries = selectedEntries.filter(e => e.type === 'char');
+    const charEntries = selectedEntries.filter(e => e.type === 'character');
     
     if (charEntries.length >= 2) {
-      // All selected char IDs — master is designated via primaryCharacterId
+      // All selected character IDs — master is designated via primaryCharacterId
       const charIds = charEntries.map(e => e.charId);
+      // Get master's avatar_url to propagate
+      const masterItem = charEntries.find(e => e.charId === masterEntry.charId);
+      const masterAvatarUrl = masterItem?.item?.data?.avatar_url || null;
       mergeMutation.mutate({ 
         characterIds: charIds, 
-        primaryCharacterId: masterEntry.charId 
+        primaryCharacterId: masterEntry.charId,
+        masterAvatarUrl,
+        masterName: masterItem?.item?.data?.name || null,
       });
       setMergeConfirmModal(null);
     } else {
@@ -316,7 +321,7 @@ export default function CharacterManager() {
               ? { key: 'user', type: 'user', item }
               : isNPC
               ? { key: itemKey, type: 'npc', sourceCharId: itemData.source_character_id, personName: npcName, item }
-              : { key: itemKey, type: 'char', charId: itemData.id, item };
+              : { key: itemKey, type: 'character', charId: itemData.id, item };
             // For user, always use the in-world name from settings if set
             const itemName = isUser
               ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
