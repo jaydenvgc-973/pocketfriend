@@ -420,7 +420,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              onSelect={setSelectedLocation}
              activeCharacterIds={characters.map(c => c.id)}
              charactersByLocationId={characters.reduce((acc, c) => {
-               const locId = c.current_location_id;
+               // Resolve authoritative location using same logic as CharacterCard
+               let locId = null;
+               if (c.occupation_location_id && locationMap[c.occupation_location_id]) {
+                 locId = c.occupation_location_id;
+               } else if (c.education_location_id && locationMap[c.education_location_id]) {
+                 locId = c.education_location_id;
+               } else if (c.current_home_location_id && locationMap[c.current_home_location_id]) {
+                 locId = c.current_home_location_id;
+               } else if (c.current_location_id) {
+                 locId = c.current_location_id;
+               }
+
                if (locId) { acc[locId] = acc[locId] || []; acc[locId].push(c.name); }
                return acc;
              }, {})}
@@ -483,10 +494,21 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
                     });
                   } else {
-                    // Active characters on shift here
-                    characters
-                      .filter(c => selectedLocation.worker_character_ids?.includes(c.id) && isCharacterAtWork(c, selectedLocation))
-                      .forEach(c => lines.push({ name: c.name, status: "working", color: "text-blue-400" }));
+                    // Active characters assigned to this location
+                    characters.forEach(c => {
+                      // Resolve authoritative location
+                      let authLocId = null;
+                      if (c.occupation_location_id && locationMap[c.occupation_location_id]) {
+                        authLocId = c.occupation_location_id;
+                      } else if (c.education_location_id && locationMap[c.education_location_id]) {
+                        authLocId = c.education_location_id;
+                      }
+
+                      // Show if assigned to this location
+                      if (authLocId === selectedLocation.id) {
+                        lines.push({ name: c.name, status: "here", color: "text-green-400" });
+                      }
+                    });
 
                     // NPC workers — ONLY show if currently on shift at THIS location
                     const realCharIds = new Set(characters.map(c => c.id));
