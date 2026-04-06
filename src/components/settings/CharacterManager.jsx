@@ -340,7 +340,12 @@ export default function CharacterManager() {
       
       if (item && item.type === 'character') {
         const updateData = {};
-        if (selectedCategory === 'active') {
+        if (selectedCategory === 'user') {
+          // Set as the user's character in the world
+          if (userSettings.id) {
+            updates.push(base44.entities.UserSettings.update(userSettings.id, { default_character_id: item.data.id }));
+          }
+        } else if (selectedCategory === 'active') {
           updateData.is_active_character = true;
         } else if (selectedCategory === 'inactive') {
           updateData.is_active_character = false;
@@ -356,6 +361,7 @@ export default function CharacterManager() {
     if (updates.length > 0) {
       await Promise.all(updates);
       queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['userSettings'] });
     }
     
     const categoryLabel = CATEGORY_OPTIONS.find(c => c.id === selectedCategory)?.label || selectedCategory;
