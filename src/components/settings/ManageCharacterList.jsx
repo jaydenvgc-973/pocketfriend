@@ -73,8 +73,7 @@ export default function ManageCharacterList() {
 
   return (
     <div className="space-y-6">
-      {sections.map(section => 
-        section.items.length > 0 ? (
+      {sections.map(section => (
           <div key={section.title} className="space-y-3">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{section.title} ({section.items.length})</p>
             <div className="space-y-2">
@@ -148,8 +147,7 @@ export default function ManageCharacterList() {
               </AnimatePresence>
             </div>
           </div>
-        ) : null
-      )}
+      ))}
     </div>
   );
 }
