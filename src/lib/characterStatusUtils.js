@@ -63,24 +63,26 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
 
   // 4. EXPLICIT CURRENT LOCATION — real-time authoritative location tracking (like Sims 4)
   // This overrides all inference and is the source of truth for where character physically is
-  // CRITICAL: If set, use this and STOP. Do not continue to work/school inference below.
+  // CRITICAL: NAMED LOCATION RULE — Always use location.name, NEVER collapse to category type
   if (character?.current_location_id && currentLocation) {
     const catIconMap = {
-      home: { icon: 'home', label: `at ${currentLocation.name}`, color: 'text-pink-400' },
-      work: { icon: 'work', label: `at ${currentLocation.name}`, color: 'text-blue-400' },
-      school: { icon: 'school', label: `at ${currentLocation.name}`, color: 'text-amber-400' },
-      gym: { icon: 'gym', label: `at ${currentLocation.name}`, color: 'text-emerald-400' },
-      food_drink: { icon: 'out', label: `at ${currentLocation.name}`, color: 'text-orange-400' },
-      social: { icon: 'bar', label: `at ${currentLocation.name}`, color: 'text-pink-400' },
-      medical: { icon: 'hospital', label: `at ${currentLocation.name}`, color: 'text-red-400' },
-      outdoor: { icon: 'out', label: `at ${currentLocation.name}`, color: 'text-emerald-400' },
+      home: { icon: 'home', color: 'text-pink-400' },
+      work: { icon: 'work', color: 'text-blue-400' },
+      school: { icon: 'school', color: 'text-amber-400' },
+      gym: { icon: 'gym', color: 'text-emerald-400' },
+      food_drink: { icon: 'out', color: 'text-orange-400' },
+      social: { icon: 'bar', color: 'text-pink-400' },
+      medical: { icon: 'hospital', color: 'text-red-400' },
+      outdoor: { icon: 'out', color: 'text-emerald-400' },
     };
     const result = catIconMap[currentLocation.category];
-    if (result) {
-      return { iconType: result.icon, label: result.label, color: result.color };
-    }
-    // Fallback for unknown categories
-    return { iconType: 'out', label: `at ${currentLocation.name}`, color: 'text-blue-400' };
+    
+    // CRITICAL: Use location.name (e.g., "VGC Gym"), never collapse to type (e.g., "gym")
+    const displayName = currentLocation.name || 'Unknown Location';
+    const iconType = result?.icon || 'out';
+    const color = result?.color || 'text-blue-400';
+    
+    return { iconType, label: `at ${displayName}`, color };
   }
 
   // 4. AT WORK FIRST (higher priority than patient status)
