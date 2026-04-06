@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -20,6 +20,7 @@ import NPCPhotoEditor from "@/components/character/NPCPhotoEditor";
 import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.jsx";
 import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
+import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -101,6 +102,7 @@ export default function CharacterProfile() {
   const queryClient = useQueryClient();
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [showEditSettings, setShowEditSettings] = useState(false);
   const [promotingNPC, setPromotingNPC] = useState(null); // { rel, sourceCharacter }
   const [editingNPCPhoto, setEditingNPCPhoto] = useState(null); // { npc, sourceCharacter }
   const [lightboxSrc, setLightboxSrc] = useState(null);
@@ -243,6 +245,13 @@ export default function CharacterProfile() {
         <Link to="/home" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></Link>
         <h2 className="text-sm font-semibold flex-1">{character.name}</h2>
         <button
+          onClick={() => setShowEditSettings(true)}
+          className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+          title="Edit profile fields"
+        >
+          <Settings className="w-4 h-4" />
+        </button>
+        <button
           onClick={() => setShowTroubleshooting(true)}
           className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
           title="Profile troubleshooting"
@@ -256,6 +265,12 @@ export default function CharacterProfile() {
         onClose={() => setShowTroubleshooting(false)}
         characterId={characterId}
         characterName={character.name}
+      />
+      <CharacterEditSettingsPanel
+        isOpen={showEditSettings}
+        onClose={() => setShowEditSettings(false)}
+        character={character}
+        allCharacters={allCharacters}
       />
 
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
