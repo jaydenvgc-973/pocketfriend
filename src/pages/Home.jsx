@@ -54,7 +54,11 @@ export default function Home() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 0, // Never cache — always fetch fresh to ensure live state
+    staleTime: 0,
+    cacheTime: 0, // Completely disable caching to prevent stale "empty" results being served
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    retry: 3,
   });
 
   // Real-time: invalidate locations when any LocationReference changes
@@ -69,10 +73,18 @@ export default function Home() {
   
   // Build complete location map for all characters
   // CRITICAL: Only build when locations are fully loaded to prevent empty-map fallback
-  const locationMap = isLocationsLoading ? {} : Object.fromEntries((locationsData || []).map(l => [l.id, l]));
+  // Guard: never render cards with partial/empty location map
+  const locationMap = isLocationsLoading || !locationsData?.length ? {} : Object.fromEntries(locationsData.map(l => [l.id, l]));
+  const isLocationMapReady = !isLocationsLoading && locationsData?.length > 0;
   
   // Helper to get all location data for a character using authoritative resolver
+  // CRITICAL: This must only be called when locationMap is guaranteed non-empty
   const getLocationDataForCharacter = (char) => {
+    // Validate that locationMap has data before attempting lookups
+    if (!isLocationMapReady || Object.keys(locationMap).length === 0) {
+      return { workLoc: null, eduLoc: null, religionLoc: null, gymLoc: null, currentLoc: null, homeLocation: null };
+    }
+    
     const workLoc = char.occupation_location_id ? locationMap[char.occupation_location_id] : null;
     const eduLoc = char.education_location_id ? locationMap[char.education_location_id] : null;
     const religionLoc = locationsData.find(l => l.category === 'religion' && !l.is_default_generic) || null;
@@ -83,7 +95,7 @@ export default function Home() {
     const authLoc = getAuthoritativeCharacterLocation(char, locationMap);
     const currentLoc = authLoc && authLoc.id ? locationMap[authLoc.id] : null;
     
-    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation };
+    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation, locationMap };
   };
 
   // Removed: backfill was causing render cascades during location loading
@@ -240,12 +252,12 @@ export default function Home() {
          </div>
        </div>
 
-      {isLocationsLoading && (
+      {!isLocationMapReady && (
         <div className="max-w-lg mx-auto px-6 py-6 flex items-center justify-center min-h-[200px]">
           <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
         </div>
       )}
-      {!isLocationsLoading && (
+      {isLocationMapReady && (
       <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
         {showThomasAndersonFix && (
           <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
@@ -254,7 +266,7 @@ export default function Home() {
         {currentUser && (
           <UserCard user={currentUser} settings={settings[0] || {}} />
         )}
-        {defaultChar && (
+        {defaultChar && isLocationMapReady && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
             {(() => {
@@ -294,7 +306,7 @@ export default function Home() {
                 <p className="text-xs text-muted-foreground mt-1">Build someone with their own story</p>
               </motion.div>
             </Link>
-          ) : (
+          ) : isLocationMapReady && (
             <div className="grid gap-3">
                {activeCustomChars.map(c => {
                  const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(c);
