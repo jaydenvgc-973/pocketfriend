@@ -53,8 +53,18 @@ export default function Home() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 30000, // 30s — refresh more frequently for real-time accuracy
+    staleTime: 0, // Force fresh data on every render to catch location name updates
   });
+
+  // Real-time: invalidate locations when any LocationReference changes
+  useEffect(() => {
+    const unsubscribe = base44.entities.LocationReference.subscribe((event) => {
+      if (event.type === "create" || event.type === "update" || event.type === "delete") {
+        queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+      }
+    });
+    return () => unsubscribe();
+  }, [currentUser?.email, queryClient]);
   
   // Build complete location map for all characters
   const locationMap = Object.fromEntries((locationsData || []).map(l => [l.id, l]));
