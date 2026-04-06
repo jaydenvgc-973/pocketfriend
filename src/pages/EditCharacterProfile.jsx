@@ -20,7 +20,7 @@ const JOB_TYPES = [
   "Unemployed", "Crime / Illegal", "Between jobs"
 ];
 
-const KNOWN_REL_TYPES = ["Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss", "Mentor", "Rival", "Ex"];
+const KNOWN_REL_TYPES = ["Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss", "Mentor", "Rival", "Ex", "Case manager", "Client"];
 
 const REL_LEVELS = [
   { key: "friendship_level", label: "Friendship", color: "text-emerald-400" },
