@@ -135,22 +135,45 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
 }
 
 /**
+ * Check if character is on work schedule right now (with prep window)
+ * Returns { onSchedule, inPrepWindow, minutesUntilWork }
+ */
+function getWorkScheduleStatus(character, currentTime) {
+  if (!character.work_start_time || !character.work_end_time || !character.work_days) {
+    return { onSchedule: false, inPrepWindow: false, minutesUntilWork: null };
+  }
+
+  const now = currentTime.getTime();
+  const dayOfWeek = currentTime.getDay();
+  const isWorkDay = character.work_days.includes(dayOfWeek);
+  
+  if (!isWorkDay) {
+    return { onSchedule: false, inPrepWindow: false, minutesUntilWork: null };
+  }
+
+  const [workStartHour, workStartMin] = character.work_start_time.split(':').map(Number);
+  const [workEndHour, workEndMin] = character.work_end_time.split(':').map(Number);
+  
+  const workStartMs = new Date(currentTime).setHours(workStartHour, workStartMin, 0, 0);
+  const workEndMs = new Date(currentTime).setHours(workEndHour, workEndMin, 0, 0);
+
+  const onSchedule = now >= workStartMs && now < workEndMs;
+  
+  // Prep window: 15 minutes before work starts
+  const prepWindowStart = workStartMs - (15 * 60 * 1000);
+  const inPrepWindow = !onSchedule && now >= prepWindowStart && now < workStartMs;
+  
+  const minutesUntilWork = inPrepWindow ? Math.round((workStartMs - now) / 60000) : null;
+
+  return { onSchedule, inPrepWindow, minutesUntilWork };
+}
+
+/**
  * Check if character is on work schedule right now
  */
 function isCharacterOnWorkSchedule(character, currentTime) {
-  if (!character.work_start_time || !character.work_end_time || !character.work_days) {
-    return false;
-  }
-
-  const hour = currentTime.getHours();
-  const dayOfWeek = currentTime.getDay();
-
-  const workStart = parseInt(character.work_start_time.split(':')[0]);
-  const workEnd = parseInt(character.work_end_time.split(':')[0]);
-  const isWorkDay = character.work_days.includes(dayOfWeek);
-  const isWorkHours = hour >= workStart && hour < workEnd;
-
-  return isWorkDay && isWorkHours;
+  const status = getWorkScheduleStatus(character, currentTime);
+  return status.onSchedule;
 }
 
 /**
@@ -279,4 +302,83 @@ export function verifyNoFalseHomeFallback(character, locationMap = {}) {
   }
 
   return true;
+}
+
+/**
+ * STRICT SCHEDULE ENFORCEMENT: Check if character is violating schedule
+ * Returns { isViolating, violation_type, should_be_at }
+ */
+export function checkScheduleViolation(character, locationMap = {}, currentTime = new Date()) {
+  const resolved = resolveCharacterLocation(character, locationMap, currentTime);
+  const workStatus = getWorkScheduleStatus(character, currentTime);
+
+  // WORK VIOLATION: Character should be at work
+  if (workStatus.onSchedule && character.occupation_location_id) {
+    const isAtWork = resolved.resolved_location_id === character.occupation_location_id;
+    const isReadyToTravel = workStatus.inPrepWindow;
+    
+    if (!isAtWork && !isReadyToTravel) {
+      const workLoc = locationMap[character.occupation_location_id];
+      return {
+        isViolating: true,
+        violation_type: 'work_schedule_violation',
+        should_be_at: {
+          location_id: character.occupation_location_id,
+          location_name: workLoc?.name || 'Work',
+          reason: 'Active work schedule'
+        }
+      };
+    }
+  }
+
+  // SCHOOL VIOLATION: Character should be at school
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const isAtSchool = resolved.resolved_current_location_id === character.education_location_id;
+    if (!isAtSchool) {
+      const schoolLoc = locationMap[character.education_location_id];
+      return {
+        isViolating: true,
+        violation_type: 'school_schedule_violation',
+        should_be_at: {
+          location_id: character.education_location_id,
+          location_name: schoolLoc?.name || 'School',
+          reason: 'Enrolled student during school hours'
+        }
+      };
+    }
+  }
+
+  return { isViolating: false };
+}
+
+/**
+ * AUTO-CORRECT: If character is violating schedule, force correct location
+ * Returns corrected character data or null if no correction needed
+ */
+export function autoCorrectScheduleViolation(character, locationMap = {}, currentTime = new Date()) {
+  const violation = checkScheduleViolation(character, locationMap, currentTime);
+  
+  if (!violation.isViolating) {
+    return null; // No violation, no correction needed
+  }
+
+  const correction = {};
+  const { location_id, location_name, reason } = violation.should_be_at;
+
+  if (violation.violation_type === 'work_schedule_violation') {
+    correction.resolved_current_location_id = location_id;
+    correction.resolved_current_location_name = location_name;
+    correction.resolved_location_type = 'work';
+    correction.resolved_presence_status = 'at_work';
+    correction.resolved_source_reason = 'work_schedule_enforced';
+  } else if (violation.violation_type === 'school_schedule_violation') {
+    correction.resolved_current_location_id = location_id;
+    correction.resolved_current_location_name = location_name;
+    correction.resolved_location_type = 'school';
+    correction.resolved_presence_status = 'at_school';
+    correction.resolved_source_reason = 'school_schedule_enforced';
+  }
+
+  correction.resolved_last_updated_at = currentTime.toISOString();
+  return correction;
 }
