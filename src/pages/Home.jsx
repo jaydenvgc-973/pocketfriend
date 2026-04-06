@@ -226,7 +226,6 @@ export default function Home() {
                </Link>
              </div>
            </div>
-           <NPCContactPanel />
          </div>
        </div>
 
@@ -280,29 +279,32 @@ export default function Home() {
             </Link>
           ) : (
             <div className="grid gap-3">
-              {activeCustomChars.map(c => {
-                const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(c);
-                return (
-                  <CharacterCard key={c.id} character={c}
-                    onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
-                    onMoveAway={(id) => moveAwayMutation.mutate(id)}
-                    locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }}
-                  />
-                );
-              })}
-              {movedAwayChars.map(c => {
-                const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(c);
-                return (
-                  <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }} />
-                );
-              })}
-              <Link to="/create">
-                <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
-                  <Plus className="w-4 h-4 text-muted-foreground mr-2" />
-                  <span className="text-sm text-muted-foreground">Add another</span>
-                </motion.div>
-              </Link>
-            </div>
+               {activeCustomChars.map(c => {
+                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(c);
+                 return (
+                   <CharacterCard key={c.id} character={c}
+                     onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
+                     onMoveAway={(id) => moveAwayMutation.mutate(id)}
+                     locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }}
+                   />
+                 );
+               })}
+               {movedAwayChars.map(c => {
+                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(c);
+                 return (
+                   <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }} />
+                 );
+               })}
+               <Link to="/create">
+                 <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
+                   <Plus className="w-4 h-4 text-muted-foreground mr-2" />
+                   <span className="text-sm text-muted-foreground">Add another</span>
+                 </motion.div>
+               </Link>
+               <div className="mt-2">
+                 <NPCContactPanel />
+               </div>
+             </div>
           )}
         </div>
       </div>
