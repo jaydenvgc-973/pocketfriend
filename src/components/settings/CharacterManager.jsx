@@ -325,16 +325,38 @@ export default function CharacterManager() {
 
   const editable = roster.filter(c => !c.is_protected && !c.is_default && !c.is_user);
 
-  const handleCategorizeSubmit = () => {
+  const handleCategorizeSubmit = async () => {
     if (selectedForCategorization.size === 0 || !selectedCategory) return;
     
-    const updated = new Map(categorizations);
-    selectedForCategorization.forEach((entry, key) => {
-      updated.set(key, selectedCategory);
+    const updates = [];
+    selectedForCategorization.forEach((_, itemKey) => {
+      const item = allManageableItems.find(i => {
+        const isNPC = i.type === 'world_person' || i.type === 'family';
+        const npcName = i.data.person_name || i.data.name || '';
+        const key = isNPC ? `npc_${i.data.source_character_id}_${npcName}` : i.data.id;
+        return key === itemKey;
+      });
+      
+      if (item && item.type === 'character') {
+        const updateData = {};
+        if (selectedCategory === 'active') {
+          updateData.is_active_character = true;
+        } else if (selectedCategory === 'inactive') {
+          updateData.is_active_character = false;
+        } else if (selectedCategory === 'delete') {
+          updateData.status = 'soft_deleted';
+        }
+        if (Object.keys(updateData).length > 0) {
+          updates.push(base44.entities.Character.update(item.data.id, updateData));
+        }
+      }
     });
-    setCategorizations(updated);
     
-    // Show confirmation
+    if (updates.length > 0) {
+      await Promise.all(updates);
+      queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
+    }
+    
     const categoryLabel = CATEGORY_OPTIONS.find(c => c.id === selectedCategory)?.label || selectedCategory;
     console.log(`✓ Categorized ${selectedForCategorization.size} character(s) as "${categoryLabel}"`);
     
