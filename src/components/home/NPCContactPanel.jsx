@@ -23,68 +23,26 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Get active character names and the user's own character name to filter out
-  const defaultCharacter = characters.find(c => c.is_default);
-  const activeCharacterNames = characters
-    .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
-    .map(c => c.name?.toLowerCase());
-
-  // Extract fictional NPCs from all characters' fictional_relationships
-  // Filter out NPCs that share names with active characters or the user
-  // Deduplicate only exact name matches from the same source character
-  const npcCharacters = characters.flatMap(char => 
-    (char.fictional_relationships || []).map(rel => ({
-      ...rel,
-      characterId: rel.related_character_id,
-      name: rel.person_name,
-      sourceCharacterId: char.id,
-      id: `${char.id}-${rel.related_character_id}`
-    }))
-  ).reduce((acc, npc) => {
-    const nameLower = npc.name?.toLowerCase().trim();
-    
-    // Filter out: active characters, user's own character
-    if (activeCharacterNames.includes(nameLower) || 
-        nameLower === defaultCharacter?.name?.toLowerCase()) {
-      return acc;
-    }
-    
-    // Only filter if exact same name from same source character already exists
-    const isDuplicate = acc.some(existing => 
-      existing.name?.toLowerCase().trim() === nameLower && 
-      existing.sourceCharacterId === npc.sourceCharacterId
-    );
-    
-    if (!isDuplicate) {
-      acc.push(npc);
-    }
-    
-    return acc;
-  }, []);
+  // Get NPC characters (character_type === "npc")
+  const npcCharacters = characters.filter(c => 
+    c.character_type === "npc" && 
+    c.status !== "deleted" && 
+    c.status !== "moved_away"
+  );
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
-    if (npc.characterId) {
-      navigate(`/chat/${npc.characterId}`);
-    }
+    navigate(`/chat/${npc.id}`);
   };
 
-  const handleDeleteNPC = async (e, sourceCharId, targetCharId) => {
+  const handleDeleteNPC = async (e, npcId) => {
     e.stopPropagation();
     
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
 
     try {
-      const char = characters.find(c => c.id === sourceCharId);
-      if (char) {
-        const updated = {
-          fictional_relationships: (char.fictional_relationships || []).filter(
-            rel => rel.related_character_id !== targetCharId
-          )
-        };
-        await base44.entities.Character.update(sourceCharId, updated);
-        queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
-      }
+      await base44.entities.Character.delete(npcId);
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }

@@ -180,8 +180,8 @@ export default function Home() {
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
-  const activeCustomChars = customChars.filter(c => c.status === "active" || !c.status);
-  const movedAwayChars = customChars.filter(c => c.status === "moved_away");
+  const activeCustomChars = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type === "active");
+  const movedAwayChars = customChars.filter(c => c.status === "moved_away" && c.character_type === "active");
   // NO HARD LIMIT: characters can always be created and displayed
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
@@ -247,7 +247,7 @@ export default function Home() {
           </div>
         )}
         {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
-          <CharacterInteractionSimulator characters={defaultChar ? [defaultChar, ...activeCustomChars] : activeCustomChars} />
+          <CharacterInteractionSimulator characters={(defaultChar && defaultChar.character_type === "active" ? [defaultChar] : []).concat(activeCustomChars)} />
         ) : null}
         
         <div>
