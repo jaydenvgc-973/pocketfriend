@@ -326,19 +326,17 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         },
       });
 
-      // Preserve bidirectional relationship IDs
-      const preservedRelationships = (update.fictional_relationships || []).map(updatedRel => {
-        const original = (character.fictional_relationships || []).find(r => r.person_name === updatedRel.person_name);
-        return { ...updatedRel, related_character_id: original?.related_character_id || updatedRel.related_character_id };
-      });
+      // ── STRICT MODE: Do NOT write fictional_relationships or transient_encounters
+      // from LLM inference. These can only be edited by the user manually.
+      // The LLM returns them in its schema for context continuity, but we DISCARD them.
 
       // Build enriched life event — append evolution note if present
       const lifeEvent = [update.current_life_event, update.character_evolution_note]
         .filter(Boolean).join(' ');
 
       await base44.asServiceRole.entities.Character.update(character.id, {
-        fictional_relationships: preservedRelationships,
-        transient_encounters: update.transient_encounters || [],
+        // fictional_relationships: intentionally omitted — user-controlled only
+        // transient_encounters: intentionally omitted — user-controlled only
         current_life_event: lifeEvent || '',
         daily_micro_narration: update.daily_micro_narration || '',
         emotional_state: update.emotional_state || character.emotional_state || 'calm',
@@ -349,8 +347,20 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
       });
 
       // Log significant life event if the simulation produced one
+      // STRICT MODE: Block any birth/child/family-creation events from auto-logging.
+      // Birth events require explicit user approval — they must never be auto-created.
+      const BLOCKED_EVENT_TYPES = ['birth_event', 'child_born', 'pregnancy_event', 'family_addition_event'];
+      const BLOCKED_KEYWORDS = /\b(born|birth|baby|infant|pregnancy|pregnant|child was born|new child|gave birth)\b/i;
       const eventToLog = update.life_event_to_log;
       if (eventToLog?.should_log && eventToLog.event_type && eventToLog.title && eventToLog.description) {
+        // Block birth/family-creation events
+        if (
+          BLOCKED_EVENT_TYPES.includes(eventToLog.event_type) ||
+          BLOCKED_KEYWORDS.test(eventToLog.title + ' ' + eventToLog.description)
+        ) {
+          results.push({ id: character.id, name: character.name, status: 'updated', blockedEvent: eventToLog.event_type + ' (birth/family — requires user approval)' });
+          continue;
+        }
         if (['moderate', 'significant', 'major'].includes(eventToLog.severity)) {
           await base44.asServiceRole.entities.LifeEvent.create({
             character_id: character.id,
@@ -379,7 +389,7 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
             });
           }
         }
-      }
+      } // end life_event_to_log block
 
       results.push({ id: character.id, name, status: 'updated' });
     } catch (err) {

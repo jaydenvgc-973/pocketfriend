@@ -1,5 +1,22 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+/**
+ * extractMemoriesFromTurn
+ *
+ * STRICT MODE — Zero Trust Character Creation
+ *
+ * RULES:
+ * - MAY store conversational memories (text) in the Memory entity
+ * - MUST NOT create characters automatically from dialogue
+ * - MUST NOT add family members automatically from dialogue
+ * - MUST NOT add fictional_relationships automatically from dialogue
+ * - MUST NOT add transient_encounters that reference new named individuals
+ *
+ * The only thing this function does automatically is store a Memory record
+ * (plain text note). All people detection is DISABLED.
+ * Family lock is always honored — if locked, no memory about family is stored.
+ */
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -11,29 +28,43 @@ Deno.serve(async (req) => {
 
     const { characterId, conversationId, userMessage, characterReply } = await req.json();
 
-    if (!characterId || !conversationId || !userMessage || !characterReply) {
-      return Response.json({ 
-        error: 'characterId, conversationId, userMessage, and characterReply are required' 
+    if (!characterId || !userMessage || !characterReply) {
+      return Response.json({
+        error: 'characterId, userMessage, and characterReply are required'
       }, { status: 400 });
     }
 
     // Get character details
     const character = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]);
-    
+
     if (!character) {
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
-    // Build existing people context so we don't duplicate
-    const existingFamilyNames = (character.family_members || []).map(f => f.name?.toLowerCase()).filter(Boolean);
-    const existingRelNames = (character.fictional_relationships || []).map(r => r.person_name?.toLowerCase()).filter(Boolean);
-    const existingEncounterDescs = (character.transient_encounters || []).map(e => e.description?.toLowerCase()).filter(Boolean);
-    const existingPeopleContext = [...existingFamilyNames, ...existingRelNames].join(', ');
+    // ── FAMILY LOCK CHECK ─────────────────────────────────────────────────
+    // If family list is locked, do not store any memory that mentions family members.
+    // This prevents the memory system from being a back-channel for family data creation.
+    const familyKeywords = /\b(mom|mother|dad|father|sister|brother|son|daughter|grandmother|grandfather|grandma|grandpa|aunt|uncle|cousin|niece|nephew|spouse|wife|husband|family|parent|sibling|child|kids?|baby|infant|pregnant|birth|born)\b/i;
+    const messageText = `${userMessage} ${characterReply}`;
+    const mentionsFamily = familyKeywords.test(messageText);
 
-    // Run memory extraction and people detection in parallel
-    const [memoryResponse, peopleResponse] = await Promise.all([
-      base44.integrations.Core.InvokeLLM({
-        prompt: `You are analyzing a conversation turn for ${character.name}, a character with:
+    if (character.family_list_locked && mentionsFamily) {
+      // Family lock active + family mention → store nothing, return silently
+      return Response.json({
+        success: true,
+        memoryCreated: false,
+        blocked: true,
+        reason: 'FAMILY_LIST_LOCKED — family mention ignored',
+        newPeopleDetected: { family: [], relationships: [], transient: [] }
+      });
+    }
+
+    // ── MEMORY EXTRACTION ONLY ────────────────────────────────────────────
+    // Analyze the turn for significant conversational memories.
+    // People detection (family/relationships/transient) is DISABLED — it was causing
+    // automatic character creation and family member injection from dialogue.
+    const memoryResponse = await base44.integrations.Core.InvokeLLM({
+      prompt: `You are analyzing a conversation turn for ${character.name}, a character with:
 - Personality: ${character.personality_summary}
 - Traits: ${character.personality_traits?.join(', ') || 'N/A'}
 - Current mood: ${character.emotional_state}
@@ -46,98 +77,30 @@ Does this exchange contain any significant memory that ${character.name} should 
 - Important information about the user
 - Decisions or commitments made
 - Emotional moments
-- Details about the user's life, preferences, or relationships
-- New names revealed (baby names, people's names)
-- Life events (birth, death, new job, relationship changes)
+- Details about the user's life or preferences
+
+IMPORTANT: Do NOT flag mentions of other people as memories that require creating new characters or family entries.
+Just extract conversational facts and emotional moments.
 
 Return a JSON object with:
-- should_remember: boolean (true if there's something worth remembering)
+- should_remember: boolean (true only if there is a clear, significant, memorable moment)
 - title: string (brief memory title, empty if should_remember is false)
-- description: string (detailed description of the memory)
+- description: string (description of the memory — focus on events/emotions, not people)
 - emotional_impact: string (how it emotionally affects the character)
 - lesson_learned: string (optional lesson or takeaway)`,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            should_remember: { type: "boolean" },
-            title: { type: "string" },
-            description: { type: "string" },
-            emotional_impact: { type: "string" },
-            lesson_learned: { type: "string" }
-          }
+      response_json_schema: {
+        type: "object",
+        properties: {
+          should_remember: { type: "boolean" },
+          title: { type: "string" },
+          description: { type: "string" },
+          emotional_impact: { type: "string" },
+          lesson_learned: { type: "string" }
         }
-      }),
+      }
+    });
 
-      base44.integrations.Core.InvokeLLM({
-        prompt: `You are analyzing a chat message for mentions of people that ${character.name} knows or encountered.
-
-CHARACTER: ${character.name}
-EXISTING KNOWN PEOPLE (do NOT re-add these): ${existingPeopleContext || 'none yet'}
-
-CONVERSATION TURN:
-User: ${userMessage}
-${character.name}: ${characterReply}
-
-Detect any people mentioned — named or unnamed (e.g. "my coworker", "some guy at the bar", "a baby named Leo", "my sister").
-For each person found, classify them:
-- "family" → blood relative, spouse, child, parent, sibling
-- "relationship" → close friend, colleague, romantic interest, someone known well
-- "transient" → stranger, one-off encounter, unnamed/vague person
-
-Special rules:
-- If a baby or child is mentioned and named, classify as "family" child
-- If a baby/child is unnamed, classify as "transient" with description "unnamed baby/child"
-- If someone is mentioned with a vague role (coworker, neighbor, stranger), classify as "transient"
-- Only return people that are clearly new and not already in the existing known people list
-- If no new people detected, return empty arrays
-
-Return JSON:
-{
-  "family": [{ "name": string, "relationship_type": string }],
-  "relationships": [{ "person_name": string, "relationship_type": string, "description": string }],
-  "transient": [{ "description": string, "context": string, "emotional_reaction": string }]
-}`,
-        response_json_schema: {
-          type: "object",
-          properties: {
-            family: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  name: { type: "string" },
-                  relationship_type: { type: "string" }
-                }
-              }
-            },
-            relationships: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  person_name: { type: "string" },
-                  relationship_type: { type: "string" },
-                  description: { type: "string" }
-                }
-              }
-            },
-            transient: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  description: { type: "string" },
-                  context: { type: "string" },
-                  emotional_reaction: { type: "string" }
-                }
-              }
-            }
-          }
-        }
-      })
-    ]);
-
-    // --- Save memory ---
+    // ── SAVE MEMORY (text only — no entity/character creation) ────────────
     let createdMemory = null;
     if (memoryResponse.should_remember && memoryResponse.title && memoryResponse.description) {
       createdMemory = await base44.asServiceRole.entities.Memory.create({
@@ -146,80 +109,25 @@ Return JSON:
         description: memoryResponse.description,
         emotional_impact: memoryResponse.emotional_impact || 'neutral',
         lesson_learned: memoryResponse.lesson_learned || '',
-        source_context: conversationId,
+        source_context: conversationId || 'chat',
         timestamp: new Date().toISOString()
       });
     }
 
-    // --- Merge new people into character ---
-    let characterUpdates = {};
-    let updatesNeeded = false;
-
-    // New family members
-    const newFamily = (peopleResponse.family || []).filter(f =>
-      f.name && !existingFamilyNames.includes(f.name.toLowerCase())
-    );
-    if (newFamily.length > 0) {
-      characterUpdates.family_members = [
-        ...(character.family_members || []),
-        ...newFamily
-      ];
-      updatesNeeded = true;
-    }
-
-    // New fictional relationships
-    const newRels = (peopleResponse.relationships || []).filter(r =>
-      r.person_name && !existingRelNames.includes(r.person_name.toLowerCase())
-    );
-    if (newRels.length > 0) {
-      characterUpdates.fictional_relationships = [
-        ...(character.fictional_relationships || []),
-        ...newRels.map(r => ({
-          person_name: r.person_name,
-          relationship_type: r.relationship_type || 'acquaintance',
-          description: r.description || '',
-          current_status: 'ongoing',
-          user_respect_level: 50,
-          friendship_level: 50,
-          romantic_level: 0,
-          attraction_level: 0,
-          chosen_family_level: 0
-        }))
-      ];
-      updatesNeeded = true;
-    }
-
-    // New transient encounters (dedupe by description similarity)
-    const newTransient = (peopleResponse.transient || []).filter(t =>
-      t.description && !existingEncounterDescs.some(e => e.includes(t.description.toLowerCase().substring(0, 20)))
-    );
-    if (newTransient.length > 0) {
-      characterUpdates.transient_encounters = [
-        ...(character.transient_encounters || []),
-        ...newTransient.map(t => ({
-          description: t.description,
-          context: t.context || '',
-          emotional_reaction: t.emotional_reaction || 'neutral',
-          date: new Date().toISOString()
-        }))
-      ];
-      updatesNeeded = true;
-    }
-
-    if (updatesNeeded) {
-      await base44.asServiceRole.entities.Character.update(characterId, characterUpdates);
-    }
-
-    return Response.json({ 
-      success: true, 
+    // ── NO CHARACTER/FAMILY/RELATIONSHIP CREATION ─────────────────────────
+    // People detected in dialogue are NOT persisted as entities, family members,
+    // or fictional relationships. That must be done manually by the user.
+    return Response.json({
+      success: true,
       memoryCreated: !!createdMemory,
       memory: createdMemory,
       newPeopleDetected: {
-        family: newFamily,
-        relationships: newRels,
-        transient: newTransient
+        family: [],        // Always empty — no auto-creation
+        relationships: [], // Always empty — no auto-creation
+        transient: []      // Always empty — no auto-creation
       }
     });
+
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

@@ -185,7 +185,25 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── 4. LLM-based confidence scoring for ambiguous cases ──────────────
+    // ── 4. ABSOLUTE FAMILY BLOCK (Strict Mode) ───────────────────────────
+    // Even without family lock: dialogue that mentions family roles must NEVER
+    // auto-create. Return shouldCreate=false always for family-role mentions
+    // so the caller must handle this via explicit user approval UI only.
+    const familyRoleKeywords = /\b(mom|mother|dad|father|sister|brother|son|daughter|grandmother|grandfather|grandma|grandpa|aunt|uncle|cousin|niece|nephew|spouse|wife|husband|parent|sibling|child|baby|infant|pregnant|birth|born)\b/i;
+    if (familyRoleKeywords.test(mentionedName + ' ' + (context || ''))) {
+      return Response.json({
+        shouldCreate: false,
+        confidence: 0,
+        reason: 'Family role mention — creation requires explicit user approval. Never auto-created.',
+        isGenericNoun: false,
+        isNickname: false,
+        matchedExisting: null,
+        requiresUserApproval: true,
+        approvalReason: 'family_mention',
+      });
+    }
+
+    // ── 5. LLM-based confidence scoring for ambiguous cases ──────────────
     const llmResult = await base44.integrations.Core.InvokeLLM({
       prompt: `You are helping determine if a person mentioned in a conversation should become a persistent NPC (non-player character) in a social simulation app.
 
@@ -229,11 +247,14 @@ Return JSON:
 
     const finalConfidence = Math.min(0.95, (llmResult?.confidence || 0) * 0.6 + score * 0.4);
 
-    // Threshold: only suggest creation if confidence >= 0.7
+    // Threshold: only suggest asking the user if confidence >= 0.7
+    // IMPORTANT: shouldCreate=true means "ask the user", NOT "create automatically".
+    // No system may create a character when this returns true without explicit user approval.
     const shouldSuggest = finalConfidence >= 0.7;
 
     return Response.json({
-      shouldCreate: shouldSuggest,
+      shouldCreate: shouldSuggest,         // = "ask user for approval", NOT auto-create
+      requiresUserApproval: shouldSuggest, // explicit flag: always require user action
       confidence: Math.round(finalConfidence * 100),
       reason: llmResult?.reasoning || 'Evaluated by context',
       isGenericNoun: false,
