@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { generateLocationActions } from "@/lib/actionGenerator";
 import { buildUnifiedMemoryContext, formatMemoryForLLM, shouldReferenceMemory, getLocationMemories } from "@/lib/memoryUnity";
 import { checkCharacterAvailability, getLocationEmployees, spawnLocationNPCs, shouldNPCApproach } from "@/lib/npcSpawner";
 import ConversationTypeSelector from "@/components/scene/ConversationTypeSelector";
+import InviteToSceneModal from "@/components/scene/InviteToSceneModal";
 import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext } from "@/lib/sceneMemoryInjection";
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
@@ -154,6 +155,7 @@ export default function Scene() {
   const [isMoveInLoading, setIsMoveInLoading] = useState(false);
   const [extraNpcs, setExtraNpcs] = useState([]); // realtor + other added NPCs
   const [pendingInvitations, setPendingInvitations] = useState(null);
+  const [showInviteModal, setShowInviteModal] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -986,6 +988,16 @@ Return JSON:
                     );
                   })()}
                 </div>
+                {/* Invite someone here */}
+                <div className="border-t border-border p-2">
+                  <button
+                    onClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-left"
+                  >
+                    <UserPlus className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span className="text-xs font-medium">Invite someone here</span>
+                  </button>
+                </div>
               </motion.div>
             )}
           </AnimatePresence>
@@ -1300,6 +1312,26 @@ Return JSON:
           />
         )}
       </AnimatePresence>
+
+      {/* Invite to scene modal */}
+      <InviteToSceneModal
+        isOpen={showInviteModal}
+        onClose={() => setShowInviteModal(false)}
+        location={location}
+        characters={characters}
+        userDisplayName={displayName}
+        onCharacterArrived={(char) => {
+          // Add arrived character to the scene immediately
+          setExtraNpcs(prev => prev.find(n => n.id === char.id) ? prev : [...prev, char]);
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            sender: "narrative",
+            content: `${char.name} arrives at ${location.name}.`,
+            timestamp: new Date().toISOString(),
+          }]);
+          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+        }}
+      />
 
       {/* Conversation type selector */}
       <ConversationTypeSelector
