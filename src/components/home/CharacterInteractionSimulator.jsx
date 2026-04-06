@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
 export default function CharacterInteractionSimulator({ characters }) {
+  // Filter out NPC characters — only include active characters created by the user
+  const activeCharactersOnly = characters.filter(c => c.character_type !== "npc");
   const [selected, setSelected] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState(null);
@@ -140,8 +142,8 @@ export default function CharacterInteractionSimulator({ characters }) {
         />
 
         {/* Character selection grid */}
-        <div className="grid grid-cols-2 gap-2">
-          {activeCharacters.map(char => (
+         <div className="grid grid-cols-2 gap-2">
+           {activeCharactersOnly.map(char => (
             <button
               key={char.id}
               onClick={() => toggleSelect(char.id)}

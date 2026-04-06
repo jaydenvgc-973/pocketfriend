@@ -180,7 +180,7 @@ export default function Home() {
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
-  const activeCustomChars = customChars.filter(c => c.status === "active" || !c.status);
+  const activeCustomChars = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type !== "npc");
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
   // NO HARD LIMIT: characters can always be created and displayed
   const canCreate = true;
