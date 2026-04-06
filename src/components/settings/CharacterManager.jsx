@@ -57,11 +57,11 @@ export default function CharacterManager() {
     .map(c => ({ type: 'character', data: c }));
   
   const activeCharacters = characterItems
-    .filter(item => item.data.created_by_user === true && item.data.status === 'active')
+    .filter(item => item.data.is_active_character === true || (item.data.status === 'active' && !item.data.is_family && !item.data.is_world_person))
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
   const inactiveCharacters = characterItems
-    .filter(item => item.data.created_by_user === true && item.data.status !== 'active')
+    .filter(item => item.data.is_active_character !== true && item.data.status !== 'active')
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
   const familyMembers = roster
