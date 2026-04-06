@@ -416,6 +416,8 @@ export default function Settings() {
 
 
 
+          {/* NPC Fictitious People - REMOVED (no voice/nickname for social NPCs) */}
+
           {/* Moved Away & Deleted Characters at bottom */}
           <div className="space-y-4">
             {movedAwayChars.length > 0 && (
