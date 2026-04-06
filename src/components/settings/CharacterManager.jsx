@@ -9,6 +9,15 @@ import { Input } from '@/components/ui/input';
 import { fetchUnifiedRoster, getInitial } from '@/lib/unifiedRosterUtils';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
+const CATEGORY_OPTIONS = [
+  { id: 'active', label: 'Active Character', color: 'bg-green-500/10 border-green-500/30' },
+  { id: 'npc_family', label: 'NPC Family', color: 'bg-blue-500/10 border-blue-500/30' },
+  { id: 'npc_fictional', label: 'NPC Fictional Person', color: 'bg-purple-500/10 border-purple-500/30' },
+  { id: 'inactive', label: 'Inactive Character', color: 'bg-gray-500/10 border-gray-500/30' },
+  { id: 'duplicate', label: 'Duplicate', color: 'bg-amber-500/10 border-amber-500/30' },
+  { id: 'delete', label: 'Delete', color: 'bg-red-500/10 border-red-500/30' },
+];
+
 export default function CharacterManager() {
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState(null);
@@ -16,6 +25,10 @@ export default function CharacterManager() {
   const [renamingId, setRenamingId] = useState(null);
   const [mergeMode, setMergeMode] = useState(false);
   const [selectedForMerge, setSelectedForMerge] = useState(new Map()); // key -> entry object
+  const [categorizationMode, setCategorizationMode] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState(null);
+  const [selectedForCategorization, setSelectedForCategorization] = useState(new Map());
+  const [categorizations, setCategorizations] = useState(new Map()); // itemKey -> category
 
   const { data: currentUser } = useQuery({
     queryKey: ['user'],
@@ -307,19 +320,50 @@ export default function CharacterManager() {
 
   const editable = roster.filter(c => !c.is_protected && !c.is_default && !c.is_user);
 
+  const handleCategorizeSubmit = () => {
+    if (selectedForCategorization.size === 0 || !selectedCategory) return;
+    
+    const updated = new Map(categorizations);
+    selectedForCategorization.forEach((entry, key) => {
+      updated.set(key, selectedCategory);
+    });
+    setCategorizations(updated);
+    
+    // Show confirmation
+    const categoryLabel = CATEGORY_OPTIONS.find(c => c.id === selectedCategory)?.label || selectedCategory;
+    console.log(`✓ Categorized ${selectedForCategorization.size} character(s) as "${categoryLabel}"`);
+    
+    setSelectedForCategorization(new Map());
+    setSelectedCategory(null);
+    setCategorizationMode(false);
+  };
+
+  const toggleCategorizeSelection = (key) => {
+    const updated = new Map(selectedForCategorization);
+    if (updated.has(key)) {
+      updated.delete(key);
+    } else {
+      updated.set(key, true);
+    }
+    setSelectedForCategorization(updated);
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-semibold text-foreground">Manage Characters</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Rename, merge, or delete characters</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Categorize, rename, merge, or delete characters</p>
         </div>
-        {mergeMode && (
+        {(mergeMode || categorizationMode) && (
           <Button
             size="sm"
             onClick={() => {
               setMergeMode(false);
               setSelectedForMerge(new Map());
+              setCategorizationMode(false);
+              setSelectedForCategorization(new Map());
+              setSelectedCategory(null);
             }}
             variant="outline"
             className="rounded-lg"
@@ -328,6 +372,41 @@ export default function CharacterManager() {
           </Button>
         )}
       </div>
+
+      {/* Categorization Mode Selector */}
+      {!categorizationMode && !mergeMode && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Categorize Characters</p>
+          <div className="grid grid-cols-2 gap-2">
+            {CATEGORY_OPTIONS.map(cat => (
+              <Button
+                key={cat.id}
+                onClick={() => {
+                  setSelectedCategory(cat.id);
+                  setCategorizationMode(true);
+                }}
+                variant="outline"
+                size="sm"
+                className="rounded-lg justify-start"
+              >
+                {cat.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Categorization selection UI */}
+      {categorizationMode && selectedCategory && (
+        <div className={`rounded-xl border-2 p-3 space-y-2 ${CATEGORY_OPTIONS.find(c => c.id === selectedCategory)?.color}`}>
+          <p className="text-xs font-semibold text-foreground">
+            Select character(s) to mark as "{CATEGORY_OPTIONS.find(c => c.id === selectedCategory)?.label}"
+          </p>
+          {selectedForCategorization.size > 0 && (
+            <p className="text-xs text-muted-foreground">{selectedForCategorization.size} selected</p>
+          )}
+        </div>
+      )}
 
       <div className="space-y-2 max-h-96 overflow-y-auto">
         {allManageableItems.length === 0 ? (
@@ -350,24 +429,34 @@ export default function CharacterManager() {
               ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
               : itemData.name;
             const isSelected = selectedForMerge.has(itemKey);
+            const isCategorizeSelected = selectedForCategorization.has(itemKey);
+            const currentCategory = categorizations.get(itemKey);
+            const categoryColor = currentCategory ? CATEGORY_OPTIONS.find(c => c.id === currentCategory)?.color : '';
             
             return (
               <motion.div
                  key={`${item.type}-${itemKey}`}
                  layout
-                 className={`rounded-xl border-2 p-4 transition-all cursor-pointer ${
-                   isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/40'
+                 className={`rounded-xl border-2 p-4 transition-all ${
+                   categorizationMode
+                     ? `cursor-pointer ${isCategorizeSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/40'}`
+                     : mergeMode
+                     ? `cursor-pointer ${isSelected ? 'bg-primary/10 border-primary' : 'bg-card border-border hover:border-primary/40'}`
+                     : `bg-card border-border ${categoryColor ? categoryColor : ''}`
                  } ${isUser ? 'ring-2 ring-primary/30' : ''}`}
-                 onClick={() => mergeMode && toggleMergeSelection(mergeEntry)}
+                 onClick={() => {
+                   if (categorizationMode) toggleCategorizeSelection(itemKey);
+                   if (mergeMode) toggleMergeSelection(mergeEntry);
+                 }}
                 >
                  <div className="flex items-center gap-3">
-                  {mergeMode && (
-                    <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                      isSelected ? 'bg-primary border-primary' : 'border-border'
-                    }`}>
-                      {isSelected && <Check className="w-3 h-3 text-white" />}
-                    </div>
-                  )}
+                  {(mergeMode || categorizationMode) && (
+                     <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                       (isSelected || isCategorizeSelected) ? 'bg-primary border-primary' : 'border-border'
+                     }`}>
+                       {(isSelected || isCategorizeSelected) && <Check className="w-3 h-3 text-white" />}
+                     </div>
+                   )}
                   {isUser ? (() => {
                    const userAvatar = itemData.avatar_url
                      || userSettings?.generated_avatar_urls?.[0]
@@ -439,7 +528,7 @@ export default function CharacterManager() {
                      </>
                    )}
                   </div>
-                  {!mergeMode && (
+                  {!mergeMode && !categorizationMode && (
                     <div className="flex items-center gap-1">
                       <button
                         onClick={() => handleRename(itemKey, itemName, isNPC)}
@@ -478,7 +567,22 @@ export default function CharacterManager() {
         </div>
       )}
 
-      {editable.length > 1 && !mergeMode && (
+      {categorizationMode && selectedCategory && (
+        <Button
+          onClick={handleCategorizeSubmit}
+          disabled={selectedForCategorization.size === 0}
+          size="sm"
+          className="w-full rounded-lg"
+        >
+          Okay — {selectedForCategorization.size} character(s) as {CATEGORY_OPTIONS.find(c => c.id === selectedCategory)?.label}
+        </Button>
+      )}
+
+      {categorizationMode && selectedCategory && selectedForCategorization.size === 0 && (
+        <p className="text-xs text-muted-foreground text-center py-2">Select character(s) above</p>
+      )}
+
+      {editable.length > 1 && !mergeMode && !categorizationMode && (
         <Button
           onClick={() => setMergeMode(true)}
           variant="outline"
