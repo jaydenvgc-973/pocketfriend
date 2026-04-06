@@ -21,7 +21,7 @@ import { getAuthoritativeCharacterLocation } from "@/lib/authoritativeLocationRe
 export default function Home() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [pendingDelete, setPendingDelete] = useState(null); // character being removed
+  const [pendingDelete, setPendingDelete] = useState(null);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [invitations, setInvitations] = useState(null);
 
@@ -46,7 +46,7 @@ export default function Home() {
     refetchOnWindowFocus: true,
   });
 
-  // Fetch locations for location-aware status display on character cards
+  // Fetch locations with zero cache to prevent stale empty data
   const { data: locationsData = [], isLoading: isLocationsLoading } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
@@ -55,7 +55,7 @@ export default function Home() {
     },
     enabled: !!currentUser?.email,
     staleTime: 0,
-    cacheTime: 0, // Completely disable caching to prevent stale "empty" results being served
+    gcTime: 0,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
     retry: 3,
@@ -70,38 +70,26 @@ export default function Home() {
     });
     return () => unsubscribe();
   }, [currentUser?.email, queryClient]);
-  
-  // Build complete location map for all characters
-  // CRITICAL: Only build when locations are fully loaded to prevent empty-map fallback
-  // Guard: never render cards with partial/empty location map
-  const locationMap = isLocationsLoading || !locationsData?.length ? {} : Object.fromEntries(locationsData.map(l => [l.id, l]));
+
+  // Build location map only when fully loaded
   const isLocationMapReady = !isLocationsLoading && locationsData?.length > 0;
-  
-  // Helper to get all location data for a character using authoritative resolver
-  // CRITICAL: This must only be called when locationMap is guaranteed non-empty
+  const locationMap = isLocationMapReady ? Object.fromEntries(locationsData.map(l => [l.id, l])) : {};
+
+  // Helper to get location data
   const getLocationDataForCharacter = (char) => {
-    // Validate that locationMap has data before attempting lookups
-    if (!isLocationMapReady || Object.keys(locationMap).length === 0) {
-      return { workLoc: null, eduLoc: null, religionLoc: null, gymLoc: null, currentLoc: null, homeLocation: null };
-    }
-    
     const workLoc = char.occupation_location_id ? locationMap[char.occupation_location_id] : null;
     const eduLoc = char.education_location_id ? locationMap[char.education_location_id] : null;
     const religionLoc = locationsData.find(l => l.category === 'religion' && !l.is_default_generic) || null;
     const gymLoc = locationsData.find(l => l.category === 'gym' && l.gym_members?.includes(char.id)) || null;
     const homeLocation = char.current_home_location_id ? locationMap[char.current_home_location_id] : null;
     
-    // Use authoritative resolver to get the "true" current location
     const authLoc = getAuthoritativeCharacterLocation(char, locationMap);
     const currentLoc = authLoc && authLoc.id ? locationMap[authLoc.id] : null;
     
-    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation, locationMap };
+    return { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation };
   };
 
-  // Removed: backfill was causing render cascades during location loading
-  // Characters maintain their real-time location state from authoritative resolver
-
-  // Check for character invites on first mount only (session-based guard)
+  // Check for character invites on first mount only
   useEffect(() => {
     if (!currentUser?.email) return;
     const hasCheckedThisSession = sessionStorage.getItem(`invites_checked_${currentUser.email}`);
@@ -179,8 +167,6 @@ export default function Home() {
   useEffect(() => {
     const defaultChar = characters.find(c => c.is_default);
     if (!defaultChar) return;
-    // Only do a one-time migration if the character is missing core data
-    // Never overwrite an already-complete character
     if (defaultChar.family_history && defaultChar.system_prompt) return;
     const updated = {
       ...DEFAULT_CHARACTER_DATA,
@@ -205,11 +191,9 @@ export default function Home() {
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
   const activeCustomChars = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type !== "npc");
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
-  // NO HARD LIMIT: characters can always be created and displayed
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
-  // Check if Thomas Anderson exists in database but is missing from active display
   const thomasAnderson = characters.find(c => c.name === 'Thomas Anderson' || c.name === 'Thomas');
   const thomasInDisplay = activeCustomChars.some(c => c.id === thomasAnderson?.id);
   const showThomasAndersonFix = thomasAnderson && !thomasInDisplay;
@@ -226,118 +210,119 @@ export default function Home() {
         )}
       </AnimatePresence>
       <div className="sticky top-0 z-10 bg-background/80 backdrop-blur-xl border-b border-border px-6 py-4">
-         <div className="max-w-lg mx-auto">
-           <div className="flex items-center justify-between mb-3">
-             <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
-             <div className="flex items-center gap-2">
-               <button
-                 onClick={() => setShowTroubleshooting(true)}
-                 className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-                 title="Troubleshoot Home page"
-               >
-                 <Wrench className="w-4 h-4" />
-               </button>
-               <Link to="/groups">
-                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                   <Users className="w-5 h-5" />
-                 </Button>
-               </Link>
-               <Link to="/settings">
-                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                   <Settings className="w-5 h-5" />
-                 </Button>
-               </Link>
-             </div>
-           </div>
-         </div>
-       </div>
+        <div className="max-w-lg mx-auto">
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowTroubleshooting(true)}
+                className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                title="Troubleshoot Home page"
+              >
+                <Wrench className="w-4 h-4" />
+              </button>
+              <Link to="/groups">
+                <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                  <Users className="w-5 h-5" />
+                </Button>
+              </Link>
+              <Link to="/settings">
+                <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                  <Settings className="w-5 h-5" />
+                </Button>
+              </Link>
+            </div>
+          </div>
+        </div>
+      </div>
 
       {!isLocationMapReady && (
         <div className="max-w-lg mx-auto px-6 py-6 flex items-center justify-center min-h-[200px]">
           <div className="w-8 h-8 border-4 border-primary/20 border-t-primary rounded-full animate-spin"></div>
         </div>
       )}
+
       {isLocationMapReady && (
-      <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
-        {showThomasAndersonFix && (
-          <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
-        )}
-        {/* User card — user as a first-class world entity */}
-        {currentUser && (
-          <UserCard user={currentUser} settings={settings[0] || {}} />
-        )}
-        {defaultChar && isLocationMapReady && (
-          <div>
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
-            {(() => {
-              const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(defaultChar);
-              return <CharacterCard character={defaultChar} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation, locationMap }} />;
-            })()}
-          </div>
-        )}
-        {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
-          <CharacterInteractionSimulator characters={defaultChar ? [defaultChar, ...activeCustomChars] : activeCustomChars} />
-        ) : null}
-        
-        <div>
-           {showPerformanceWarning && (
-             <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
-               <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Performance Notice</p>
-               <p className="text-xs text-amber-600/80">You have {activeCustomChars.length} custom characters. The app may slow down with many active characters. Performance depends on your device.</p>
-             </div>
-           )}
-           <div className="flex items-center justify-between mb-3">
-             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters ({activeCustomChars.length})</p>
-             {canCreate && (
-               <Link to="/create">
-                 <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
-                   <Plus className="w-3.5 h-3.5" /> Create
-                 </motion.button>
-               </Link>
-             )}
-           </div>
-          {activeCustomChars.length === 0 && movedAwayChars.length === 0 ? (
-            <Link to="/create">
-              <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors">
-                <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
-                  <Plus className="w-5 h-5 text-primary" />
-                </div>
-                <p className="text-sm font-medium text-foreground">Create a character</p>
-                <p className="text-xs text-muted-foreground mt-1">Build someone with their own story</p>
-              </motion.div>
-            </Link>
-          ) : isLocationMapReady && (
-            <div className="grid gap-3">
-               {activeCustomChars.map(c => {
-                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(c);
-                 return (
-                   <CharacterCard key={c.id} character={c}
-                     onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
-                     onMoveAway={(id) => moveAwayMutation.mutate(id)}
-                     locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation, locationMap }}
-                   />
-                 );
-               })}
-               {movedAwayChars.map(c => {
-                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(c);
-                 return (
-                   <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation, locationMap }} />
-                 );
-               })}
-               <Link to="/create">
-                 <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
-                   <Plus className="w-4 h-4 text-muted-foreground mr-2" />
-                   <span className="text-sm text-muted-foreground">Add another</span>
-                 </motion.div>
-               </Link>
-               <div className="mt-2">
-                 <NPCContactPanel />
-               </div>
-             </div>
+        <div className="max-w-lg mx-auto px-6 py-6 pb-32 space-y-6">
+          {showThomasAndersonFix && (
+            <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
           )}
+          {currentUser && (
+            <UserCard user={currentUser} settings={settings[0] || {}} />
+          )}
+          {defaultChar && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
+              {(() => {
+                const locData = getLocationDataForCharacter(defaultChar);
+                return <CharacterCard character={defaultChar} locationData={{ ...locData, locationMap }} />;
+              })()}
+            </div>
+          )}
+          {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
+            <CharacterInteractionSimulator characters={defaultChar ? [defaultChar, ...activeCustomChars] : activeCustomChars} />
+          ) : null}
+          
+          <div>
+            {showPerformanceWarning && (
+              <div className="mb-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                <p className="text-xs font-medium text-amber-600 mb-1">⚠️ Performance Notice</p>
+                <p className="text-xs text-amber-600/80">You have {activeCustomChars.length} custom characters. The app may slow down with many active characters. Performance depends on your device.</p>
+              </div>
+            )}
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Custom characters ({activeCustomChars.length})</p>
+              {canCreate && (
+                <Link to="/create">
+                  <motion.button whileTap={{ scale: 0.95 }} className="flex items-center gap-1.5 text-xs text-primary font-medium">
+                    <Plus className="w-3.5 h-3.5" /> Create
+                  </motion.button>
+                </Link>
+              )}
+            </div>
+            {activeCustomChars.length === 0 && movedAwayChars.length === 0 ? (
+              <Link to="/create">
+                <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-8 flex flex-col items-center justify-center text-center cursor-pointer hover:border-primary/30 transition-colors">
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mb-3">
+                    <Plus className="w-5 h-5 text-primary" />
+                  </div>
+                  <p className="text-sm font-medium text-foreground">Create a character</p>
+                  <p className="text-xs text-muted-foreground mt-1">Build someone with their own story</p>
+                </motion.div>
+              </Link>
+            ) : (
+              <div className="grid gap-3">
+                {activeCustomChars.map(c => {
+                  const locData = getLocationDataForCharacter(c);
+                  return (
+                    <CharacterCard key={c.id} character={c}
+                      onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
+                      onMoveAway={(id) => moveAwayMutation.mutate(id)}
+                      locationData={{ ...locData, locationMap }}
+                    />
+                  );
+                })}
+                {movedAwayChars.map(c => {
+                  const locData = getLocationDataForCharacter(c);
+                  return (
+                    <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ ...locData, locationMap }} />
+                  );
+                })}
+                <Link to="/create">
+                  <motion.div whileTap={{ scale: 0.98 }} className="border-2 border-dashed border-border rounded-2xl p-6 flex items-center justify-center cursor-pointer hover:border-primary/30 transition-colors">
+                    <Plus className="w-4 h-4 text-muted-foreground mr-2" />
+                    <span className="text-sm text-muted-foreground">Add another</span>
+                  </motion.div>
+                </Link>
+                <div className="mt-2">
+                  <NPCContactPanel />
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
       )}
+
       <DailyAchievementReminder />
       <TroubleshootingPanelHome
         isOpen={showTroubleshooting}
@@ -347,14 +332,12 @@ export default function Home() {
         <InviteOutModal
           invitations={invitations}
           onAccept={(invite) => {
-            // Record that user accepted this invite (for character memory)
             base44.functions.invoke('recordCharacterInviteAccepted', {
               characterId: invite.characterId,
               locationId: invite.locationId,
               inviteType: invite.inviteType,
             }).catch(() => {});
 
-            // Clear this invite and navigate
             const remaining = invitations.filter(i => i.characterId !== invite.characterId);
             setInvitations(remaining.length > 0 ? remaining : null);
             
@@ -362,7 +345,6 @@ export default function Home() {
             navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
           }}
           onDecline={() => {
-            // Record decline and mark characters as "already invited"
             if (invitations.length > 0) {
               invitations.forEach(inv => {
                 base44.functions.invoke('recordCharacterInviteDeclined', {
@@ -374,7 +356,6 @@ export default function Home() {
             setInvitations(null);
           }}
           onClose={() => {
-            // Clear pending invites from settings when modal is dismissed
             if (settings[0]?.id) {
               base44.entities.UserSettings.update(settings[0].id, {
                 pending_character_invites: [],
