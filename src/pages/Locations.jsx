@@ -712,30 +712,57 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             )}
           </div>
 
-          {/* Add resident: active characters + family members + NPCs */}
+          {/* Add resident: user + active characters + family members + NPCs */}
           <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
+            {/* User (current player) - always first */}
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">The Player</p>
+            <button
+              onClick={() => {
+                // Placeholder: user would be represented with their world name or special marker
+                // For now, we'll add a visual indicator but this would need backend support
+              }}
+              disabled={true}
+              className="w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg bg-primary/10 border-l-2 border-primary opacity-50 cursor-default"
+            >
+              <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                <span className="text-xs font-bold text-primary">U</span>
+              </div>
+              <span className="text-sm text-foreground font-medium flex-1">{currentUser?.full_name || "You"}</span>
+              <span className="text-xs text-primary font-medium">✓ Player</span>
+            </button>
+
+            {/* Active Characters (sorted: primary characters first, NPCs last) */}
             {characters.length > 0 && (
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Active Characters</p>
             )}
-            {characters.map(char => {
-              const alreadyResident = form.resident_character_ids?.includes(char.id);
-              return (
-                <button
-                  key={char.id}
-                  onClick={() => {
-                    if (!alreadyResident) {
-                      update("resident_character_ids", [...(form.resident_character_ids || []), char.id]);
-                    }
-                  }}
-                  disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
-                >
-                  <CharacterAvatar character={char} size="sm" />
-                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                </button>
-              );
-            })}
+            {(() => {
+              // Sort: active characters first, then inactive/NPC-like characters
+              const sorted = [...characters].sort((a, b) => {
+                const aActive = a.is_active_character ? 0 : 1;
+                const bActive = b.is_active_character ? 0 : 1;
+                if (aActive !== bActive) return aActive - bActive;
+                return (a.name || "").localeCompare(b.name || "");
+              });
+              return sorted.map(char => {
+                const alreadyResident = form.resident_character_ids?.includes(char.id);
+                return (
+                  <button
+                    key={char.id}
+                    onClick={() => {
+                      if (!alreadyResident) {
+                        update("resident_character_ids", [...(form.resident_character_ids || []), char.id]);
+                      }
+                    }}
+                    disabled={alreadyResident}
+                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                  >
+                    <CharacterAvatar character={char} size="sm" />
+                    <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                    {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                  </button>
+                );
+              });
+            })()}
 
             {/* Family members from all characters */}
             {characters.flatMap(char =>

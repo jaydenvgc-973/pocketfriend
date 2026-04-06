@@ -1354,7 +1354,7 @@ Return JSON:
             <BookOpen className="w-3 h-3" /> Narrate
           </button>
         </div>
-        <div className="flex gap-2 px-3 pb-2">
+        <div className="flex gap-2 px-3 pb-2 touch-manipulation">
           <input
             value={inputText}
             onChange={e => setInputText(e.target.value)}
@@ -1363,13 +1363,21 @@ Return JSON:
                 narratorMode ? sendNarration(inputText) : sendMessage(inputText);
               }
             }}
+            onTouchStart={(e) => e.currentTarget.focus()}
             placeholder={narratorMode ? "Describe the scene, set the atmosphere..." : "Say something..."}
-            className={`flex-1 h-10 px-3 rounded-xl bg-secondary border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none transition-colors ${narratorMode ? "border-primary/40 focus:border-primary italic" : "border-border focus:border-primary/50"}`}
+            className={`flex-1 h-11 px-3 rounded-xl bg-secondary border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors ${narratorMode ? "border-primary/40 italic" : "border-border"}`}
+            autoComplete="off"
           />
           <button
-            onClick={() => narratorMode ? sendNarration(inputText) : sendMessage(inputText)}
+            onClick={() => {
+              narratorMode ? sendNarration(inputText) : sendMessage(inputText);
+            }}
+            onTouchEnd={(e) => {
+              if (!inputText.trim()) return;
+              narratorMode ? sendNarration(inputText) : sendMessage(inputText);
+            }}
             disabled={!inputText.trim()}
-            className={`w-10 h-10 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all ${narratorMode ? "bg-primary/70 text-primary-foreground" : "bg-primary text-primary-foreground"}`}
+            className={`w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all active:scale-95 ${narratorMode ? "bg-primary/70 text-primary-foreground hover:bg-primary/80" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
           >
             {narratorMode ? <BookOpen className="w-4 h-4" /> : <Send className="w-4 h-4" />}
           </button>
