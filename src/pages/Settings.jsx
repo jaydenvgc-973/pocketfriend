@@ -262,98 +262,293 @@ export default function Settings() {
         <div className="space-y-4 pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Per-Character Nicknames & Voice</p>
           <p className="text-xs text-muted-foreground">Set a nickname and voice for each character.</p>
-          <div className="space-y-4">
-            {characters.filter(c => c.status !== "deleted" && c.status !== "moved_away").map(char => {
-              const charVoiceForm = charVoiceForms[char.id] || {
-                voice_enabled: char.voice_enabled || false,
-                voice_name: char.voice_name || "",
-                voice_style_note: char.voice_style_note || "",
-              };
-              const isSavingChar = savingCharIds.has(char.id);
-              return (
-                <div key={char.id} className="border border-border rounded-xl p-3 space-y-3">
-                  <div className="flex items-center gap-3">
-                    <CharacterAvatar character={char} size="sm" />
-                    <span className="text-sm font-medium text-foreground w-24 shrink-0 truncate">{char.name}</span>
-                    <input
-                      type="text"
-                      placeholder={settings.fictional_world_name || "nickname..."}
-                      defaultValue={char.nickname_for_user || ""}
-                      onBlur={e => {
-                        const val = e.target.value.trim();
-                        if (val !== (char.nickname_for_user || "")) {
-                          base44.entities.Character.update(char.id, { nickname_for_user: val || null })
-                            .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
-                        }
-                      }}
-                      className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
-                    />
+          
+          {/* Your Profile */}
+          <div className="space-y-3 pb-4 border-b border-border">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">You</p>
+            {user && (
+              <div className="border border-border rounded-xl p-3 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-semibold text-primary">{user.full_name?.[0]?.toUpperCase()}</span>
                   </div>
-                  <div className="pl-11">
-                    <VoiceSettings 
-                      data={charVoiceForm} 
-                      onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
-                      hasApiKey={true}
-                      character={char}
-                    />
-                    {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
-                      <Button 
-                        onClick={async () => {
-                          setSavingCharIds(p => new Set([...p, char.id]));
-                          await base44.entities.Character.update(char.id, {
-                            voice_enabled: charVoiceForm.voice_enabled,
-                            voice_name: charVoiceForm.voice_name,
-                            voice_style_note: charVoiceForm.voice_style_note,
-                          });
-                          queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
-                          setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
-                        }} 
-                        disabled={isSavingChar} 
-                        size="sm"
-                        className="w-full mt-2 gap-1 rounded-lg h-8"
-                      >
-                        {isSavingChar ? "Saving..." : <><Check className="w-3 h-3" /> Save</>}
-                      </Button>
-                    )}
-                  </div>
+                  <span className="text-sm font-medium text-foreground">{user.full_name}</span>
                 </div>
-              );
-            })}
+              </div>
+            )}
+          </div>
+
+          {/* Active Characters */}
+          {(() => {
+            const activeChars = characters.filter(c => c.character_type === "active" && c.status === "active");
+            return activeChars.length > 0 ? (
+              <div className="space-y-3 pb-4 border-b border-border">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Characters ({activeChars.length})</p>
+                <div className="space-y-4">
+                  {activeChars.map(char => {
+                    const charVoiceForm = charVoiceForms[char.id] || {
+                      voice_enabled: char.voice_enabled || false,
+                      voice_name: char.voice_name || "",
+                      voice_style_note: char.voice_style_note || "",
+                    };
+                    const isSavingChar = savingCharIds.has(char.id);
+                    return (
+                      <div key={char.id} className="border border-border rounded-xl p-3 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <CharacterAvatar character={char} size="sm" />
+                          <span className="text-sm font-medium text-foreground w-24 shrink-0 truncate">{char.name}</span>
+                          <input
+                            type="text"
+                            placeholder={settings.fictional_world_name || "nickname..."}
+                            defaultValue={char.nickname_for_user || ""}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== (char.nickname_for_user || "")) {
+                                base44.entities.Character.update(char.id, { nickname_for_user: val || null })
+                                  .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
+                              }
+                            }}
+                            className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
+                          />
+                        </div>
+                        <div className="pl-11">
+                          <VoiceSettings 
+                            data={charVoiceForm} 
+                            onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
+                            hasApiKey={true}
+                            character={char}
+                          />
+                          {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
+                            <Button 
+                              onClick={async () => {
+                                setSavingCharIds(p => new Set([...p, char.id]));
+                                await base44.entities.Character.update(char.id, {
+                                  voice_enabled: charVoiceForm.voice_enabled,
+                                  voice_name: charVoiceForm.voice_name,
+                                  voice_style_note: charVoiceForm.voice_style_note,
+                                });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
+                              }} 
+                              disabled={isSavingChar} 
+                              size="sm"
+                              className="w-full mt-2 gap-1 rounded-lg h-8"
+                            >
+                              {isSavingChar ? "Saving..." : <><Check className="w-3 h-3" /> Save</>}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null;
+          })()}
+
+          {/* NPC Fictitious People */}
+          {(() => {
+            const npcChars = characters.filter(c => c.character_type === "npc" && c.status === "active");
+            return npcChars.length > 0 ? (
+              <div className="space-y-3 pb-4 border-b border-border">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Fictitious People ({npcChars.length})</p>
+                <div className="space-y-4">
+                  {npcChars.map(char => {
+                    const charVoiceForm = charVoiceForms[char.id] || {
+                      voice_enabled: char.voice_enabled || false,
+                      voice_name: char.voice_name || "",
+                      voice_style_note: char.voice_style_note || "",
+                    };
+                    const isSavingChar = savingCharIds.has(char.id);
+                    return (
+                      <div key={char.id} className="border border-border rounded-xl p-3 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <CharacterAvatar character={char} size="sm" />
+                          <span className="text-sm font-medium text-foreground w-24 shrink-0 truncate">{char.name}</span>
+                          <input
+                            type="text"
+                            placeholder={settings.fictional_world_name || "nickname..."}
+                            defaultValue={char.nickname_for_user || ""}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== (char.nickname_for_user || "")) {
+                                base44.entities.Character.update(char.id, { nickname_for_user: val || null })
+                                  .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
+                              }
+                            }}
+                            className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
+                          />
+                        </div>
+                        <div className="pl-11">
+                          <VoiceSettings 
+                            data={charVoiceForm} 
+                            onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
+                            hasApiKey={true}
+                            character={char}
+                          />
+                          {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
+                            <Button 
+                              onClick={async () => {
+                                setSavingCharIds(p => new Set([...p, char.id]));
+                                await base44.entities.Character.update(char.id, {
+                                  voice_enabled: charVoiceForm.voice_enabled,
+                                  voice_name: charVoiceForm.voice_name,
+                                  voice_style_note: charVoiceForm.voice_style_note,
+                                });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
+                              }} 
+                              disabled={isSavingChar} 
+                              size="sm"
+                              className="w-full mt-2 gap-1 rounded-lg h-8"
+                            >
+                              {isSavingChar ? "Saving..." : <><Check className="w-3 h-3" /> Save</>}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null;
+          })()}
+
+          {/* NPC Family */}
+          {(() => {
+            const familyChars = characters.filter(c => c.character_type === "family_npc" && c.status === "active");
+            return familyChars.length > 0 ? (
+              <div className="space-y-3 pb-4 border-b border-border">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Family ({familyChars.length})</p>
+                <div className="space-y-4">
+                  {familyChars.map(char => {
+                    const charVoiceForm = charVoiceForms[char.id] || {
+                      voice_enabled: char.voice_enabled || false,
+                      voice_name: char.voice_name || "",
+                      voice_style_note: char.voice_style_note || "",
+                    };
+                    const isSavingChar = savingCharIds.has(char.id);
+                    return (
+                      <div key={char.id} className="border border-border rounded-xl p-3 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <CharacterAvatar character={char} size="sm" />
+                          <span className="text-sm font-medium text-foreground w-24 shrink-0 truncate">{char.name}</span>
+                          <input
+                            type="text"
+                            placeholder={settings.fictional_world_name || "nickname..."}
+                            defaultValue={char.nickname_for_user || ""}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== (char.nickname_for_user || "")) {
+                                base44.entities.Character.update(char.id, { nickname_for_user: val || null })
+                                  .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
+                              }
+                            }}
+                            className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
+                          />
+                        </div>
+                        <div className="pl-11">
+                          <VoiceSettings 
+                            data={charVoiceForm} 
+                            onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
+                            hasApiKey={true}
+                            character={char}
+                          />
+                          {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
+                            <Button 
+                              onClick={async () => {
+                                setSavingCharIds(p => new Set([...p, char.id]));
+                                await base44.entities.Character.update(char.id, {
+                                  voice_enabled: charVoiceForm.voice_enabled,
+                                  voice_name: charVoiceForm.voice_name,
+                                  voice_style_note: charVoiceForm.voice_style_note,
+                                });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
+                              }} 
+                              disabled={isSavingChar} 
+                              size="sm"
+                              className="w-full mt-2 gap-1 rounded-lg h-8"
+                            >
+                              {isSavingChar ? "Saving..." : <><Check className="w-3 h-3" /> Save</>}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null;
+          })()}
+
+          {/* Moved Away & Deleted Characters at bottom */}
+          <div className="space-y-4">
+            {movedAwayChars.length > 0 && (
+              <div className="space-y-4 pt-4 border-t border-border">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Characters Away ({movedAwayChars.length})</p>
+                <div className="space-y-3">
+                  {movedAwayChars.map(char => {
+                    const charVoiceForm = charVoiceForms[char.id] || {
+                      voice_enabled: char.voice_enabled || false,
+                      voice_name: char.voice_name || "",
+                      voice_style_note: char.voice_style_note || "",
+                    };
+                    const isSavingChar = savingCharIds.has(char.id);
+                    return (
+                      <div key={char.id} className="border border-border rounded-xl p-3 space-y-3">
+                        <div className="flex items-center gap-3">
+                          <CharacterAvatar character={char} size="sm" />
+                          <span className="text-sm font-medium text-foreground w-24 shrink-0 truncate">{char.name}</span>
+                          <input
+                            type="text"
+                            placeholder={settings.fictional_world_name || "nickname..."}
+                            defaultValue={char.nickname_for_user || ""}
+                            onBlur={e => {
+                              const val = e.target.value.trim();
+                              if (val !== (char.nickname_for_user || "")) {
+                                base44.entities.Character.update(char.id, { nickname_for_user: val || null })
+                                  .then(() => queryClient.invalidateQueries({ queryKey: ["characters", user?.email] }));
+                              }
+                            }}
+                            className="flex-1 h-9 px-3 rounded-lg bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground"
+                          />
+                        </div>
+                        <div className="pl-11">
+                          <VoiceSettings 
+                            data={charVoiceForm} 
+                            onUpdate={(field, value) => setCharVoiceForms(p => ({ ...p, [char.id]: { ...charVoiceForm, [field]: value } }))} 
+                            hasApiKey={true}
+                            character={char}
+                          />
+                          {(charVoiceForm.voice_enabled !== char.voice_enabled || charVoiceForm.voice_name !== char.voice_name || charVoiceForm.voice_style_note !== char.voice_style_note) && (
+                            <Button 
+                              onClick={async () => {
+                                setSavingCharIds(p => new Set([...p, char.id]));
+                                await base44.entities.Character.update(char.id, {
+                                  voice_enabled: charVoiceForm.voice_enabled,
+                                  voice_name: charVoiceForm.voice_name,
+                                  voice_style_note: charVoiceForm.voice_style_note,
+                                });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
+                              }} 
+                              disabled={isSavingChar} 
+                              size="sm"
+                              className="w-full mt-2 gap-1 rounded-lg h-8"
+                            >
+                              {isSavingChar ? "Saving..." : <><Check className="w-3 h-3" /> Save</>}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
-        {movedAwayChars.length > 0 && (
-          <div className="space-y-4 pt-4 border-t border-border">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Characters Away ({movedAwayChars.length})</p>
-            <div className="space-y-3">
-              {movedAwayChars.map(char => (
-                <div key={char.id} className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border">
-                  <CharacterAvatar character={char} size="md" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground">{char.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => moveBackMutation.mutate(char.id)}
-                      disabled={moveBackMutation.isPending}
-                      className="p-2 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors disabled:opacity-50"
-                      title="Move back"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setPendingDelete(char)}
-                      className="p-2 rounded-lg bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
         <StorageBackup />
         <CommonQuestions />
 
