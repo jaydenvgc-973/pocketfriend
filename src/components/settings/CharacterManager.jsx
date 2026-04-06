@@ -75,12 +75,28 @@ export default function CharacterManager() {
     .map(n => ({ type: 'world_person', data: n }))
     .sort((a, b) => new Date(b.data.created_date) - new Date(a.data.created_date));
   
+  // Consolidate duplicate characters into single entries with multiple roles
+  const consolidateItems = (items) => {
+    const map = new Map();
+    items.forEach(item => {
+      const key = item.data.id || `${item.type}_${item.data.person_name || item.data.name}`;
+      if (!map.has(key)) {
+        map.set(key, { ...item, roles: [] });
+      }
+      const existing = map.get(key);
+      if (item.type === 'family' || item.type === 'world_person') {
+        const role = item.data.appearance_notes || item.type;
+        if (!existing.roles.includes(role)) {
+          existing.roles.push(role);
+        }
+      }
+    });
+    return Array.from(map.values());
+  };
+
   const allManageableItems = [
     ...(userItem ? [userItem] : []),
-    ...activeCharacters,
-    ...inactiveCharacters,
-    ...familyMembers,
-    ...npcItems
+    ...consolidateItems([...activeCharacters, ...inactiveCharacters, ...familyMembers, ...npcItems])
   ];
 
   const renameMutation = useMutation({
@@ -601,9 +617,11 @@ export default function CharacterManager() {
                          {isUser && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">You</span>}
                          {!isUser && !isNPC && itemData.is_active_character && <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium flex items-center gap-1"><Star className="w-3 h-3 fill-primary" /> Active</span>}
                        </div>
-                       {isNPC && itemData.appearance_notes && (
+                       {isNPC && (item.roles?.length > 0 ? (
+                         <p className="text-sm text-muted-foreground">{item.roles.join(', ')}</p>
+                       ) : itemData.appearance_notes && (
                          <p className="text-sm text-muted-foreground">{itemData.appearance_notes}</p>
-                       )}
+                       ))}
                        {!isUser && !isNPC && (
                          <div className="flex flex-wrap gap-1 mt-0.5">
                            {itemData.character_type && (
