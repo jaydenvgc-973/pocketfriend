@@ -83,14 +83,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     staleTime: 30000, // 30s — don't re-fetch on every render
   });
 
-  const { data: currentLocationData = null } = useQuery({
-    queryKey: ['characterCurrentLocation', character.current_location_id],
-    queryFn: () => character.current_location_id
-      ? base44.entities.LocationReference.filter({ id: character.current_location_id }).then(r => r[0] || null)
-      : Promise.resolve(null),
-    enabled: !!character.current_location_id,
-    staleTime: 0, // Force fresh data on every render to catch location name updates
-  });
+  // REMOVED: No separate currentLocationData query — use locationData.currentLoc passed from parent (Home.jsx)
+  // This ensures we use the same location map and avoid stale/duplicate queries
+  const currentLocationData = locationData?.currentLoc || null;
 
   // Single batched query: fetch ALL unread character messages for this character at once
   // instead of N queries per conversation (which caused 429 rate limit storms)
@@ -152,15 +147,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     return () => unsubscribe();
   }, [character.id, countUnread]);
 
-  // Real-time: refresh location data when character location changes
-  useEffect(() => {
-    const unsubscribe = base44.entities.Character.subscribe((event) => {
-      if (event.id === character.id && (event.type === "update" || event.type === "create")) {
-        queryClient.invalidateQueries({ queryKey: ['characterCurrentLocation', character.current_location_id] });
-      }
-    });
-    return () => unsubscribe();
-  }, [character.id, character.current_location_id, queryClient]);
+
 
   const generateAvatar = async () => {
     setIsGeneratingAvatar(true);
