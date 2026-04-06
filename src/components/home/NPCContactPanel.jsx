@@ -15,36 +15,16 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ['characters', currentUser?.email],
+  const { data: npcCharacters = [] } = useQuery({
+    queryKey: ['npc-characters', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email })
+      ? base44.entities.Character.filter({
+          created_by: currentUser.email,
+          character_type: { $in: ['npc', 'family_npc'] }
+        })
       : [],
     enabled: !!currentUser?.email,
   });
-
-  // Get NPCs from all active characters' fictional_relationships (unlinked ones)
-  const npcCharacters = Array.from(
-    new Map(
-      characters
-        .flatMap(char => 
-          (char.fictional_relationships || [])
-            .filter(r => !r.related_character_id) // Only unlinked NPCs
-            .map(rel => [
-              rel.person_name?.toLowerCase(),
-              {
-                ...rel,
-                characterId: rel.person_name,
-                name: rel.person_name,
-                sourceCharacterId: char.id,
-                id: rel.person_name,
-                avatar_url: rel.avatar_url || rel.photo_url,
-              }
-            ])
-        )
-        .sort((a, b) => a[0]?.localeCompare(b[0]))
-    ).values()
-  );
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -61,8 +41,8 @@ export default function NPCContactPanel() {
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
-    // Navigate to the source character's chat, which contains the NPC relationship
-    navigate(`/chat/${npc.sourceCharacterId}`);
+    // Navigate to chat with the NPC character directly
+    navigate(`/chat/${npc.id}`);
   };
 
   const handleDeleteNPC = async (e, npcId) => {
@@ -72,7 +52,7 @@ export default function NPCContactPanel() {
 
     try {
       await base44.entities.Character.delete(npcId);
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }
@@ -108,9 +88,9 @@ export default function NPCContactPanel() {
               </div>
             ) : (
               <div>
-                {npcCharacters.map((npc, idx) => (
+                {npcCharacters.map((npc) => (
                   <motion.button
-                    key={idx}
+                    key={npc.id}
                     onClick={() => handleContactNPC(npc)}
                     className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0"
                     whileHover={{ x: 2 }}
@@ -125,15 +105,11 @@ export default function NPCContactPanel() {
                       )}
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-medium text-foreground truncate">{npc.name}</p>
-                        {npc.relationship_type && (
-                          <p className="text-xs text-muted-foreground truncate">{npc.relationship_type}</p>
-                        )}
+                        <p className="text-xs text-muted-foreground truncate capitalize">{npc.character_type}</p>
                       </div>
                     </div>
                     <button
-                      onClick={(e) => {
-                        handleDeleteNPC(e, npc.id);
-                      }}
+                      onClick={(e) => handleDeleteNPC(e, npc.id)}
                       className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
                       title="Delete NPC"
                     >
