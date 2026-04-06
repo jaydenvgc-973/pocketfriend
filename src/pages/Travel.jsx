@@ -75,29 +75,38 @@ export default function Travel() {
 
   /**
    * For a given location, check if we're allowed to visit it.
-   * If it's someone's home and that character is away, only allow entry
-   * if there are NPC family members listed there.
-   * Returns: { canVisit: boolean, blockedBy: Character|null, hasNpcResidents: boolean }
+   * Returns:
+   *   { canVisit, activeResidents (all), homeResidents (home now), awayResidents (away now), npcResidents, blockedBy }
    */
   const checkHomeAccess = (location) => {
-    if (!location || location.category !== "home") return { canVisit: true, blockedBy: null, hasNpcResidents: false };
+    if (!location || location.category !== "home") {
+      return { canVisit: true, blockedBy: null, activeResidents: [], homeResidents: [], awayResidents: [], npcResidents: [] };
+    }
 
-    // Find active characters who live here
-    const residents = characters.filter(c => location.resident_character_ids?.includes(c.id));
-    if (residents.length === 0) return { canVisit: true, blockedBy: null, hasNpcResidents: false };
+    // Active characters who live here
+    const activeResidents = characters.filter(c => location.resident_character_ids?.includes(c.id));
+    const homeResidents = activeResidents.filter(c => isCharacterHome(c, locationMap));
+    const awayResidents = activeResidents.filter(c => !isCharacterHome(c, locationMap));
 
-    // Check if any resident is home
-    const anyoneHome = residents.some(c => isCharacterHome(c, locationMap));
-    if (anyoneHome) return { canVisit: true, blockedBy: null, hasNpcResidents: false };
+    // NPC residents actually listed ON the location record
+    const npcResidents = location.resident_family_members || [];
 
-    // No active character is home — check for NPC family members
-    const hasNpcResidents = residents.some(c => c.family_members?.length > 0) ||
-      (location.owner_is_npc && location.owner_npc_name);
+    // Can visit if any active resident is home OR there are NPC residents listed on this location
+    const canVisit = homeResidents.length > 0 || npcResidents.length > 0;
 
-    if (hasNpcResidents) return { canVisit: true, blockedBy: null, hasNpcResidents: true };
+    // If no one at all lives here, always allow entry
+    if (activeResidents.length === 0 && npcResidents.length === 0) {
+      return { canVisit: true, blockedBy: null, activeResidents: [], homeResidents: [], awayResidents: [], npcResidents: [] };
+    }
 
-    // Blocked — everyone is away
-    return { canVisit: false, blockedBy: residents[0], hasNpcResidents: false };
+    return {
+      canVisit,
+      blockedBy: !canVisit ? awayResidents[0] : null,
+      activeResidents,
+      homeResidents,
+      awayResidents,
+      npcResidents,
+    };
   };
 
   const toggleCharacter = (charId) => {
@@ -267,10 +276,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     // Check home access
     const homeAccess = checkHomeAccess(selectedLocation);
     if (!homeAccess.canVisit) {
-      const char = homeAccess.blockedBy;
+      const awayNames = homeAccess.awayResidents.map(c => c.name).join(", ") || homeAccess.blockedBy?.name || "Everyone";
       setUnavailablePopup([{
-        character: char,
-        reason: { iconType: "home", message: `${char?.name} isn't home right now. You can't visit.`, color: "text-amber-400" },
+        character: homeAccess.blockedBy || { id: "blocked", name: selectedLocation.name, avatar_url: null },
+        reason: { iconType: "out", message: `${awayNames} ${homeAccess.awayResidents.length === 1 ? "isn't" : "aren't"} home right now.`, color: "text-amber-400" },
         availableAt: "Come back when they're home",
       }]);
       return;
@@ -408,28 +417,43 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                 </div>
                 {(() => {
                   const homeAccess = checkHomeAccess(selectedLocation);
-                  if (!homeAccess.canVisit) {
+                  const isHome = selectedLocation.category === "home";
+
+                  // Build presence summary for home locations
+                  let presenceSummary = null;
+                  if (isHome) {
+                    const lines = [];
+                    homeAccess.homeResidents.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
+                    homeAccess.awayResidents.forEach(c => lines.push({ name: c.name, status: "not home", color: "text-amber-400" }));
+                    homeAccess.npcResidents.forEach(n => lines.push({ name: n.name, status: "home", color: "text-green-400" }));
+                    if (lines.length > 0) {
+                      presenceSummary = (
+                        <div className="space-y-0.5">
+                          {lines.map((l, i) => (
+                            <p key={i} className="text-xs">
+                              <span className="text-foreground font-medium">{l.name}</span>
+                              <span className={`ml-1 ${l.color}`}>is {l.status}</span>
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    }
+                  }
+
+                  if (isHome && !homeAccess.canVisit) {
                     return (
-                      <div className="text-center py-2 space-y-1">
-                        <p className="text-sm text-amber-400 font-medium">Nobody's home</p>
-                        <p className="text-xs text-muted-foreground">{homeAccess.blockedBy?.name} is away right now. Come back when they're home.</p>
+                      <div className="space-y-2">
+                        {presenceSummary}
+                        <div className="text-center py-1">
+                          <p className="text-xs text-amber-400">Nobody's home right now. Come back later.</p>
+                        </div>
                       </div>
                     );
                   }
-                  if (homeAccess.hasNpcResidents) {
-                    return (
-                      <>
-                        <p className="text-xs text-muted-foreground text-center">The active residents are away, but family members are home.</p>
-                        <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
-                          <Navigation className="w-4 h-4" />
-                          {isTraveling ? "Traveling..." : "Visit anyway"}
-                        </Button>
-                        {isTraveling && <p className="text-xs text-muted-foreground text-center animate-pulse">On your way to {selectedLocation.name}...</p>}
-                      </>
-                    );
-                  }
+
                   return (
                     <>
+                      {presenceSummary}
                       <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
                         <Navigation className="w-4 h-4" />
                         {isTraveling ? "Traveling..." : travelLabel}
