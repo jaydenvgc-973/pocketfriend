@@ -188,34 +188,27 @@ export default function Scene() {
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const locationZones = location?.zones || [];
 
-  // Characters explicitly brought + any active characters who work here during their shift
-  // OWNERSHIP ≠ PRESENCE: a character who only owns a location does NOT appear here.
-  // They must be explicitly assigned as a worker (in worker_character_ids) AND on shift to appear.
-  const workerCharacters = location
-    ? characters.filter(c => {
-        // Skip if user brought them
-        if (characterIds.includes(c.id)) return false;
-        // Skip if asleep
-        if (isCharacterAsleep(c)) return false;
-        // Skip if owner but NOT a worker — ownership is a financial role, not a presence trigger
-        const isOwner = location.owner_character_id === c.id;
-        const isWorker = location.worker_character_ids?.includes(c.id);
-        if (isOwner && !isWorker) return false;
-        // Include if listed in location's worker_character_ids and on shift
-        if (isWorker && isCharacterAtWork(c, location)) {
-          return true;
-        }
-        return false;
-      })
-    : [];
-
-  // At a home location: separate home residents into "home" vs "away"
+  // AUTHORITATIVE: Characters who are actually at this location right now
+  // Do NOT use stale worker_character_ids — compute from authoritative location state
   const isHomeLocation = location?.category === "home";
   const homeResidents = isHomeLocation
-    ? characters.filter(c => location.resident_character_ids?.includes(c.id))
+    ? characters.filter(c => {
+        // AUTHORITATIVE: Is this character actually at this home location right now?
+        return c.current_home_location_id === location.id;
+      })
     : [];
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
+
+  // Workers: characters actually at this location during their work schedule
+  const workerCharacters = location
+    ? characters.filter(c => {
+        if (characterIds.includes(c.id)) return false;
+        if (isCharacterAsleep(c)) return false;
+        // AUTHORITATIVE: Are they at this location right now?
+        return isCharacterAtWork(c, location);
+      })
+    : [];
 
   // Build the full pool of possible NPCs for ANY venue
   const allPossibleNpcs = (() => {
@@ -844,14 +837,9 @@ Return JSON:
     if (!location || broughtCharacters.length === 0) return;
     const mover = broughtCharacters[0];
     try {
-      const newResidents = (location.resident_character_ids || []).filter(id => id !== mover.id);
-      const newNames = (location.resident_character_names || []).filter(n => n !== mover.name);
-      await base44.entities.LocationReference.update(location.id, {
-        resident_character_ids: newResidents,
-        resident_character_names: newNames,
-      });
+      // AUTHORITATIVE: Only update the character's home location
+      // Do NOT write to occupancy arrays — they are computed only
       await base44.entities.Character.update(mover.id, { current_home_location_id: "" });
-      queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
       setMessages(prev => [...prev, {
         id: Date.now().toString(),
@@ -992,7 +980,7 @@ Return JSON:
           <ResidenceOptionsDropdown
             location={location}
             sceneCharacters={sceneCharacters}
-            isResident={broughtCharacters.some(c => location.resident_character_ids?.includes(c.id))}
+            isResident={broughtCharacters.some(c => c.current_home_location_id === location.id)}
             currentUser={currentUser}
             allCharacters={characters}
             onTour={() => setShowTourModal(true)}
