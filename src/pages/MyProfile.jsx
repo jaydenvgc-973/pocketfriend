@@ -343,11 +343,12 @@ export default function MyProfile() {
                       </p>
                     )}
                   </div>
-                 );
-            </div>
-          </div>
-        )}
-      </div>
+                  );
+                  })}
+                  </div>
+                  </div>
+                  )}
+                  </div>
 
       <BottomNav />
     </div>
