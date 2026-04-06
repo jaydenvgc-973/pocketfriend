@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
-import { getAuthoritativeCharacterLocation } from "@/lib/authoritativeLocationResolver";
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -241,11 +241,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                const authLoc = getAuthoritativeCharacterLocation(character, locationMap);
-                const locationObj = locationMap[authLoc?.id];
+                const resolved = resolveCharacterLocation(character, locationMap);
+                const locationObj = locationMap[resolved.resolved_current_location_id];
                 const category = locationObj?.category || 'generic';
-                const isSleeping = authLoc?.source === 'sleeping_at_home';
-                const isPraying = authLoc?.source === 'praying_at_home';
+                const isSleeping = resolved.resolved_source_reason === 'home_sleeping';
+                const isPraying = resolved.resolved_source_reason === 'praying_at_home';
                 
                 // Map category/source to icon and color
                 let iconType = 'calm';
@@ -262,15 +262,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   color = 'text-violet-300';
                 } else if (category === 'work') {
                   iconType = 'work';
-                  label = `at ${authLoc.name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-blue-400';
                 } else if (category === 'school') {
                   iconType = 'school';
-                  label = `at ${authLoc.name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-amber-400';
                 } else if (category === 'gym') {
                   iconType = 'gym';
-                  label = `at ${authLoc.name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-emerald-400';
                 } else if (category === 'home') {
                   iconType = 'home';
@@ -278,15 +278,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   color = 'text-pink-400';
                 } else if (category === 'social' || category === 'food_drink') {
                   iconType = 'out';
-                  label = `at ${authLoc.name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-orange-400';
                 } else if (category === 'medical') {
                   iconType = 'hospital';
-                  label = `at ${authLoc.name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-red-400';
                 } else {
                   iconType = 'out';
-                  label = `at ${authLoc.name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-blue-400';
                 }
                 

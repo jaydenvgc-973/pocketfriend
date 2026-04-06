@@ -420,10 +420,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              onSelect={setSelectedLocation}
              activeCharacterIds={characters.map(c => c.id)}
              charactersByLocationId={characters.reduce((acc, c) => {
-               const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
-               if (authLoc && authLoc.id) { 
-                 acc[authLoc.id] = acc[authLoc.id] || []; 
-                 acc[authLoc.id].push(c.name); 
+               const resolved = resolveCharacterLocation(c, locationMap);
+               if (resolved.resolved_current_location_id) { 
+                 acc[resolved.resolved_current_location_id] = acc[resolved.resolved_current_location_id] || []; 
+                 acc[resolved.resolved_current_location_id].push(c.name); 
                }
                return acc;
              }, {})}
@@ -482,8 +482,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   if (isHome) {
                     // AUTHORITATIVE: Show characters who are actually at home right now
                     const charactersAtHome = characters.filter(c => {
-                      const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
-                      return authLoc?.id === selectedLocation.id;
+                      const resolved = resolveCharacterLocation(c, locationMap);
+                      return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
@@ -494,8 +494,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   } else {
                     // AUTHORITATIVE: Show characters currently at this location
                     const currentlyAtLocation = characters.filter(c => {
-                      const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
-                      return authLoc?.id === selectedLocation.id;
+                      const resolved = resolveCharacterLocation(c, locationMap);
+                      return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
