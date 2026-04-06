@@ -33,13 +33,18 @@ export default function NPCContactPanel() {
   // Filter out NPCs that share names with active characters or the user
   // Deduplicate only exact name matches from the same source character
   const npcCharacters = characters.flatMap(char => 
-    (char.fictional_relationships || []).map(rel => ({
-      ...rel,
-      characterId: rel.related_character_id,
-      name: rel.person_name,
-      sourceCharacterId: char.id,
-      id: `${char.id}-${rel.related_character_id}`
-    }))
+    (char.fictional_relationships || []).map(rel => {
+      // Find the actual NPC character to get avatar
+      const npcChar = characters.find(c => c.id === rel.related_character_id);
+      return {
+        ...rel,
+        characterId: rel.related_character_id,
+        name: rel.person_name,
+        sourceCharacterId: char.id,
+        id: `${char.id}-${rel.related_character_id}`,
+        avatar_url: npcChar?.avatar_url
+      };
+    })
   ).reduce((acc, npc) => {
     const nameLower = npc.name?.toLowerCase().trim();
     
@@ -96,30 +101,30 @@ export default function NPCContactPanel() {
   };
 
   return (
-    <div className="relative">
+    <div className="relative w-full">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors"
       >
         <Users className="w-4 h-4" />
         Contact NPC ({npcCharacters.length})
-        <ChevronDown className={`w-4 h-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
       <AnimatePresence>
         {isOpen && (
           <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.95 }}
+            initial={{ opacity: 0, y: 8, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.95 }}
-            className="absolute top-full right-0 mt-2 w-64 bg-card border border-border rounded-xl shadow-lg z-50"
+            exit={{ opacity: 0, y: 8, scale: 0.95 }}
+            className="absolute left-0 right-0 top-full mt-2 w-full bg-card border border-border rounded-xl shadow-lg z-40 max-h-80 overflow-y-auto"
           >
             {npcCharacters.length === 0 ? (
               <div className="p-3 text-xs text-muted-foreground text-center">
                 No NPCs to contact
               </div>
             ) : (
-              <div className="max-h-64 overflow-y-auto">
+              <div>
                 {npcCharacters.map((npc, idx) => (
                   <motion.button
                     key={idx}
@@ -127,11 +132,20 @@ export default function NPCContactPanel() {
                     className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0"
                     whileHover={{ x: 2 }}
                   >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{npc.name}</p>
-                      {npc.relationship_type && (
-                        <p className="text-xs text-muted-foreground truncate">{npc.relationship_type}</p>
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      {npc.avatar_url ? (
+                        <img src={npc.avatar_url} alt={npc.name} className="w-8 h-8 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+                          <span className="text-xs font-semibold text-primary">{npc.name?.[0]?.toUpperCase()}</span>
+                        </div>
                       )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{npc.name}</p>
+                        {npc.relationship_type && (
+                          <p className="text-xs text-muted-foreground truncate">{npc.relationship_type}</p>
+                        )}
+                      </div>
                     </div>
                     <button
                       onClick={(e) => {
