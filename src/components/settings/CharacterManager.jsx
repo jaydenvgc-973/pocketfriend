@@ -425,17 +425,22 @@ export default function CharacterManager() {
             uncategorized: { label: 'Uncategorized', items: [] },
           };
 
+          // Track seen names to skip true duplicates (same name = same person)
+          const seenNames = new Set();
+          
           allManageableItems.forEach((item, index) => {
             const isNPC = item.type === 'world_person' || item.type === 'family';
             const isUser = item.type === 'user';
             const itemData = item.data;
             const npcName = itemData.person_name || itemData.name || `unnamed_${index}`;
             const itemKey = isUser ? 'user' : (isNPC ? `npc_${itemData.source_character_id}_${npcName}_${index}` : itemData.id);
+            const normalizedName = itemData.name?.toLowerCase() || '';
+
+            // Skip true duplicates (same name already seen)
+            if (normalizedName && seenNames.has(normalizedName)) return;
+            if (normalizedName) seenNames.add(normalizedName);
 
             const category = categorizations.get(itemKey);
-            // Skip items marked as duplicates entirely
-            if (category === 'duplicate') return;
-            
             if (isUser) {
               sections.user.items.push({ item, index, itemKey });
             } else if (category) {
