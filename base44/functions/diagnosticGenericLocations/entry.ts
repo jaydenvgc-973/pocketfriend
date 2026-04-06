@@ -10,12 +10,11 @@ Deno.serve(async (req) => {
     
     // Fetch all active characters
     const characters = await base44.asServiceRole.entities.Character.filter({ 
-      status: "active",
-      is_active_character: true 
+      status: "active"
     });
 
     // Generic location patterns to detect
-    const genericPatterns = /\b(at a bar|at bar|bar|at club|at clubs|club|social|party|pub|tavern|lounge|nightclub)\b/i;
+    const activityPatterns = /\b(bar|club|nightclub|lounge|pub|tavern|happy hour)\b/i;
 
     const affectedCharacters = [];
     const now = new Date();
@@ -23,11 +22,10 @@ Deno.serve(async (req) => {
     const dayOfWeek = now.getDay();
 
     for (const char of characters) {
-      // Check if current_location_id or description matches generic patterns
+      // Check if current_activity contains bar/club keywords
       const currentActivity = char.current_activity || '';
-      const hasGenericLocation = genericPatterns.test(currentActivity);
-
-      if (!hasGenericLocation) continue;
+      
+      if (!activityPatterns.test(currentActivity)) continue;
 
       // Determine where they should actually be
       let proposedLocation = null;

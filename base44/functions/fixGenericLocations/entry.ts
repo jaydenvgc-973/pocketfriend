@@ -5,6 +5,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
  * 1. Their work location (if they have a shift now)
  * 2. Their school location (if they're in class now)
  * 3. Their home location (if no scheduled activities)
+ * Also clears current_activity when it contains bar/club keywords
  */
 Deno.serve(async (req) => {
   try {
@@ -14,11 +15,11 @@ Deno.serve(async (req) => {
     // Fetch affected characters
     const query = characterIds?.length > 0
       ? { id: { "$in": characterIds }, status: "active" }
-      : { status: "active", is_active_character: true };
+      : { status: "active" };
     
     const characters = await base44.asServiceRole.entities.Character.filter(query);
 
-    const genericPatterns = /\b(at a bar|at bar|bar|at club|at clubs|club|social|party|pub|tavern|lounge|nightclub)\b/i;
+    const activityPatterns = /\b(bar|club|nightclub|lounge|pub|tavern|happy hour)\b/i;
     const now = new Date();
     const currentHour = now.getHours();
     const dayOfWeek = now.getDay();
@@ -28,7 +29,7 @@ Deno.serve(async (req) => {
 
     for (const char of characters) {
       const currentActivity = char.current_activity || '';
-      if (!genericPatterns.test(currentActivity)) continue;
+      if (!activityPatterns.test(currentActivity)) continue;
 
       let newLocationId = null;
       let updateData = {};
@@ -58,14 +59,15 @@ Deno.serve(async (req) => {
         newLocationId = char.current_home_location_id;
       }
 
-      // Update character
+      // Always clear bar/club activity and update location if found
+      updateData.current_activity = null;
       if (newLocationId) {
         updateData.current_location_id = newLocationId;
-        updateData.current_activity = null; // Clear generic activity
-        updates.push(base44.asServiceRole.entities.Character.update(char.id, updateData).then(() => {
-          fixed++;
-        }).catch(err => console.error(`Failed to fix ${char.name}:`, err)));
       }
+
+      updates.push(base44.asServiceRole.entities.Character.update(char.id, updateData).then(() => {
+        fixed++;
+      }).catch(err => console.error(`Failed to fix ${char.name}:`, err)));
     }
 
     await Promise.all(updates);
