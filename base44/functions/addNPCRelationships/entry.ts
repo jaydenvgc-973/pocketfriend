@@ -58,9 +58,9 @@ Deno.serve(async (req) => {
         await base44.entities.Character.update(character.id, {
           fictional_relationships: [...currentRels, ...newRels]
         });
-        results[charName] = { status: 'updated', added: newRels.map(r => r.person_name) };
+        results[charName] = { status: 'updated', added: newRels.map(r => r.person_name), addedCount: newRels.length };
       } else {
-        results[charName] = { status: 'skipped', reason: 'all NPCs already present' };
+        results[charName] = { status: 'skipped', reason: 'all NPCs already present', existingCount: existingNames.size };
       }
     }
 
