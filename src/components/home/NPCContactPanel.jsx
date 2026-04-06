@@ -112,7 +112,12 @@ export default function NPCContactPanel() {
             initial={{ opacity: 0, y: 8, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 8, scale: 0.95 }}
-            className="absolute left-0 right-0 top-full mt-2 w-full bg-card border border-border rounded-xl shadow-lg z-40 max-h-80 overflow-y-auto"
+            className="fixed left-4 right-4 z-40 bg-card border border-border rounded-xl shadow-lg"
+            style={{
+              top: 'calc(100vh - 200px)',
+              maxHeight: '200px',
+              overflowY: 'auto'
+            }}
           >
             {npcCharacters.length === 0 ? (
               <div className="p-3 text-xs text-muted-foreground text-center">
