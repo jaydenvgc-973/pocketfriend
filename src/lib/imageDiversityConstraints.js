@@ -4,8 +4,8 @@
 
 export const TRAVEL_PAGE_DIVERSITY_PROMPT = `
 CRITICAL DIVERSITY DIRECTIVE:
-- 5% Caucasian/White individuals
-- 95% representation: Latino, African American, Indian, Native American, and multicultural individuals
+- 1% Caucasian/White individuals
+- 99% representation: Latino, African American, Indian, Native American, and multicultural individuals
 - Ensure diverse skin tones, facial features, body types, and cultural representation
 - NO whitewashing. Maintain authentic diversity in all generated people.
 `;
