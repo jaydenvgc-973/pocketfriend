@@ -230,6 +230,15 @@
       "type": "boolean",
       "default": false
     },
+    "is_sitter": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this character is a caregiver/sitter role assigned to supervise dependents"
+    },
+    "sitter_assigned_to_location_id": {
+      "type": "string",
+      "description": "If is_sitter=true, the home location ID this sitter is assigned to"
+    },
     "trait_oversharer": {
       "type": "boolean",
       "default": false
@@ -320,6 +329,10 @@
     },
     "current_activity": {
       "type": "string"
+    },
+    "current_location_id": {
+      "type": "string",
+      "description": "ID of the location the character is currently at (real-time tracking)"
     },
     "weather_summary": {
       "type": "string"
@@ -1052,23 +1065,6 @@
     },
     "relationship_state_id": {
       "type": "string"
-    },
-    "is_sitter": {
-      "type": "boolean",
-      "default": false,
-      "description": "True if this character is assigned as a professional sitter for dependents"
-    },
-    "sitter_assignment_home_id": {
-      "type": "string",
-      "description": "ID of the home location this sitter is assigned to (null if not assigned)"
-    },
-    "sitter_assignment_dependent_ids": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "default": [],
-      "description": "IDs of dependents this sitter is responsible for"
     }
   },
   "required": [
