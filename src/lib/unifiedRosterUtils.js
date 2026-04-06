@@ -141,20 +141,22 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   );
 
   // ── PEOPLE IN THEIR WORLD ────────────────────────────────────────────
-  // Collect all world people from all active characters' fictional_relationships
+  // Collect actual NPCs (with fictional_relationships records that have deeper metadata beyond just status).
+  // Pure relationship status objects (just person_name + relationship metadata) are NOT separate entities.
   const worldPeopleMap = new Map(); // Deduplicate by person_name
 
   activeCharacters.forEach(char => {
     (char.fictional_relationships || []).forEach(rel => {
-      if (rel.person_name && !rel.related_character_id) {
-        // This is an NPC/world person, not a link to another character
+      // Only include if there's meaningful NPC data beyond a status entry:
+      // Must have avatar_url, appearance notes, or other distinct identity markers
+      if (rel.person_name && !rel.related_character_id && rel.avatar_url) {
         const key = rel.person_name.toLowerCase();
         if (!worldPeopleMap.has(key)) {
           worldPeopleMap.set(key, {
             person_name: rel.person_name,
             relationship_type: rel.relationship_type,
             description: rel.description,
-            avatar_url: rel.character_id ? null : null, // Will check for stored avatar
+            avatar_url: rel.avatar_url,
             source_character_id: char.id,
             source_character_name: char.name,
           });
