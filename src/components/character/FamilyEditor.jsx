@@ -43,7 +43,8 @@ const RELATIONSHIP_TYPES = [
   "great-grandmother", "great-grandfather", "aunt", "uncle",
   "sister", "brother", "half-sister", "half-brother",
   "step-mother", "step-father", "step-sister", "step-brother",
-  "cousin", "niece", "nephew", "daughter", "son", "spouse", "other",
+  "cousin", "niece", "nephew", "daughter", "son", "spouse",
+  "significant other", "romantic interest", "other",
 ];
 
 // Default relationship bars based on family role
@@ -375,13 +376,34 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
   // Close add menu on outside click
   useEffect(() => {
     const handler = (e) => {
-      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) setShowAddMenu(false);
+      if (addMenuRef.current && !addMenuRef.current.contains(e.target)) { setShowAddMenu(false); setShowCharacterPicker(false); }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
+  const [showCharacterPicker, setShowCharacterPicker] = useState(false);
   const alreadyAddedSelf = members.some(m => m._is_user);
+
+  // Active characters that aren't the current character and aren't already in the family list
+  const availableCharacters = allCharacters.filter(c =>
+    c.id !== character.id &&
+    c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged' &&
+    !members.some(m => m.name?.trim().toLowerCase() === c.name?.trim().toLowerCase())
+  );
+
+  const addCharacterAsMember = (char) => {
+    setShowCharacterPicker(false);
+    setShowAddMenu(false);
+    setMembers(prev => [...prev, {
+      name: char.name,
+      relationship_type: "other",
+      photo_url: char.avatar_url || null,
+      age_at_creation: char.age ?? null,
+      age_set_date: new Date().toISOString(),
+      _linked_character_id: char.id,
+    }]);
+  };
 
   const addSelf = () => {
     if (masterLocked || alreadyAddedSelf) return;
@@ -450,6 +472,32 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   <Plus className="w-3.5 h-3.5 text-muted-foreground" />
                   Add family member
                 </button>
+                {availableCharacters.length > 0 && (
+                  <button
+                    onClick={() => { setShowCharacterPicker(v => !v); }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-foreground hover:bg-secondary transition-colors text-left border-t border-border"
+                  >
+                    <User className="w-3.5 h-3.5 text-muted-foreground" />
+                    Add a character
+                  </button>
+                )}
+                {showCharacterPicker && (
+                  <div className="border-t border-border max-h-48 overflow-y-auto">
+                    {availableCharacters.map(char => (
+                      <button
+                        key={char.id}
+                        onClick={() => addCharacterAsMember(char)}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left"
+                      >
+                        {char.avatar_url
+                          ? <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                          : <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{char.name?.[0]}</span></div>
+                        }
+                        <span className="truncate">{char.name}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {!alreadyAddedSelf && (
                   <button
                     onClick={addSelf}
