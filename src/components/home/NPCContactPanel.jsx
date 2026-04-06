@@ -23,17 +23,28 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Get NPC characters with character_type === "npc"
-  const npcCharacters = characters
-    .filter(c => c.character_type === "npc")
-    .map(npc => ({
-      ...npc,
-      characterId: npc.id,
-      name: npc.name,
-      sourceCharacterId: npc.id,
-      id: npc.id,
-      avatar_url: npc.avatar_url,
-    }));
+  // Get NPCs from all active characters' fictional_relationships (unlinked ones)
+  const npcCharacters = Array.from(
+    new Map(
+      characters
+        .flatMap(char => 
+          (char.fictional_relationships || [])
+            .filter(r => !r.related_character_id) // Only unlinked NPCs
+            .map(rel => [
+              rel.person_name?.toLowerCase(),
+              {
+                ...rel,
+                characterId: rel.person_name,
+                name: rel.person_name,
+                sourceCharacterId: char.id,
+                id: rel.person_name,
+                avatar_url: rel.avatar_url || rel.photo_url,
+              }
+            ])
+        )
+        .sort((a, b) => a[0]?.localeCompare(b[0]))
+    ).values()
+  );
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -50,7 +61,8 @@ export default function NPCContactPanel() {
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
-    navigate(`/chat/${npc.id}`);
+    // Navigate to the source character's chat, which contains the NPC relationship
+    navigate(`/chat/${npc.sourceCharacterId}`);
   };
 
   const handleDeleteNPC = async (e, npcId) => {
