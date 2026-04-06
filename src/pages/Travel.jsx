@@ -391,6 +391,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              selectedLocation={selectedLocation}
              onSelect={setSelectedLocation}
              activeCharacterIds={characters.map(c => c.id)}
+             charactersByLocationId={characters.reduce((acc, c) => {
+               const locId = c.current_location_id;
+               if (locId) { acc[locId] = acc[locId] || []; acc[locId].push(c.name); }
+               return acc;
+             }, {})}
            />
          </div>
 

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus, LogOut } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -22,6 +22,7 @@ import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdow
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
 import InviteOutModal from "@/components/home/InviteOutModal";
+import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -156,6 +157,7 @@ export default function Scene() {
   const [extraNpcs, setExtraNpcs] = useState([]); // realtor + other added NPCs
   const [pendingInvitations, setPendingInvitations] = useState(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -396,6 +398,34 @@ export default function Scene() {
       setActions(newActions);
     }
   }, [location?.id, activeZone]);
+
+  // When characters arrive at the scene, update their current_location_id so their card reflects the venue
+  useEffect(() => {
+    if (!location || broughtCharacters.length === 0) return;
+    broughtCharacters.forEach(char => {
+      base44.entities.Character.update(char.id, { current_location_id: location.id }).catch(() => {});
+    });
+  }, [location?.id]);
+
+  const handleLeaveWithCharacters = async () => {
+    setShowLeaveModal(false);
+    // Clear current_location_id for all brought chars → they "go home" or resume schedule
+    await Promise.all(
+      broughtCharacters.map(char =>
+        base44.entities.Character.update(char.id, { current_location_id: "" }).catch(() => {})
+      )
+    );
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    navigate("/travel");
+  };
+
+  const handleLeaveCharactersBehind = async () => {
+    setShowLeaveModal(false);
+    // Characters stay — their current_location_id remains set to this location
+    // We just navigate the user away
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    navigate("/travel");
+  };
 
   // Check for pending invitations on first mount only (not on every render)
   useEffect(() => {
@@ -864,9 +894,14 @@ Return JSON:
     <div className="h-screen flex flex-col bg-background">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
-        <Link to="/travel" className="text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
+        <button
+          onClick={() => setShowLeaveModal(true)}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-secondary border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors flex-shrink-0"
+          title="Leave location"
+        >
+          <LogOut className="w-3.5 h-3.5" />
+          <span>Leave</span>
+        </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2>
           <p className="text-xs text-muted-foreground capitalize">
@@ -1345,6 +1380,16 @@ Return JSON:
         npcName={conversationModal?.npcName || "them"}
         hasEmployees={conversationModal?.hasEmployees || false}
         isGroup={conversationModal?.isGroup || false}
+      />
+
+      {/* Leave Location Modal */}
+      <LeaveLocationModal
+        isOpen={showLeaveModal}
+        onClose={() => setShowLeaveModal(false)}
+        locationName={location.name}
+        broughtCharacters={broughtCharacters}
+        onLeaveWithChars={handleLeaveWithCharacters}
+        onLeaveCharactersBehind={handleLeaveCharactersBehind}
       />
 
       {/* Invite notifications */}

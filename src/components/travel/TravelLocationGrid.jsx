@@ -7,7 +7,7 @@ const CATEGORY_EMOJIS = {
   medical: "🏨", business: "🏢", government: "🏛️", public: "🗺️", generic: "📍",
 };
 
-export default function TravelLocationGrid({ locations, selectedLocation, onSelect, activeCharacterIds = [] }) {
+export default function TravelLocationGrid({ locations, selectedLocation, onSelect, activeCharacterIds = [], charactersByLocationId = {} }) {
   if (locations.length === 0) return null;
 
   return (
@@ -35,6 +35,9 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
           : [];
         const isVacant = loc.category === 'home' && residentIds.length > 0 && !hasActiveResidents;
 
+        // For non-home locations, show characters currently there via current_location_id
+        const currentlyHere = charactersByLocationId[loc.id] || [];
+
         return (
           <button
             key={loc.id}
@@ -60,6 +63,8 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
               <p className="text-xs font-semibold text-white leading-tight truncate">{loc.name}</p>
               {occupants.length > 0 ? (
                 <p className="text-[10px] text-white/70 truncate">{occupants.slice(0, 2).join(", ")}</p>
+              ) : currentlyHere.length > 0 ? (
+                <p className="text-[10px] text-white/70 truncate">{currentlyHere.slice(0, 2).join(", ")}</p>
               ) : isVacant ? (
                 <p className="text-[10px] text-white/40 italic">Vacant</p>
               ) : null}
