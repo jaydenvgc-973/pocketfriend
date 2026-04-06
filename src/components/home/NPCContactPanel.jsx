@@ -64,13 +64,8 @@ export default function NPCContactPanel() {
 
   const handleContactNPC = (npc) => {
     setIsOpen(false);
-    // If fictional NPC has a related_character_id, navigate to that character's chat
-    // Otherwise, navigate with npc name as a parameter for fictional chat
     if (npc.characterId) {
       navigate(`/chat/${npc.characterId}`);
-    } else {
-      // For NPCs without a linked character, pass NPC data via state
-      navigate(`/chat?npcName=${encodeURIComponent(npc.name)}&sourceCharId=${npc.sourceCharacterId}`);
     }
   };
 
