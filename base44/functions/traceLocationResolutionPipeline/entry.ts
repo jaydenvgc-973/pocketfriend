@@ -49,19 +49,29 @@ Deno.serve(async (req) => {
       const isWorkDay = hasWorkSchedule && char.work_days.includes(dayOfWeek);
       const isWorkHours = hasWorkSchedule && isWorkDay && (currentHour >= workStart && currentHour < workEnd);
 
-      // AUTHORITATIVE RESOLUTION (what the system should show)
+      // AUTHORITATIVE RESOLUTION — matches lib/authoritativeLocationResolver.js logic
       let authoritativeLoc = null;
       let authoritativeSource = null;
 
+      // 1. Work schedule takes priority
       if (isWorkHours && workLoc) {
         authoritativeLoc = workLoc;
         authoritativeSource = 'active_work_schedule';
-      } else if (currentLoc) {
+      } 
+      // 2. School enrollment
+      else if (char.student_status === 'enrolled' && eduLoc) {
+        authoritativeLoc = eduLoc;
+        authoritativeSource = 'active_school_schedule';
+      }
+      // 3. Explicit current location (but NOT if it equals home)
+      else if (currentLoc && char.current_location_id !== char.current_home_location_id) {
         authoritativeLoc = currentLoc;
         authoritativeSource = 'explicit_current_location';
-      } else if (homeLoc) {
+      }
+      // 4. Home fallback (only if no schedule/travel)
+      else if (homeLoc) {
         authoritativeLoc = homeLoc;
-        authoritativeSource = 'home_fallback';
+        authoritativeSource = 'home_fallback_no_obligation';
       }
 
       // What Card SHOULD read (authoritative resolver)

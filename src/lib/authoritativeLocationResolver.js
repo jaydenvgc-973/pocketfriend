@@ -39,6 +39,8 @@ export function getAuthoritativeCharacterLocation(character, locationMap = {}) {
   }
 
   // === SCHEDULE CHECKING (highest priority when awake) ===
+  // SCHEDULES MUST BE CHECKED BEFORE CURRENT_LOCATION
+  // because current_location might be stale or set to home by default
 
   // 1. WORK SCHEDULE — check if scheduled NOW
   if (character.work_start_time && character.work_end_time && character.work_days) {
@@ -51,9 +53,9 @@ export function getAuthoritativeCharacterLocation(character, locationMap = {}) {
     const isWorkDay = character.work_days.includes(dayOfWeek);
     const isWorkHours = currentHour >= workStart && currentHour < workEnd;
 
-    // CRITICAL: If scheduled for work, they must be at work
-    // This OVERRIDES any home fallback
-    if (isWorkDay && isWorkHours) {
+    // CRITICAL: If scheduled for work, they MUST be at work
+    // This OVERRIDES current_location and home fallback
+    if (isWorkDay && isWorkHours && character.occupation_location_id) {
       const workLoc = locationMap[character.occupation_location_id];
       if (workLoc && workLoc.name) {
         return {
@@ -66,20 +68,24 @@ export function getAuthoritativeCharacterLocation(character, locationMap = {}) {
     }
   }
 
-  // 2. SCHOOL SCHEDULE — check if enrolled and scheduled NOW
+  // 2. SCHOOL SCHEDULE — check if enrolled
   if (character.student_status === 'enrolled' && character.education_location_id) {
-    // If school schedule exists, check it
-    // (For now, treating enrollment as persistent; can add time-based school hours later)
     const schoolLoc = locationMap[character.education_location_id];
     if (schoolLoc && schoolLoc.name) {
-      // TODO: Add granular school schedule checking if needed
-      // For now, if enrolled but no specific schedule, don't force school presence
-      // Use current_location_id if set, otherwise home
+      // Character is enrolled in school — they are there (unless on break/graduated)
+      return {
+        id: character.education_location_id,
+        name: schoolLoc.name,
+        source: 'active_school_schedule',
+        authoritative: true
+      };
     }
   }
 
   // 3. EXPLICIT CURRENT LOCATION — may be set by travel, event, or manual placement
-  if (character.current_location_id) {
+  // BUT: Only trust it if it's NOT the home location (home is the fallback, not an explicit choice)
+  // If current_location_id equals home_location_id, ignore it and fall through to home fallback
+  if (character.current_location_id && character.current_location_id !== character.current_home_location_id) {
     const currentLoc = locationMap[character.current_location_id];
     if (currentLoc && currentLoc.name) {
       return {
