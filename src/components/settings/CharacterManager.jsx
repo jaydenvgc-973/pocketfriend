@@ -68,6 +68,7 @@ export default function CharacterManager() {
       queryClient.invalidateQueries({ queryKey: ['unifiedRoster', currentUser?.email] });
       setMergeMode(false);
       setSelectedForMerge(new Map());
+      setMergeConfirmModal(null);
     },
   });
 
@@ -230,12 +231,13 @@ export default function CharacterManager() {
     const charEntries = selectedEntries.filter(e => e.type === 'char');
     
     if (charEntries.length >= 2) {
-      // Character-to-character merge: call backend function
+      // All selected char IDs — master is designated via primaryCharacterId
       const charIds = charEntries.map(e => e.charId);
       mergeMutation.mutate({ 
         characterIds: charIds, 
         primaryCharacterId: masterEntry.charId 
       });
+      setMergeConfirmModal(null);
     } else {
       // NPC-only merge (deduplication)
       const npcEntries = selectedEntries.filter(e => e.type === 'npc');

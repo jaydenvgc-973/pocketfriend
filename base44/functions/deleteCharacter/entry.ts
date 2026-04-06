@@ -31,17 +31,14 @@ Deno.serve(async (req) => {
     if (char.is_default) {
       return Response.json({ error: 'Cannot delete default character' }, { status: 403 });
     }
-    if (char.is_active_character) {
-      return Response.json({ error: 'Cannot delete active character. Mark as inactive first.' }, { status: 403 });
-    }
-
     // ─────────────────────────────────────────────────────────
     // SOFT DELETE
     // ─────────────────────────────────────────────────────────
 
-    // 1. Set status to soft_deleted
+    // 1. Set status to soft_deleted (clear active flag too so it stops appearing)
     await base44.entities.Character.update(characterId, {
       status: 'soft_deleted',
+      is_active_character: false,
     });
 
     // 2. Create audit record

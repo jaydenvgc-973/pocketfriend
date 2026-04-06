@@ -28,7 +28,7 @@ Deno.serve(async (req) => {
     // FETCH ALL CHARACTERS & DATA
     // ─────────────────────────────────────────────────────────
     const chars = await Promise.all(
-      characterIds.map(id => base44.asServiceRole.entities.Character.get(id))
+      characterIds.map(id => base44.asServiceRole.entities.Character.filter({ id }).then(r => r[0] || null))
     );
 
     const missingIds = chars.map((c, i) => c ? null : characterIds[i]).filter(Boolean);

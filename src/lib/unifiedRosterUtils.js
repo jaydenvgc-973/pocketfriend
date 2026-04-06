@@ -55,7 +55,7 @@ export async function fetchUnifiedRoster(base44, userEmail) {
   ]);
 
   const settings = settingsList?.[0] || {};
-  const activeCharacters = all.filter(c => c.status !== 'deleted');
+  const activeCharacters = all.filter(c => c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged');
 
   // ── USER ENTITY ──────────────────────────────────────────────────────────
   let userAvatarUrl = null;
