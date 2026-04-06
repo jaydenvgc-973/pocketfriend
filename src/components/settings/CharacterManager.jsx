@@ -404,9 +404,6 @@ export default function CharacterManager() {
                            {itemData.created_by && itemData.created_by !== currentUser?.email && (
                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 font-medium">service-created</span>
                            )}
-                           {!itemData.personality_summary && !itemData.backstory && (
-                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-500 font-medium">undefined</span>
-                           )}
                            {itemData.personality_summary && (
                              <p className="text-xs text-muted-foreground line-clamp-1 w-full">{itemData.personality_summary}</p>
                            )}
