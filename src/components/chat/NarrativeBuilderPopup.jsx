@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from '@/components/ui/button';
-import { X, Wand2, Send } from 'lucide-react';
+import { X, Wand2, Send, Key, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
@@ -9,6 +9,8 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
   const [narrativeText, setNarrativeText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isRequestingKey, setIsRequestingKey] = useState(false);
+  const [keyResult, setKeyResult] = useState(null);
 
   const handleGenerate = async () => {
     if (!characterId || chatHistory.length < 2) return;
@@ -50,6 +52,34 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
       console.error('Failed to submit narrative:', err);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRequestKey = async () => {
+    if (!characterId) return;
+
+    setIsRequestingKey(true);
+    setKeyResult(null);
+    try {
+      const res = await base44.functions.invoke('requestKeyFromCharacter', {
+        characterId,
+      });
+
+      if (res?.data?.success) {
+        setKeyResult({
+          success: res.data.agreed,
+          message: res.data.message,
+          characterName: res.data.characterName,
+        });
+      }
+    } catch (err) {
+      console.error('Failed to request key:', err);
+      setKeyResult({
+        success: false,
+        message: 'Something went wrong.',
+      });
+    } finally {
+      setIsRequestingKey(false);
     }
   };
 
@@ -113,7 +143,35 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
                   <Send className="w-4 h-4 mr-2" />
                   {isSubmitting ? 'Submitting...' : 'Submit Narrative'}
                 </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleRequestKey}
+                  disabled={isRequestingKey || keyResult?.success}
+                  size="icon"
+                  title="Request a key to their home"
+                >
+                  {isRequestingKey ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Key className="w-4 h-4" />
+                  )}
+                </Button>
               </div>
+
+              {/* Key Result Message */}
+              {keyResult && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className={`p-3 rounded-lg text-sm ${
+                    keyResult.success
+                      ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400'
+                      : 'bg-amber-500/10 border border-amber-500/30 text-amber-400'
+                  }`}
+                >
+                  {keyResult.message}
+                </motion.div>
+              )}
 
               {/* Helper Text */}
               <p className="text-xs text-muted-foreground">This will become part of the story and affect how the character responds.</p>
