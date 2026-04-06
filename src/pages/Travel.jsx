@@ -492,10 +492,13 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
                     });
                   } else {
-                    // Active characters on shift here
-                    characters
-                      .filter(c => selectedLocation.worker_character_ids?.includes(c.id) && isCharacterAtWork(c, selectedLocation))
-                      .forEach(c => lines.push({ name: c.name, status: "working", color: "text-blue-400" }));
+                    // CRITICAL: Use authoritative charactersByLocationId, NOT stale worker_character_ids
+                    // This prevents showing characters who are no longer actually at this location
+                    const currentlyAtLocation = characters.filter(c => {
+                      const authLoc = getAuthoritativeCharacterLocation(c, locationMap);
+                      return authLoc?.id === selectedLocation.id;
+                    });
+                    currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "working", color: "text-blue-400" }));
 
                     // NPC workers — ONLY show if currently on shift at THIS location
                     const realCharIds = new Set(characters.map(c => c.id));
