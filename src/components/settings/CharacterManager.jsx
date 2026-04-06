@@ -489,7 +489,10 @@ export default function CharacterManager() {
             className="w-full max-w-lg bg-card border border-border rounded-t-2xl p-6 space-y-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <h3 className="text-sm font-semibold text-foreground">Merge Characters</h3>
+            <div className="space-y-1">
+              <h3 className="text-sm font-semibold text-foreground">Who is the REAL person?</h3>
+              <p className="text-xs text-muted-foreground">The one you pick is the master. The other(s) are duplicates — they will be permanently erased and replaced everywhere by the master's name and photo.</p>
+            </div>
             <div className="space-y-3 max-h-60 overflow-y-auto">
               {mergeConfirmModal.selectedItems.map(({ item, entry }) => {
                 const isNPC = item.type === 'world_person' || item.type === 'family';
@@ -498,9 +501,6 @@ export default function CharacterManager() {
                 const itemName = isUser
                   ? (userSettings.fictional_world_name || itemData.full_name || currentUser?.full_name || 'You')
                   : itemData.name;
-                const description = isUser 
-                  ? null 
-                  : (isNPC ? itemData.appearance_notes : itemData.personality_summary);
                 const avatarUrl = isUser 
                   ? (itemData.avatar_url || userSettings?.generated_avatar_urls?.[0] || userSettings?.reference_image_urls?.[0])
                   : (itemData.avatar_url);
@@ -509,32 +509,27 @@ export default function CharacterManager() {
                   <button
                     key={entry.key}
                     onClick={() => confirmMerge(entry)}
-                    className="w-full text-left p-3 rounded-lg border border-border hover:border-primary/60 hover:bg-primary/5 transition-colors flex gap-3 items-start"
+                    className="w-full text-left p-3 rounded-lg border-2 border-border hover:border-emerald-500 hover:bg-emerald-500/5 transition-colors flex gap-3 items-center"
                   >
                     {avatarUrl ? (
-                      <img src={avatarUrl} alt={itemName} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 mt-0.5" />
+                      <img src={avatarUrl} alt={itemName} className="w-12 h-12 rounded-full object-cover flex-shrink-0" />
                     ) : (
-                      <div className={`w-10 h-10 rounded-lg ${isUser ? 'bg-primary' : isNPC ? 'bg-purple-500' : 'bg-secondary'} flex items-center justify-center flex-shrink-0 mt-0.5`}>
-                        <span className={`text-xs font-semibold ${isUser || isNPC ? 'text-white' : 'text-foreground'}`}>
+                      <div className={`w-12 h-12 rounded-full ${isUser ? 'bg-primary' : isNPC ? 'bg-purple-500' : 'bg-secondary'} flex items-center justify-center flex-shrink-0`}>
+                        <span className={`text-sm font-semibold ${isUser || isNPC ? 'text-white' : 'text-foreground'}`}>
                           {itemName[0].toUpperCase()}
                         </span>
                       </div>
                     )}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{itemName}</p>
-                      {description && (
-                        <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{description}</p>
-                      )}
-                      <p className="text-xs text-primary/80 mt-1 font-medium">
-                        👆 Tap to keep this one as master
-                      </p>
+                      <p className="text-sm font-semibold text-foreground">{itemName}</p>
+                      <p className="text-xs text-emerald-500 font-medium mt-0.5">✓ This is the real person — keep this one</p>
                     </div>
                   </button>
                 );
               })}
             </div>
-            <p className="text-xs text-muted-foreground italic">
-              Select the character that should remain as the master — others will be merged into it.
+            <p className="text-xs text-destructive/80 font-medium">
+              ⚠ The character(s) you do NOT pick will be permanently deleted and all their appearances replaced by the master.
             </p>
             <Button
               onClick={() => setMergeConfirmModal(null)}

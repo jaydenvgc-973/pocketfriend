@@ -58,75 +58,19 @@ Deno.serve(async (req) => {
     const finalAvatar = masterAvatarUrl || primary.avatar_url || null;
     const finalName = conflictResolutions.display_name || masterName || primary.name;
 
-    // ── CONSOLIDATE DATA INTO PRIMARY ────────────────────────────────────
+    // ── MASTER WINS — duplicate data is discarded, master data is authoritative ──
+    // We do NOT blend data from duplicates into the master.
+    // The master's profile, name, avatar, relationships, family — all stay exactly as-is.
+    // Only thing we do: add secondary names as aliases so the master is recognizable.
+    // All records (messages, memories, convos) that referenced the duplicate get re-pointed to master.
 
-    // Merge fictional_relationships
-    const primaryRels = (primary.fictional_relationships || []);
-    const secondaryRels = secondaryChars.flatMap(c => c.fictional_relationships || []);
-    const mergedRels = [...primaryRels];
-    for (const rel of secondaryRels) {
-      const exists = mergedRels.some(m => m.person_name?.toLowerCase() === rel.person_name?.toLowerCase());
-      if (!exists) mergedRels.push(rel);
+    // Just ensure the master's name/avatar are confirmed (no change if already set)
+    if (finalName !== primary.name || (finalAvatar && finalAvatar !== primary.avatar_url)) {
+      await base44.asServiceRole.entities.Character.update(primary.id, {
+        name: finalName,
+        ...(finalAvatar ? { avatar_url: finalAvatar } : {}),
+      });
     }
-
-    // Merge family members
-    const mergedFamily = [...(primary.family_members || [])];
-    for (const fm of secondaryChars.flatMap(c => c.family_members || [])) {
-      if (!mergedFamily.some(f => f.name?.toLowerCase() === fm.name?.toLowerCase())) {
-        mergedFamily.push(fm);
-      }
-    }
-
-    // Merge departed_characters
-    const mergedDeparted = [...(primary.departed_characters || [])];
-    for (const d of secondaryChars.flatMap(c => c.departed_characters || [])) {
-      if (!mergedDeparted.some(e => e.name?.toLowerCase() === d.name?.toLowerCase())) {
-        mergedDeparted.push(d);
-      }
-    }
-
-    // Merge songs_heard
-    const songIds = new Set((primary.songs_heard || []).map(s => s.spotify_id));
-    const mergedSongs = [...(primary.songs_heard || [])];
-    for (const song of secondaryChars.flatMap(c => c.songs_heard || [])) {
-      if (!songIds.has(song.spotify_id)) { mergedSongs.push(song); songIds.add(song.spotify_id); }
-    }
-
-    // Merge videos_watched
-    const videoLinks = new Set((primary.videos_watched || []).map(v => v.link));
-    const mergedVideos = [...(primary.videos_watched || [])];
-    for (const v of secondaryChars.flatMap(c => c.videos_watched || [])) {
-      if (!videoLinks.has(v.link)) { mergedVideos.push(v); videoLinks.add(v.link); }
-    }
-
-    // Merge future_life_goals
-    const mergedGoals = [...(primary.future_life_goals || [])];
-    for (const g of secondaryChars.flatMap(c => c.future_life_goals || [])) {
-      if (!mergedGoals.some(x => x.description?.toLowerCase() === g.description?.toLowerCase())) {
-        mergedGoals.push(g);
-      }
-    }
-
-    // Merge aliases (from aliases array on character)
-    const mergedAliases = [...(primary.aliases || [])];
-    for (const alias of secondaryChars.flatMap(c => c.aliases || [])) {
-      if (!mergedAliases.some(a => a.normalized === alias.normalized)) {
-        mergedAliases.push(alias);
-      }
-    }
-
-    // Update primary with all consolidated data + final name/avatar
-    await base44.asServiceRole.entities.Character.update(primary.id, {
-      fictional_relationships: mergedRels,
-      family_members: mergedFamily,
-      departed_characters: mergedDeparted,
-      songs_heard: mergedSongs,
-      videos_watched: mergedVideos,
-      future_life_goals: mergedGoals,
-      aliases: mergedAliases,
-      name: finalName,
-      ...(finalAvatar ? { avatar_url: finalAvatar } : {}),
-    });
 
     // ── REMAP DEPENDENT RECORDS ──────────────────────────────────────────
 
