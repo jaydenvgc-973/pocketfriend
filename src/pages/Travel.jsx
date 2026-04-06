@@ -423,16 +423,23 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                 {(() => {
                   const homeAccess = checkHomeAccess(selectedLocation);
                   const isHome = selectedLocation.category === "home";
+                  const isClosed = isLocationActiveNow(selectedLocation) === false;
+
+                  // If closed, show nothing about who's there — just the closed notice
+                  if (isClosed) {
+                    return (
+                      <div className="text-center py-1">
+                        <p className="text-xs text-amber-400">{selectedLocation.name} is currently closed.</p>
+                      </div>
+                    );
+                  }
 
                   // Build presence summary
-                  let presenceSummary = null;
                   const lines = [];
 
                   if (isHome) {
-                    // Active character residents
                     homeAccess.homeResidents.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
                     homeAccess.awayResidents.forEach(c => lines.push({ name: c.name, status: "not home", color: "text-amber-400" }));
-                    // NPC/family residents listed on this location
                     (selectedLocation.resident_family_members || []).forEach(n => {
                       if (n.name) lines.push({ name: n.name, status: "home", color: "text-green-400" });
                     });
@@ -441,34 +448,27 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     characters
                       .filter(c => selectedLocation.worker_character_ids?.includes(c.id) && isCharacterAtWork(c, selectedLocation))
                       .forEach(c => lines.push({ name: c.name, status: "working", color: "text-blue-400" }));
+
+                    // NPC workers (keyed by npc_ prefix in worker_job_titles)
+                    const realCharIds = new Set(characters.map(c => c.id));
+                    Object.entries(selectedLocation.worker_job_titles || {}).forEach(([key, jobTitle]) => {
+                      if (!realCharIds.has(key) && key.startsWith("npc_")) {
+                        const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
+                        lines.push({ name: npcName, status: jobTitle || "working", color: "text-blue-400" });
+                      }
+                    });
                   }
 
-                  // For ANY location type: NPC workers listed via worker_job_titles (string-keyed NPCs, not character IDs)
-                  // These are stored as npc_<name> style keys or free-text names in worker_job_titles
-                  // Also check resident_family_members for non-home locations (e.g. someone's family member working there)
-                  // Main source: location.worker_job_titles may have NPC names as keys
-                  // We identify NPC keys as those NOT matching any real character ID
-                  const realCharIds = new Set(characters.map(c => c.id));
-                  Object.entries(selectedLocation.worker_job_titles || {}).forEach(([key, jobTitle]) => {
-                    if (!realCharIds.has(key) && key.startsWith("npc_")) {
-                      // Extract readable name from key like "npc_John Smith"
-                      const npcName = key.replace(/^npc_/, "").replace(/_/g, " ");
-                      lines.push({ name: npcName, status: jobTitle || "working", color: "text-blue-400" });
-                    }
-                  });
-
-                  if (lines.length > 0) {
-                    presenceSummary = (
-                      <div className="space-y-0.5">
-                        {lines.map((l, i) => (
-                          <p key={i} className="text-xs">
-                            <span className="text-foreground font-medium">{l.name}</span>
-                            <span className={`ml-1 ${l.color}`}>is {l.status}</span>
-                          </p>
-                        ))}
-                      </div>
-                    );
-                  }
+                  const presenceSummary = lines.length > 0 ? (
+                    <div className="space-y-0.5">
+                      {lines.map((l, i) => (
+                        <p key={i} className="text-xs">
+                          <span className="text-foreground font-medium">{l.name}</span>
+                          <span className={`ml-1 ${l.color}`}>is {l.status}</span>
+                        </p>
+                      ))}
+                    </div>
+                  ) : null;
 
                   if (isHome && !homeAccess.canVisit) {
                     return (
