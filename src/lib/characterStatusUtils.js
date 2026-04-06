@@ -87,22 +87,17 @@ export function getCharacterStatusDisplay(character, locationData = {}) {
 
   // 4. AT WORK FIRST (higher priority than patient status)
   // Check work status BEFORE patient status, because a character can work at a hospital
-  // ALSO: If character has occupation_location_id but no shift schedule, still use it as current location
   const activity = character.current_activity?.toLowerCase().trim() || '';
   const unemployedKeywords = ['unemployed', 'between jobs'];
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   const isUnemployed = unemployedKeywords.some(k => workType.includes(k));
 
-  if (!isUnemployed && workLocation) {
-    // Either on shift schedule OR has occupation assigned
-    const onShift = isCharacterAtWork(character, workLocation);
-    const hasOccupationAssignment = !!character.occupation_location_id;
-    
-    if (onShift || hasOccupationAssignment) {
-      const locationName = workLocation?.name;
-      const label = locationName ? `at ${locationName}` : 'at work';
-      return { iconType: 'work', label, color: 'text-blue-400' };
-    }
+  if (!isUnemployed && isCharacterAtWork(character, workLocation)) {
+    // Shift schedule is authoritative — if they're on shift, they're working
+    // Activity keywords don't override verified shift status
+    const locationName = workLocation?.name;
+    const label = locationName ? `at ${locationName}` : 'at work';
+    return { iconType: 'work', label, color: 'text-blue-400' };
   }
 
   // 5. PATIENT / SICK (only if NOT at work)

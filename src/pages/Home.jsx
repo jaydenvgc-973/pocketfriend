@@ -252,9 +252,9 @@ export default function Home() {
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Your character</p>
             {(() => {
-               const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(defaultChar);
-               return <CharacterCard character={defaultChar} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation }} />;
-             })()}
+              const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(defaultChar);
+              return <CharacterCard character={defaultChar} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }} />;
+            })()}
           </div>
         )}
         {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
@@ -291,19 +291,19 @@ export default function Home() {
           ) : (
             <div className="grid gap-3">
                {activeCustomChars.map(c => {
-                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(c);
+                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(c);
                  return (
                    <CharacterCard key={c.id} character={c}
                      onDelete={(id) => setPendingDelete(characters.find(ch => ch.id === id))}
                      onMoveAway={(id) => moveAwayMutation.mutate(id)}
-                     locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation }}
+                     locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }}
                    />
                  );
                })}
                {movedAwayChars.map(c => {
-                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation } = getLocationDataForCharacter(c);
+                 const { workLoc, eduLoc, religionLoc, gymLoc, currentLoc } = getLocationDataForCharacter(c);
                  return (
-                   <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc, homeLocation }} />
+                   <CharacterCard key={c.id} character={c} onMoveAway={() => moveBackMutation.mutate(c.id)} locationData={{ workLoc, eduLoc, religionLoc, gymLoc, currentLoc }} />
                  );
                })}
                <Link to="/create">

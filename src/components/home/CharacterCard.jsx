@@ -244,18 +244,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                // Use ONLY the location data passed from parent — never fallback
-                const workLocation = locationData.workLoc || null;
-                const educationLocation = locationData.eduLoc || null;
+                const workLocation = locationData.workLoc || (character.occupation_location_id ? locationMap[character.occupation_location_id] : null);
+                const educationLocation = locationData.eduLoc || (character.education_location_id ? locationMap[character.education_location_id] : null);
 
-                const statusDisplay = getCharacterStatusDisplay(character, { 
-                  workLocation, 
-                  educationLocation, 
-                  religionLocation: locationData.religionLoc || null, 
-                  gymLocation: locationData.gymLoc || null, 
-                  currentLocation: locationData.currentLoc || currentLocationData, 
-                  homeLocation: locationData.homeLocation || null 
-                });
+                // Check if character is scheduled for work now
+                const { shouldBeAtWork } = isCharacterScheduledNow(character);
+
+                // Get real-world location display name (avoids "at bar", shows actual business name)
+                const locationDisplay = getCharacterLocationDisplay(character, locationMap);
+
+                const statusDisplay = getCharacterStatusDisplay(character, { workLocation, educationLocation, religionLocation: locationData.religionLoc || null, gymLocation: locationData.gymLoc || null, currentLocation: locationData.currentLoc || currentLocationData, homeLocation: locationData.homeLocation || null });
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,
