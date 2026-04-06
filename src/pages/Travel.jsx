@@ -13,7 +13,7 @@ import CharacterAvailabilityPopup from "@/components/travel/CharacterAvailabilit
 import BusyCharacterPopup from "@/components/travel/BusyCharacterPopup";
 import WakeUpModal from "@/components/travel/WakeUpModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
-import { isLocationActiveNow } from "@/lib/workScheduleUtils";
+import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 
 export default function Travel() {
@@ -438,6 +438,24 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                             <p key={i} className="text-xs">
                               <span className="text-foreground font-medium">{l.name}</span>
                               <span className={`ml-1 ${l.color}`}>is {l.status}</span>
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    }
+                  } else {
+                    // Non-home: show characters who work here and are currently on shift
+                    const workersHere = characters.filter(c =>
+                      selectedLocation.worker_character_ids?.includes(c.id) &&
+                      isCharacterAtWork(c, selectedLocation)
+                    );
+                    if (workersHere.length > 0) {
+                      presenceSummary = (
+                        <div className="space-y-0.5">
+                          {workersHere.map(c => (
+                            <p key={c.id} className="text-xs">
+                              <span className="text-foreground font-medium">{c.name}</span>
+                              <span className="ml-1 text-blue-400">is working</span>
                             </p>
                           ))}
                         </div>
