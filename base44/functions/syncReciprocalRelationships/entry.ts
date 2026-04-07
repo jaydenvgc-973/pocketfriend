@@ -130,6 +130,8 @@ function getReciprocalRole(relationshipType, sourceGender) {
   const reciprocals = {
     'mentor': 'mentee',
     'mentee': 'mentor',
+    'case manager': 'client',
+    'client': 'case manager',
     'friend': 'friend',
     'best friend': 'best friend',
     'close friend': 'close friend',
