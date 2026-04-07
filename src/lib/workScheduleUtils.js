@@ -49,18 +49,34 @@ function getLocalDay() {
  */
 export function isLocationActiveNow(location) {
   const hours = location?.operating_hours;
-  if (!hours || hours.length === 0) return null; // unknown
+  if (!hours || hours.length === 0) return null; // unknown — no hours defined, treat as always open
 
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
 
-  for (const window of hours) {
-    const dayMatch = window.day_of_week == null || window.day_of_week === currentDay;
-    if (dayMatch && isInWindow(currentMinutes, window.open_time, window.close_time)) {
-      return true;
-    }
+  // Split entries into day-specific and day-agnostic (no day_of_week set)
+  const daySpecificEntries = hours.filter(w => w.day_of_week != null);
+  const dayAgnosticEntries = hours.filter(w => w.day_of_week == null);
+
+  // Check day-specific entries for today
+  const todayEntries = daySpecificEntries.filter(w => w.day_of_week === currentDay);
+
+  if (todayEntries.length > 0) {
+    // There are hours defined specifically for today — use them
+    return todayEntries.some(w => isInWindow(currentMinutes, w.open_time, w.close_time));
   }
-  return false;
+
+  if (daySpecificEntries.length > 0 && todayEntries.length === 0) {
+    // Hours defined for other days but NOT for today — location is closed today
+    return false;
+  }
+
+  // Only day-agnostic entries exist (no day_of_week) — apply to every day
+  if (dayAgnosticEntries.length > 0) {
+    return dayAgnosticEntries.some(w => isInWindow(currentMinutes, w.open_time, w.close_time));
+  }
+
+  return null; // No usable entries — unknown
 }
 
 /**
