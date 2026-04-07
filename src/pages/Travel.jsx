@@ -498,9 +498,29 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
-                    // Also show NPC family members who live here
-                    const npcResidents = selectedLocation.resident_family_members || [];
-                    npcResidents.forEach(m => lines.push({ name: m.name, status: "home", color: "text-muted-foreground" }));
+
+                    // Only show NPC family members who are actually present at this home
+                    (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
+                      const ownerCharacter = characters.find(c =>
+                        (c.fictional_relationships || []).some(rel =>
+                          rel.person_name === locFamilyMember.name && !rel.related_character_id
+                        )
+                      );
+
+                      if (ownerCharacter) {
+                        const fictionalRelationship = ownerCharacter.fictional_relationships.find(rel =>
+                          rel.person_name === locFamilyMember.name && !rel.related_character_id
+                        );
+
+                        // Only show if NPC is home (no current_location_id) or at this location
+                        if (
+                          fictionalRelationship &&
+                          (!fictionalRelationship.current_location_id || fictionalRelationship.current_location_id === selectedLocation.id)
+                        ) {
+                          lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
+                        }
+                      }
+                    });
                   } else {
                     // LIVE: compute actual current location from engine
                     const currentlyAtLocation = characters.filter(c => {
