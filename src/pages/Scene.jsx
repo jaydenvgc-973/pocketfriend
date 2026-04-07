@@ -200,6 +200,18 @@ export default function Scene() {
     : [];
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
+  
+  // Family NPCs who are away (have a current_location_id set to somewhere other than home)
+  const familyMemberNpcsAway = isHomeLocation
+    ? (location.resident_family_members || []).filter(fm => {
+        const ownerChar = homeResidents.find(c => 
+          c.fictional_relationships?.some(rel => rel.person_name === fm.name && !rel.related_character_id)
+        );
+        if (!ownerChar) return false;
+        const npcRel = ownerChar.fictional_relationships.find(rel => rel.person_name === fm.name && !rel.related_character_id);
+        return npcRel?.current_location_id && npcRel.current_location_id !== location.id;
+      })
+    : [];
 
   // Family member NPCs showing as present: check their actual current_location_id in fictional_relationships
   const familyMemberNpcsPresent = isHomeLocation
@@ -225,6 +237,26 @@ export default function Scene() {
         return isCharacterAtWork(c, location);
       })
     : [];
+
+  // PRESENCE SYNC: Scan all characters for NPCs currently at this location
+  const npcsTravelingHere = (() => {
+    const traveling = [];
+    characters.forEach(char => {
+      if (!char.fictional_relationships) return;
+      char.fictional_relationships.forEach(rel => {
+        if (!rel.related_character_id && rel.person_name && rel.current_location_id === locationId) {
+          traveling.push({
+            id: `npc_${rel.person_name.replace(/\s+/g, "_")}_${char.id}`,
+            name: rel.person_name,
+            role: rel.relationship_type || "NPC",
+            isNpc: true,
+            avatar_url: null,
+          });
+        }
+      });
+    });
+    return traveling;
+  })();
 
   // Build the full pool of possible NPCs for ANY venue
   const allPossibleNpcs = (() => {
@@ -358,6 +390,11 @@ export default function Scene() {
     ];
     venueDefaults.forEach(n => {
       if (!npcs.find(x => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
+    });
+
+    // Add NPCs currently traveling to this location (presence sync fix)
+    npcsTravelingHere.forEach(n => {
+      if (!npcs.find(x => x.id === n.id)) npcs.push(n);
     });
 
     // Dedupe by id
@@ -534,8 +571,9 @@ export default function Scene() {
   }, [location?.id, activeZone]);
 
   // Generate scene image on load or when zone changes (sceneImage set to null)
+  // RABBIT HOLE MODE: Skip scene generation for real-world locations
   useEffect(() => {
-    if (location && !sceneImage && !isGeneratingImage) {
+    if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
       generateSceneImage();
     }
   }, [location?.id, sceneImage]);
@@ -1260,9 +1298,9 @@ Return JSON:
               {[...homeResidentsPresent, ...familyMemberNpcsPresent.map(fm => ({ name: fm.name }))].map(c => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home
             </span></div>
           )}
-          {(homeResidentsAway.length > 0 || (location.resident_family_members?.length ?? 0) - familyMemberNpcsPresent.length > 0) && (
+          {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && (
             <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">
-              {homeResidentsAway.map(c => c.name).concat((location.resident_family_members || []).filter(fm => !familyMemberNpcsPresent.find(f => f.name === fm.name)).map(fm => fm.name)).join(", ")} {homeResidentsAway.length + ((location.resident_family_members?.length ?? 0) - familyMemberNpcsPresent.length) === 1 ? "is" : "are"} away
+              {homeResidentsAway.map(c => c.name).concat(familyMemberNpcsAway.map(fm => fm.name)).join(", ")} {homeResidentsAway.length + familyMemberNpcsAway.length === 1 ? "is" : "are"} away
             </span></div>
           )}
           {workerCharacters.length > 0 && (

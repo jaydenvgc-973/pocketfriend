@@ -53,6 +53,26 @@
       "description": "Location features that affect actions and capabilities",
       "default": []
     },
+    "is_real_world": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is a real-world location created by user travel"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "app_created",
+        "travel_input",
+        "import"
+      ],
+      "default": "app_created",
+      "description": "How this location was created"
+    },
+    "is_rabbit_hole": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this location uses lightweight interaction mode (no full scene generation)"
+    },
     "school_type": {
       "type": "string",
       "enum": [

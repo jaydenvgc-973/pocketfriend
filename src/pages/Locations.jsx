@@ -15,6 +15,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
 import LocationDetailPanel from "@/components/location/LocationDetailPanel";
+import SavedPlaces from "@/components/location/SavedPlaces";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
@@ -1302,6 +1303,7 @@ export default function Locations() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [inlineEditId, setInlineEditId] = useState(null); // ID of location being edited inline
   const [filter, setFilter] = useState("all");
+  const [activeTab, setActiveTab] = useState("locations"); // "locations" | "saved_places"
   const [newlyCreatedLocation, setNewlyCreatedLocation] = useState(null);
 
   const { data: currentUser } = useQuery({
@@ -1472,18 +1474,43 @@ export default function Locations() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Filter tabs */}
-        <div className="flex gap-2 flex-1">
-          {["all", "global", "character_specific"].map(f => (
-            <button key={f} onClick={() => setFilter(f)}
-              className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-              {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
-            </button>
-          ))}
-        </div>
+         {/* Tab switcher */}
+         <div className="flex gap-2 flex-1 border-b border-border pb-3">
+           <button
+             onClick={() => setActiveTab("locations")}
+             className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "locations" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+           >
+             All Locations
+           </button>
+           <button
+             onClick={() => setActiveTab("saved_places")}
+             className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "saved_places" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+           >
+             📍 Saved Places
+           </button>
+         </div>
 
-        {/* Empty state */}
-        {locations.length === 0 && !showAddForm && (
+         {/* Locations filter tabs - only show on locations tab */}
+         {activeTab === "locations" && (
+           <div className="flex gap-2 flex-1">
+             {["all", "global", "character_specific"].map(f => (
+               <button key={f} onClick={() => setFilter(f)}
+                 className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
+                 {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
+               </button>
+             ))}
+           </div>
+         )}
+
+        {/* Show saved places or location management based on active tab */}
+        {activeTab === "saved_places" ? (
+          <div className="space-y-3">
+            <SavedPlaces currentUser={currentUser} onLocationSelect={() => {}} />
+          </div>
+        ) : (
+          <>
+            {/* Empty state */}
+            {locations.length === 0 && !showAddForm && (
           <div className="text-center py-10 space-y-3">
             <MapPin className="w-10 h-10 text-muted-foreground/40 mx-auto" />
             <div>
@@ -1612,9 +1639,11 @@ export default function Locations() {
                   </AnimatePresence>
                   )}
                   </div>
+                  </>
+                  )}
                   </div>
 
-      <BottomNav />
+                  <BottomNav />
 
       {/* Location match suggestions after new location creation */}
       {newlyCreatedLocation && (
