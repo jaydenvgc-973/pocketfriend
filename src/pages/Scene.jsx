@@ -160,6 +160,7 @@ export default function Scene() {
   const [pendingInvitations, setPendingInvitations] = useState(null);
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [privateTarget, setPrivateTarget] = useState(null); // { id, name } — pull aside mode
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -706,7 +707,12 @@ export default function Scene() {
     setActions(getLocationActions(location.category, text));
 
     try {
-      const charSummaries = sceneCharacters.map(c =>
+      // In private mode, only the pulled-aside character responds
+      const activeSceneChars = privateTarget
+        ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
+        : sceneCharacters;
+
+      const charSummaries = activeSceneChars.map(c =>
         `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
       ).join("; ");
 
@@ -714,18 +720,23 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
-      const knownChars = sceneCharacters.filter(c => !c.isNpc);
-      // Only selected NPCs should ever respond — never ambient/unselected ones
-      const selectedNpcList = selectedNpcs.map(n => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
+      const knownChars = activeSceneChars.filter(c => !c.isNpc);
+      const selectedNpcList = privateTarget
+        ? activeSceneChars.filter(c => c.isNpc).map(n => `${n.name} (${n.role || "NPC"})`).join(", ")
+        : selectedNpcs.map(n => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
+
+      const privateNote = privateTarget
+        ? `\nNOTE: ${displayName} has pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond — absolutely no one else, not even other characters who are present.`
+        : "";
 
       const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:
 - Known characters present: ${knownChars.map(c => c.name).join(", ") || "none"}
 - Selected NPCs the user is talking to: ${selectedNpcList || "none"}
 Workers on shift (${workerCharacters.map(c => c.name).join(", ") || "none"}) respond only if they are also listed above.
-If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers or unselected staff.`;
+If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers or unselected staff.${privateNote}`;
 
       const responses = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are managing a group scene at ${location.name} (${location.category}).
+        prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
 
 People present: ${displayName}, ${charSummaries || "no one they know"}
 
@@ -1327,6 +1338,27 @@ Return JSON:
         </div>
       </div>
 
+      {/* Private conversation banner */}
+      {privateTarget && (
+        <div className="flex items-center justify-between px-3 py-1.5 bg-primary/10 border-t border-primary/30 flex-shrink-0">
+          <span className="text-xs text-primary font-medium">🤫 Private with {privateTarget.name}</span>
+          <button
+            onClick={() => {
+              setPrivateTarget(null);
+              setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                sender: "narrative",
+                content: `You rejoin the group.`,
+                timestamp: new Date().toISOString(),
+              }]);
+            }}
+            className="text-[10px] text-primary/70 hover:text-primary underline"
+          >
+            End private chat
+          </button>
+        </div>
+      )}
+
       {/* Input bar */}
       <div className="border-t border-border flex-shrink-0 pb-safe">
         {/* Mode toggle */}
@@ -1448,9 +1480,18 @@ Return JSON:
         isOpen={!!conversationModal}
         onClose={() => setConversationModal(null)}
         onSelect={(conversationType) => {
-          // Log the selected conversation type (can be used for memory context, tone adjustment, etc)
-          console.log(`Selected conversation type: ${conversationType} with ${conversationModal?.npcName}`);
-          // Future: adjust NPC response tone based on conversation type
+          if (conversationType === "one_on_one" && conversationModal?.npcId && conversationModal?.npcName) {
+            setPrivateTarget({ id: conversationModal.npcId, name: conversationModal.npcName });
+            setMessages(prev => [...prev, {
+              id: Date.now().toString(),
+              sender: "narrative",
+              content: `You pull ${conversationModal.npcName} aside for a private conversation.`,
+              timestamp: new Date().toISOString(),
+            }]);
+          } else {
+            // Any other conversation type clears private mode
+            setPrivateTarget(null);
+          }
         }}
         npcName={conversationModal?.npcName || "them"}
         hasEmployees={conversationModal?.hasEmployees || false}
