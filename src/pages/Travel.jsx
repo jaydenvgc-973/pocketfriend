@@ -88,7 +88,7 @@ export default function Travel() {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
 
-    // AUTHORITATIVE: Characters who are actually at this home location RIGHT NOW
+    // LIVE: Use engine to compute actual current location (not stored field)
     const homeResidents = characters.filter(c => {
       const resolved = resolveCharacterLocation(c, locationMap);
       return resolved.resolved_current_location_id === location.id;
@@ -422,10 +422,12 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              onSelect={setSelectedLocation}
              activeCharacterIds={characters.map(c => c.id)}
              charactersByLocationId={characters.reduce((acc, c) => {
-               // READ-ONLY: Use pre-resolved location from character entity
-               if (c.resolved_current_location_id) { 
-                 acc[c.resolved_current_location_id] = acc[c.resolved_current_location_id] || []; 
-                 acc[c.resolved_current_location_id].push(c.name); 
+               // LIVE resolution: compute actual current location from engine
+               const resolved = resolveCharacterLocation(c, locationMap);
+               const locId = resolved.resolved_current_location_id;
+               if (locId) { 
+                 acc[locId] = acc[locId] || []; 
+                 acc[locId].push(c.name); 
                }
                return acc;
              }, {})}
@@ -482,18 +484,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // READ-ONLY: Show ONLY characters whose resolved location is this home
+                    // LIVE: compute actual current location from engine
                     const charactersAtHome = characters.filter(c => {
-                      return c.resolved_current_location_id === selectedLocation.id;
+                      const resolved = resolveCharacterLocation(c, locationMap);
+                      return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
                     // Also show NPC family members who live here
                     const npcResidents = selectedLocation.resident_family_members || [];
                     npcResidents.forEach(m => lines.push({ name: m.name, status: "home", color: "text-muted-foreground" }));
                   } else {
-                    // READ-ONLY: Show characters whose resolved location is here
+                    // LIVE: compute actual current location from engine
                     const currentlyAtLocation = characters.filter(c => {
-                      return c.resolved_current_location_id === selectedLocation.id;
+                      const resolved = resolveCharacterLocation(c, locationMap);
+                      return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
@@ -503,7 +507,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
                     characters.forEach(c => {
-                      if (c.resolved_current_location_id === selectedLocation.id) {
+                      const resolvedC = resolveCharacterLocation(c, locationMap);
+                      if (resolvedC.resolved_current_location_id === selectedLocation.id) {
                         // Character is here - check if they're on shift
                         const workerShifts = selectedLocation.worker_shifts || {};
                         const shift = workerShifts[c.id];
