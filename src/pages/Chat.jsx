@@ -1740,8 +1740,8 @@ Reply with ONLY the single emoji or the word "none".`,
 
   return (
     <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
-      <div className={`flex items-center gap-3 px-4 py-3 border-b border-border ${isPhone ? "bg-card" : "bg-background/80 backdrop-blur-xl"}`}>
-        <Link to="/home" className="text-muted-foreground hover:text-foreground transition-colors">
+      <div className="sticky top-0 z-[1000] bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 pointer-events-auto">
+        <Link to="/home" className="text-muted-foreground hover:text-foreground transition-colors pointer-events-auto cursor-pointer">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <Link to={`/profile/${characterId}`}>
