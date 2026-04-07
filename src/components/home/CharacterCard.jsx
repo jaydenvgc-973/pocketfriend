@@ -241,11 +241,11 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                // READ-ONLY: Use pre-computed resolved location from character entity
-                const isSleeping = character.resolved_source_reason === 'home_sleeping';
-                const isPraying = character.resolved_source_reason === 'praying_at_home';
+                // LIVE: compute actual location using resolution engine + locationMap
+                const resolved = resolveCharacterLocation(character, locationMap);
+                const isSleeping = resolved.resolved_source_reason === 'home_sleeping';
+                const isPraying = resolved.resolved_source_reason === 'praying_at_home';
                 
-                // Map resolved source reason to icon and color (READ-ONLY display)
                 let iconType = 'calm';
                 let label = 'available';
                 let color = 'text-muted-foreground';
@@ -258,25 +258,25 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   iconType = 'prayer';
                   label = 'praying';
                   color = 'text-violet-300';
-                } else if (character.resolved_location_type === 'work') {
+                } else if (resolved.resolved_location_type === 'work') {
                   iconType = 'work';
-                  label = `at ${character.resolved_current_location_name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-blue-400';
-                } else if (character.resolved_location_type === 'school') {
+                } else if (resolved.resolved_location_type === 'school') {
                   iconType = 'school';
-                  label = `at ${character.resolved_current_location_name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-amber-400';
-                } else if (character.resolved_location_type === 'home') {
+                } else if (resolved.resolved_location_type === 'home') {
                   iconType = 'home';
                   label = 'at home';
                   color = 'text-pink-400';
-                } else if (character.resolved_presence_status === 'traveling') {
+                } else if (resolved.resolved_presence_status === 'traveling') {
                   iconType = 'out';
-                  label = `headed to ${character.resolved_current_location_name}`;
+                  label = `headed to ${resolved.resolved_current_location_name}`;
                   color = 'text-orange-400';
                 } else {
                   iconType = 'out';
-                  label = `at ${character.resolved_current_location_name}`;
+                  label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-blue-400';
                 }
                 

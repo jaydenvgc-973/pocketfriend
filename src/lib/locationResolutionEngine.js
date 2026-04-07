@@ -37,6 +37,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 1: Check work schedule (highest priority obligation)
+  // First try character-level schedule fields, then fall back to location worker_shifts
   if (isCharacterOnWorkSchedule(character, currentTime)) {
     const workLocation = locationMap[character.occupation_location_id];
     if (workLocation) {
@@ -48,6 +49,24 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         resolved_source_reason: 'work_schedule',
         resolved_zone: null,
       };
+    }
+  }
+
+  // LAYER 1b: Check worker_shifts on all locations (for characters without work_start/end_time set)
+  if (character.occupation_location_id) {
+    const workLocation = locationMap[character.occupation_location_id];
+    if (workLocation) {
+      const shift = workLocation.worker_shifts?.[character.id];
+      if (shift && isOnShiftNow(shift, currentTime)) {
+        return {
+          resolved_current_location_id: character.occupation_location_id,
+          resolved_current_location_name: workLocation.name || 'Work',
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: 'work_schedule',
+          resolved_zone: null,
+        };
+      }
     }
   }
 
@@ -132,6 +151,31 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
 
   // Fallback: Unknown location (should not happen)
   return createFailedResolution('No valid location resolved');
+}
+
+/**
+ * Check if a character is currently on shift based on location worker_shifts data
+ * Handles overnight shifts (e.g. 17:00–01:00)
+ */
+function isOnShiftNow(shift, currentTime = new Date()) {
+  if (!shift?.start || !shift?.end) return false;
+  // Check day of week if days array is specified
+  if (shift.days && shift.days.length > 0) {
+    const dayOfWeek = currentTime.getDay();
+    if (!shift.days.includes(dayOfWeek)) return false;
+  }
+
+  const now = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const [startH, startM] = shift.start.split(':').map(Number);
+  const [endH, endM] = shift.end.split(':').map(Number);
+  const startMin = startH * 60 + startM;
+  const endMin = endH * 60 + endM;
+
+  // Overnight shift (e.g. 17:00 -> 01:00)
+  if (endMin < startMin) {
+    return now >= startMin || now < endMin;
+  }
+  return now >= startMin && now < endMin;
 }
 
 /**
