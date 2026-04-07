@@ -577,12 +577,12 @@ export default function CharacterProfile() {
               <Users className="w-4 h-4 text-primary" />
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Characters They Know</p>
             </div>
-            {(!character.fictional_relationships?.some(r => r.related_character_id && allCharacters.find(c => c.id === r.related_character_id && c.character_type === "active"))) && (
+            {(!character.fictional_relationships?.some(r => r.related_character_id)) && (
               <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
             )}
             <div className="space-y-4">
               {(character.fictional_relationships || [])
-                .filter(r => r.related_character_id && allCharacters.find(c => c.id === r.related_character_id && c.character_type === "active"))
+                .filter(r => r.related_character_id && allCharacters.find(c => c.id === r.related_character_id && c.character_type !== "npc"))
                 .map((rel, idx) => {
                    const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
                   return (
@@ -648,12 +648,14 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships — unlinked NPCs only, excluding family */}
+          {/* NPC relationships — exclude family members and active characters, deduplicated by person_name */}
           {(() => {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-            const npcRels = character.fictional_relationships?.filter(r =>
-              !r.related_character_id && !familyNames.has(r.person_name?.toLowerCase())
+            const npcRels = character.fictional_relationships?.filter(r => 
+              !r.related_character_id && 
+              !familyNames.has(r.person_name?.toLowerCase())
             ) || [];
+            // Deduplicate: keep first occurrence of each person_name (case-insensitive)
             const seen = new Set();
             const deduped = npcRels.filter(r => {
               const key = r.person_name?.toLowerCase();
@@ -666,9 +668,11 @@ export default function CharacterProfile() {
             <div className="space-y-5">
               {(() => {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-                const npcRels = character.fictional_relationships?.filter(r =>
-                  !r.related_character_id && !familyNames.has(r.person_name?.toLowerCase())
+                const npcRels = character.fictional_relationships?.filter(r => 
+                  !r.related_character_id && 
+                  !familyNames.has(r.person_name?.toLowerCase())
                 ) || [];
+                // Deduplicate: keep first occurrence of each person_name (case-insensitive)
                 const seen = new Set();
                 const deduped = npcRels.filter(r => {
                   const key = r.person_name?.toLowerCase();
