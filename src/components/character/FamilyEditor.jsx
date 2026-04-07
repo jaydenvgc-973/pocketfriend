@@ -45,7 +45,7 @@ const RELATIONSHIP_TYPES = [
   "sister", "brother", "half-sister", "half-brother",
   "step-mother", "step-father", "step-sister", "step-brother",
   "cousin", "niece", "nephew", "daughter", "son", "spouse",
-  "significant other", "romantic interest", "case manager", "client", "other",
+  "significant other", "romantic interest", "other",
 ];
 
 // Default relationship bars based on family role
