@@ -11,7 +11,7 @@ const RELATIONSHIP_TYPES = [
   "coworker", "colleague", "boss", "employee",
   "classmate", "teammate", "roommate",
   "romantic interest", "significant other", "ex",
-  "mentor", "mentee", "enemy", "rival", "other"
+  "mentor", "mentee", "case manager", "client", "enemy", "rival", "other"
 ];
 
 const GENDER_OPTIONS = ["male", "female", "non-binary", "other"];
