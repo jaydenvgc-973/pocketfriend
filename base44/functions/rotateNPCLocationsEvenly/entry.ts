@@ -41,18 +41,23 @@ Deno.serve(async (req) => {
       status: 'active' 
     });
 
-    // **Identify all VGC Towers residents to rotate:**
+    // **Identify all true VGC Towers NPC Residents**
     
     // 1. Character entities at VGC Towers (excluding Active Created Characters)
     const vgcCharacters = allCharacters.filter(c => 
-      c.resolved_current_location_id === vgcTowers.id && 
+      c.current_home_location_id === vgcTowers.id && 
       c.character_type !== 'active'
     );
+
+    // 2. NPCs explicitly listed in VGC Towers resident_family_members (only those marked isNPC: true)
+    const npcResidentsFromLocationList = (vgcTowers.resident_family_members || [])
+      .filter(member => member.isNPC === true)
+      .map(member => member.name);
 
     let rotatedCount = 0;
     const ownerUpdates = {}; // Track which owners need updates
 
-    // **Process standalone Character entities at VGC Towers**
+    // **Process Character entities at VGC Towers**
     vgcCharacters.forEach(char => {
       const charIsWorking = isNPCWorking(char, now);
       
@@ -66,54 +71,31 @@ Deno.serve(async (req) => {
       }
     });
 
-    // **Process family members listed in VGC Towers resident_family_members**
-    // Family members are associated with owner characters via source_character_id
-    // EXCLUDE family members whose owner is an Active Created Character
-    const ownerToFamilyMap = {}; // Group family members by owner
-    
-    (vgcTowers.resident_family_members || []).forEach(familyMember => {
-      const ownerId = familyMember.source_character_id;
-      if (!ownerId) return; // Skip if no owner
+    // **Process NPC family members explicitly listed in resident_family_members**
+    // These are true residents of VGC Towers, regardless of who they're related to
+    allCharacters.forEach(char => {
+      if (!char.fictional_relationships) return;
       
-      const ownerChar = allCharacters.find(c => c.id === ownerId);
-      if (ownerChar && ownerChar.character_type === 'active') {
-        // Skip family members of Active Created Characters
-        return;
-      }
-      
-      if (!ownerToFamilyMap[ownerId]) {
-        ownerToFamilyMap[ownerId] = [];
-      }
-      ownerToFamilyMap[ownerId].push(familyMember.name);
-    });
-
-    // Update owners' fictional_relationships for their family members
-    for (const [ownerId, familyNames] of Object.entries(ownerToFamilyMap)) {
-      const owner = allCharacters.find(c => c.id === ownerId);
-      if (!owner || !owner.fictional_relationships) continue;
-
-      let ownerUpdated = false;
-      
-      owner.fictional_relationships.forEach((rel, idx) => {
-        if (!rel.related_character_id && familyNames.includes(rel.person_name)) {
-          // This is a family member; check if owner is working
-          const ownerIsWorking = isNPCWorking(owner, now);
+      char.fictional_relationships.forEach((rel, idx) => {
+        // Check if this is one of the NPCs listed as a resident
+        if (!rel.related_character_id && npcResidentsFromLocationList.includes(rel.person_name)) {
+          const charIsWorking = isNPCWorking(char, now);
           
-          if (!ownerIsWorking) {
+          if (!charIsWorking) {
             const locationIdx = rotatedCount % validNPCLocations.length;
             const newLocation = validNPCLocations[locationIdx];
             
-            rel.current_location_id = newLocation.id;
-            ownerUpdated = true;
+            // Track this owner for update
+            if (!ownerUpdates[char.id]) {
+              ownerUpdates[char.id] = char;
+            }
+            
+            ownerUpdates[char.id].fictional_relationships[idx].current_location_id = newLocation.id;
             rotatedCount++;
           }
         }
       });
-
-      if (ownerUpdated) {
-        ownerUpdates[ownerId] = owner;
-      }
-    }
+    });
 
     if (rotatedCount === 0) {
       return Response.json({ message: 'No VGC Towers residents available to rotate (all working or no residents)' }, { status: 200 });
