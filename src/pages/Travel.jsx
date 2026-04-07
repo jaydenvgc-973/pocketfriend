@@ -714,21 +714,26 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               })}
             </div>
 
-            {/* NPCs with locations */}
+            {/* All NPCs */}
             <div className="space-y-1 text-xs border-t border-border pt-2">
-              <p className="font-medium text-muted-foreground">NPCs at locations:</p>
+              <p className="font-medium text-muted-foreground">All NPCs:</p>
               {characters.length > 0 ? (
                 characters.flatMap(c =>
                   (c.fictional_relationships || [])
-                    .filter(rel => !rel.related_character_id && rel.person_name && rel.current_location_id)
+                    .filter(rel => !rel.related_character_id && rel.person_name)
                     .map(rel => (
-                      <div key={`${c.id}_${rel.person_name}`} className="text-[10px] text-muted-foreground/70">
-                        • {rel.person_name} at {locationMap[rel.current_location_id]?.name || "unknown"} (id: {rel.current_location_id.slice(0, 8)})
+                      <div key={`${c.id}_${rel.person_name}`} className="text-[10px]">
+                        <span className="text-muted-foreground/70">• {rel.person_name}:</span>
+                        {rel.current_location_id ? (
+                          <span className="text-blue-400"> {locationMap[rel.current_location_id]?.name || `id: ${rel.current_location_id.slice(0, 8)}`}</span>
+                        ) : (
+                          <span className="text-red-400"> [NO LOCATION]</span>
+                        )}
                       </div>
                     ))
                 )
               ) : (
-                <p className="text-[10px] text-muted-foreground/50">No NPCs with locations</p>
+                <p className="text-[10px] text-muted-foreground/50">No NPCs found</p>
               )}
             </div>
           </motion.div>
