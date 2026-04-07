@@ -3,6 +3,24 @@
  * @param {object} location - The location object with operating_hours
  * @returns {boolean} true if open, false if closed, null if no hours defined
  */
+function toMinutesLH(timeStr) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+function isInWindowLH(currentMinutes, openStr, closeStr) {
+  const open = toMinutesLH(openStr);
+  const close = toMinutesLH(closeStr);
+  if (open == null || close == null) return false;
+  if (open <= close) {
+    // Normal window e.g. 09:00–17:00
+    return currentMinutes >= open && currentMinutes <= close;
+  }
+  // Overnight window e.g. 12:00–02:00
+  return currentMinutes >= open || currentMinutes <= close;
+}
+
 export function isLocationOpen(location) {
   if (!location?.operating_hours || location.operating_hours.length === 0) {
     return null; // No hours defined = assume always open
@@ -10,7 +28,7 @@ export function isLocationOpen(location) {
 
   const now = new Date();
   const dayOfWeek = now.getDay();
-  const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
   const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
   const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
@@ -18,21 +36,19 @@ export function isLocationOpen(location) {
   const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
 
   if (todayEntries.length > 0) {
-    // Hours defined for today — use them
-    return todayEntries.some(h => currentTime >= h.open_time && currentTime <= h.close_time);
+    return todayEntries.some(h => isInWindowLH(currentMinutes, h.open_time, h.close_time));
   }
 
   if (daySpecific.length > 0 && todayEntries.length === 0) {
-    // Hours defined for other days but NOT today — closed today
-    return false;
+    return false; // Hours for other days but not today = closed
   }
 
-  // Only day-agnostic entries (no day_of_week set) — apply to every day
+  // Day-agnostic entries apply every day
   if (dayAgnostic.length > 0) {
-    return dayAgnostic.some(h => currentTime >= h.open_time && currentTime <= h.close_time);
+    return dayAgnostic.some(h => isInWindowLH(currentMinutes, h.open_time, h.close_time));
   }
 
-  return null; // No usable entries
+  return null;
 }
 
 /**
