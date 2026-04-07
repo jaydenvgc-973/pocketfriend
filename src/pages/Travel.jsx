@@ -688,7 +688,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Debug Info</h3>
-              <button onClick={() => setShowDebug(false)} className="text-muted-foreground hover:text-foreground">✕</button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    await base44.functions.invoke('populateNPCLocations', {});
+                    // Refetch to see updates
+                    setTimeout(() => window.location.reload(), 500);
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                  title="Populate missing NPC locations"
+                >
+                  Fix NPCs
+                </button>
+                <button onClick={() => setShowDebug(false)} className="text-muted-foreground hover:text-foreground">✕</button>
+              </div>
             </div>
 
             {/* Locations */}
