@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Trash2, Plus } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
@@ -13,8 +13,10 @@ const EXPENSE_TYPES = [
   { value: "custom", label: "Custom Expense" },
 ];
 
-export default function CharacterExpenseManager({ financial, readOnly = false }) {
+export default function CharacterExpenseManager({ characterId, readOnly = false }) {
   const queryClient = useQueryClient();
+  const [financial, setFinancial] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [newExpense, setNewExpense] = useState({
     name: "",
@@ -22,6 +24,17 @@ export default function CharacterExpenseManager({ financial, readOnly = false })
     type: "custom",
   });
   const [isAdding, setIsAdding] = useState(false);
+
+  useEffect(() => {
+    base44.entities.CharacterFinancial.filter({ character_id: characterId })
+      .then(results => {
+        if (results.length > 0) setFinancial(results[0]);
+      })
+      .finally(() => setLoading(false));
+  }, [characterId]);
+
+  if (loading) return <div className="h-20 bg-secondary/30 rounded-xl animate-pulse" />;
+  if (!financial) return null;
 
   const expenses = financial?.other_monthly_expenses || [];
 

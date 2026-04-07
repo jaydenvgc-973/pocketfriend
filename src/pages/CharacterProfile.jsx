@@ -137,15 +137,6 @@ export default function CharacterProfile() {
     staleTime: 0,
   });
 
-  const { data: financial = null } = useQuery({
-    queryKey: ["characterFinancial", characterId],
-    queryFn: async () => {
-      const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
-      return records[0] || null;
-    },
-    enabled: !!characterId,
-  });
-
   const getReciprocal = () => {
     const settings = userSettings[0];
     if (!settings?.user_relatives || !character?.id) return null;
@@ -307,7 +298,7 @@ export default function CharacterProfile() {
         <CharacterFinancialSummary characterId={characterId} />
 
         {/* Monthly Expenses */}
-        {financial && <CharacterExpenseManager financial={financial} readOnly={character.is_default} />}
+        <CharacterExpenseManager characterId={characterId} readOnly={character.is_default} />
 
         {/* Your Connection */}
         <div className="bg-card border border-border rounded-2xl p-4">
