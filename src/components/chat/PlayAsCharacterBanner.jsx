@@ -37,7 +37,7 @@ export default function PlayAsCharacterBanner() {
         initial={{ y: -40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: -40, opacity: 0 }}
-        className="fixed top-0 left-0 right-0 z-[60] bg-primary text-primary-foreground px-3 py-1.5 flex items-center gap-1.5 shadow-lg"
+        className="fixed top-0 left-0 right-0 z-[60] bg-primary text-primary-foreground px-3 py-2 flex items-center gap-2 shadow-lg pointer-events-auto"
       >
         <Gamepad2 className="w-3.5 h-3.5 flex-shrink-0" />
         <CharacterAvatar character={activeCharacter} size="sm" />
@@ -45,57 +45,62 @@ export default function PlayAsCharacterBanner() {
 
         {/* Media Grid */}
         <button
-          onClick={(e) => { e.stopPropagation(); setShowMediaGallery(true); }}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowMediaGallery(true); }}
+          onTouchStart={(e) => { e.stopPropagation(); setShowMediaGallery(true); }}
+          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
           title="Media from characters"
         >
-          <Images className="w-3.5 h-3.5" />
+          <Images className="w-4 h-4" />
         </button>
 
         {/* World Contacts — speaks as active character */}
         <button
-          onClick={(e) => { e.stopPropagation(); setShowWorldContacts(true); }}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowWorldContacts(true); }}
+          onTouchStart={(e) => { e.stopPropagation(); setShowWorldContacts(true); }}
+          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
           title="Speak to NPCs as this character"
         >
-          <Globe className="w-3.5 h-3.5" />
+          <Globe className="w-4 h-4" />
         </button>
 
         {/* Narrative Tool */}
         <button
-          onClick={(e) => { e.stopPropagation(); setShowNarrative(true); }}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowNarrative(true); }}
+          onTouchStart={(e) => { e.stopPropagation(); setShowNarrative(true); }}
+          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
           title="Narrative tool"
         >
-          <BookOpen className="w-3.5 h-3.5" />
+          <BookOpen className="w-4 h-4" />
         </button>
 
         {/* Troubleshooting */}
         <button
-          onClick={(e) => { e.stopPropagation(); setShowTroubleshooting(true); }}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowTroubleshooting(true); }}
+          onTouchStart={(e) => { e.stopPropagation(); setShowTroubleshooting(true); }}
+          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
           title="Troubleshooting"
         >
-          <Wrench className="w-3.5 h-3.5" />
+          <Wrench className="w-4 h-4" />
         </button>
 
         {/* Settings */}
-        <Link
-          to="/settings"
-          onClick={(e) => e.stopPropagation()}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
+        <button
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = '/settings'; }}
+          onTouchStart={(e) => { e.stopPropagation(); window.location.href = '/settings'; }}
+          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
           title="Settings"
         >
-          <Settings className="w-3.5 h-3.5" />
-        </Link>
+          <Settings className="w-4 h-4" />
+        </button>
 
         {/* Stop playing */}
         <button
-          onClick={(e) => { e.stopPropagation(); setActiveCharacter(null); }}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setActiveCharacter(null); }}
+          onTouchStart={(e) => { e.stopPropagation(); setActiveCharacter(null); }}
+          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
           title="Stop playing as character"
         >
-          <X className="w-3.5 h-3.5" />
+          <X className="w-4 h-4" />
         </button>
       </motion.div>
 
