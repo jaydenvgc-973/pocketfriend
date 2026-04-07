@@ -21,14 +21,22 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
 
-        // READ-ONLY: Display characters whose resolved location is here
-        const currentlyHere = charactersByLocationId[loc.id] || [];
-        // Also show NPC family members for home locations
-        const npcResidents = loc.category === 'home'
-          ? (loc.resident_family_members || []).map(m => m.name)
-          : [];
-        const allOccupants = currentlyHere.length > 0 ? currentlyHere : npcResidents;
-        const isVacant = loc.category === 'home' && currentlyHere.length === 0 && npcResidents.length === 0;
+        // For residential (home) locations: check who is a resident (current_home_location_id)
+        let allOccupants = [];
+        let isVacant = false;
+
+        if (loc.category === 'home') {
+          // Get residents by current_home_location_id (not resolved location)
+          const residents = (charactersByLocationId[loc.id] || []).filter(name => 
+            Object.values(charactersByLocationId).flat().includes(name)
+          );
+          const npcResidents = (loc.resident_family_members || []).map(m => m.name);
+          allOccupants = [...new Set([...residents, ...npcResidents])];
+          isVacant = allOccupants.length === 0;
+        } else {
+          // For non-residential locations: use charactersByLocationId as-is
+          allOccupants = charactersByLocationId[loc.id] || [];
+        }
 
         return (
           <button
