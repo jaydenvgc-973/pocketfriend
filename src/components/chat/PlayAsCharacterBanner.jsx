@@ -45,8 +45,8 @@ export default function PlayAsCharacterBanner() {
 
         {/* Media Grid */}
         <button
-          onClick={() => setShowMediaGallery(true)}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          onClick={(e) => { e.stopPropagation(); setShowMediaGallery(true); }}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
           title="Media from characters"
         >
           <Images className="w-3.5 h-3.5" />
@@ -54,8 +54,8 @@ export default function PlayAsCharacterBanner() {
 
         {/* World Contacts — speaks as active character */}
         <button
-          onClick={() => setShowWorldContacts(true)}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          onClick={(e) => { e.stopPropagation(); setShowWorldContacts(true); }}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
           title="Speak to NPCs as this character"
         >
           <Globe className="w-3.5 h-3.5" />
@@ -63,8 +63,8 @@ export default function PlayAsCharacterBanner() {
 
         {/* Narrative Tool */}
         <button
-          onClick={() => setShowNarrative(true)}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          onClick={(e) => { e.stopPropagation(); setShowNarrative(true); }}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
           title="Narrative tool"
         >
           <BookOpen className="w-3.5 h-3.5" />
@@ -72,8 +72,8 @@ export default function PlayAsCharacterBanner() {
 
         {/* Troubleshooting */}
         <button
-          onClick={() => setShowTroubleshooting(true)}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          onClick={(e) => { e.stopPropagation(); setShowTroubleshooting(true); }}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
           title="Troubleshooting"
         >
           <Wrench className="w-3.5 h-3.5" />
@@ -82,7 +82,8 @@ export default function PlayAsCharacterBanner() {
         {/* Settings */}
         <Link
           to="/settings"
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          onClick={(e) => e.stopPropagation()}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
           title="Settings"
         >
           <Settings className="w-3.5 h-3.5" />
@@ -90,8 +91,8 @@ export default function PlayAsCharacterBanner() {
 
         {/* Stop playing */}
         <button
-          onClick={() => setActiveCharacter(null)}
-          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0"
+          onClick={(e) => { e.stopPropagation(); setActiveCharacter(null); }}
+          className="p-1 rounded-full hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer"
           title="Stop playing as character"
         >
           <X className="w-3.5 h-3.5" />
