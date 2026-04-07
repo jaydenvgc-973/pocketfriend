@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, MapPin, Users, Navigation, Plus } from "lucide-react";
+import { ArrowLeft, MapPin, Users, Navigation, Plus, Wrench } from "lucide-react";
 import { toDisplay12h } from "@/lib/timeFormat";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ export default function Travel() {
   const [wakeUpModal, setWakeUpModal] = useState(null); // { character, pendingCharacterId }
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [showRealLocationModal, setShowRealLocationModal] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -378,6 +379,13 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
           <h1 className="text-base font-bold text-foreground">Travel</h1>
           <p className="text-xs text-muted-foreground">Choose a place, then who's coming</p>
         </div>
+        <button
+          onClick={() => setShowDebug(!showDebug)}
+          className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+          title="Debug Travel Issues"
+        >
+          <Wrench className="w-5 h-5" />
+        </button>
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6">
@@ -668,6 +676,64 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       />
 
       <BottomNav />
+
+      {/* Debug Panel */}
+      <AnimatePresence>
+        {showDebug && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-28 right-4 w-80 max-h-96 bg-card border border-border rounded-xl shadow-lg overflow-y-auto z-40 p-4 space-y-3"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Debug Info</h3>
+              <button onClick={() => setShowDebug(false)} className="text-muted-foreground hover:text-foreground">✕</button>
+            </div>
+
+            {/* Locations */}
+            <div className="space-y-1 text-xs">
+              <p className="font-medium text-muted-foreground">Locations: {locationsData.length}</p>
+              {locationsData.map(l => (
+                <div key={l.id} className="text-[10px] text-muted-foreground/70 truncate">
+                  • {l.name} (id: {l.id.slice(0, 8)})
+                </div>
+              ))}
+            </div>
+
+            {/* Characters */}
+            <div className="space-y-1 text-xs border-t border-border pt-2">
+              <p className="font-medium text-muted-foreground">Characters: {characters.length}</p>
+              {characters.map(c => {
+                const resolved = resolveCharacterLocation(c, locationMap);
+                return (
+                  <div key={c.id} className="text-[10px] text-muted-foreground/70">
+                    • {c.name}: {resolved.resolved_current_location_name || "unknown"}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* NPCs with locations */}
+            <div className="space-y-1 text-xs border-t border-border pt-2">
+              <p className="font-medium text-muted-foreground">NPCs at locations:</p>
+              {characters.length > 0 ? (
+                characters.flatMap(c =>
+                  (c.fictional_relationships || [])
+                    .filter(rel => !rel.related_character_id && rel.person_name && rel.current_location_id)
+                    .map(rel => (
+                      <div key={`${c.id}_${rel.person_name}`} className="text-[10px] text-muted-foreground/70">
+                        • {rel.person_name} at {locationMap[rel.current_location_id]?.name || "unknown"} (id: {rel.current_location_id.slice(0, 8)})
+                      </div>
+                    ))
+                )
+              ) : (
+                <p className="text-[10px] text-muted-foreground/50">No NPCs with locations</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
