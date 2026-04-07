@@ -81,7 +81,7 @@ export default function Travel() {
 
   /**
    * For a given location, check if we're allowed to visit it.
-   * AUTHORITATIVE: Uses current_location_id to determine who's actually home.
+   * AUTHORITATIVE: Residency is determined by current_home_location_id only.
    * Returns: { canVisit, blockedBy, homeResidents, npcResidents }
    */
   const checkHomeAccess = (location) => {
@@ -89,11 +89,8 @@ export default function Travel() {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
 
-    // LIVE: Use engine to compute actual current location (not stored field)
-    const homeResidents = characters.filter(c => {
-      const resolved = resolveCharacterLocation(c, locationMap);
-      return resolved.resolved_current_location_id === location.id;
-    });
+    // Residents are those whose current_home_location_id matches this location
+    const homeResidents = characters.filter(c => c.current_home_location_id === location.id);
 
     // NPC residents listed on the location
     const npcResidents = location.resident_family_members || [];
