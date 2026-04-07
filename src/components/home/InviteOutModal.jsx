@@ -76,7 +76,7 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onClo
 
         <div className="flex gap-2">
           <Button
-            onClick={() => onDecline()}
+            onClick={() => onDecline(selectedInv)}
             variant="outline"
             size="sm"
             className="flex-1 rounded-lg"

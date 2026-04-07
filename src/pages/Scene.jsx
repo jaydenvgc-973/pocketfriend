@@ -1523,14 +1523,14 @@ Return JSON:
             const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
             navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
           }}
-          onDecline={() => {
-            if (pendingInvitations.length > 0) {
-              base44.functions.invoke('recordCharacterInviteDeclined', {
-                characterId: pendingInvitations[0].characterId,
-                locationId: pendingInvitations[0].locationId,
-              }).catch(() => {});
-            }
-            setPendingInvitations(null);
+          onDecline={(selectedInv) => {
+            base44.functions.invoke('recordCharacterInviteDeclined', {
+              characterId: selectedInv.characterId,
+              locationId: selectedInv.locationId,
+            }).catch(() => {});
+            const remaining = pendingInvitations.filter(i => i.characterId !== selectedInv.characterId);
+            setPendingInvitations(remaining.length > 0 ? remaining : null);
+            // CHARACTER MUST STILL GO — do NOT navigate to scene, user stays on current screen
           }}
           onClose={() => {
             if (settings.id) {
