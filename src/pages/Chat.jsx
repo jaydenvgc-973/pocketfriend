@@ -22,6 +22,7 @@ import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
 import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
+import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
@@ -59,6 +60,7 @@ export default function Chat() {
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null); // message pending delete choice
+  const [forwardTarget, setForwardTarget] = useState(null); // message pending forward
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1819,6 +1821,7 @@ Reply with ONLY the single emoji or the word "none".`,
               onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => playCharacterVoice(msg.id, msg.content, character, userSettings, true) : null}
               isPlayingVoice={playingAudioId === msg.id}
               voiceError={voiceErrors[msg.id]}
+              onForward={!msg.is_narrative ? (msg) => setForwardTarget(msg) : null}
             />
           ))}
         </AnimatePresence>
@@ -1868,6 +1871,12 @@ Reply with ONLY the single emoji or the word "none".`,
         onForget={handleDeleteForget}
         onCancel={() => setDeleteTarget(null)}
       />
+      {forwardTarget && (
+        <ForwardMessageModal
+          message={forwardTarget}
+          onClose={() => setForwardTarget(null)}
+        />
+      )}
       <BottomNav />
 
       {/* Approval pop-ups for life events */}

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles } from "lucide-react";
+import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
@@ -15,7 +15,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -224,7 +224,19 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               originalPrompt={message.generation_context?.prompt || null}
             />
             {message.content && message.content.trim() && (
-              <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
+              message.is_forwarded ? (
+                <div className="px-4 py-2.5">
+                  <div className="flex items-center gap-1 mb-1">
+                    <Forward className="w-3 h-3 text-primary/60" />
+                    <span className="text-[10px] text-primary/60 font-medium">Fwd from {message.forwarded_from || "them"}</span>
+                  </div>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap border-l-2 border-primary/30 pl-2">
+                    {message.content.replace(/^Fwd Message from [^:]+:\n?/, "")}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
+              )
             )}
             {message.songs_heard && message.songs_heard.length > 0 && (
               <div className="px-4 py-3 space-y-2">
@@ -261,6 +273,19 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           <span className="text-[10px] text-red-400 mt-1 ml-2">Voice error: {voiceError}</span>
         )}
       </div>
+
+      {/* Forward button — visible on all non-narrative messages */}
+      {!isNarrative && onForward && (
+        <motion.button
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.95 }}
+          onClick={(e) => { e.stopPropagation(); onForward(message); }}
+          className="flex-shrink-0 flex items-center justify-center w-6 h-6 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary transition-colors"
+          title="Forward message"
+        >
+          <Forward className="w-3.5 h-3.5" />
+        </motion.button>
+      )}
 
       {/* Voice button outside bubble on the right - visible on all character messages */}
       {!isNarrative && !isUser && onPlayVoice && (
