@@ -180,6 +180,83 @@
       "format": "date-time",
       "description": "When the resolved location was last computed"
     },
+    "traveling_to_location_id": {
+      "type": "string",
+      "description": "Destination location if character is actively traveling"
+    },
+    "traveling_to_location_name": {
+      "type": "string",
+      "description": "Display name of travel destination"
+    },
+    "location_status": {
+      "type": "string",
+      "enum": [
+        "at_location",
+        "traveling",
+        "home",
+        "unavailable"
+      ],
+      "default": "home",
+      "description": "Current location state (at place, in transit, home, or unavailable)"
+    },
+    "last_location_update_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When location state was last updated"
+    },
+    "last_arrived_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When character last arrived at current location"
+    },
+    "location_visibility_state": {
+      "type": "string",
+      "enum": [
+        "visible",
+        "hidden",
+        "in_scene",
+        "unreachable"
+      ],
+      "default": "visible",
+      "description": "Whether character is visible in who's-here lists"
+    },
+    "pending_invite_id": {
+      "type": "string",
+      "description": "ID of pending invite the character sent to user"
+    },
+    "schedule_override_active": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if character temporarily deviating from schedule"
+    },
+    "return_to_schedule_after_outing": {
+      "type": "string",
+      "description": "Location ID to return to when schedule override ends"
+    },
+    "recent_location_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "arrived_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "left_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": [],
+      "description": "Recent visit history for location rotation logic"
+    },
     "travel_status": {
       "type": "string",
       "enum": [

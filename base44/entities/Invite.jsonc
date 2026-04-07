@@ -1,0 +1,69 @@
+{
+  "name": "Invite",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character sending the invite"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of inviter"
+    },
+    "destination_id": {
+      "type": "string",
+      "description": "ID of the location being invited to"
+    },
+    "destination_name": {
+      "type": "string",
+      "description": "Display name of destination"
+    },
+    "sent_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When invite was sent"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "declined",
+        "ignored",
+        "expired",
+        "cancelled"
+      ],
+      "default": "pending",
+      "description": "Current status of invite"
+    },
+    "scene_navigation_allowed": {
+      "type": "boolean",
+      "default": false,
+      "description": "True only if user accepted (allow scene page navigation)"
+    },
+    "character_still_going": {
+      "type": "boolean",
+      "default": true,
+      "description": "Does character proceed regardless of user response"
+    },
+    "user_attending": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if user accepted and is attending"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When invite auto-expires if not responded to"
+    },
+    "context": {
+      "type": "string",
+      "description": "Free-text context about the invite (e.g., 'casual meetup' or 'urgent help')"
+    }
+  },
+  "required": [
+    "character_id",
+    "destination_id",
+    "sent_at"
+  ]
+}
