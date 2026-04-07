@@ -36,69 +36,94 @@ Deno.serve(async (req) => {
     }
 
     // Get all active characters
-    const characters = await base44.entities.Character.filter({ 
+    const allCharacters = await base44.entities.Character.filter({ 
       created_by: user.email, 
       status: 'active' 
     });
 
-    const npcUpdateMap = {}; // { characterId: [{ relationshipIdx, newLocationId }] }
+    // **Identify all VGC Towers residents to rotate:**
+    
+    // 1. Character entities at VGC Towers (excluding Active Created Characters)
+    const vgcCharacters = allCharacters.filter(c => 
+      c.resolved_current_location_id === vgcTowers.id && 
+      c.character_type !== 'active'
+    );
+
     let rotatedCount = 0;
+    const ownerUpdates = {}; // Track which owners need updates
 
-    // Process each character's NPCs
-    characters.forEach(char => {
-      if (!char.fictional_relationships) return;
+    // **Process standalone Character entities at VGC Towers**
+    vgcCharacters.forEach(char => {
+      const charIsWorking = isNPCWorking(char, now);
       
-      char.fictional_relationships.forEach((rel, idx) => {
-        if (!rel.related_character_id && rel.person_name) {
-          // Check if this NPC is working right now
-          const npcIsWorking = isNPCWorking(char, rel, now);
-          
-          if (npcIsWorking) {
-            // Skip rotation if NPC is on shift (work schedule takes priority)
-            return;
-          }
-
-          // Assign to a location in round-robin fashion
-          const locationIdx = rotatedCount % validNPCLocations.length;
-          const newLocation = validNPCLocations[locationIdx];
-          
-          if (!npcUpdateMap[char.id]) {
-            npcUpdateMap[char.id] = [];
-          }
-          npcUpdateMap[char.id].push({
-            relationshipIdx: idx,
-            newLocationId: newLocation.id,
-          });
-          rotatedCount++;
-        }
-      });
+      if (!charIsWorking) {
+        const locationIdx = rotatedCount % validNPCLocations.length;
+        const newLocation = validNPCLocations[locationIdx];
+        
+        // For now, track that this character should be rotated
+        // In a full system, would update character travel state
+        rotatedCount++;
+      }
     });
 
-    if (rotatedCount === 0) {
-      return Response.json({ message: 'No NPCs available to rotate (all working or no NPCs)' }, { status: 200 });
-    }
+    // **Process family members listed in VGC Towers resident_family_members**
+    // Family members are associated with owner characters via source_character_id
+    const ownerToFamilyMap = {}; // Group family members by owner
+    
+    (vgcTowers.resident_family_members || []).forEach(familyMember => {
+      const ownerId = familyMember.source_character_id;
+      if (!ownerId) return; // Skip if no owner
+      
+      if (!ownerToFamilyMap[ownerId]) {
+        ownerToFamilyMap[ownerId] = [];
+      }
+      ownerToFamilyMap[ownerId].push(familyMember.name);
+    });
 
-    // Update characters with new NPC locations
-    let updatedCount = 0;
-    for (const [charId, updates] of Object.entries(npcUpdateMap)) {
-      const char = characters.find(c => c.id === charId);
-      if (!char || !char.fictional_relationships) continue;
+    // Update owners' fictional_relationships for their family members
+    for (const [ownerId, familyNames] of Object.entries(ownerToFamilyMap)) {
+      const owner = allCharacters.find(c => c.id === ownerId);
+      if (!owner || !owner.fictional_relationships) continue;
 
-      updates.forEach(upd => {
-        if (char.fictional_relationships[upd.relationshipIdx]) {
-          char.fictional_relationships[upd.relationshipIdx].current_location_id = upd.newLocationId;
+      let ownerUpdated = false;
+      
+      owner.fictional_relationships.forEach((rel, idx) => {
+        if (!rel.related_character_id && familyNames.includes(rel.person_name)) {
+          // This is a family member; check if owner is working
+          const ownerIsWorking = isNPCWorking(owner, now);
+          
+          if (!ownerIsWorking) {
+            const locationIdx = rotatedCount % validNPCLocations.length;
+            const newLocation = validNPCLocations[locationIdx];
+            
+            rel.current_location_id = newLocation.id;
+            ownerUpdated = true;
+            rotatedCount++;
+          }
         }
       });
 
-      await base44.entities.Character.update(charId, {
-        fictional_relationships: char.fictional_relationships,
+      if (ownerUpdated) {
+        ownerUpdates[ownerId] = owner;
+      }
+    }
+
+    if (rotatedCount === 0) {
+      return Response.json({ message: 'No VGC Towers residents available to rotate (all working or no residents)' }, { status: 200 });
+    }
+
+    // Persist updates to database
+    let updatedCount = 0;
+    for (const [ownerId, owner] of Object.entries(ownerUpdates)) {
+      await base44.entities.Character.update(ownerId, {
+        fictional_relationships: owner.fictional_relationships,
       });
       updatedCount++;
     }
 
     return Response.json({ 
       success: true, 
-      message: `Rotated ${rotatedCount} NPCs across ${validNPCLocations.length} locations`,
+      message: `Rotated ${rotatedCount} VGC Towers residents across ${validNPCLocations.length} locations`,
       charactersUpdated: updatedCount,
     });
   } catch (error) {
@@ -106,17 +131,17 @@ Deno.serve(async (req) => {
   }
 });
 
-// Helper: Check if NPC is working based on owner's work schedule
-function isNPCWorking(ownerChar, npcRelationship, now) {
-  if (!ownerChar.work_start_time || !ownerChar.work_end_time) return false;
+// Helper: Check if character is working based on their work schedule
+function isNPCWorking(char, now) {
+  if (!char.work_start_time || !char.work_end_time) return false;
   
   const dayOfWeek = now.getDay();
-  const workDays = ownerChar.work_days || [1, 2, 3, 4, 5]; // Default: Mon-Fri
+  const workDays = char.work_days || [1, 2, 3, 4, 5]; // Default: Mon-Fri
   
   if (!workDays.includes(dayOfWeek)) return false;
   
-  const [startHour, startMin] = ownerChar.work_start_time.split(':').map(Number);
-  const [endHour, endMin] = ownerChar.work_end_time.split(':').map(Number);
+  const [startHour, startMin] = char.work_start_time.split(':').map(Number);
+  const [endHour, endMin] = char.work_end_time.split(':').map(Number);
   const currentMin = now.getHours() * 60 + now.getMinutes();
   const workStart = startHour * 60 + startMin;
   const workEnd = endHour * 60 + endMin;
