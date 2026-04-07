@@ -178,8 +178,8 @@ export default function GroupChat() {
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background pb-[60px]">
-      <div className="bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 flex-shrink-0">
-        <Link to="/home" className="text-muted-foreground hover:text-foreground">
+      <div className="sticky top-0 z-[1000] bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 flex-shrink-0 pointer-events-auto">
+        <Link to="/home" className="p-2 -ml-2 text-muted-foreground hover:text-foreground pointer-events-auto cursor-pointer">
           <ArrowLeft className="w-5 h-5" />
         </Link>
         <h2 className="text-sm font-semibold text-foreground">Group Chats</h2>

@@ -75,8 +75,8 @@ export default function Groups() {
 
   return (
     <div className="min-h-screen bg-background pb-20">
-      <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
-        <Link to="/home" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></Link>
+      <div className="sticky top-0 z-[1000] bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 pointer-events-auto">
+        <Link to="/home" className="p-2 -ml-2 text-muted-foreground hover:text-foreground pointer-events-auto cursor-pointer"><ArrowLeft className="w-5 h-5" /></Link>
         <h2 className="text-sm font-semibold">Groups</h2>
       </div>
       <div className="max-w-lg mx-auto px-6 py-6 space-y-6">
