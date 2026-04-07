@@ -1,0 +1,94 @@
+{
+  "name": "VerifiedRealLocation",
+  "type": "object",
+  "properties": {
+    "place_name": {
+      "type": "string",
+      "description": "Normalized place name from OSM"
+    },
+    "search_key": {
+      "type": "string",
+      "description": "Normalized key used for cache lookup: name+city+state lowercased"
+    },
+    "formatted_address": {
+      "type": "string",
+      "description": "Full formatted address"
+    },
+    "city": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "latitude": {
+      "type": "number"
+    },
+    "longitude": {
+      "type": "number"
+    },
+    "osm_category": {
+      "type": "string",
+      "description": "OSM top-level category (amenity, shop, leisure, etc.)"
+    },
+    "osm_type": {
+      "type": "string",
+      "description": "OSM subtype (bar, restaurant, gym, etc.)"
+    },
+    "app_location_category": {
+      "type": "string",
+      "enum": [
+        "food_drink",
+        "gym",
+        "social",
+        "outdoor",
+        "medical",
+        "grocery",
+        "education",
+        "business",
+        "religion",
+        "public",
+        "generic"
+      ],
+      "default": "generic",
+      "description": "Mapped app location category"
+    },
+    "operating_hours_raw": {
+      "type": "string",
+      "description": "Raw OSM opening_hours string e.g. Mo-Fr 09:00-17:00"
+    },
+    "operating_hours_manual": {
+      "type": "string",
+      "description": "User-provided hours if OSM hours are unavailable"
+    },
+    "image_url": {
+      "type": "string",
+      "description": "User-uploaded or app-generated image URL"
+    },
+    "source_provider": {
+      "type": "string",
+      "enum": [
+        "photon",
+        "nominatim",
+        "user_confirmed"
+      ],
+      "default": "photon"
+    },
+    "osm_place_id": {
+      "type": "string",
+      "description": "OSM place ID for deduplication"
+    },
+    "verified": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once user has confirmed this is the correct place"
+    },
+    "linked_location_reference_id": {
+      "type": "string",
+      "description": "ID of the LocationReference created from this verified place"
+    }
+  },
+  "required": [
+    "place_name",
+    "search_key"
+  ]
+}
