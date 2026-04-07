@@ -429,16 +429,35 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
              selectedLocation={selectedLocation}
              onSelect={setSelectedLocation}
              activeCharacterIds={characters.map(c => c.id)}
-             charactersByLocationId={characters.reduce((acc, c) => {
-               // LIVE resolution: compute actual current location from engine
-               const resolved = resolveCharacterLocation(c, locationMap);
-               const locId = resolved.resolved_current_location_id;
-               if (locId) { 
-                 acc[locId] = acc[locId] || []; 
-                 acc[locId].push(c.name); 
-               }
-               return acc;
-             }, {})}
+             charactersByLocationId={(() => {
+               const byLocation = {};
+               
+               // Add active characters at their resolved locations
+               characters.forEach(c => {
+                 const resolved = resolveCharacterLocation(c, locationMap);
+                 const locId = resolved.resolved_current_location_id;
+                 if (locId) { 
+                   byLocation[locId] = byLocation[locId] || []; 
+                   byLocation[locId].push(c.name); 
+                 }
+               });
+               
+               // Add NPCs at their traveled locations
+               characters.forEach(char => {
+                 if (!char.fictional_relationships) return;
+                 char.fictional_relationships.forEach(rel => {
+                   if (!rel.related_character_id && rel.person_name && rel.current_location_id) {
+                     const locId = rel.current_location_id;
+                     byLocation[locId] = byLocation[locId] || [];
+                     if (!byLocation[locId].includes(rel.person_name)) {
+                       byLocation[locId].push(rel.person_name);
+                     }
+                   }
+                 });
+               });
+               
+               return byLocation;
+             })()}
            />
            
            {/* Visit a real location button */}
