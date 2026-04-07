@@ -37,7 +37,7 @@ export default function PlayAsCharacterBanner() {
         initial={{ y: -40, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: -40, opacity: 0 }}
-        className="fixed top-0 left-0 right-0 z-[60] bg-primary text-primary-foreground px-3 py-2 flex items-center gap-2 shadow-lg pointer-events-auto"
+        className="fixed top-0 left-0 right-0 z-[9999] bg-primary text-primary-foreground px-3 py-2 flex items-center gap-2 shadow-lg pointer-events-auto"
       >
         <Gamepad2 className="w-3.5 h-3.5 flex-shrink-0" />
         <CharacterAvatar character={activeCharacter} size="sm" />
