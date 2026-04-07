@@ -35,7 +35,6 @@ Deno.serve(async (req) => {
 
     // Fetch all active characters
     const allChars = await base44.entities.Character.filter({
-      status: 'active',
       character_type: 'active'
     });
 
