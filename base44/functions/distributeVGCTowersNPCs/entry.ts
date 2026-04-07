@@ -134,6 +134,33 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Persist location changes to database
+    for (const dist of distribution) {
+      try {
+        const sourceChar = characters.find(c => c.id === dist.sourceCharacterId);
+        if (!sourceChar) continue;
+
+        // Update fictional_relationships with new location for the NPC
+        const updatedRels = (sourceChar.fictional_relationships || []).map(rel => {
+          if (rel.person_name === dist.npcName && !rel.related_character_id) {
+            return {
+              ...rel,
+              current_location_id: dist.locationId,
+              current_location_name: dist.locationName,
+              last_location_update_time: now.toISOString()
+            };
+          }
+          return rel;
+        });
+
+        await base44.entities.Character.update(dist.sourceCharacterId, {
+          fictional_relationships: updatedRels
+        });
+      } catch (err) {
+        console.error(`Failed to update NPC location for ${dist.npcName}:`, err);
+      }
+    }
+
     // Log the distribution for debugging
     const result = {
       success: true,
@@ -141,7 +168,8 @@ Deno.serve(async (req) => {
       totalVGCTowersNPCs: vgcTowersNPCs.length,
       stayingAtHome: stayAtHome.length,
       distributed: distribution.length,
-      distribution: distribution
+      distribution: distribution,
+      persisted: true
     };
 
     return Response.json(result);
