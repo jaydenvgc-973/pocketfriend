@@ -530,10 +530,18 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
 
+    // ── PARSE SUBJECT TYPE FIRST (used throughout all subsequent blocks) ──────
+    let resolvedSubjectType = subjectType || "character";
+    const tagMatch = prompt.match(/^\[(USER|CHARACTER|JOINT)\]/i);
+    if (tagMatch) resolvedSubjectType = tagMatch[1].toLowerCase();
+    const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
+
     // ── SERVER-SIDE CHARACTER REF RESOLUTION ──────────────────────────────────
     // Always fetch the character record so we have the latest avatar + reference images,
     // regardless of what the frontend passed in. This prevents "no refs" when the
     // frontend passes an empty array.
+    // RULE: All characters with avatars — active created, NPC fictitious, NPC family — must
+    // be referenced at 100% for face shape, facial features, skin tone, body type, and hair.
     let resolvedCharacterRefs = characterReferenceImages || [];
     let characterAppearanceNote = "";
 
@@ -541,15 +549,16 @@ Deno.serve(async (req) => {
       try {
         const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
         if (charRecord) {
-          // Build server-side ref list: avatar first, then reference_image_urls
+          // Build server-side ref list: avatar first (most reliable), then reference_image_urls
+          // Always use server-side refs — they are authoritative and most up-to-date
           const serverRefs = [];
           if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
           if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
 
-          // Use server-side refs if frontend passed nothing or server has more
-          if (serverRefs.length > resolvedCharacterRefs.length) {
+          // ALWAYS prefer server-side refs — they are the canonical identity source
+          if (serverRefs.length > 0) {
             resolvedCharacterRefs = serverRefs;
-            console.log(`[CHAR-REFS] Using server-side refs: ${serverRefs.length} images for ${charRecord.name}`);
+            console.log(`[CHAR-REFS] Server-side refs (authoritative): ${serverRefs.length} images for ${charRecord.name} (type: ${charRecord.character_type || 'active'})`);
           }
 
           // Build appearance description text for when refs are sparse/missing
@@ -650,12 +659,6 @@ Deno.serve(async (req) => {
     } catch (refErr) {
       console.error('[USER-REFS] Failed to resolve user refs server-side:', refErr.message);
     }
-
-    // Parse [TAG] from start of prompt — do this BEFORE user ref resolution
-    let resolvedSubjectType = subjectType || "character";
-    const tagMatch = prompt.match(/^\[(USER|CHARACTER|JOINT)\]/i);
-    if (tagMatch) resolvedSubjectType = tagMatch[1].toLowerCase();
-    const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
 
     const hasUserImages = resolvedUserRefs.length > 0;
     const hasCharacterImages = resolvedCharacterRefs.length > 0;
@@ -787,10 +790,9 @@ Deno.serve(async (req) => {
         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + (effectiveUserIncluded ? 2 : charCount)} = ${characterName} — replicate their exact face, skin tone, hair, and body with maximum fidelity.${effectiveUserIncluded ? ` Final images = THE USER — also present in this scene, replicate their exact appearance.` : ''} Do NOT redesign the room.`
         : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance.${doNotIncludeOthers}`;
 
-      // For character-only photos in chat, enforce strict appearance consistency
-      const characterAppearanceStrict = resolvedSubjectType === 'character' 
-        ? `\n\n════════════════════════════════════════════════════════════\nCHARACTER IDENTITY LOCK - 100% ACCURACY REQUIRED:\nWhen generating a photo of ${characterName} sending/showing this image:\n- Facial features: MUST match exactly\n- Skin tone: MUST match exactly (no variation)\n- Hair type, color, and style: MUST match exactly\n- Body type: MUST match exactly\n${characterName} must be INSTANTLY RECOGNIZABLE\nNO ARTISTIC INTERPRETATION - strict character consistency\n════════════════════════════════════════════════════════════`
-        : '';
+      // For ALL character photos — active created, NPC fictitious, NPC family — enforce
+      // 100% identity lock. The avatar IS the character. Every image must match exactly.
+      const characterAppearanceStrict = `\n\n════════════════════════════════════════════════════════════\nCHARACTER IDENTITY LOCK — 100% FIDELITY REQUIRED\nThis applies whether ${characterName} is an active character, NPC, or family member.\nThe reference images provided ARE this person's face and body. They are non-negotiable.\n\nLOCKED AT 100% — NO DEVIATION:\n• Face shape: IDENTICAL to reference — bone structure, jaw, cheekbones, forehead\n• Facial features: Eyes (shape, color, distance), nose (shape, size), lips — EXACT MATCH\n• Skin tone: EXACT match — do NOT lighten, darken, or shift hue whatsoever\n• Hair texture: Exact curl pattern, wave, or straightness — do NOT alter\n• Hair length: Exact length from reference — do NOT shorten or lengthen\n• Hair color: Exact color from reference — do NOT shift shade or add highlights\n• Body type: Exact build, proportions, and height from reference\n• Distinctive features: Any birthmarks, scars, or unique traits MUST appear\n\n${characterName} must be INSTANTLY RECOGNIZABLE as the same person in every image.\nThe reference image IS the ground truth — not a style suggestion.\nDo NOT produce a generic or idealized version. Do NOT beautify or normalize.\nDo NOT default to Caucasian or model-like features if the reference shows otherwise.\n════════════════════════════════════════════════════════════`;
 
       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}${characterAppearanceStrict}${AUTO_DIVERSITY_CONSTRAINT}`;
 

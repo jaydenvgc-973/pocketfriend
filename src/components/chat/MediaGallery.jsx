@@ -346,11 +346,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       if (!newMsg?.id) throw new Error('Failed to create message');
 
       try {
+        // Collect location reference images for the selected location
+        const locImgs = selectedLocation
+          ? (selectedLocation.zones?.find(z => z.zone_name === selectedZone)?.image_urls
+              || selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls
+              || selectedLocation.image_urls
+              || [])
+          : [];
+
         // Use shared user identity-preserving generation (same as Travel page)
         const imageUrl = await generateImageWithUserIdentity(
           promptText,
           charReferences,
-          selectedLocation ? locationImages : [],
+          locImgs,
           userCharForGen,
           userAppearanceData,
           true // strictMode: enforce maximum identity preservation
@@ -367,7 +375,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
             location_id: selectedLocation?.id || null,
             zone_name: selectedZone || null,
             location_name: selectedLocation?.name || null,
-            location_reference_images: selectedLocation ? locationImages : [],
+            location_reference_images: locImgs,
             user_reference_images: userCharForGen ? buildUserReferenceImages(userCharForGen) : [],
             user_appearance_data: userAppearanceData,
             is_user_identity_locked: true,
