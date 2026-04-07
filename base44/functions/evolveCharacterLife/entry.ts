@@ -1,100 +1,177 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-// ── Location Affinity Engine (inline — no local imports in Deno) ──────────────
-const SOCIAL_ENERGY_AFFINITIES = {
-  introvert:       { preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion'], conditional: ['social','gym'], avoided: [] },
-  mostly_introvert:{ preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion','gym'], conditional: ['social'], avoided: [] },
-  ambivert:        { preferred: ['food_drink','outdoor','home','social'], acceptable: ['gym','public','education','religion','grocery','medical'], conditional: [], avoided: [] },
-  mostly_extrovert:{ preferred: ['social','food_drink','gym'], acceptable: ['outdoor','public','home','education','religion','grocery','medical'], conditional: [], avoided: [] },
-  extrovert:       { preferred: ['social','food_drink'], acceptable: ['gym','outdoor','public','education','religion','grocery','medical'], conditional: ['home'], avoided: [] },
+// ── Location Affinity Engine (inline — Deno cannot use local imports) ─────────
+const _SE = {
+  introvert:        { preferred:['home','outdoor','public'], acceptable:['food_drink','education','medical','grocery','religion'], conditional:['gym'], avoided:['social'] },
+  mostly_introvert: { preferred:['home','outdoor','public'], acceptable:['food_drink','education','medical','grocery','religion','gym'], conditional:['social'], avoided:[] },
+  ambivert:         { preferred:['food_drink','outdoor','home','social'], acceptable:['gym','public','education','religion','grocery','medical'], conditional:[], avoided:[] },
+  mostly_extrovert: { preferred:['social','food_drink','gym','outdoor'], acceptable:['public','home','education','religion','grocery','medical'], conditional:[], avoided:[] },
+  extrovert:        { preferred:['social','food_drink','outdoor'], acceptable:['gym','public','education','religion','grocery','medical'], conditional:['home'], avoided:[] },
 };
-const ARCHETYPE_AFFINITY_OVERRIDES = {
-  'guardian':{'boost':['home','religion','medical'],'penalize':['social']},
+const _AA = {
+  'guardian':{'boost':['home','religion','medical','grocery'],'penalize':['social']},
   'achiever':{'boost':['gym','education','business'],'penalize':[]},
   'rebel':{'boost':['social','outdoor'],'penalize':['religion','home']},
   'introvert':{'boost':['home','outdoor'],'penalize':['social']},
   'charmer':{'boost':['social','food_drink'],'penalize':[]},
-  'wounded':{'boost':['home','outdoor'],'penalize':['social']},
-  'chaotic':{'boost':['social'],'penalize':['home']},
+  'wounded':{'boost':['home','outdoor','religion'],'penalize':['social']},
+  'chaotic':{'boost':['social'],'penalize':['home','religion']},
   'people-pleaser':{'boost':['food_drink','social'],'penalize':[]},
   'self-destructive':{'boost':['social'],'penalize':['gym','medical']},
+  'nurturer':{'boost':['home','medical','grocery','religion'],'penalize':[]},
+  'intellectual':{'boost':['education','public','home'],'penalize':['social']},
+  'homebody':{'boost':['home','grocery','outdoor'],'penalize':['social']},
+  'social butterfly':{'boost':['social','food_drink','gym'],'penalize':['home']},
+  'loner':{'boost':['home','outdoor','public'],'penalize':['social','food_drink']},
+  'romantic':{'boost':['food_drink','outdoor','social'],'penalize':[]},
+  'free spirit':{'boost':['outdoor','social','food_drink'],'penalize':['home']},
 };
-const EMOTIONAL_STATE_MODIFIERS = {
-  sad:{'boost':['home','outdoor'],'penalize':['social']},
-  anxious:{'boost':['home','outdoor'],'penalize':['social']},
-  overwhelmed:{'boost':['home','outdoor'],'penalize':['social']},
-  reflective:{'boost':['home','outdoor','religion'],'penalize':['social']},
-  'closed-off':{'boost':['home'],'penalize':['social','food_drink']},
-  'burnt out':{'boost':['home','outdoor'],'penalize':['social','gym']},
-  grief:{'boost':['home','religion','outdoor'],'penalize':['social']},
-  loneliness:{'boost':['social','food_drink'],'penalize':['home']},
-  joyful:{'boost':['social','food_drink','outdoor'],'penalize':[]},
-  excited:{'boost':['social','food_drink','outdoor','gym'],'penalize':[]},
-  content:{'boost':['home','outdoor','food_drink'],'penalize':[]},
-  flirtatious:{'boost':['social','food_drink'],'penalize':['home']},
-  calm:{'boost':['outdoor','home','food_drink'],'penalize':[]},
-  bored:{'boost':['social','food_drink','outdoor'],'penalize':['home']},
-  irritated:{'boost':['outdoor','gym'],'penalize':['social']},
-  frustrated:{'boost':['gym','outdoor','home'],'penalize':['social']},
-  defensive:{'boost':['home'],'penalize':['social']},
+const _EM = {
+  sad:{'boost':['home','outdoor','religion'],'penalize':['social'],'isolating':true},
+  anxious:{'boost':['home','outdoor'],'penalize':['social'],'isolating':true},
+  overwhelmed:{'boost':['home','outdoor'],'penalize':['social','gym'],'isolating':true},
+  reflective:{'boost':['home','outdoor','religion','public'],'penalize':['social'],'isolating':false},
+  'closed-off':{'boost':['home'],'penalize':['social','food_drink'],'isolating':true},
+  'burnt out':{'boost':['home','outdoor'],'penalize':['social','gym'],'isolating':true},
+  grief:{'boost':['home','religion','outdoor'],'penalize':['social'],'isolating':true},
+  loneliness:{'boost':['social','food_drink','outdoor'],'penalize':['home'],'isolating':false},
+  detachment:{'boost':['home','outdoor'],'penalize':['social'],'isolating':true},
+  apathy:{'boost':['home'],'penalize':[],'isolating':true},
+  hopelessness:{'boost':['home','religion'],'penalize':['social','gym'],'isolating':true},
+  joyful:{'boost':['social','food_drink','outdoor','gym'],'penalize':[],'isolating':false},
+  excited:{'boost':['social','food_drink','outdoor','gym'],'penalize':[],'isolating':false},
+  content:{'boost':['home','outdoor','food_drink'],'penalize':[],'isolating':false},
+  flirtatious:{'boost':['social','food_drink'],'penalize':['home'],'isolating':false},
+  calm:{'boost':['outdoor','home','food_drink','religion'],'penalize':[],'isolating':false},
+  bored:{'boost':['social','food_drink','outdoor'],'penalize':['home'],'isolating':false},
+  irritated:{'boost':['outdoor','gym'],'penalize':['social'],'isolating':false},
+  frustrated:{'boost':['gym','outdoor','home'],'penalize':['social'],'isolating':false},
+  defensive:{'boost':['home','outdoor'],'penalize':['social'],'isolating':true},
+  stress:{'boost':['outdoor','home','gym'],'penalize':['social'],'isolating':false},
+  guilt:{'boost':['home','religion'],'penalize':['social'],'isolating':true},
+  shame:{'boost':['home'],'penalize':['social','food_drink'],'isolating':true},
+  longing:{'boost':['outdoor','religion','home'],'penalize':[],'isolating':false},
+  confidence:{'boost':['social','gym','outdoor'],'penalize':[],'isolating':false},
+  pride:{'boost':['social','gym','food_drink'],'penalize':[],'isolating':false},
+  nostalgia:{'boost':['home','outdoor','food_drink'],'penalize':[],'isolating':false},
+  curiosity:{'boost':['outdoor','education','public','food_drink'],'penalize':[],'isolating':false},
 };
+
+const _CONSERVATIVE_FLAGS = ['gay','lgbt','queer','lgbtq','drag','strip club','strip bar','adult club','adult entertainment','erotic','sex club','swinger','fetish'];
+const _ALCOHOL_FLAGS = ['brewery','distillery','wine bar','cocktail bar','pub','bar'];
+const _NIGHTCLUB_FLAGS = ['nightclub','night club','rave','dance club','lounge club'];
+const _hasPattern = (text, patterns) => { const t=(text||'').toLowerCase(); return patterns.some(p=>t.includes(p)); };
 
 function buildCharacterAffinityContext(character, availableLocations) {
+  // Base profile
   const profile = {};
   const allCats = ['home','outdoor','public','food_drink','education','medical','grocery','religion','social','gym','workplace','school','business','generic'];
-  allCats.forEach(c => profile[c] = 0);
+  allCats.forEach(c => { profile[c] = 0; });
 
-  const socialEnergy = character.social_energy || 'ambivert';
-  const ep = SOCIAL_ENERGY_AFFINITIES[socialEnergy] || SOCIAL_ENERGY_AFFINITIES.ambivert;
-  ep.preferred.forEach(c => { profile[c] = (profile[c]||0) + 3; });
-  ep.acceptable.forEach(c => { profile[c] = (profile[c]||0) + 1; });
-  ep.conditional.forEach(c => { profile[c] = (profile[c]||0) - 1; });
+  // Social energy
+  const se = character.social_energy || 'ambivert';
+  const ep = _SE[se] || _SE.ambivert;
+  (ep.preferred||[]).forEach(c => { profile[c] = (profile[c]||0) + 3; });
+  (ep.acceptable||[]).forEach(c => { profile[c] = (profile[c]||0) + 1; });
+  (ep.conditional||[]).forEach(c => { profile[c] = (profile[c]||0) - 1; });
+  (ep.avoided||[]).forEach(c => { profile[c] = (profile[c]||0) - 3; });
 
-  const archetype = (character.archetype||'').toLowerCase();
-  const ao = ARCHETYPE_AFFINITY_OVERRIDES[archetype];
+  // Archetype
+  const arch = (character.archetype||'').toLowerCase().trim();
+  const ao = _AA[arch] || _AA[Object.keys(_AA).find(k => arch.includes(k)||k.includes(arch))];
   if (ao) {
-    ao.boost.forEach(c => { profile[c] = (profile[c]||0) + 2; });
-    ao.penalize.forEach(c => { profile[c] = (profile[c]||0) - 2; });
+    (ao.boost||[]).forEach(c => { profile[c] = (profile[c]||0) + 2; });
+    (ao.penalize||[]).forEach(c => { profile[c] = (profile[c]||0) - 2; });
   }
 
-  const religion = (character.religion||'').toLowerCase();
+  // Religion
+  const religion = (character.religion||'').toLowerCase().trim();
   const beliefLevel = character.belief_level || 'moderate';
+  const isDevout = beliefLevel === 'devout';
+  const isModerate = beliefLevel === 'moderate';
   if (religion && religion !== 'none') {
-    const rb = beliefLevel === 'devout' ? 4 : beliefLevel === 'moderate' ? 2 : 1;
-    profile.religion = (profile.religion||0) + rb;
-    if (beliefLevel === 'devout') profile.social = (profile.social||0) - 2;
+    profile.religion = (profile.religion||0) + (isDevout ? 5 : isModerate ? 2 : 1);
+    if (isDevout) { profile.social = (profile.social||0) - 2; profile.home = (profile.home||0) + 1; }
+    if ((religion.includes('islam')||religion.includes('muslim')) && (isDevout||isModerate)) {
+      profile.social = (profile.social||0) - 1;
+    }
   }
 
-  const traits = (character.personality_traits||[]).map(t => t.toLowerCase());
-  if (traits.some(t => ['nature','earthy','outdoorsy','grounded','peaceful'].includes(t))) { profile.outdoor += 2; profile.home += 1; profile.social -= 1; }
-  if (traits.some(t => ['foodie','culinary','sociable','outgoing'].includes(t))) profile.food_drink += 2;
-  if (traits.some(t => ['fitness','athletic','active','disciplined'].includes(t))) profile.gym += 2;
+  // Health habits
+  const hh = (character.health_habits||'').toLowerCase();
+  if (/gym|workout|fitness|exercise|train|lift|crossfit/.test(hh)) profile.gym = (profile.gym||0) + 3;
+  if (/run|jog|walk|hike|trail|outdoor|cycle|bike/.test(hh)) profile.outdoor = (profile.outdoor||0) + 2;
+  if (/yoga|meditat|wellness|mindful|pilates/.test(hh)) profile.outdoor = (profile.outdoor||0) + 2;
+  if (/drink|bar|nightclub|party|clubbing/.test(hh)) profile.social = (profile.social||0) + 2;
 
-  const healthHabits = (character.health_habits||'').toLowerCase();
-  if (/gym|workout|fitness|exercise|train/.test(healthHabits)) profile.gym += 2;
-  if (/run|jog|walk|hike|outdoor/.test(healthHabits)) profile.outdoor += 2;
+  // Personality traits
+  const traits = (character.personality_traits||[]).map(t => t.toLowerCase()).join(' ');
+  if (/nature|earthy|outdoors|grounded|peaceful|hiking|trail/.test(traits)) { profile.outdoor += 2; profile.home += 1; profile.social -= 1; }
+  if (/foodie|culinary|brunch|coffee|food lover/.test(traits)) profile.food_drink += 2;
+  if (/fitness|athletic|active|disciplined|sporty|runner|wellness/.test(traits)) { profile.gym += 2; profile.outdoor += 1; }
+  if (/bookish|intellectual|studious|curious|academic|reader/.test(traits)) { profile.education += 2; profile.public += 1; }
+  if (/outgoing|sociable|party|social|gregarious|extroverted/.test(traits)) profile.social += 2;
+  if (/homebody|cozy|domestic|introverted|private/.test(traits)) { profile.home += 2; profile.social -= 1; }
+  if (/spiritual|religious|faithful|devout|prayer|worship/.test(traits)) { profile.religion += 2; profile.home += 1; }
+  if (/night owl|party lover|nightlife|club goer|bar hopper/.test(traits)) profile.social += 2;
 
-  const emotionMod = EMOTIONAL_STATE_MODIFIERS[character.emotional_state||'calm'];
-  if (emotionMod) {
-    emotionMod.boost.forEach(c => { profile[c] = (profile[c]||0) + 2; });
-    emotionMod.penalize.forEach(c => { profile[c] = (profile[c]||0) - 2; });
+  // Emotional state
+  const em = _EM[character.emotional_state||'calm'];
+  if (em) {
+    (em.boost||[]).forEach(c => { profile[c] = (profile[c]||0) + 2; });
+    (em.penalize||[]).forEach(c => { profile[c] = (profile[c]||0) - 2; });
+    if (em.isolating) profile.home = (profile.home||0) + 1;
   }
 
-  // Score available locations
+  // Score locations
   const scored = (availableLocations||[]).map(loc => {
     let score = profile[loc.category] || 0;
-    const venueId = (loc.venue_identity||'').toLowerCase();
-    const isDevout = beliefLevel === 'devout';
-    if (isDevout && religion && religion !== 'none') {
-      if (/gay|lgbt|queer|strip|adult/.test(venueId)) score -= 6;
+    const venueText = [(loc.venue_identity||''),(loc.club_theme||''),(loc.name||''),(loc.subtype||[]).join(' ')].join(' ').toLowerCase();
+
+    // Religion-based venue filtering
+    if (religion && religion !== 'none') {
+      if (isDevout && _hasPattern(venueText, _CONSERVATIVE_FLAGS)) score -= 8;
+      else if (isModerate && _hasPattern(venueText, ['strip club','adult club','sex club'])) score -= 4;
+      if ((religion.includes('islam')||religion.includes('muslim')) && (isDevout||isModerate)) {
+        if (_hasPattern(venueText, _ALCOHOL_FLAGS)) score += isDevout ? -6 : -3;
+      }
     }
+
+    // Introvert + nightclub
+    if (_hasPattern(venueText, _NIGHTCLUB_FLAGS) && ['introvert','mostly_introvert'].includes(se)) score -= 3;
+
+    // Health need → medical
+    if (loc.category === 'medical' && /sick|pain|recover|ill|injury|checkup/.test((character.health_status||'').toLowerCase())) score += 4;
+
+    // Gym + burnt out
+    if (loc.category === 'gym' && /burnt out|overwhelmed|exhausted/.test((character.emotional_state||'').toLowerCase())) score -= 2;
+
+    // Home when worn out
+    if (loc.category === 'home' && /burnt out|overwhelmed|sad|tired|exhausted|grief|anxious/.test((character.emotional_state||'').toLowerCase())) score += 2;
+
+    // Frequented places
+    const freq = (character.frequented_places||[]).map(p=>p.toLowerCase());
+    if (freq.some(p => (loc.name||'').toLowerCase().includes(p) || p.includes((loc.name||'').toLowerCase()))) score += 2;
+
     return { name: loc.name, category: loc.category, score };
   }).sort((a,b) => b.score - a.score);
 
-  const preferred = scored.filter(l => l.score > 1).map(l => `${l.name} (${l.category})`).slice(0,5);
-  const avoided = scored.filter(l => l.score < -1).map(l => `${l.name} (${l.category})`).slice(0,3);
+  const preferred = scored.filter(l => l.score > 1).map(l => `${l.name} (${l.category})`).slice(0,6);
+  const avoided   = scored.filter(l => l.score < -1).map(l => `${l.name} (${l.category})`).slice(0,4);
 
-  return { preferred, avoided, socialEnergy, religion, beliefLevel };
+  const socialDesc = {
+    introvert:'prefers home/parks/quiet places, avoids crowds',
+    mostly_introvert:'leans quiet, small gatherings',
+    ambivert:'mood-dependent between social and quiet',
+    mostly_extrovert:'enjoys lively social venues and restaurants',
+    extrovert:'thrives in clubs, parties, crowded social spaces',
+  }[se] || 'balanced preferences';
+
+  const moodDesc = em
+    ? (em.isolating ? `withdrawing — prefers ${(em.boost||[]).join('/')}` : `outward — drawn to ${(em.boost||[]).join('/')}`)
+    : 'neutral';
+
+  return { preferred, avoided, socialEnergy: se, socialDesc, religion, beliefLevel, moodDesc };
 }
 
 Deno.serve(async (req) => {
@@ -317,15 +394,21 @@ ${eventHistoryContext}
 ${vulnerabilityContext}
 ${growthContext}
 
-LOCATION AFFINITY (character-specific — use this to shape where ${name} goes during free time):
+LOCATION AFFINITY (identity-driven — must shape every location choice during free time):
 ${locationAffinityContext ? `
-Social energy type: ${locationAffinityContext.socialEnergy}
-${locationAffinityContext.religion && locationAffinityContext.religion !== 'none' ? `Religion: ${locationAffinityContext.religion} (${locationAffinityContext.beliefLevel})` : ''}
-Best-fit locations right now: ${locationAffinityContext.preferred.length > 0 ? locationAffinityContext.preferred.join(', ') : 'home or familiar spots'}
-Locations that conflict with identity: ${locationAffinityContext.avoided.length > 0 ? locationAffinityContext.avoided.join(', ') : 'none flagged'}
+SOCIAL ENERGY: ${locationAffinityContext.socialEnergy} — ${locationAffinityContext.socialDesc}
+CURRENT MOOD: ${character.emotional_state || 'calm'} — ${locationAffinityContext.moodDesc}
+${locationAffinityContext.religion && locationAffinityContext.religion !== 'none' ? `BELIEFS: ${locationAffinityContext.religion} (${locationAffinityContext.beliefLevel}) — filters uncomfortable venue types` : ''}
+PREFERRED RIGHT NOW: ${locationAffinityContext.preferred.length > 0 ? locationAffinityContext.preferred.join(', ') : 'home or familiar spots'}
+AVOID (identity conflict): ${locationAffinityContext.avoided.length > 0 ? locationAffinityContext.avoided.join(', ') : 'none flagged'}
 
-LOCATION RULE: ${name} should choose locations that match who they are. Their beliefs, personality, mood, and habits must all influence where they go. Do not send them to places that conflict with their established identity unless there is a specific, meaningful reason. Preferences are real but not absolute — exceptions must feel intentional.
-` : 'No location data available — use personality and beliefs to infer appropriate venues.'}
+LOCATION RULES (strictly enforced):
+1. Schedule obligations always take priority (work/school/sleep times).
+2. During free time, ${name} must go to places that fit their personality, beliefs, habits, and current mood.
+3. Preferred venues = natural default. Acceptable = occasional. Avoided = only with a strong specific reason.
+4. Do NOT randomly assign venues. Two characters with different identities must not default to the same places unless that makes sense for both.
+5. Exceptions are allowed but must feel intentional — not accidental noise.
+` : 'No specific location data — use personality, social energy, beliefs, and mood to infer appropriate venues. Do not default to random choices.'}
 
 REALISM RULES — READ CAREFULLY:
 1. CHARACTER FLAWS: ${flawNote} Do NOT make ${name} perfectly rational or emotionally controlled at all times.

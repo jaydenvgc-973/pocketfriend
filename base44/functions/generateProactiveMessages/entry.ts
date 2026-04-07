@@ -1,31 +1,61 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-// Location affinity (inlined)
-function buildLocationAffinityContext(character) {
-  const socialEnergy = character.social_energy || 'ambivert';
-  const parts = [];
-  const socialMap = {
-    introvert: 'Prefers home, parks, quiet cafes. Avoids loud crowded venues.',
-    mostly_introvert: 'Leans quiet. Small gatherings, calm spots.',
-    ambivert: 'Balanced. Mood-dependent between social and quiet.',
-    mostly_extrovert: 'Enjoys lively bars, restaurants, social events.',
-    extrovert: 'Thrives at clubs, parties, crowded social spaces.',
-  };
-  parts.push(socialMap[socialEnergy] || 'Balanced venue preferences.');
+// ── Full Identity-Driven Location Affinity (inlined — no local imports in Deno) ─
+const _SE_P = {
+  introvert:        'prefers home, parks, quiet places — avoids crowds and loud venues',
+  mostly_introvert: 'leans quiet — small gatherings and calm spots',
+  ambivert:         'mood-dependent — can go social or quiet depending on the day',
+  mostly_extrovert: 'enjoys lively bars, restaurants, social events',
+  extrovert:        'thrives in clubs, parties, and crowded social spaces',
+};
+const _MOOD_P = {
+  sad:{txt:'withdrawing, prefers home or quiet outdoor spaces, avoids social noise'},
+  anxious:{txt:'needs calm, familiar spaces — avoids crowded or overwhelming venues'},
+  overwhelmed:{txt:'home or park only — too tired for social scenes'},
+  'burnt out':{txt:'resting at home or outdoors — not gym, not clubs'},
+  grief:{txt:'home, quiet trusted spots, maybe a place of worship'},
+  bored:{txt:'wants a change of scenery — social or outdoor'},
+  excited:{txt:'more likely social, active, or outdoors'},
+  joyful:{txt:'naturally social — restaurants, friends, active settings'},
+  content:{txt:'relaxed at home or in calm outdoor/food spots'},
+  calm:{txt:'comfortable anywhere appropriate for their identity'},
+  irritated:{txt:'prefers gym or outdoor solitude — away from crowds'},
+  frustrated:{txt:'gym, home, or outdoor — not social venues'},
+  flirtatious:{txt:'inclined toward social/restaurant settings'},
+};
 
-  const religion = character.religion || 'None';
+function buildLocationAffinityContext(character) {
+  const se = character.social_energy || 'ambivert';
+  const religion = (character.religion || '').trim();
   const rel = religion.toLowerCase();
-  if (religion !== 'None') {
-    if ((rel.includes('christian') || rel.includes('catholic')) && character.belief_level === 'devout') {
-      parts.push(`Devout ${religion}: avoids adult clubs/venues as defaults.`);
-    } else if ((rel.includes('muslim') || rel.includes('islam')) && character.belief_level !== 'in_name_only') {
-      parts.push(`Muslim: avoids alcohol-heavy venues as defaults.`);
-    }
+  const beliefLevel = character.belief_level || 'moderate';
+  const isDevout = beliefLevel === 'devout';
+  const isModerate = beliefLevel === 'moderate';
+  const hasReligion = religion && rel !== 'none' && religion !== 'None';
+  const isMuslim = rel.includes('islam') || rel.includes('muslim');
+  const hh = (character.health_habits || '').toLowerCase();
+  const mood = character.emotional_state || 'calm';
+  const moodInfo = _MOOD_P[mood];
+  const traits = (character.personality_traits || []).map(t => t.toLowerCase()).join(' ');
+
+  const parts = [];
+  parts.push(`[${se}] ${_SE_P[se] || 'balanced venue preferences'}.`);
+
+  if (hasReligion) {
+    if (isDevout) parts.push(`Devout ${religion}: strictly avoids gay clubs, adult venues, strip clubs. Only exception if strong explicit story reason.`);
+    else if (isModerate) parts.push(`${religion} (moderate): avoids adult/explicit venues as defaults.`);
+    if (isMuslim && (isDevout || isModerate)) parts.push(`Muslim: avoids alcohol-heavy bars/pubs as defaults.`);
   }
 
-  const health = (character.health_habits || '').toLowerCase();
-  if (health.includes('gym') || health.includes('fitness')) parts.push('Fitness lifestyle: gym and outdoor are regular activities.');
+  if (/gym|workout|fitness|exercise|train|lift/.test(hh)) parts.push('Fitness-focused: gym and outdoor are natural regular choices.');
+  if (/run|jog|walk|hike|outdoor/.test(hh)) parts.push('Outdoor-active lifestyle: parks and walks are natural.');
+  if (/nature|earthy|outdoors|grounded|peaceful/.test(traits)) parts.push('Earthy/nature-leaning: outdoor and calm spaces feel like home.');
+  if (/homebody|cozy|private|introverted/.test(traits)) parts.push('Homebody tendency: home is a real preference, not just a fallback.');
+  if (/night owl|nightlife|club goer/.test(traits)) parts.push('Night owl: nightlife is natural and comfortable for them.');
 
+  if (moodInfo) parts.push(`Current mood (${mood}): ${moodInfo.txt}.`);
+
+  parts.push('RULE: Any location or activity mentioned must match this identity profile. Do not reference venues that conflict with who this character is unless there is a clear specific reason.');
   return parts.join(' ');
 }
 
