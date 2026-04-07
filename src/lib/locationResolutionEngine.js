@@ -5,13 +5,15 @@
  * Computes one final resolved location per character.
  * 
  * Strict precedence:
- * 1. Work schedule
- * 2. School schedule
+ * 1. Work schedule (and location must be open)
+ * 2. School schedule (and location must be open)
  * 3. Active travel
  * 4. Valid visit/event/supervision
  * 5. Free-time chosen location
  * 6. Home (only if truly home)
  */
+
+import { isLocationOpen } from '@/lib/locationHoursUtils';
 
 /**
  * Main resolution function: determine ONE true current location for a character
@@ -40,7 +42,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // First try character-level schedule fields, then fall back to location worker_shifts
   if (isCharacterOnWorkSchedule(character, currentTime)) {
     const workLocation = locationMap[character.occupation_location_id];
-    if (workLocation) {
+    if (workLocation && isLocationOpen(workLocation, currentTime) !== false) {
       return {
         resolved_current_location_id: character.occupation_location_id,
         resolved_current_location_name: workLocation.name || 'Work',
@@ -57,7 +59,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     const workLocation = locationMap[character.occupation_location_id];
     if (workLocation) {
       const shift = workLocation.worker_shifts?.[character.id];
-      if (shift && isOnShiftNow(shift, currentTime)) {
+      if (shift && isOnShiftNow(shift, currentTime) && isLocationOpen(workLocation, currentTime) !== false) {
         return {
           resolved_current_location_id: character.occupation_location_id,
           resolved_current_location_name: workLocation.name || 'Work',
@@ -73,7 +75,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // LAYER 2: Check school schedule
   if (character.student_status === 'enrolled' && character.education_location_id) {
     const schoolLocation = locationMap[character.education_location_id];
-    if (schoolLocation) {
+    if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {
         resolved_current_location_id: character.education_location_id,
         resolved_current_location_name: schoolLocation.name || 'School',

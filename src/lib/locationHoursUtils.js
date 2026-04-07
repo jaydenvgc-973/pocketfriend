@@ -21,12 +21,12 @@ function isInWindowLH(currentMinutes, openStr, closeStr) {
   return currentMinutes >= open || currentMinutes <= close;
 }
 
-export function isLocationOpen(location) {
+export function isLocationOpen(location, currentTime = new Date()) {
   if (!location?.operating_hours || location.operating_hours.length === 0) {
     return null; // No hours defined = assume always open
   }
 
-  const now = new Date();
+  const now = currentTime;
   const dayOfWeek = now.getDay();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
