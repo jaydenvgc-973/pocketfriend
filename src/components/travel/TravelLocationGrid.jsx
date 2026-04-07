@@ -7,7 +7,7 @@ const CATEGORY_EMOJIS = {
   medical: "🏨", business: "🏢", government: "🏛️", public: "🗺️", generic: "📍",
 };
 
-export default function TravelLocationGrid({ locations, selectedLocation, onSelect, activeCharacterIds = [], charactersByLocationId = {} }) {
+export default function TravelLocationGrid({ locations, selectedLocation, onSelect, characters = [] }) {
   if (locations.length === 0) return null;
 
   return (
@@ -26,16 +26,16 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         let isVacant = false;
 
         if (loc.category === 'home') {
-          // Get residents by current_home_location_id (not resolved location)
-          const residents = (charactersByLocationId[loc.id] || []).filter(name => 
-            Object.values(charactersByLocationId).flat().includes(name)
-          );
+          // Get residents by current_home_location_id
+          const residents = characters
+            .filter(c => c.current_home_location_id === loc.id)
+            .map(c => c.name);
           const npcResidents = (loc.resident_family_members || []).map(m => m.name);
           allOccupants = [...new Set([...residents, ...npcResidents])];
           isVacant = allOccupants.length === 0;
         } else {
-          // For non-residential locations: use charactersByLocationId as-is
-          allOccupants = charactersByLocationId[loc.id] || [];
+          // For non-residential locations, just map character names at their resolved location
+          allOccupants = [];
         }
 
         return (
