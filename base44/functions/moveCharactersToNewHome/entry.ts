@@ -42,9 +42,23 @@ Deno.serve(async (req) => {
     for (const moverId of moversToMove) {
       const chars = await base44.entities.Character.filter({ id: moverId });
       if (chars.length > 0) {
+        const moverChar = chars[0];
         destResidents.add(moverId);
-        destNames.add(chars[0].name);
-        movedCharacters.push(chars[0]);
+        destNames.add(moverChar.name);
+        movedCharacters.push(moverChar);
+
+        // SINGLE-HOME RULE: Remove from any existing home they're listed in (other than destination)
+        const existingHomeId = moverChar.current_home_location_id;
+        if (existingHomeId && existingHomeId !== destinationHomeId && existingHomeId !== sourceHomeId) {
+          const existingHomes = await base44.entities.LocationReference.filter({ id: existingHomeId });
+          if (existingHomes.length > 0) {
+            const eh = existingHomes[0];
+            await base44.entities.LocationReference.update(existingHomeId, {
+              resident_character_ids: (eh.resident_character_ids || []).filter(id => id !== moverId),
+              resident_character_names: (eh.resident_character_names || []).filter(n => n !== moverChar.name),
+            });
+          }
+        }
       }
     }
 

@@ -11,13 +11,28 @@ export function isLocationOpen(location) {
   const now = new Date();
   const dayOfWeek = now.getDay();
   const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-  
-  const todayHours = location.operating_hours.find(h => h.day_of_week === dayOfWeek);
-  if (!todayHours) {
-    return false; // No hours for today = closed
+
+  const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+
+  const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
+
+  if (todayEntries.length > 0) {
+    // Hours defined for today — use them
+    return todayEntries.some(h => currentTime >= h.open_time && currentTime <= h.close_time);
   }
 
-  return currentTime >= todayHours.open_time && currentTime <= todayHours.close_time;
+  if (daySpecific.length > 0 && todayEntries.length === 0) {
+    // Hours defined for other days but NOT today — closed today
+    return false;
+  }
+
+  // Only day-agnostic entries (no day_of_week set) — apply to every day
+  if (dayAgnostic.length > 0) {
+    return dayAgnostic.some(h => currentTime >= h.open_time && currentTime <= h.close_time);
+  }
+
+  return null; // No usable entries
 }
 
 /**
