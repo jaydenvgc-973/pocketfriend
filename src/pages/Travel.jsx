@@ -548,6 +548,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     });
                     currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
+                    // Show NPCs currently traveling/working at this location
+                    characters.forEach(char => {
+                      if (!char.fictional_relationships) return;
+                      char.fictional_relationships.forEach(rel => {
+                        if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
+                          if (!lines.find(l => l.name === rel.person_name)) {
+                            lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
+                          }
+                        }
+                      });
+                    });
+
                     // REAL WORKERS: Show if they have resolved location at this workplace AND are on shift
                     const now = new Date();
                     const dayOfWeek = now.getDay();
