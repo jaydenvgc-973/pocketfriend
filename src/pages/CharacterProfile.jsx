@@ -21,6 +21,7 @@ import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.js
 import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
+import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -134,6 +135,15 @@ export default function CharacterProfile() {
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
     staleTime: 0,
+  });
+
+  const { data: financial = null } = useQuery({
+    queryKey: ["characterFinancial", characterId],
+    queryFn: async () => {
+      const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
+      return records[0] || null;
+    },
+    enabled: !!characterId,
   });
 
   const getReciprocal = () => {
@@ -295,6 +305,9 @@ export default function CharacterProfile() {
 
         {/* Financial Summary */}
         <CharacterFinancialSummary characterId={characterId} />
+
+        {/* Monthly Expenses */}
+        {financial && <CharacterExpenseManager financial={financial} readOnly={character.is_default} />}
 
         {/* Your Connection */}
         <div className="bg-card border border-border rounded-2xl p-4">
