@@ -201,6 +201,21 @@ export default function Scene() {
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
 
+  // Family member NPCs showing as present: check their actual current_location_id in fictional_relationships
+  const familyMemberNpcsPresent = isHomeLocation
+    ? (location.resident_family_members || []).filter(fm => {
+        // Find which character this family member belongs to
+        const ownerChar = homeResidents.find(c => 
+          c.fictional_relationships?.some(rel => rel.person_name === fm.name && !rel.related_character_id)
+        );
+        if (!ownerChar) return false;
+        // Check the NPC's current_location_id in fictional_relationships
+        const npcRel = ownerChar.fictional_relationships.find(rel => rel.person_name === fm.name && !rel.related_character_id);
+        // If no location set, they're home; if location set to somewhere else, they're away
+        return !npcRel?.current_location_id || npcRel.current_location_id === location.id;
+      })
+    : [];
+
   // Workers: characters actually at this location during their work schedule
   const workerCharacters = location
     ? characters.filter(c => {
@@ -1242,12 +1257,12 @@ Return JSON:
           </span>
           {homeResidentsPresent.length > 0 && (
             <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">
-              {homeResidentsPresent.map(c => c.name).join(", ")} {homeResidentsPresent.length === 1 ? "is" : "are"} home
+              {[...homeResidentsPresent, ...familyMemberNpcsPresent.map(fm => ({ name: fm.name }))].map(c => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home
             </span></div>
           )}
-          {homeResidentsAway.length > 0 && (
+          {(homeResidentsAway.length > 0 || (location.resident_family_members?.length ?? 0) - familyMemberNpcsPresent.length > 0) && (
             <div><span className="text-xs text-muted-foreground/60 bg-secondary/50 px-3 py-1 rounded-full">
-              {homeResidentsAway.map(c => c.name).join(", ")} {homeResidentsAway.length === 1 ? "is" : "are"} away
+              {homeResidentsAway.map(c => c.name).concat((location.resident_family_members || []).filter(fm => !familyMemberNpcsPresent.find(f => f.name === fm.name)).map(fm => fm.name)).join(", ")} {homeResidentsAway.length + ((location.resident_family_members?.length ?? 0) - familyMemberNpcsPresent.length) === 1 ? "is" : "are"} away
             </span></div>
           )}
           {workerCharacters.length > 0 && (
