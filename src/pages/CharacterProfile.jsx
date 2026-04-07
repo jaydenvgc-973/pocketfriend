@@ -648,16 +648,12 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships — unlinked NPCs + NPC fictitious characters, excluding family and active characters */}
+          {/* NPC relationships — unlinked NPCs only, excluding family */}
           {(() => {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-            const npcRels = character.fictional_relationships?.filter(r => {
-              if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return true; // unlinked NPC
-              // Include if linked to an NPC fictitious character (not active)
-              const linked = allCharacters.find(c => c.id === r.related_character_id);
-              return linked && linked.character_type !== "active";
-            }) || [];
+            const npcRels = character.fictional_relationships?.filter(r =>
+              !r.related_character_id && !familyNames.has(r.person_name?.toLowerCase())
+            ) || [];
             const seen = new Set();
             const deduped = npcRels.filter(r => {
               const key = r.person_name?.toLowerCase();
@@ -670,12 +666,9 @@ export default function CharacterProfile() {
             <div className="space-y-5">
               {(() => {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-                const npcRels = character.fictional_relationships?.filter(r => {
-                  if (familyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return true;
-                  const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  return linked && linked.character_type !== "active";
-                }) || [];
+                const npcRels = character.fictional_relationships?.filter(r =>
+                  !r.related_character_id && !familyNames.has(r.person_name?.toLowerCase())
+                ) || [];
                 const seen = new Set();
                 const deduped = npcRels.filter(r => {
                   const key = r.person_name?.toLowerCase();

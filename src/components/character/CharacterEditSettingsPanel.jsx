@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Trash2, Check, Link, AlertTriangle, GripVertical } from "lucide-react";
+import { X, Plus, Trash2, Check, Link, AlertTriangle } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
@@ -172,35 +172,28 @@ function GhostLinkModal({ npc, allCharacters, character, onConfirm, onCancel }) 
 }
 
 // ── People In Their World Editor ──────────────────────────────────────────────
-function WorldPeopleEditor({ character, allCharacters, onDropCharacter, isDragOver, onDragOver, onDragLeave }) {
+function WorldPeopleEditor({ character, allCharacters }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
 
-  // Include: unlinked NPCs + NPC fictitious characters (non-active)
-  const worldRels = (character.fictional_relationships || []).filter(r => {
-    if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;
-    if (!r.related_character_id) return true; // unlinked NPC
-    const linked = allCharacters.find(c => c.id === r.related_character_id);
-    return linked && linked.character_type !== "active"; // NPC fictitious
-  });
-
+  // Only unlinked NPCs (no related_character_id), excluding family
+  const npcRels = (character.fictional_relationships || []).filter(r =>
+    !r.related_character_id && !r._from_family && !familyNames.has(r.person_name?.toLowerCase())
+  );
   const seen = new Set();
-  const deduped = worldRels.filter(r => {
-    const key = (r.related_character_id || r.person_name)?.toLowerCase();
+  const deduped = npcRels.filter(r => {
+    const key = r.person_name?.toLowerCase();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 
-  const deleteRel = async (rel) => {
-    let updated;
-    if (rel.related_character_id) {
-      updated = (character.fictional_relationships || []).filter(r => r.related_character_id !== rel.related_character_id);
-    } else {
-      updated = (character.fictional_relationships || []).filter(r => r.person_name?.toLowerCase() !== rel.person_name?.toLowerCase());
-    }
+  const deleteNpc = async (personName) => {
+    const updated = (character.fictional_relationships || []).filter(
+      r => r.person_name?.toLowerCase() !== personName.toLowerCase()
+    );
     await base44.entities.Character.update(character.id, { fictional_relationships: updated });
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
   };
@@ -208,12 +201,7 @@ function WorldPeopleEditor({ character, allCharacters, onDropCharacter, isDragOv
   const linkNpcToCharacter = async (npc, targetChar) => {
     const updated = (character.fictional_relationships || []).map(r => {
       if (r.person_name?.toLowerCase() === npc.person_name?.toLowerCase() && !r.related_character_id) {
-        return {
-          ...r,
-          person_name: targetChar.name,
-          related_character_id: targetChar.id,
-          avatar_url: targetChar.avatar_url || r.avatar_url || null,
-        };
+        return { ...r, person_name: targetChar.name, related_character_id: targetChar.id, avatar_url: targetChar.avatar_url || r.avatar_url || null };
       }
       return r;
     });
@@ -222,10 +210,7 @@ function WorldPeopleEditor({ character, allCharacters, onDropCharacter, isDragOv
     if (linkedToTarget.length > 1) {
       let kept = false;
       finalRels = updated.filter(r => {
-        if (r.related_character_id === targetChar.id) {
-          if (!kept) { kept = true; return true; }
-          return false;
-        }
+        if (r.related_character_id === targetChar.id) { if (!kept) { kept = true; return true; } return false; }
         return true;
       });
     }
@@ -235,51 +220,31 @@ function WorldPeopleEditor({ character, allCharacters, onDropCharacter, isDragOv
   };
 
   return (
-    <div
-      className={`space-y-2 min-h-[40px] rounded-xl transition-colors ${isDragOver ? "bg-primary/10 ring-2 ring-primary/40 ring-dashed" : ""}`}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDropCharacter}
-    >
+    <div className="space-y-2">
       {deduped.length === 0 && (
-        <p className="text-xs text-muted-foreground italic">No people in their world yet. Drag from "Characters They Know" below.</p>
+        <p className="text-xs text-muted-foreground italic">No unlinked people in their world yet.</p>
       )}
       {deduped.map((rel, i) => {
-        const linkedChar = rel.related_character_id ? allCharacters.find(c => c.id === rel.related_character_id) : null;
-        const avatarUrl = linkedChar?.avatar_url || rel.avatar_url || rel.photo_url;
-        const possibleMatches = !rel.related_character_id
-          ? findPossibleMatches(rel.person_name, allCharacters.filter(c => c.id !== character.id && c.character_type === "active"))
-          : [];
+        const possibleMatches = findPossibleMatches(rel.person_name, allCharacters.filter(c => c.id !== character.id));
         const isGhost = possibleMatches.length > 0;
-        const isNPCFictitious = !!rel.related_character_id && linkedChar && linkedChar.character_type !== "active";
-
         return (
-          <div key={i} className={`rounded-xl border px-3 py-2.5 space-y-1.5 ${isGhost ? "border-amber-500/40 bg-amber-500/5" : isNPCFictitious ? "border-primary/30 bg-primary/5" : "border-border bg-secondary/30"}`}>
+          <div key={i} className={`rounded-xl border px-3 py-2.5 space-y-1.5 ${isGhost ? "border-amber-500/40 bg-amber-500/5" : "border-border bg-secondary/30"}`}>
             <div className="flex items-center gap-2">
-              {avatarUrl
-                ? <img src={avatarUrl} alt={rel.person_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+              {rel.avatar_url || rel.photo_url
+                ? <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                 : <div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{rel.person_name?.[0]?.toUpperCase()}</span></div>
               }
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-foreground truncate">{rel.person_name}</p>
-                <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}{isNPCFictitious ? " · NPC" : ""}</p>
+                <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}</p>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
-                {/* Only show link button for unlinked NPCs */}
-                {!rel.related_character_id && (
-                  <button
-                    onClick={() => setLinkingNpc(rel)}
-                    title="Link to active character"
-                    className={`p-1.5 rounded-lg transition-colors ${isGhost ? "text-amber-400 hover:bg-amber-500/20" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
-                  >
-                    <Link className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                <button
-                  onClick={() => deleteRel(rel)}
-                  title="Remove"
-                  className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-                >
+                <button onClick={() => setLinkingNpc(rel)} title="Link to active character"
+                  className={`p-1.5 rounded-lg transition-colors ${isGhost ? "text-amber-400 hover:bg-amber-500/20" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}>
+                  <Link className="w-3.5 h-3.5" />
+                </button>
+                <button onClick={() => deleteNpc(rel.person_name)} title="Remove"
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -293,16 +258,11 @@ function WorldPeopleEditor({ character, allCharacters, onDropCharacter, isDragOv
           </div>
         );
       })}
-
       <AnimatePresence>
         {linkingNpc && (
-          <GhostLinkModal
-            npc={linkingNpc}
-            allCharacters={allCharacters}
-            character={character}
+          <GhostLinkModal npc={linkingNpc} allCharacters={allCharacters} character={character}
             onConfirm={(targetChar) => linkNpcToCharacter(linkingNpc, targetChar)}
-            onCancel={() => setLinkingNpc(null)}
-          />
+            onCancel={() => setLinkingNpc(null)} />
         )}
       </AnimatePresence>
     </div>
@@ -310,7 +270,7 @@ function WorldPeopleEditor({ character, allCharacters, onDropCharacter, isDragOv
 }
 
 // ── Characters They Know Editor ───────────────────────────────────────────────
-function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
+function KnownCharactersEditor({ character, allCharacters }) {
   const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef(null);
@@ -329,18 +289,17 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
       .map(r => r.related_character_id)
   );
 
-  // Only show truly active characters in "Characters They Know"
   const available = allCharacters.filter(
     c => c.id !== character.id && !existingLinkedIds.has(c.id) &&
     c.character_type === "active" &&
     c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged"
   );
 
-  // Only show active characters here (NPCs belong in "People In Their World")
+  // Only active characters here
   const linked = (character.fictional_relationships || []).filter(r => {
     if (!r.related_character_id) return false;
-    const char = allCharacters.find(c => c.id === r.related_character_id);
-    return char && char.character_type === "active";
+    const c = allCharacters.find(ac => ac.id === r.related_character_id);
+    return c && c.character_type === "active";
   });
 
   const addCharacter = async (char, relType) => {
@@ -348,17 +307,11 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
       person_name: char.name,
       related_character_id: char.id,
       relationship_type: relType || "friend",
-      description: "",
-      current_status: "",
-      emotional_impact: "",
-      history_summary: "",
-      last_interaction_summary: "",
+      description: "", current_status: "", emotional_impact: "",
+      history_summary: "", last_interaction_summary: "",
       avatar_url: char.avatar_url || null,
-      user_respect_level: 50,
-      friendship_level: 75,
-      romantic_level: 0,
-      attraction_level: 0,
-      chosen_family_level: 0,
+      user_respect_level: 50, friendship_level: 75,
+      romantic_level: 0, attraction_level: 0, chosen_family_level: 0,
     };
     const updated = [...(character.fictional_relationships || []), newRel];
     await base44.entities.Character.update(character.id, { fictional_relationships: updated });
@@ -372,6 +325,16 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
   };
 
+  // Move to "People In Their World": strip related_character_id so it becomes an unlinked NPC entry
+  const moveToWorld = async (rel) => {
+    const { related_character_id, avatar_url, ...rest } = rel;
+    const updatedRels = (character.fictional_relationships || []).map(r =>
+      r.related_character_id === related_character_id ? rest : r
+    );
+    await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+  };
+
   return (
     <div className="space-y-2">
       {linked.length === 0 && (
@@ -381,16 +344,7 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
         {linked.map((rel, i) => {
           const char = allCharacters.find(c => c.id === rel.related_character_id);
           return (
-            <div
-              key={i}
-              draggable
-              onDragStart={(e) => {
-                e.dataTransfer.setData("relCharId", rel.related_character_id);
-                if (onDragStart) onDragStart(rel);
-              }}
-              className="flex items-center gap-2 bg-secondary/50 rounded-xl px-3 py-2 cursor-grab active:cursor-grabbing select-none"
-              title="Drag to 'People In Their World' above"
-            >
+            <div key={i} className="flex items-center gap-2 bg-secondary/50 rounded-xl px-3 py-2">
               {char?.avatar_url
                 ? <img src={char.avatar_url} alt={rel.person_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                 : <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{rel.person_name?.[0]}</span></div>
@@ -399,7 +353,13 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
                 <p className="text-xs font-medium text-foreground truncate">{rel.person_name}</p>
                 <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}</p>
               </div>
-              <span className="text-[10px] text-muted-foreground/50 mr-1 hidden sm:block">drag ↑</span>
+              <button
+                onClick={() => moveToWorld(rel)}
+                title="Move to People In Their World"
+                className="text-[10px] text-muted-foreground hover:text-primary px-1.5 py-1 rounded-lg hover:bg-primary/10 transition-colors flex-shrink-0 whitespace-nowrap"
+              >
+                → World
+              </button>
               <button
                 onClick={() => removeLinked(rel.related_character_id)}
                 className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
@@ -411,7 +371,6 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
         })}
       </div>
 
-      {/* Add picker */}
       <div className="relative" ref={pickerRef}>
         <button
           onClick={() => setPickerOpen(v => !v)}
@@ -421,10 +380,7 @@ function KnownCharactersEditor({ character, allCharacters, onDragStart }) {
           <Plus className="w-3.5 h-3.5" /> Add character
         </button>
         {pickerOpen && (
-          <CharacterPickerDropdown
-            characters={available}
-            onSelect={addCharacter}
-          />
+          <CharacterPickerDropdown characters={available} onSelect={addCharacter} />
         )}
       </div>
     </div>
@@ -487,36 +443,6 @@ function CharacterPickerDropdown({ characters, onSelect }) {
 
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters }) {
-  const queryClient = useQueryClient();
-  const [worldDragOver, setWorldDragOver] = useState(false);
-
-  const handleDropOnWorld = async (e) => {
-    e.preventDefault();
-    setWorldDragOver(false);
-    const charId = e.dataTransfer.getData("relCharId");
-    if (!charId || !character) return;
-
-    // Find the existing relationship for this character
-    const existingRel = (character.fictional_relationships || []).find(r => r.related_character_id === charId);
-    if (!existingRel) return;
-
-    // Move it: keep the relationship data but change the linked character's display group
-    // by marking it so it appears in "People In Their World" — we do this by keeping
-    // the related_character_id but ensuring the linked character record is set to NPC type.
-    // Actually the display is based on character_type of the linked character.
-    // Instead, we convert the rel to an unlinked NPC entry so it shows in "People In Their World".
-    const updatedRels = (character.fictional_relationships || []).map(r => {
-      if (r.related_character_id === charId) {
-        // Remove the related_character_id so it moves to "People In Their World" as an unlinked NPC
-        const { related_character_id, ...rest } = r;
-        return rest;
-      }
-      return r;
-    });
-    await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
-    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-  };
-
   if (!isOpen || !character) return null;
 
   return createPortal(
@@ -585,23 +511,16 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
               <section className="space-y-3">
                 <div>
                   <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">People In Their World</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Unlinked NPCs and NPC fictitious people. Drag active characters here to move them to this section.</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Unlinked NPCs. Delete or link them to a real active character.</p>
                 </div>
-                <WorldPeopleEditor
-                  character={character}
-                  allCharacters={allCharacters}
-                  isDragOver={worldDragOver}
-                  onDragOver={(e) => { e.preventDefault(); setWorldDragOver(true); }}
-                  onDragLeave={() => setWorldDragOver(false)}
-                  onDropCharacter={handleDropOnWorld}
-                />
+                <WorldPeopleEditor character={character} allCharacters={allCharacters} />
               </section>
 
               {/* Characters They Know */}
               <section className="space-y-3">
                 <div>
                   <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Characters They Know</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Active characters. Drag any person up to "People In Their World" to move them there.</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Active characters. Use "→ World" to move someone to People In Their World.</p>
                 </div>
                 <KnownCharactersEditor character={character} allCharacters={allCharacters} />
               </section>
