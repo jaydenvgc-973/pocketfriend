@@ -238,13 +238,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       const rawPromptText = prompt.trim() || "candid natural moment, everyday life";
 
-      // Reframe prompt to avoid content policy refusals on intimate/contact scenes.
-      // The model rejects "real people kissing" with reference images — we reframe as
-      // fictional characters in an illustrated/cinematic style to pass content filters.
-      const intimateKeywords = /\b(kiss|kissing|kissed|makeout|make out|embrace|cuddle|cuddling|hug|hugging|hold|holding|touch|touching|graze|grazing|nuzzle|nuzzling|romantic|intimate|close|forehead|cheek|lips|mouth)\b/i;
-      const promptText = intimateKeywords.test(rawPromptText)
-        ? `Cinematic scene, two fictional characters — ${rawPromptText}. Illustrated film style, tasteful, artistic, not photorealistic.`
-        : rawPromptText;
+      // Enforce photorealistic quality on all prompts. NSFW allowed.
+      const promptText = `${rawPromptText}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
 
       // Determine subject type based on who's selected:
       // - user alone (no other chars) → "user"
@@ -331,10 +326,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const userCharForGen = allCharacters.find(c => c.is_user);
       const userName = userSettings?.fictional_world_name || userCharForGen?.world_name || userCharForGen?.name || "the user";
       const rawPromptText = prompt.trim() || "candid natural moment, everyday life";
-      const intimateKeywordsUser = /\b(kiss|kissing|kissed|makeout|make out|embrace|cuddle|cuddling|hug|hugging|hold|holding|touch|touching|graze|grazing|nuzzle|nuzzling|romantic|intimate|close|forehead|cheek|lips|mouth)\b/i;
-      const promptText = intimateKeywordsUser.test(rawPromptText)
-        ? `Cinematic scene, two fictional characters — ${rawPromptText}. Illustrated film style, tasteful, artistic, not photorealistic.`
-        : rawPromptText;
+      // Enforce photorealistic quality on all prompts. NSFW allowed.
+      const promptText = `${rawPromptText}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
 
       // Use selected entities from dropdown (excluding user and world people for user generation)
       const selectedChars = selectedCharacterIds.length > 0
