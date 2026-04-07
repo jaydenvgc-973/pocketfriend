@@ -1,5 +1,49 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// Location affinity helper (inlined — no local imports in Deno functions)
+function buildLocationAffinityContext(character) {
+  const lines = [];
+  const socialEnergy = character.social_energy || 'ambivert';
+  const socialProfiles = {
+    introvert: { desc: 'Strongly prefers quiet, low-stimulus environments.', preferred: ['home','park','quiet cafe','library'], avoided: ['loud clubs','crowded bars'] },
+    mostly_introvert: { desc: 'Leans quiet. Socializes selectively.', preferred: ['home','small restaurant','park'], avoided: ['large loud venues'] },
+    ambivert: { desc: 'Balanced. Mood-dependent venue choice.', preferred: ['restaurants','parks','moderate social settings','home'], avoided: ['consistent extremes'] },
+    mostly_extrovert: { desc: 'Enjoys active, people-filled environments.', preferred: ['lively bars','restaurants','social events'], avoided: ['long isolation'] },
+    extrovert: { desc: 'Thrives in high-energy social spaces.', preferred: ['clubs','crowded bars','parties','events'], avoided: ['sustained isolation'] },
+  };
+  const sp = socialProfiles[socialEnergy] || socialProfiles.ambivert;
+  lines.push(`Social energy: ${socialEnergy} — ${sp.desc} Prefers: ${sp.preferred.join(', ')}. Avoids: ${sp.avoided.join(', ')}.`);
+
+  const religion = character.religion || 'None';
+  const beliefLevel = character.belief_level || 'moderate';
+  if (religion && religion !== 'None') {
+    const rel = religion.toLowerCase();
+    if ((rel.includes('christian') || rel.includes('catholic')) && beliefLevel === 'devout') {
+      lines.push(`Devout ${religion}: must not casually appear at gay clubs or adult venues. Exceptions require clear context.`);
+    } else if (rel.includes('muslim') || rel.includes('islam')) {
+      lines.push(`${beliefLevel === 'devout' ? 'Devout' : 'Practicing'} Muslim: avoids alcohol-heavy clubs/bars as defaults.`);
+    }
+  }
+
+  const health = (character.health_habits || '').toLowerCase();
+  if (health.includes('gym') || health.includes('fitness') || health.includes('workout')) {
+    lines.push(`Fitness-focused: gym and outdoor activity are regular. Nightlife is secondary.`);
+  }
+
+  const mood = character.emotional_state || 'calm';
+  const isIntrovert = ['introvert','mostly_introvert'].includes(socialEnergy);
+  const moodMap = {
+    anxious: 'Anxious → prefers familiar, quiet spaces.', overwhelmed: 'Overwhelmed → home or park.',
+    'burnt out': 'Burnt out → rest, home, quiet.', sad: 'Sad → solitude or comfort of close friend.',
+    grief: 'Grieving → trusted spaces, quiet.', bored: isIntrovert ? 'Bored introvert → quiet change of scenery.' : 'Bored extrovert → seeks social stimulation.',
+    excited: 'Excited → more likely to be social or active.',
+  };
+  if (moodMap[mood]) lines.push(`Mood (${mood}): ${moodMap[mood]}`);
+
+  lines.push('RULE: narrative location/activity choices must match this profile. Do not send an earthy introvert to a club or a devout Christian to an adult venue without clear contextual reason.');
+  return lines.join(' ');
+}
+
 /**
  * triggerCharacterNarratives
  *
@@ -76,6 +120,7 @@ Deno.serve(async (req) => {
         const emotionalState = character.emotional_state || 'calm';
         const city = [character.city, character.state].filter(Boolean).join(', ');
         const weather = character.weather_summary || '';
+        const locationAffinity = buildLocationAffinityContext(character);
 
         const etNow = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', weekday: 'long' });
 
@@ -89,6 +134,7 @@ CHARACTER CONTEXT:
 - Location: ${city || 'their area'}
 - Current time: ${etNow} Eastern
 ${weather ? `- Weather: ${weather}` : ''}
+- Location affinity: ${locationAffinity}
 
 RECENT CONVERSATION:
 ${recentText}

@@ -1,5 +1,34 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// Location affinity (inlined)
+function buildLocationAffinityContext(character) {
+  const socialEnergy = character.social_energy || 'ambivert';
+  const parts = [];
+  const socialMap = {
+    introvert: 'Prefers home, parks, quiet cafes. Avoids loud crowded venues.',
+    mostly_introvert: 'Leans quiet. Small gatherings, calm spots.',
+    ambivert: 'Balanced. Mood-dependent between social and quiet.',
+    mostly_extrovert: 'Enjoys lively bars, restaurants, social events.',
+    extrovert: 'Thrives at clubs, parties, crowded social spaces.',
+  };
+  parts.push(socialMap[socialEnergy] || 'Balanced venue preferences.');
+
+  const religion = character.religion || 'None';
+  const rel = religion.toLowerCase();
+  if (religion !== 'None') {
+    if ((rel.includes('christian') || rel.includes('catholic')) && character.belief_level === 'devout') {
+      parts.push(`Devout ${religion}: avoids adult clubs/venues as defaults.`);
+    } else if ((rel.includes('muslim') || rel.includes('islam')) && character.belief_level !== 'in_name_only') {
+      parts.push(`Muslim: avoids alcohol-heavy venues as defaults.`);
+    }
+  }
+
+  const health = (character.health_habits || '').toLowerCase();
+  if (health.includes('gym') || health.includes('fitness')) parts.push('Fitness lifestyle: gym and outdoor are regular activities.');
+
+  return parts.join(' ');
+}
+
 /**
  * generateProactiveMessages
  * 
@@ -121,11 +150,13 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
   else if (hour >= 18 && hour < 20) timeContext = 'evening';
   else if (hour >= 21 && hour < 23) timeContext = 'late night (good night message, they are about to sleep)';
   
+  const locationAffinityNote = buildLocationAffinityContext(character);
   const systemPrompt = `You are ${character.name}. Generate a natural, spontaneous proactive message to the user right now (1-3 sentences). 
 ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling.'}
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
 Your friendship level with the user is ${relationshipLevel}/100 - adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
+Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}
 Be authentic, not overly cheerful. Just a natural message someone would send.`;
 
   const content = await base44.integrations.Core.InvokeLLM({

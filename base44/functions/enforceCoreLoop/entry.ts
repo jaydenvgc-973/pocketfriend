@@ -1,5 +1,83 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// ── Inline affinity engine (no local imports in Deno) ────────────────────────
+const SOCIAL_ENERGY_AFFINITIES = {
+  introvert:        { preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion'], conditional: ['social','gym'] },
+  mostly_introvert: { preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion','gym'], conditional: ['social'] },
+  ambivert:         { preferred: ['food_drink','outdoor','home','social'], acceptable: ['gym','public','education','religion','grocery','medical'], conditional: [] },
+  mostly_extrovert: { preferred: ['social','food_drink','gym'], acceptable: ['outdoor','public','home','education','religion','grocery','medical'], conditional: [] },
+  extrovert:        { preferred: ['social','food_drink'], acceptable: ['gym','outdoor','public','education','religion','grocery','medical'], conditional: ['home'] },
+};
+const EMOTIONAL_MODIFIERS = {
+  sad:{'boost':['home','outdoor'],'penalize':['social']}, anxious:{'boost':['home','outdoor'],'penalize':['social']},
+  overwhelmed:{'boost':['home','outdoor'],'penalize':['social']}, reflective:{'boost':['home','outdoor','religion'],'penalize':['social']},
+  'closed-off':{'boost':['home'],'penalize':['social','food_drink']}, 'burnt out':{'boost':['home','outdoor'],'penalize':['social','gym']},
+  grief:{'boost':['home','religion','outdoor'],'penalize':['social']}, joyful:{'boost':['social','food_drink','outdoor'],'penalize':[]},
+  excited:{'boost':['social','food_drink','outdoor','gym'],'penalize':[]}, content:{'boost':['home','outdoor','food_drink'],'penalize':[]},
+  bored:{'boost':['social','food_drink','outdoor'],'penalize':['home']}, irritated:{'boost':['outdoor','gym'],'penalize':['social']},
+  frustrated:{'boost':['gym','outdoor','home'],'penalize':['social']},
+};
+
+function scoreLocationForCharacter(loc, character) {
+  let score = 0;
+  const se = character.social_energy || 'ambivert';
+  const ep = SOCIAL_ENERGY_AFFINITIES[se] || SOCIAL_ENERGY_AFFINITIES.ambivert;
+  if (ep.preferred.includes(loc.category)) score += 3;
+  else if (ep.acceptable.includes(loc.category)) score += 1;
+  else if (ep.conditional && ep.conditional.includes(loc.category)) score -= 1;
+
+  // Archetype
+  const arch = (character.archetype||'').toLowerCase();
+  const archBoosts = {'guardian':['home','religion'],'achiever':['gym','education'],'rebel':['social','outdoor'],'introvert':['home','outdoor'],'charmer':['social'],'wounded':['home','outdoor'],'chaotic':['social']};
+  const archPens  = {'guardian':['social'],'introvert':['social'],'wounded':['social'],'chaotic':['home']};
+  if (archBoosts[arch]?.includes(loc.category)) score += 2;
+  if (archPens[arch]?.includes(loc.category))   score -= 2;
+
+  // Health habits → gym/outdoor
+  const hh = (character.health_habits||'').toLowerCase();
+  if (loc.category === 'gym' && /gym|workout|fitness|exercise/.test(hh)) score += 2;
+  if (loc.category === 'outdoor' && /run|jog|walk|hike|outdoor/.test(hh)) score += 2;
+
+  // Religion
+  const religion = (character.religion||'').toLowerCase();
+  const isDevout = character.belief_level === 'devout';
+  if (loc.category === 'religion' && religion && religion !== 'none') score += isDevout ? 4 : 2;
+  if (isDevout && religion && religion !== 'none') {
+    const vi = (loc.venue_identity||'').toLowerCase();
+    if (/gay|lgbt|queer|strip|adult/.test(vi)) score -= 8;
+    if (loc.category === 'social') score -= 1;
+  }
+
+  // Emotional state
+  const em = EMOTIONAL_MODIFIERS[character.emotional_state||'calm'];
+  if (em) {
+    if (em.boost.includes(loc.category)) score += 2;
+    if (em.penalize.includes(loc.category)) score -= 2;
+  }
+
+  // Home as refuge when worn out
+  if (loc.category === 'home' && ['burnt out','overwhelmed','sad','anxious','grief'].includes(character.emotional_state)) score += 2;
+
+  return score;
+}
+
+function pickBestFreeTimeLocation(availableLocations, character) {
+  if (!availableLocations?.length) return null;
+  const scored = availableLocations
+    .map(loc => ({ loc, score: scoreLocationForCharacter(loc, character) }))
+    .sort((a, b) => b.score - a.score);
+  const top = scored.filter(s => s.score > 0).slice(0, 3);
+  if (!top.length) return scored[0]?.loc || null;
+  const weights = top.length === 1 ? [1] : top.length === 2 ? [0.65, 0.35] : [0.50, 0.30, 0.20];
+  const roll = Math.random();
+  let cum = 0;
+  for (let i = 0; i < top.length; i++) {
+    cum += weights[i];
+    if (roll <= cum) return top[i].loc;
+  }
+  return top[0].loc;
+}
+
 /**
  * ENFORCE CORE LOOP (12-STEP VALIDATION + AUTO-CORRECTION)
  * 

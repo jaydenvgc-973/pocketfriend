@@ -1,5 +1,102 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// ── Location Affinity Engine (inline — no local imports in Deno) ──────────────
+const SOCIAL_ENERGY_AFFINITIES = {
+  introvert:       { preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion'], conditional: ['social','gym'], avoided: [] },
+  mostly_introvert:{ preferred: ['home','outdoor','public'], acceptable: ['food_drink','education','medical','grocery','religion','gym'], conditional: ['social'], avoided: [] },
+  ambivert:        { preferred: ['food_drink','outdoor','home','social'], acceptable: ['gym','public','education','religion','grocery','medical'], conditional: [], avoided: [] },
+  mostly_extrovert:{ preferred: ['social','food_drink','gym'], acceptable: ['outdoor','public','home','education','religion','grocery','medical'], conditional: [], avoided: [] },
+  extrovert:       { preferred: ['social','food_drink'], acceptable: ['gym','outdoor','public','education','religion','grocery','medical'], conditional: ['home'], avoided: [] },
+};
+const ARCHETYPE_AFFINITY_OVERRIDES = {
+  'guardian':{'boost':['home','religion','medical'],'penalize':['social']},
+  'achiever':{'boost':['gym','education','business'],'penalize':[]},
+  'rebel':{'boost':['social','outdoor'],'penalize':['religion','home']},
+  'introvert':{'boost':['home','outdoor'],'penalize':['social']},
+  'charmer':{'boost':['social','food_drink'],'penalize':[]},
+  'wounded':{'boost':['home','outdoor'],'penalize':['social']},
+  'chaotic':{'boost':['social'],'penalize':['home']},
+  'people-pleaser':{'boost':['food_drink','social'],'penalize':[]},
+  'self-destructive':{'boost':['social'],'penalize':['gym','medical']},
+};
+const EMOTIONAL_STATE_MODIFIERS = {
+  sad:{'boost':['home','outdoor'],'penalize':['social']},
+  anxious:{'boost':['home','outdoor'],'penalize':['social']},
+  overwhelmed:{'boost':['home','outdoor'],'penalize':['social']},
+  reflective:{'boost':['home','outdoor','religion'],'penalize':['social']},
+  'closed-off':{'boost':['home'],'penalize':['social','food_drink']},
+  'burnt out':{'boost':['home','outdoor'],'penalize':['social','gym']},
+  grief:{'boost':['home','religion','outdoor'],'penalize':['social']},
+  loneliness:{'boost':['social','food_drink'],'penalize':['home']},
+  joyful:{'boost':['social','food_drink','outdoor'],'penalize':[]},
+  excited:{'boost':['social','food_drink','outdoor','gym'],'penalize':[]},
+  content:{'boost':['home','outdoor','food_drink'],'penalize':[]},
+  flirtatious:{'boost':['social','food_drink'],'penalize':['home']},
+  calm:{'boost':['outdoor','home','food_drink'],'penalize':[]},
+  bored:{'boost':['social','food_drink','outdoor'],'penalize':['home']},
+  irritated:{'boost':['outdoor','gym'],'penalize':['social']},
+  frustrated:{'boost':['gym','outdoor','home'],'penalize':['social']},
+  defensive:{'boost':['home'],'penalize':['social']},
+};
+
+function buildCharacterAffinityContext(character, availableLocations) {
+  const profile = {};
+  const allCats = ['home','outdoor','public','food_drink','education','medical','grocery','religion','social','gym','workplace','school','business','generic'];
+  allCats.forEach(c => profile[c] = 0);
+
+  const socialEnergy = character.social_energy || 'ambivert';
+  const ep = SOCIAL_ENERGY_AFFINITIES[socialEnergy] || SOCIAL_ENERGY_AFFINITIES.ambivert;
+  ep.preferred.forEach(c => { profile[c] = (profile[c]||0) + 3; });
+  ep.acceptable.forEach(c => { profile[c] = (profile[c]||0) + 1; });
+  ep.conditional.forEach(c => { profile[c] = (profile[c]||0) - 1; });
+
+  const archetype = (character.archetype||'').toLowerCase();
+  const ao = ARCHETYPE_AFFINITY_OVERRIDES[archetype];
+  if (ao) {
+    ao.boost.forEach(c => { profile[c] = (profile[c]||0) + 2; });
+    ao.penalize.forEach(c => { profile[c] = (profile[c]||0) - 2; });
+  }
+
+  const religion = (character.religion||'').toLowerCase();
+  const beliefLevel = character.belief_level || 'moderate';
+  if (religion && religion !== 'none') {
+    const rb = beliefLevel === 'devout' ? 4 : beliefLevel === 'moderate' ? 2 : 1;
+    profile.religion = (profile.religion||0) + rb;
+    if (beliefLevel === 'devout') profile.social = (profile.social||0) - 2;
+  }
+
+  const traits = (character.personality_traits||[]).map(t => t.toLowerCase());
+  if (traits.some(t => ['nature','earthy','outdoorsy','grounded','peaceful'].includes(t))) { profile.outdoor += 2; profile.home += 1; profile.social -= 1; }
+  if (traits.some(t => ['foodie','culinary','sociable','outgoing'].includes(t))) profile.food_drink += 2;
+  if (traits.some(t => ['fitness','athletic','active','disciplined'].includes(t))) profile.gym += 2;
+
+  const healthHabits = (character.health_habits||'').toLowerCase();
+  if (/gym|workout|fitness|exercise|train/.test(healthHabits)) profile.gym += 2;
+  if (/run|jog|walk|hike|outdoor/.test(healthHabits)) profile.outdoor += 2;
+
+  const emotionMod = EMOTIONAL_STATE_MODIFIERS[character.emotional_state||'calm'];
+  if (emotionMod) {
+    emotionMod.boost.forEach(c => { profile[c] = (profile[c]||0) + 2; });
+    emotionMod.penalize.forEach(c => { profile[c] = (profile[c]||0) - 2; });
+  }
+
+  // Score available locations
+  const scored = (availableLocations||[]).map(loc => {
+    let score = profile[loc.category] || 0;
+    const venueId = (loc.venue_identity||'').toLowerCase();
+    const isDevout = beliefLevel === 'devout';
+    if (isDevout && religion && religion !== 'none') {
+      if (/gay|lgbt|queer|strip|adult/.test(venueId)) score -= 6;
+    }
+    return { name: loc.name, category: loc.category, score };
+  }).sort((a,b) => b.score - a.score);
+
+  const preferred = scored.filter(l => l.score > 1).map(l => `${l.name} (${l.category})`).slice(0,5);
+  const avoided = scored.filter(l => l.score < -1).map(l => `${l.name} (${l.category})`).slice(0,3);
+
+  return { preferred, avoided, socialEnergy, religion, beliefLevel };
+}
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
@@ -60,6 +157,14 @@ Deno.serve(async (req) => {
       const locationContext = [character.city, character.state].filter(Boolean).join(', ') || '';
 
       const structuredLifeContext = [workScheduleContext, sleepScheduleContext, educationContext, jobTrainingContext, locationContext ? `Location: ${locationContext}` : ''].filter(Boolean).join('\n');
+
+      // Fetch available locations for affinity scoring
+      let locationAffinityContext = null;
+      try {
+        const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 50);
+        const userLocations = allLocations.filter(l => !l.created_by || l.created_by === character.created_by);
+        locationAffinityContext = buildCharacterAffinityContext(character, userLocations);
+      } catch (_) {}
 
       // Fetch recent life events (last 10) for context
       const recentLifeEvents = await base44.asServiceRole.entities.LifeEvent.filter(
@@ -211,6 +316,16 @@ ${departedContext}
 ${eventHistoryContext}
 ${vulnerabilityContext}
 ${growthContext}
+
+LOCATION AFFINITY (character-specific — use this to shape where ${name} goes during free time):
+${locationAffinityContext ? `
+Social energy type: ${locationAffinityContext.socialEnergy}
+${locationAffinityContext.religion && locationAffinityContext.religion !== 'none' ? `Religion: ${locationAffinityContext.religion} (${locationAffinityContext.beliefLevel})` : ''}
+Best-fit locations right now: ${locationAffinityContext.preferred.length > 0 ? locationAffinityContext.preferred.join(', ') : 'home or familiar spots'}
+Locations that conflict with identity: ${locationAffinityContext.avoided.length > 0 ? locationAffinityContext.avoided.join(', ') : 'none flagged'}
+
+LOCATION RULE: ${name} should choose locations that match who they are. Their beliefs, personality, mood, and habits must all influence where they go. Do not send them to places that conflict with their established identity unless there is a specific, meaningful reason. Preferences are real but not absolute — exceptions must feel intentional.
+` : 'No location data available — use personality and beliefs to infer appropriate venues.'}
 
 REALISM RULES — READ CAREFULLY:
 1. CHARACTER FLAWS: ${flawNote} Do NOT make ${name} perfectly rational or emotionally controlled at all times.
