@@ -260,24 +260,32 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   };
 
   const handleRealLocationConfirm = async (locationData) => {
-    if (!selectedLocation) return;
-    
-    // Create a temporary location record for the real place
     setIsTraveling(true);
     try {
-      // Travel takes realistic time: 2–8 seconds simulated delay
-      const travelMs = 2000 + Math.random() * 6000;
+      // Create (or retrieve) a LocationReference for this verified place
+      const res = await base44.functions.invoke('createLocationFromVerified', {
+        verifiedLocationId: locationData.verifiedLocationId,
+      });
+
+      const locationReferenceId = res?.data?.location_reference_id;
+      if (!locationReferenceId) throw new Error('Failed to create location');
+
+      // Short travel delay
+      const travelMs = 2000 + Math.random() * 4000;
       await new Promise(r => setTimeout(r, travelMs));
 
-      // For now, show message that they're visiting a real location
+      // Navigate to scene
+      const params = new URLSearchParams({
+        locationId: locationReferenceId,
+        characterIds: selectedCharacterIds.join(","),
+      });
+      navigate(`/scene?${params.toString()}`);
+    } catch (err) {
+      console.error('Real location travel failed:', err);
       setUnavailablePopup([{
         character: { id: "real_location", name: locationData.name, avatar_url: null },
-        reason: {
-          iconType: "info",
-          message: `Heading to ${locationData.name}...`,
-          color: "text-green-400",
-        },
-        availableAt: locationData.address || "Real location visit",
+        reason: { iconType: "out", message: `Couldn't load ${locationData.name}. Try again.`, color: "text-destructive" },
+        availableAt: null,
       }]);
     } finally {
       setIsTraveling(false);
@@ -602,7 +610,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       <RealLocationModal
         isOpen={showRealLocationModal}
         onClose={() => setShowRealLocationModal(false)}
-        onConfirm={handleRealLocationConfirm}
+        onConfirm={(locationData) => {
+          setShowRealLocationModal(false);
+          handleRealLocationConfirm(locationData);
+        }}
       />
 
       <BottomNav />
