@@ -172,17 +172,19 @@ function GhostLinkModal({ npc, allCharacters, character, onConfirm, onCancel }) 
 }
 
 // ── People In Their World Editor ──────────────────────────────────────────────
-function WorldPeopleEditor({ character, allCharacters }) {
+function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
-  const [linkingNpc, setLinkingNpc] = useState(null); // the NPC rel being linked
+  const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // NPCs: fictional_relationships with NO related_character_id
+  // Include: unlinked NPCs + relationships pointing to npc character_type
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-  const npcRels = (character.fictional_relationships || []).filter(r =>
-    !r.related_character_id && !r._from_family && !familyNames.has(r.person_name?.toLowerCase())
-  );
+  const npcRels = (character.fictional_relationships || []).filter(r => {
+    if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;
+    if (!r.related_character_id) return true; // unlinked
+    const linked = allCharacters.find(c => c.id === r.related_character_id);
+    return linked && linked.character_type === "npc"; // NPC fictitious
+  });
 
-  // Deduplicate by person_name
   const seen = new Set();
   const deduped = npcRels.filter(r => {
     const key = r.person_name?.toLowerCase();
@@ -200,23 +202,15 @@ function WorldPeopleEditor({ character, allCharacters }) {
   };
 
   const linkNpcToCharacter = async (npc, targetChar) => {
-    // Replace the NPC entry: add related_character_id, update avatar/name to match the real character
     const updated = (character.fictional_relationships || []).map(r => {
       if (r.person_name?.toLowerCase() === npc.person_name?.toLowerCase() && !r.related_character_id) {
-        return {
-          ...r,
-          person_name: targetChar.name,
-          related_character_id: targetChar.id,
-          avatar_url: targetChar.avatar_url || r.avatar_url || null,
-        };
+        return { ...r, person_name: targetChar.name, related_character_id: targetChar.id, avatar_url: targetChar.avatar_url || r.avatar_url || null };
       }
       return r;
     });
-    // Deduplicate: if targetChar is already linked separately, merge & keep the one with more data
     const linkedToTarget = updated.filter(r => r.related_character_id === targetChar.id);
     let finalRels = updated;
     if (linkedToTarget.length > 1) {
-      // Keep the first (now updated) one, remove subsequent duplicates
       let kept = false;
       finalRels = updated.filter(r => {
         if (r.related_character_id === targetChar.id) {
@@ -231,37 +225,52 @@ function WorldPeopleEditor({ character, allCharacters }) {
     setLinkingNpc(null);
   };
 
+  // Move an NPC fictitious character to "Characters They Know" by setting related_character_id to an active char
+  // For now, "Move to Characters They Know" just opens the link modal (which links to an active char)
+  // OR if the rel already has a related_character_id that is an NPC-type — it stays here unless user moves it
+
   return (
     <div className="space-y-2">
       {deduped.length === 0 && (
-        <p className="text-xs text-muted-foreground italic">No unlinked people in their world.</p>
+        <p className="text-xs text-muted-foreground italic">No people in their world yet.</p>
       )}
       {deduped.map((rel, i) => {
-        // Check if this NPC name loosely matches any active character → flag as possible ghost
-        const possibleMatches = findPossibleMatches(rel.person_name, allCharacters.filter(c => c.id !== character.id));
+        const possibleMatches = !rel.related_character_id
+          ? findPossibleMatches(rel.person_name, allCharacters.filter(c => c.id !== character.id))
+          : [];
         const isGhost = possibleMatches.length > 0;
+        const linkedNpc = rel.related_character_id ? allCharacters.find(c => c.id === rel.related_character_id) : null;
 
         return (
           <div key={i} className={`rounded-xl border px-3 py-2.5 space-y-1.5 ${isGhost ? "border-amber-500/40 bg-amber-500/5" : "border-border bg-secondary/30"}`}>
             <div className="flex items-center gap-2">
-              {rel.avatar_url || rel.photo_url
-                ? <img src={rel.avatar_url || rel.photo_url} alt={rel.person_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+              {rel.avatar_url || rel.photo_url || linkedNpc?.avatar_url
+                ? <img src={rel.avatar_url || rel.photo_url || linkedNpc?.avatar_url} alt={rel.person_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
                 : <div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{rel.person_name?.[0]?.toUpperCase()}</span></div>
               }
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-foreground truncate">{rel.person_name}</p>
-                <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}</p>
+                <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}{linkedNpc ? ` · NPC` : ""}</p>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
-                {/* Link to character button */}
+                {/* Move to Characters They Know */}
                 <button
-                  onClick={() => setLinkingNpc(rel)}
-                  title="Link to active character"
-                  className={`p-1.5 rounded-lg transition-colors ${isGhost ? "text-amber-400 hover:bg-amber-500/20" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+                  onClick={() => onMoveToKnown(rel)}
+                  title="Move to Characters They Know"
+                  className="p-1.5 rounded-lg text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors text-[10px] font-medium"
                 >
-                  <Link className="w-3.5 h-3.5" />
+                  → Known
                 </button>
-                {/* Delete button */}
+                {/* Link to active character (for unlinked) */}
+                {!rel.related_character_id && (
+                  <button
+                    onClick={() => setLinkingNpc(rel)}
+                    title="Link to active character"
+                    className={`p-1.5 rounded-lg transition-colors ${isGhost ? "text-amber-400 hover:bg-amber-500/20" : "text-muted-foreground hover:text-primary hover:bg-primary/10"}`}
+                  >
+                    <Link className="w-3.5 h-3.5" />
+                  </button>
+                )}
                 <button
                   onClick={() => deleteNpc(rel.person_name)}
                   title="Remove from world"
@@ -281,7 +290,6 @@ function WorldPeopleEditor({ character, allCharacters }) {
         );
       })}
 
-      {/* Ghost link modal */}
       <AnimatePresence>
         {linkingNpc && (
           <GhostLinkModal
@@ -298,7 +306,7 @@ function WorldPeopleEditor({ character, allCharacters }) {
 }
 
 // ── Characters They Know Editor ───────────────────────────────────────────────
-function KnownCharactersEditor({ character, allCharacters }) {
+function KnownCharactersEditor({ character, allCharacters, onMoveToWorld }) {
   const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef(null);
@@ -319,10 +327,16 @@ function KnownCharactersEditor({ character, allCharacters }) {
 
   const available = allCharacters.filter(
     c => c.id !== character.id && !existingLinkedIds.has(c.id) &&
-    c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged"
+    c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged" &&
+    (c.character_type === "active" || c.character_type === "promoted_npc" || !c.character_type)
   );
 
-  const linked = (character.fictional_relationships || []).filter(r => r.related_character_id);
+  // Only active/promoted — not NPC-type characters
+  const linked = (character.fictional_relationships || []).filter(r => {
+    if (!r.related_character_id) return false;
+    const lc = allCharacters.find(c => c.id === r.related_character_id);
+    return lc && (lc.character_type === "active" || lc.character_type === "promoted_npc" || !lc.character_type);
+  });
 
   const addCharacter = async (char, relType) => {
     const newRel = {
@@ -371,6 +385,15 @@ function KnownCharactersEditor({ character, allCharacters }) {
                 <p className="text-xs font-medium text-foreground truncate">{rel.person_name}</p>
                 <p className="text-[10px] text-muted-foreground capitalize">{rel.relationship_type}</p>
               </div>
+              {onMoveToWorld && (
+                <button
+                  onClick={() => onMoveToWorld(rel)}
+                  title="Move to People In Their World"
+                  className="text-[10px] font-medium text-muted-foreground hover:text-primary transition-colors flex-shrink-0 px-1"
+                >
+                  → World
+                </button>
+              )}
               <button
                 onClick={() => removeLinked(rel.related_character_id)}
                 className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
@@ -458,6 +481,46 @@ function CharacterPickerDropdown({ characters, onSelect }) {
 
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters }) {
+  const queryClient = useQueryClient();
+
+  // Move a relationship from "People In Their World" → "Characters They Know"
+  // (sets a placeholder related_character_id removal — just clears the npc flag by opening the link modal;
+  //  here we just toggle: remove related_character_id so it becomes an unlinked NPC under World,
+  //  and "Move to Known" will open the ghost link picker)
+  // Actually: "Move to Known" means: if unlinked, let user pick an active char to link.
+  //           "Move to World" means: strip related_character_id so it becomes an unlinked NPC.
+  const handleMoveToWorld = async (rel) => {
+    if (!rel.related_character_id) return; // already unlinked
+    const updated = (character.fictional_relationships || []).map(r => {
+      if (r.related_character_id === rel.related_character_id && r.person_name === rel.person_name) {
+        const { related_character_id, avatar_url, ...rest } = r;
+        return { ...rest, avatar_url: avatar_url || null }; // keep avatar but strip link
+      }
+      return r;
+    });
+    await base44.entities.Character.update(character.id, { fictional_relationships: updated });
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+  };
+
+  // "Move to Known" from World — for now just opens as normal (link modal handles it in WorldPeopleEditor)
+  // but we also need to handle NPC fictitious ones (those with related_character_id pointing to npc-type)
+  // → strip the related_character_id so they become unlinked, then the user can re-link to an active char
+  const handleMoveToKnown = async (rel) => {
+    // If this rel has no related_character_id, open link modal — handled inside WorldPeopleEditor
+    // If it points to an NPC-type, we detach it from NPC and make it unlinked so user can relink
+    if (!rel.related_character_id) return; // handled by link modal
+    // Just strip the link — user can then re-link via ghost link modal
+    const updated = (character.fictional_relationships || []).map(r => {
+      if (r.related_character_id === rel.related_character_id && r.person_name === rel.person_name) {
+        const { related_character_id, ...rest } = r;
+        return rest;
+      }
+      return r;
+    });
+    await base44.entities.Character.update(character.id, { fictional_relationships: updated });
+    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+  };
+
   if (!isOpen || !character) return null;
 
   return createPortal(
@@ -526,18 +589,18 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
               <section className="space-y-3">
                 <div>
                   <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">People In Their World</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Unlinked NPCs. Delete or link them to a real active character.</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Unlinked NPCs and NPC fictitious people they know. Use "→ Known" to move someone to active character relationships, or link them.</p>
                 </div>
-                <WorldPeopleEditor character={character} allCharacters={allCharacters} />
+                <WorldPeopleEditor character={character} allCharacters={allCharacters} onMoveToKnown={handleMoveToKnown} />
               </section>
 
               {/* Characters They Know */}
               <section className="space-y-3">
                 <div>
                   <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Characters They Know</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">Active characters with a direct link.</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Active characters with a direct link. Use "→ World" to move someone to People In Their World.</p>
                 </div>
-                <KnownCharactersEditor character={character} allCharacters={allCharacters} />
+                <KnownCharactersEditor character={character} allCharacters={allCharacters} onMoveToWorld={handleMoveToWorld} />
               </section>
 
             </div>
