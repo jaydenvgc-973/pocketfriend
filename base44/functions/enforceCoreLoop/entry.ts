@@ -239,31 +239,42 @@ Deno.serve(async (req) => {
         note: 'User can override behavior during interaction'
       };
 
-      // STEP 6: UPDATE LOCATION (Based on schedule)
+      // STEP 6: UPDATE LOCATION (Based on schedule, then affinity for free time)
       let targetLocation = null;
       let locationReason = null;
 
       if (isWorkDay && isWorkHours && workLoc) {
+        // Schedule wins — character must be at work
         targetLocation = workLoc.id;
         locationReason = 'scheduled work time';
       } else if (isStudentEnrolled && schoolLoc) {
-        // Check if school is in session (simplified: assume 08:00-15:00)
         if (currentHour >= 8 && currentHour < 15 && [1,2,3,4,5].includes(dayOfWeek)) {
           targetLocation = schoolLoc.id;
           locationReason = 'school hours';
+        }
+      } else {
+        // FREE TIME: use affinity engine to pick best-fit location
+        const freeTimeLocations = locations.filter(l =>
+          l.category !== 'workplace' && l.category !== 'school' &&
+          (!l.created_by || l.created_by === character.created_by)
+        );
+        const bestFit = pickBestFreeTimeLocation(freeTimeLocations, character);
+        if (bestFit && bestFit.id !== character.resolved_current_location_id) {
+          targetLocation = bestFit.id;
+          locationReason = `free time — best fit for personality/mood (${character.social_energy || 'ambivert'}, ${character.emotional_state || 'calm'})`;
         }
       }
 
       if (targetLocation && character.current_location_id !== targetLocation) {
         await base44.entities.Character.update(character.id, {
           current_location_id: targetLocation,
-          current_activity: `At ${locationMap[targetLocation].name} (${locationReason})`
+          current_activity: `At ${locationMap[targetLocation]?.name || 'location'} (${locationReason})`
         });
-        charLoop.corrections.push(`Moved to ${locationMap[targetLocation].name} (${locationReason})`);
+        charLoop.corrections.push(`Moved to ${locationMap[targetLocation]?.name} (${locationReason})`);
       }
 
       charLoop.steps['6_UPDATE_LOCATION'] = {
-        targetLocation: targetLocation ? locationMap[targetLocation].name : null,
+        targetLocation: targetLocation ? locationMap[targetLocation]?.name : null,
         reason: locationReason
       };
 
