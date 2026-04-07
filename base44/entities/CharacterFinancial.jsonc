@@ -105,7 +105,7 @@
     },
     "recurring_expenses": {
       "type": "array",
-      "description": "All recurring expenses",
+      "description": "All location-tied recurring expenses (rent, utilities, gym, etc.)",
       "items": {
         "type": "object",
         "properties": {
@@ -116,14 +116,13 @@
               "utilities",
               "groceries",
               "gym",
-              "phone",
-              "streaming",
+              "childcare",
               "custom"
             ]
           },
           "location_id": {
             "type": "string",
-            "description": "Location ID if tied to a place (rent, utilities, gym)"
+            "description": "Location ID if tied to a place (rent, utilities, gym, childcare)"
           },
           "location_name": {
             "type": "string"
@@ -149,6 +148,51 @@
           "monthly_cost"
         ]
       }
+    },
+    "other_monthly_expenses": {
+      "type": "array",
+      "description": "Personal monthly expenses not tied to a location (phone, internet, car, child support, etc.)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Expense name (e.g. 'Cell Phone', 'Car Payment', 'Child Support')"
+          },
+          "amount": {
+            "type": "number",
+            "description": "Monthly cost in USD"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "cell_phone",
+              "internet",
+              "automotive",
+              "insurance",
+              "child_support",
+              "subscription",
+              "custom"
+            ],
+            "description": "Expense category"
+          },
+          "total_paid": {
+            "type": "number",
+            "default": 0,
+            "description": "Cumulative amount paid for this expense"
+          },
+          "last_payment_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "name",
+          "amount",
+          "type"
+        ]
+      },
+      "default": []
     },
     "last_updated": {
       "type": "string",

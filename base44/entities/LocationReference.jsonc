@@ -351,6 +351,10 @@
     "rent_or_housing_cost": {
       "type": "number"
     },
+    "monthly_childcare_cost": {
+      "type": "number",
+      "description": "Monthly childcare/babysitter expense if children under 16 reside here"
+    },
     "bedroom_count": {
       "type": "integer",
       "default": 1
