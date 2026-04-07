@@ -487,6 +487,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       return c.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
+                    // Also show NPC family members who live here
+                    const npcResidents = selectedLocation.resident_family_members || [];
+                    npcResidents.forEach(m => lines.push({ name: m.name, status: "home", color: "text-muted-foreground" }));
                   } else {
                     // READ-ONLY: Show characters whose resolved location is here
                     const currentlyAtLocation = characters.filter(c => {
