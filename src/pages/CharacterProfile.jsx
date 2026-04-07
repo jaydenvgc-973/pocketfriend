@@ -577,12 +577,22 @@ export default function CharacterProfile() {
               <Users className="w-4 h-4 text-primary" />
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Characters They Know</p>
             </div>
-            {(!character.fictional_relationships?.some(r => r.related_character_id && allCharacters.find(c => c.id === r.related_character_id && (c.character_type === "active" || c.character_type === "promoted_npc" || (!c.character_type))))) && (
+            {(!character.fictional_relationships?.some(r => {
+              if (!r.related_character_id) return false;
+              const lc = allCharacters.find(c => c.id === r.related_character_id);
+              if (!lc) return true; // not found — still show
+              return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+            })) && (
               <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
             )}
             <div className="space-y-4">
               {(character.fictional_relationships || [])
-                .filter(r => r.related_character_id && allCharacters.find(c => c.id === r.related_character_id && (c.character_type === "active" || c.character_type === "promoted_npc" || (!c.character_type))))
+                .filter(r => {
+                  if (!r.related_character_id) return false;
+                  const lc = allCharacters.find(c => c.id === r.related_character_id);
+                  if (!lc) return true; // not found in list — keep it
+                  return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+                })
                 .map((rel, idx) => {
                    const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
                   return (
@@ -648,15 +658,15 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships — exclude family members; include unlinked NPCs AND fictitious NPC characters */}
+          {/* NPC relationships — exclude family members; include unlinked NPCs AND npc/family_npc typed characters */}
           {(() => {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
               if (!r.related_character_id) return true; // unlinked NPC
-              // Include if the linked character is an NPC fictitious type (not active)
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              return linked && linked.character_type === "npc";
+              // Show here only if explicitly npc or family_npc type
+              return linked && (linked.character_type === "npc" || linked.character_type === "family_npc");
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -674,7 +684,7 @@ export default function CharacterProfile() {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  return linked && linked.character_type === "npc";
+                  return linked && (linked.character_type === "npc" || linked.character_type === "family_npc");
                 });
                 const seen = new Set();
                 const deduped = npcRels.filter(r => {
