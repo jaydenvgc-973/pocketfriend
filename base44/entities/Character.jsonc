@@ -885,6 +885,10 @@
           "avatar_url": {
             "type": "string"
           },
+          "current_location_id": {
+            "type": "string",
+            "description": "ID of the location the NPC is currently at"
+          },
           "user_respect_level": {
             "type": "number",
             "default": 50
