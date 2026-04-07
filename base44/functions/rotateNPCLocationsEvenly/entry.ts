@@ -68,11 +68,18 @@ Deno.serve(async (req) => {
 
     // **Process family members listed in VGC Towers resident_family_members**
     // Family members are associated with owner characters via source_character_id
+    // EXCLUDE family members whose owner is an Active Created Character
     const ownerToFamilyMap = {}; // Group family members by owner
     
     (vgcTowers.resident_family_members || []).forEach(familyMember => {
       const ownerId = familyMember.source_character_id;
       if (!ownerId) return; // Skip if no owner
+      
+      const ownerChar = allCharacters.find(c => c.id === ownerId);
+      if (ownerChar && ownerChar.character_type === 'active') {
+        // Skip family members of Active Created Characters
+        return;
+      }
       
       if (!ownerToFamilyMap[ownerId]) {
         ownerToFamilyMap[ownerId] = [];
