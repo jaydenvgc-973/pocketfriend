@@ -154,12 +154,12 @@ export default function Moments() {
 
       <div className="px-4 py-5 space-y-8">
 
-        {/* Active Arcs */}
-        {characters.length > 0 && (
+        {/* Active Arcs — active created characters only (no NPCs) */}
+        {characters.filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc' && c.character_type !== 'background' && c.character_type !== 'promoted_npc').length > 0 && (
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">🔥 Active Arcs</h2>
             <div className="space-y-2">
-              {characters.map(c => (
+              {characters.filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc' && c.character_type !== 'background' && c.character_type !== 'promoted_npc').map(c => (
                 <ActiveArcCard key={c.id} character={c} />
               ))}
             </div>

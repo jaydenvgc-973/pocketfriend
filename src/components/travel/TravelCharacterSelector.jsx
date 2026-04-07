@@ -13,6 +13,13 @@ const STATUS_ICONS = {
 export default function TravelCharacterSelector({ characters, currentUser, displayName, selectedIds, locationMap, onToggle }) {
   const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
 
+  // Sort: active created characters → NPC fictitious → NPC family members
+  const sortedCharacters = [
+    ...characters.filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc' && c.character_type !== 'background'),
+    ...characters.filter(c => c.character_type === 'npc' || c.character_type === 'promoted_npc'),
+    ...characters.filter(c => c.character_type === 'family_npc' || c.character_type === 'background'),
+  ];
+
   return (
     <div className="space-y-2">
       {/* User card — always available */}
@@ -33,7 +40,7 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
       </div>
 
       {/* Character cards */}
-      {characters.map(char => {
+      {sortedCharacters.map(char => {
         let availability = { available: true, reason: null, availableAt: null };
         try {
           availability = getCharacterTravelAvailability(char, locationMap);

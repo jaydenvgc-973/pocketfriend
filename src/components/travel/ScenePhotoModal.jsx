@@ -130,7 +130,11 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
             >
               <Check className="w-3 h-3" /> {displayName}
             </button>
-            {characters.map(char => (
+            {[
+              ...characters.filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc' && c.character_type !== 'background'),
+              ...characters.filter(c => c.character_type === 'npc' || c.character_type === 'promoted_npc'),
+              ...characters.filter(c => c.character_type === 'family_npc' || c.character_type === 'background'),
+            ].map(char => (
               <button
                 key={char.id}
                 onClick={() => toggleParticipant(char.id)}

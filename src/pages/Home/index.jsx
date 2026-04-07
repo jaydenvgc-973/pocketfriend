@@ -201,6 +201,11 @@ export default function Home() {
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-xl font-bold text-foreground">Pocketfriend</h1>
             <div className="flex items-center gap-2">
+              <Link to="/groups">
+                <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
+                  <Users className="w-5 h-5" />
+                </Button>
+              </Link>
               <button
                 onClick={() => setShowTroubleshooting(true)}
                 className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
@@ -208,11 +213,6 @@ export default function Home() {
               >
                 <Wrench className="w-4 h-4" />
               </button>
-              <Link to="/groups">
-                <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
-                  <Users className="w-5 h-5" />
-                </Button>
-              </Link>
               <Link to="/settings">
                 <Button variant="ghost" size="icon" className="rounded-full text-muted-foreground hover:text-foreground">
                   <Settings className="w-5 h-5" />
