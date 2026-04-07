@@ -328,14 +328,19 @@ function KnownCharactersEditor({ character, allCharacters, onMoveToWorld }) {
   const available = allCharacters.filter(
     c => c.id !== character.id && !existingLinkedIds.has(c.id) &&
     c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged" &&
-    (c.character_type === "active" || c.character_type === "promoted_npc" || !c.character_type)
+    c.character_type !== "npc" && c.character_type !== "family_npc"
   );
 
-  // Only active/promoted — not NPC-type characters
+  // Show all relationships with a related_character_id that point to active/promoted characters.
+  // If the character isn't found in allCharacters, still show the relationship (don't silently drop it).
+  // Only exclude explicit npc/family_npc types.
   const linked = (character.fictional_relationships || []).filter(r => {
     if (!r.related_character_id) return false;
     const lc = allCharacters.find(c => c.id === r.related_character_id);
-    return lc && (lc.character_type === "active" || lc.character_type === "promoted_npc" || !lc.character_type);
+    // If not found in list, keep it (don't silently drop)
+    if (!lc) return true;
+    // Exclude pure NPC types — those belong in "People In Their World"
+    return lc.character_type !== "npc" && lc.character_type !== "family_npc";
   });
 
   const addCharacter = async (char, relType) => {
