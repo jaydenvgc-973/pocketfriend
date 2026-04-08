@@ -1020,7 +1020,7 @@ Return JSON:
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="flex flex-col bg-background" style={{ height: '100dvh' }}>
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
         <button
@@ -1413,7 +1413,7 @@ Return JSON:
       )}
 
       {/* Input bar */}
-      <div className="border-t border-border flex-shrink-0 pb-safe">
+      <div className="border-t border-border flex-shrink-0">
         {/* Mode toggle */}
         <div className="flex gap-1 px-3 pt-2 pb-1">
           <button
