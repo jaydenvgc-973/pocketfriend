@@ -25,6 +25,7 @@ import MoveInPopup from "@/components/travel/MoveInPopup";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
+import SceneInputBar from "@/components/scene/SceneInputBar";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -164,6 +165,10 @@ export default function Scene() {
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
+  // Stable refs for send handlers — prevents SceneInputBar from re-rendering on every keystroke
+  const narratorModeRef = useRef(narratorMode);
+  const sendMessageRef = useRef(null);
+  const sendNarrationRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
   const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
@@ -548,9 +553,18 @@ export default function Scene() {
       .catch(() => {});
   }, [currentUser?.email]);
 
-  // Auto-scroll
+  // Auto-scroll — only scroll if user is near the bottom, never steal focus
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const el = bottomRef.current;
+    if (!el) return;
+    // Only auto-scroll if we're already near the bottom (within 150px)
+    const container = el.parentElement;
+    if (container) {
+      const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distFromBottom < 150) {
+        el.scrollIntoView({ behavior: "smooth", block: "end" });
+      }
+    }
   }, [messages.length]);
 
   // Rotate actions every 3 minutes
@@ -744,6 +758,20 @@ export default function Scene() {
       timestamp: new Date().toISOString(),
     }]);
   };
+
+  // Keep refs current so SceneInputBar's stable onSend callback always calls the latest versions
+  useEffect(() => { narratorModeRef.current = narratorMode; }, [narratorMode]);
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+  useEffect(() => { sendNarrationRef.current = sendNarration; }, [sendNarration]);
+
+  // Stable onSend — never changes identity, so SceneInputBar never re-renders due to prop change
+  const stableOnSend = useRef((text) => {
+    if (narratorModeRef.current) {
+      sendNarrationRef.current?.(text);
+    } else {
+      sendMessageRef.current?.(text);
+    }
+  }).current;
 
   const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null) => {
     if (!text.trim() || !location) return;
@@ -1412,52 +1440,14 @@ Return JSON:
         </div>
       )}
 
-      {/* Input bar */}
-      <div className="border-t border-border flex-shrink-0">
-        {/* Mode toggle */}
-        <div className="flex gap-1 px-3 pt-2 pb-1">
-          <button
-            onClick={() => setNarratorMode(false)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${!narratorMode ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
-          >
-            <Send className="w-3 h-3" /> Dialogue
-          </button>
-          <button
-            onClick={() => setNarratorMode(true)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${narratorMode ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground hover:text-foreground"}`}
-          >
-            <BookOpen className="w-3 h-3" /> Narrate
-          </button>
-        </div>
-        <div className="flex gap-2 px-3 pb-2 touch-manipulation">
-          <input
-            value={inputText}
-            onChange={e => setInputText(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                narratorMode ? sendNarration(inputText) : sendMessage(inputText);
-              }
-            }}
-            onTouchStart={(e) => e.currentTarget.focus()}
-            placeholder={narratorMode ? "Describe the scene, set the atmosphere..." : "Say something..."}
-            className={`flex-1 h-11 px-3 rounded-xl bg-secondary border text-foreground text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors ${narratorMode ? "border-primary/40 italic" : "border-border"}`}
-            autoComplete="off"
-          />
-          <button
-            onClick={() => {
-              narratorMode ? sendNarration(inputText) : sendMessage(inputText);
-            }}
-            onTouchEnd={(e) => {
-              if (!inputText.trim()) return;
-              narratorMode ? sendNarration(inputText) : sendMessage(inputText);
-            }}
-            disabled={!inputText.trim()}
-            className={`w-11 h-11 rounded-xl flex items-center justify-center disabled:opacity-40 transition-all active:scale-95 ${narratorMode ? "bg-primary/70 text-primary-foreground hover:bg-primary/80" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
-          >
-            {narratorMode ? <BookOpen className="w-4 h-4" /> : <Send className="w-4 h-4" />}
-          </button>
-        </div>
-      </div>
+      {/* Input bar — stable, never remounts. Uses stable callbacks to prevent re-renders. */}
+      <SceneInputBar
+        inputText={inputText}
+        setInputText={setInputText}
+        narratorMode={narratorMode}
+        setNarratorMode={setNarratorMode}
+        onSend={stableOnSend}
+      />
 
       {/* Photo modal */}
       <AnimatePresence>
