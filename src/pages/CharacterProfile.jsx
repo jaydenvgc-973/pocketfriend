@@ -22,6 +22,7 @@ import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
+import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -542,50 +543,11 @@ export default function CharacterProfile() {
           <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
         </div>
 
-        {/* Needs */}
-        <div className="bg-card border border-border rounded-2xl p-4">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider mb-4">Current Needs</p>
-          <div className="space-y-3">
-            {[
-              { label: "Hunger", key: "hunger" },
-              { label: "Energy", key: "energy" },
-              { label: "Social", key: "social" },
-              { label: "Health", key: "health" },
-              { label: "Mental", key: "mental" },
-              { label: "Financial", key: "financial" },
-              { label: "Hygiene", key: "hygiene" },
-              { label: "Comfort", key: "comfort" }
-            ].map(({ label, key }) => {
-              const value = character[key] ?? 50;
-              const priority = value <= 9 ? "critical" : value <= 29 ? "urgent" : value <= 49 ? "moderate" : "stable";
-              const priorityColor = priority === "critical" ? "bg-destructive" : priority === "urgent" ? "bg-amber-500" : priority === "moderate" ? "bg-primary" : "bg-green-600";
-              return (
-                <div key={key}>
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="text-xs font-medium text-foreground">{label}</span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                      priority === "critical" ? "bg-destructive/20 text-destructive" :
-                      priority === "urgent" ? "bg-amber-500/20 text-amber-500" :
-                      priority === "moderate" ? "bg-primary/20 text-primary" :
-                      "bg-green-600/20 text-green-600"
-                    }`}>
-                      {value}
-                    </span>
-                  </div>
-                  <div className="h-2 bg-secondary rounded-full overflow-hidden">
-                    <div 
-                      className={`h-full ${priorityColor} transition-all`}
-                      style={{ width: `${value}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-muted-foreground/70 capitalize mt-0.5 block">
-                    {priority === "critical" ? "🔴 Critical" : priority === "urgent" ? "🟠 Urgent" : priority === "moderate" ? "🟡 Moderate" : "🟢 Stable"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        {/* Live Needs — Active Created Characters only */}
+        <CharacterNeedsPanel
+          character={character}
+          onRefresh={() => refetch()}
+        />
 
         {/* Key Life Events & Memories */}
         {character.memories?.length > 0 && (

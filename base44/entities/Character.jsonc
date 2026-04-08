@@ -27,8 +27,7 @@
             "type": "string"
           },
           "normalized": {
-            "type": "string",
-            "description": "lowercased, punctuation stripped, whitespace compressed"
+            "type": "string"
           },
           "type": {
             "type": "string",
@@ -54,12 +53,10 @@
             ]
           },
           "location_scope_id": {
-            "type": "string",
-            "description": "For aliases like 'the bartender' at one specific bar"
+            "type": "string"
           },
           "relationship_scope_character_id": {
-            "type": "string",
-            "description": "For aliases like 'my mom' dependent on who is speaking"
+            "type": "string"
           },
           "user_confirmed": {
             "type": "boolean",
@@ -125,24 +122,19 @@
       "description": "Education history"
     },
     "current_home_location_id": {
-      "type": "string",
-      "description": "ID of current home location"
+      "type": "string"
     },
     "current_work_location_id": {
-      "type": "string",
-      "description": "ID of current work location"
+      "type": "string"
     },
     "current_school_location_id": {
-      "type": "string",
-      "description": "ID of current school location"
+      "type": "string"
     },
     "resolved_current_location_id": {
-      "type": "string",
-      "description": "AUTHORITATIVE: The one true current location (computed from resolution engine)"
+      "type": "string"
     },
     "resolved_current_location_name": {
-      "type": "string",
-      "description": "Display name of resolved location (e.g., 'VGC Gym' not 'gym')"
+      "type": "string"
     },
     "resolved_location_type": {
       "type": "string",
@@ -154,8 +146,7 @@
         "traveling",
         "supervision_home",
         "recovery_nap"
-      ],
-      "description": "Type of resolved location"
+      ]
     },
     "resolved_presence_status": {
       "type": "string",
@@ -168,25 +159,20 @@
         "under_supervision",
         "sleeping",
         "napping"
-      ],
-      "description": "Current presence status"
+      ]
     },
     "resolved_source_reason": {
-      "type": "string",
-      "description": "Why they are at this location: work_schedule, school_schedule, traveling_to_work, active_visit, home_resting, recovery_nap, etc."
+      "type": "string"
     },
     "resolved_last_updated_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "When the resolved location was last computed"
+      "format": "date-time"
     },
     "traveling_to_location_id": {
-      "type": "string",
-      "description": "Destination location if character is actively traveling"
+      "type": "string"
     },
     "traveling_to_location_name": {
-      "type": "string",
-      "description": "Display name of travel destination"
+      "type": "string"
     },
     "location_status": {
       "type": "string",
@@ -196,18 +182,15 @@
         "home",
         "unavailable"
       ],
-      "default": "home",
-      "description": "Current location state (at place, in transit, home, or unavailable)"
+      "default": "home"
     },
     "last_location_update_time": {
       "type": "string",
-      "format": "date-time",
-      "description": "When location state was last updated"
+      "format": "date-time"
     },
     "last_arrived_time": {
       "type": "string",
-      "format": "date-time",
-      "description": "When character last arrived at current location"
+      "format": "date-time"
     },
     "location_visibility_state": {
       "type": "string",
@@ -217,21 +200,17 @@
         "in_scene",
         "unreachable"
       ],
-      "default": "visible",
-      "description": "Whether character is visible in who's-here lists"
+      "default": "visible"
     },
     "pending_invite_id": {
-      "type": "string",
-      "description": "ID of pending invite the character sent to user"
+      "type": "string"
     },
     "schedule_override_active": {
       "type": "boolean",
-      "default": false,
-      "description": "True if character temporarily deviating from schedule"
+      "default": false
     },
     "return_to_schedule_after_outing": {
-      "type": "string",
-      "description": "Location ID to return to when schedule override ends"
+      "type": "string"
     },
     "recent_location_history": {
       "type": "array",
@@ -254,8 +233,7 @@
           }
         }
       },
-      "default": [],
-      "description": "Recent visit history for location rotation logic"
+      "default": []
     },
     "travel_status": {
       "type": "string",
@@ -265,41 +243,33 @@
         "traveling_to_school",
         "traveling_to_destination"
       ],
-      "default": "not_traveling",
-      "description": "Current travel state"
+      "default": "not_traveling"
     },
     "travel_destination_location_id": {
-      "type": "string",
-      "description": "If traveling, where are they going"
+      "type": "string"
     },
     "sleep_debt_hours": {
       "type": "number",
-      "default": 0,
-      "description": "Hours of sleep owed due to work interruption"
+      "default": 0
     },
     "last_sleep_start": {
       "type": "string",
-      "format": "date-time",
-      "description": "When they last started sleeping"
+      "format": "date-time"
     },
     "last_nap_time": {
       "type": "string",
-      "format": "date-time",
-      "description": "When they last took a recovery nap"
+      "format": "date-time"
     },
     "image_avatar_url": {
-      "type": "string",
-      "description": "Primary avatar image URL"
+      "type": "string"
     },
     "alias_count": {
       "type": "integer",
-      "default": 0,
-      "description": "Count of aliases for quick reference"
+      "default": 0
     },
     "relationship_count": {
       "type": "integer",
-      "default": 0,
-      "description": "Count of relationships for quick reference"
+      "default": 0
     },
     "is_protected": {
       "type": "boolean",
@@ -307,20 +277,21 @@
     },
     "created_by_user": {
       "type": "boolean",
-      "default": true,
-      "description": "True if user explicitly created; false if AI-spawned"
+      "default": true
+    },
+    "protected_active": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if user explicitly marked this character as active \u2014 prevents NPC re-categorization by any system process"
     },
     "nickname_for_user": {
-      "type": "string",
-      "description": "The name this character uses when referring to or addressing the user."
+      "type": "string"
     },
     "appearance_age": {
-      "type": "number",
-      "description": "Visual appearance age for image generation. Overrides profile age in generated images only."
+      "type": "number"
     },
     "appearance_lock": {
       "type": "object",
-      "description": "Locked appearance attributes that persist across all generated images. These act as identity anchors.",
       "properties": {
         "skin_tone": {
           "type": "string"
@@ -357,16 +328,14 @@
     },
     "family_list_locked": {
       "type": "boolean",
-      "default": false,
-      "description": "When true, no new family members can be added to this character's family list by any source."
+      "default": false
     },
     "family_locked_members": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "default": [],
-      "description": "List of family member names (lowercased) that are individually locked and cannot be removed."
+      "default": []
     },
     "is_default": {
       "type": "boolean",
@@ -374,8 +343,7 @@
     },
     "is_finalized": {
       "type": "boolean",
-      "default": false,
-      "description": "True once character creation is complete. Fields are locked."
+      "default": false
     },
     "is_photogenic": {
       "type": "boolean",
@@ -383,12 +351,10 @@
     },
     "is_sitter": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this character is a caregiver/sitter role assigned to supervise dependents"
+      "default": false
     },
     "sitter_assigned_to_location_id": {
-      "type": "string",
-      "description": "If is_sitter=true, the home location ID this sitter is assigned to"
+      "type": "string"
     },
     "trait_oversharer": {
       "type": "boolean",
@@ -886,8 +852,7 @@
             "type": "string"
           },
           "current_location_id": {
-            "type": "string",
-            "description": "ID of the location the NPC is currently at"
+            "type": "string"
           },
           "user_respect_level": {
             "type": "number",
@@ -936,8 +901,7 @@
       "type": "string"
     },
     "daily_micro_narration": {
-      "type": "string",
-      "description": "1\u20133 short third-person sentences describing what the character is doing right now. Strictly third-person (he/she/they/name). Updated by life simulation."
+      "type": "string"
     },
     "life_last_updated": {
       "type": "string"
@@ -1216,6 +1180,56 @@
     },
     "relationship_state_id": {
       "type": "string"
+    },
+    "hunger_value": {
+      "type": "number",
+      "default": 70,
+      "description": "Active character hunger level 0-100. Only simulated for active character_type."
+    },
+    "energy_value": {
+      "type": "number",
+      "default": 75,
+      "description": "Active character energy level 0-100."
+    },
+    "social_value": {
+      "type": "number",
+      "default": 65,
+      "description": "Active character social need 0-100."
+    },
+    "health_value": {
+      "type": "number",
+      "default": 80,
+      "description": "Active character health level 0-100."
+    },
+    "mental_value": {
+      "type": "number",
+      "default": 70,
+      "description": "Active character mental wellbeing 0-100."
+    },
+    "financial_need_value": {
+      "type": "number",
+      "default": 60,
+      "description": "Active character financial stress level 0-100."
+    },
+    "hygiene_value": {
+      "type": "number",
+      "default": 75,
+      "description": "Active character hygiene level 0-100."
+    },
+    "comfort_value": {
+      "type": "number",
+      "default": 70,
+      "description": "Active character comfort level 0-100."
+    },
+    "last_need_simulated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of last needs simulation run. Used for elapsed-time recovery."
+    },
+    "needs_initialized": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once needs have been initialized with non-default starting values."
     }
   },
   "required": [
