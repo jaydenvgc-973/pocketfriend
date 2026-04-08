@@ -749,9 +749,10 @@ Deno.serve(async (req) => {
         ...resolvedUserRefs.slice(0, 2),
       ].filter(Boolean);
 
+      const userJointLabel = userWorldName ? userWorldName : "the user";
       const roomNote = hasLocationImages
-         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = the USER (replicate exactly). Both people must be placed inside the locked room.`
-         : `CRITICAL: Features BOTH ${characterName} AND the user. Replicate both faces and appearances with pristine accuracy.`;
+         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = ${userJointLabel} (replicate exactly from reference photos). Both people must be placed inside the locked room.`
+         : `CRITICAL: Features BOTH ${characterName} AND ${userJointLabel}. Replicate both faces and appearances with pristine accuracy.`;
        enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${AUTO_DIVERSITY_CONSTRAINT}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
@@ -760,7 +761,9 @@ Deno.serve(async (req) => {
       referenceImages = resolvedUserRefs.slice(0, 4);
       const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(resolvedUserAppearanceData, userIdentityStrictMode) : '';
       const userLockNote = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
-      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject is the USER (not ${characterName}). Replicate their exact face, features, and appearance.${identityLockNote}${userLockNote}`;
+      // Use the user's world name in the prompt — never say "the user"
+      const userSubjectLabel = userWorldName ? `${userWorldName}` : "the person in these reference photos";
+      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this image is ${userSubjectLabel}. Replicate their exact face, features, and appearance from the reference photos provided.${identityLockNote}${userLockNote}`;
 
     } else if (hasCharacterImages) {
       // Character refs come AFTER location refs but get more slots (4 vs 3) for face priority

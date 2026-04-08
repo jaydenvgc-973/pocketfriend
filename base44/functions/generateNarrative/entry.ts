@@ -22,9 +22,14 @@ Deno.serve(async (req) => {
 
     const characterName = character[0].name;
 
-    const formattedChatHistory = chatHistory.map(m => `"${m.sender_type === "user" ? "User" : characterName}": "${m.content}"`).join("\n");
+    // Resolve user's in-world name — never label them "User" in narrative context
+    const settingsList = await base44.entities.UserSettings.list().catch(() => []);
+    const worldName = settingsList?.[0]?.fictional_world_name || null;
+    const userLabel = worldName || "them"; // safe fallback — never "the user"
 
-    const prompt = `Based on the following chat history between the User and ${characterName}, generate a concise and impactful narrative. This narrative should describe an event, an NPC action, a change in location, or an environmental detail that subtly advances the story or adds flavor to the current scene. It should feel like a game master or narrator setting the scene. The narrative should be no more than 3 sentences.
+    const formattedChatHistory = chatHistory.map(m => `"${m.sender_type === "user" ? (worldName || "You") : characterName}": "${m.content}"`).join("\n");
+
+    const prompt = `Based on the following chat history between ${userLabel} and ${characterName}, generate a concise and impactful narrative. This narrative should describe an event, an NPC action, a change in location, or an environmental detail that subtly advances the story or adds flavor to the current scene. It should feel like a game master or narrator setting the scene. The narrative should be no more than 3 sentences. Do not refer to anyone as "the user" — use their actual name or natural pronouns.
 
 Chat History:
 ${formattedChatHistory}

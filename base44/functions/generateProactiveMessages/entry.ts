@@ -180,13 +180,23 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
   else if (hour >= 18 && hour < 20) timeContext = 'evening';
   else if (hour >= 21 && hour < 23) timeContext = 'late night (good night message, they are about to sleep)';
   
+  // Resolve user's in-world name — never fall back to "the user"
+  const userSettings = await base44.entities.UserSettings.list().catch(() => []);
+  const worldName = character.nickname_for_user || userSettings?.[0]?.fictional_world_name || null;
+  const userAddressName = worldName || null; // null = use natural pronouns, not "the user"
+
   const locationAffinityNote = buildLocationAffinityContext(character);
-  const systemPrompt = `You are ${character.name}. Generate a natural, spontaneous proactive message to the user right now (1-3 sentences). 
+  const systemPrompt = `You are ${character.name}. Generate a natural, spontaneous proactive message right now (1-3 sentences).
 ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling.'}
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
-Your friendship level with the user is ${relationshipLevel}/100 - adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
+Your friendship level is ${relationshipLevel}/100 — adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
 Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}
+${userAddressName ? `The person you're messaging is named ${userAddressName}. Use that name naturally when addressing them directly (sparingly — not in every sentence). NEVER say "the user".` : `You don't know their name. Use natural pronouns (you, them) — NEVER say "the user" or "user".`}
+WRITING STYLE — NON-NEGOTIABLE:
+- Write like a real person texting. No theatrical or literary language.
+- NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ). Use commas or periods instead.
+- Keep it short, direct, and human.
 Be authentic, not overly cheerful. Just a natural message someone would send.`;
 
   const content = await base44.integrations.Core.InvokeLLM({

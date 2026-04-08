@@ -1119,6 +1119,8 @@ ${songsInfo}`;
 
       const userDisplayName = userSettings.fictional_world_name || null;
       const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
+      // World name injected into image instruction so LLM uses the right name in prompts — never "the user"
+      const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
       // Status-aware nuance (chat only) and sleep interruption context
@@ -1235,7 +1237,8 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - "Send me a pic of you / yourself" → subject is YOU. Start prompt with "[CHARACTER]".
 - "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
 - Default (no explicit subject): "[CHARACTER]".
-- image_generation_prompt is INTERNAL ONLY — it is never shown to the user.`
+- image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
+${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}`
         : explicitImageRequest && !isPhotogenic
         ? `MESSAGE TYPE RULES: The user asked for a photo but you've already sent several recently. Politely acknowledge you're not available to send one right now, and use message_type "text_only".`
         : `MESSAGE TYPE RULES: You MUST use message_type "text_only" this turn. Do NOT include any image fields. Images are rate-limited and you have sent enough recently.`;
