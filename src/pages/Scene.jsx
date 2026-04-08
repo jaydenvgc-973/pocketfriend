@@ -759,20 +759,6 @@ export default function Scene() {
     }]);
   };
 
-  // Keep refs current so SceneInputBar's stable onSend callback always calls the latest versions
-  useEffect(() => { narratorModeRef.current = narratorMode; }, [narratorMode]);
-  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
-  useEffect(() => { sendNarrationRef.current = sendNarration; }, [sendNarration]);
-
-  // Stable onSend — never changes identity, so SceneInputBar never re-renders due to prop change
-  const stableOnSend = useRef((text) => {
-    if (narratorModeRef.current) {
-      sendNarrationRef.current?.(text);
-    } else {
-      sendMessageRef.current?.(text);
-    }
-  }).current;
-
   const sendMessage = async (text, fromAction = false, actionImagePrompt = null, actionScenePrompt = null) => {
     if (!text.trim() || !location) return;
     setInputText("");
@@ -896,6 +882,20 @@ Return JSON:
       setIsTyping(false);
     }
   };
+
+  // Keep refs current so SceneInputBar's stable onSend callback always calls the latest versions
+  useEffect(() => { narratorModeRef.current = narratorMode; }, [narratorMode]);
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+  useEffect(() => { sendNarrationRef.current = sendNarration; }, [sendNarration]);
+
+  // Stable onSend — never changes identity, so SceneInputBar never re-renders due to prop change
+  const stableOnSend = useRef((text) => {
+    if (narratorModeRef.current) {
+      sendNarrationRef.current?.(text);
+    } else {
+      sendMessageRef.current?.(text);
+    }
+  }).current;
 
   const handleMoveIn = async ({ moversToMove, npcMovers = [], newHomeName }) => {
     if (!location) return;
