@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, X, ChevronDown } from 'lucide-react';
+import { Users, X, ChevronDown, UserCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
@@ -47,14 +47,23 @@ export default function NPCContactPanel() {
 
   const handleDeleteNPC = async (e, npcId) => {
     e.stopPropagation();
-    
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
-
     try {
       await base44.entities.Character.delete(npcId);
       queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
+    }
+  };
+
+  const handleMarkAsActive = async (e, npc) => {
+    e.stopPropagation();
+    try {
+      // Change character_type to 'active' — removes them from this NPC list only
+      await base44.entities.Character.update(npc.id, { character_type: 'active' });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
+    } catch (err) {
+      alert('Failed to update character: ' + err.message);
     }
   };
 
@@ -108,13 +117,22 @@ export default function NPCContactPanel() {
                         <p className="text-xs text-muted-foreground truncate capitalize">{npc.character_type}</p>
                       </div>
                     </div>
-                    <button
-                      onClick={(e) => handleDeleteNPC(e, npc.id)}
-                      className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors flex-shrink-0"
-                      title="Delete NPC"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-1 flex-shrink-0">
+                      <button
+                        onClick={(e) => handleMarkAsActive(e, npc)}
+                        className="p-1 rounded hover:bg-blue-500/10 text-muted-foreground hover:text-blue-400 transition-colors"
+                        title="Not an NPC — move to active characters"
+                      >
+                        <UserCheck className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={(e) => handleDeleteNPC(e, npc.id)}
+                        className="p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                        title="Delete NPC"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </motion.button>
                 ))}
               </div>
