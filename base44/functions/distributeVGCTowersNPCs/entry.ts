@@ -171,7 +171,22 @@ Deno.serve(async (req) => {
       });
 
       if (ageFilteredLocations.length === 0) {
-        log.push(`${npc.name} → no age-appropriate locations`);
+        // FALLBACK: no age-appropriate destinations → retain at VGC Towers (never leave nowhere)
+        log.push(`${npc.name} → FALLBACK: no age-appropriate locations, returning to VGC Towers`);
+        updates.push({
+          id: npc.id,
+          name: npc.name,
+          data: {
+            resolved_current_location_id: VGC_ID,
+            resolved_current_location_name: 'VGC Towers',
+            presence_state: 'home',
+            presence_reason: 'no_valid_destination_fallback',
+            source_of_move: 'system',
+            valid_from: now.toISOString(),
+            valid_until: null,
+            return_location_id: null,
+          }
+        });
         continue;
       }
 
@@ -208,6 +223,34 @@ Deno.serve(async (req) => {
     // Write all updates atomically
     await Promise.all(updates.map(u => base44.entities.Character.update(u.id, u.data)));
 
+    // FINAL VALIDATION: ensure every VGC resident ends with a valid resolved location
+    // Any NPC that still has no resolved_current_location_id gets a fallback to VGC Towers
+    const allFreshChars = await base44.entities.Character.filter({ created_by: user.email, status: 'active' });
+    const finalNPCStates = [];
+    const nowhereFixUpdates = [];
+
+    for (const npc of vgcResidents) {
+      const fresh = allFreshChars.find(c => c.id === npc.id) || npc;
+      const hasLocation = fresh.resolved_current_location_id && fresh.resolved_current_location_id.length > 0;
+      if (!hasLocation) {
+        // NPC ended up nowhere — apply critical fallback
+        nowhereFixUpdates.push(base44.entities.Character.update(npc.id, {
+          resolved_current_location_id: VGC_ID,
+          resolved_current_location_name: 'VGC Towers',
+          presence_state: 'home',
+          presence_reason: 'nowhere_fallback_applied',
+          source_of_move: 'system',
+          valid_from: now.toISOString(),
+          valid_until: null,
+        }));
+        log.push(`${npc.name} → NOWHERE_FIX: was missing resolved location, restored to VGC Towers`);
+        finalNPCStates.push({ name: npc.name, status: 'INVALID_NOWHERE_STATE → fixed_to_hub' });
+      } else {
+        finalNPCStates.push({ name: npc.name, status: fresh.presence_state, location: fresh.resolved_current_location_name });
+      }
+    }
+    if (nowhereFixUpdates.length > 0) await Promise.all(nowhereFixUpdates);
+
     return Response.json({
       success: true,
       mode: 'active',
@@ -217,8 +260,10 @@ Deno.serve(async (req) => {
       ineligible: ineligible.length,
       stayingAtHome: stayingNPCs.length,
       distributed: updates.length,
+      nowhereFixed: nowhereFixUpdates.length,
       guaranteedLocationsFound: guaranteedLocations.map(l => l.name),
       socialLocationsAvailable: socialLocations.length,
+      finalNPCStates,
       log,
     });
 

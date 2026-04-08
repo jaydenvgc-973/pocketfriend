@@ -188,28 +188,48 @@ export default function Scene() {
     queryKey: ["characters", currentUser?.email],
     queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }),
     enabled: !!currentUser?.email,
+    // Refetch on scene load to ensure fresh authoritative presence data
+    staleTime: 0,
   });
 
   const location = locationsData.find(l => l.id === locationId);
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const locationZones = location?.zones || [];
 
-  // AUTHORITATIVE: Characters who are actually at this location right now
-  // Do NOT use stale worker_character_ids — compute from authoritative location state
+  // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
+  // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
+  // Staff assignment is NOT scene presence. Schedule-blocked characters are NOT here.
+  // This aligns Scene with Home page and Travel page.
+
   const isHomeLocation = location?.category === "home";
+
+  // VALID PRESENCE STATES that indicate real physical presence
+  const VALID_PRESENCE_STATES = new Set(['home', 'social_visit', 'work', 'school', 'hospital', 'supervised', null, undefined, '']);
+
+  // Helper: is a character truly present at this location right now?
+  const isAuthoritativelyPresent = (char) => {
+    // GATE 1: resolved_current_location_id must match exactly
+    if (char.resolved_current_location_id && char.resolved_current_location_id !== locationId) {
+      return false; // LOCATION_MISMATCH — they are somewhere else
+    }
+    // GATE 2: If sleeping, exclude from public/social scenes (only home scenes show sleepers)
+    if (isCharacterAsleep(char) && !isHomeLocation) return false;
+    // GATE 3: in_transit means not arrived yet
+    if (char.presence_state === 'in_transit') return false;
+    return true;
+  };
+
+  // Active characters home at a home location
   const homeResidents = isHomeLocation
-    ? characters.filter(c => {
-        // AUTHORITATIVE: Is this character actually at this home location right now?
-        return c.current_home_location_id === location.id;
-      })
+    ? characters.filter(c => c.current_home_location_id === location.id)
     : [];
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
-  
-  // Family NPCs who are away (have a current_location_id set to somewhere other than home)
+
+  // Family NPCs for home scenes (legacy fictional_relationships approach)
   const familyMemberNpcsAway = isHomeLocation
     ? (location.resident_family_members || []).filter(fm => {
-        const ownerChar = homeResidents.find(c => 
+        const ownerChar = homeResidents.find(c =>
           c.fictional_relationships?.some(rel => rel.person_name === fm.name && !rel.related_character_id)
         );
         if (!ownerChar) return false;
@@ -218,32 +238,45 @@ export default function Scene() {
       })
     : [];
 
-  // Family member NPCs showing as present: check their actual current_location_id in fictional_relationships
   const familyMemberNpcsPresent = isHomeLocation
     ? (location.resident_family_members || []).filter(fm => {
-        // Find which character this family member belongs to
-        const ownerChar = homeResidents.find(c => 
+        const ownerChar = homeResidents.find(c =>
           c.fictional_relationships?.some(rel => rel.person_name === fm.name && !rel.related_character_id)
         );
         if (!ownerChar) return false;
-        // Check the NPC's current_location_id in fictional_relationships
         const npcRel = ownerChar.fictional_relationships.find(rel => rel.person_name === fm.name && !rel.related_character_id);
-        // If no location set, they're home; if location set to somewhere else, they're away
         return !npcRel?.current_location_id || npcRel.current_location_id === location.id;
       })
     : [];
 
-  // Workers: characters actually at this location during their work schedule
+  // Workers: ONLY if they have a valid resolved presence at this location (not just assignment)
+  // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
   const workerCharacters = location
     ? characters.filter(c => {
         if (characterIds.includes(c.id)) return false;
         if (isCharacterAsleep(c)) return false;
-        // AUTHORITATIVE: Are they at this location right now?
-        return isCharacterAtWork(c, location);
+        if (!isCharacterAtWork(c, location)) return false;
+        // If resolved_current_location_id is set to somewhere else, they are NOT here
+        if (c.resolved_current_location_id && c.resolved_current_location_id !== locationId) return false;
+        return true;
       })
     : [];
 
-  // PRESENCE SYNC: Scan all characters for NPCs currently at this location
+  // VGC Towers NPC characters distributed to this location (authoritative presence)
+  // These are Character entity records with resolved_current_location_id === locationId
+  const vgcDistributedNpcs = characters.filter(c => {
+    if (!c.character_type) return false;
+    const isNpcType = ['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type);
+    if (!isNpcType) return false;
+    if (characterIds.includes(c.id)) return false;
+    // Must have authoritative resolved presence at this exact location
+    if (c.resolved_current_location_id !== locationId) return false;
+    // Must be in a valid presence state (social_visit, home, work)
+    if (c.presence_state === 'in_transit') return false;
+    return true;
+  });
+
+  // PRESENCE SYNC: Scan all characters for NPCs currently at this location (legacy fictional_relationships)
   const npcsTravelingHere = (() => {
     const traveling = [];
     characters.forEach(char => {
@@ -397,9 +430,28 @@ export default function Scene() {
       if (!npcs.find(x => x.id === n.id)) npcs.push({ ...n, isNpc: true, avatar_url: null });
     });
 
-    // Add NPCs currently traveling to this location (presence sync fix)
+    // Add NPCs currently traveling to this location (presence sync — legacy fictional_relationships)
     npcsTravelingHere.forEach(n => {
       if (!npcs.find(x => x.id === n.id)) npcs.push(n);
+    });
+
+    // Add VGC Towers distributed NPC Character entities at this location
+    // These have authoritative resolved_current_location_id === locationId
+    vgcDistributedNpcs.forEach(n => {
+      if (!npcs.find(x => x.id === n.id)) {
+        npcs.push({
+          id: n.id,
+          name: n.name,
+          role: n.presence_reason === 'vgc_distribution' || n.presence_reason === 'vgc_rotation'
+            ? 'Visiting'
+            : (n.character_type === 'family_npc' ? 'Family' : 'NPC'),
+          isNpc: true,
+          npcType: 'customer',
+          avatar_url: n.avatar_url || null,
+          personality_summary: n.personality_summary,
+          emotional_state: n.emotional_state,
+        });
+      }
     });
 
     // Dedupe by id
@@ -414,10 +466,18 @@ export default function Scene() {
     ? allPossibleNpcs.filter(n => selectedNpcIds.includes(n.id))
     : [];
 
+  // ── AUTHORITATIVE SCENE ROSTER ───────────────────────────────────────────────
+  // Built fresh per location load. No stale data merging.
+  // Priority order: brought chars → home residents → on-shift workers → VGC distributed NPCs → selected NPC overlays → extras
   const sceneCharacters = [
     ...broughtCharacters,
     ...(isHomeLocation ? homeResidentsPresent : []),
     ...workerCharacters,
+    // VGC Towers NPCs who are authoritatively distributed to this location
+    ...vgcDistributedNpcs.filter(n =>
+      !broughtCharacters.find(b => b.id === n.id) &&
+      !workerCharacters.find(w => w.id === n.id)
+    ),
     ...selectedNpcs,
     ...extraNpcs,
   ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe

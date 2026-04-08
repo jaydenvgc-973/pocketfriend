@@ -17,6 +17,7 @@ const ISSUE_LIST = [
   { id: 'world_name_enforcement', label: 'Character using "the user" instead of my name', description: 'Detect stale identity references in this character\'s memories, relationship labels, and context. Traces the full root-cause chain and corrects placeholder identity at all layers.' },
   { id: 'appearance_lock_check', label: 'Appearance lock / age appearance not persisting', description: 'Verify appearance_lock fields and appearance_age are correctly saved and will be used in image generation — detect drift or missing data.' },
   { id: 'stale_location_refs', label: 'Character referencing deleted location', description: 'Detect stale location IDs pointing to deleted or non-existent locations in this character\'s profile, invites, and memories.' },
+  { id: 'fix_everything', label: '🔧 Fix Everything — Full System Deep Diagnostic', description: 'Master cross-system scan: presence consistency, VGC Towers NPC distribution, identity leaks, stale caches, scene population, and more. Applies auto-fixes where possible.' },
 ];
 
 export default function ProfileTroubleshootingPanel({ isOpen, onClose, characterId, characterName }) {
@@ -36,6 +37,28 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
     setResults(null);
 
     try {
+      // Route "fix_everything" to the master diagnostic function
+      if (selectedIssues.includes('fix_everything')) {
+        const res = await base44.functions.invoke('fixEverything', {});
+        if (res?.data) {
+          const d = res.data;
+          setResults({
+            summary: d.summary || 'Fix Everything complete.',
+            checks: (d.systems_checked || []).map(s => ({ name: s, status: 'info', message: '' })),
+            fixes_applied: d.corrective_actions_taken || [],
+            issues_found: [
+              ...(d.issues_found || []),
+              ...(d.corrective_actions_recommended || []).map(r => `RECOMMENDED: ${r}`),
+              ...(d.unresolved_items || []).map(u => `UNRESOLVED: ${u}`),
+            ],
+          });
+        } else {
+          setError('Fix Everything returned no data');
+        }
+        setIsRunning(false);
+        return;
+      }
+
       const res = await base44.functions.invoke('troubleshootCharacterProfile', {
         characterId,
         selectedIssues,

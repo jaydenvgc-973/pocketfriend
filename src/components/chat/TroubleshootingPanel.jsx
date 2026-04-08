@@ -15,6 +15,7 @@ const ISSUE_LIST = [
   { id: 'world_name_enforcement', label: 'Character calling me "the user"', description: 'Full identity propagation diagnostic — detects stale "the user" references in messages, memories, and prompt data. Traces root cause across all layers and corrects stale identity.' },
   { id: 'stale_prompt_cache', label: 'Character using outdated context', description: 'Detect stale cached prompt fragments, old identity references, or outdated character context that survived a settings change.' },
   { id: 'deep_character_recovery', label: 'Retrieve any & all images, messages, memories for this character', description: 'Deep dive across ALL app data — finds orphaned messages, memories, images, and life events anywhere in the system and reattaches them to this character. Also restores them to the correct chat thread.' },
+  { id: 'fix_everything', label: '🔧 Fix Everything — Full System Deep Diagnostic', description: 'Master cross-system scan: presence consistency, VGC Towers NPC distribution, identity leaks, stale caches, scene population, Home/Travel/Scene alignment, and more. Applies auto-fixes where possible.' },
 ];
 
 export default function TroubleshootingPanel({ isOpen, onClose, conversationId, characterId }) {
@@ -37,10 +38,32 @@ export default function TroubleshootingPanel({ isOpen, onClose, conversationId, 
     setResults(null);
 
     try {
+      // Route "fix_everything" to the master diagnostic function
+      if (selectedIssues.includes('fix_everything')) {
+        const res = await base44.functions.invoke('fixEverything', {});
+        if (res?.data) {
+          // Normalize the master report into the standard results shape
+          const d = res.data;
+          setResults({
+            summary: d.summary || 'Fix Everything complete.',
+            checks: (d.systems_checked || []).map(s => ({ name: s, status: 'info', message: '' })),
+            fixes_applied: d.corrective_actions_taken || [],
+            issues_found: [
+              ...(d.issues_found || []),
+              ...(d.corrective_actions_recommended || []).map(r => `RECOMMENDED: ${r}`),
+              ...(d.unresolved_items || []).map(u => `UNRESOLVED: ${u}`),
+            ],
+          });
+        } else {
+          setError('Fix Everything returned no data');
+        }
+        return;
+      }
+
       const res = await base44.functions.invoke('troubleshootThread', {
         conversationId,
         characterId,
-        selectedIssues, // only run diagnostics for what the user selected
+        selectedIssues,
       });
 
       if (res?.data?.data) {
