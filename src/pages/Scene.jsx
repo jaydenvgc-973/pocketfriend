@@ -1050,11 +1050,10 @@ Return JSON:
       <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-background/80 backdrop-blur-xl flex-shrink-0 relative z-50">
         <button
           onClick={() => setShowLeaveModal(true)}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-secondary border border-border text-xs font-medium text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors flex-shrink-0"
+          className="p-2 rounded-xl text-muted-foreground hover:text-foreground transition-colors flex-shrink-0"
           title="Leave location"
         >
-          <LogOut className="w-3.5 h-3.5" />
-          <span>Leave</span>
+          <ArrowLeft className="w-5 h-5" />
         </button>
         <div className="flex-1 min-w-0">
           <h2 className="text-sm font-bold text-foreground truncate">{location.name}</h2>
