@@ -40,8 +40,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Get all locations
-    const locations = await base44.entities.LocationReference.list();
+    // Get all locations — filter out deleted/stale ones immediately
+    const allLocationsRaw = await base44.entities.LocationReference.list();
+    const locations = allLocationsRaw.filter(l => l.status !== 'deleted' && !l.is_deleted && l.name);
     
     // Helper: check if location is open right now
     const isLocationOpen = (location) => {
@@ -128,6 +129,11 @@ Deno.serve(async (req) => {
           }
         }
         
+        // Final stale-location guard: verify the chosen location still exists in our valid list
+        if (!locations.find(l => l.id === targetLocation.id)) {
+          return null; // location was deleted — skip this invite
+        }
+
         return {
           characterId: char.id,
           characterName: char.name,

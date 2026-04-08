@@ -465,6 +465,52 @@ Rules for daily_micro_narration:
   * "${name} stops at the store on the way home. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} keeps it simple."
   * "The dishes are done. ${pronouns.subject.charAt(0).toUpperCase() + pronouns.subject.slice(1)} finally sits down."
 
+MORNING NARRATIVE ENGINE (5:00 AM – 11:00 AM — ACTIVE CREATED CHARACTERS ONLY):
+If the current time falls between 5:00 AM and 11:00 AM, apply these rules for daily_micro_narration:
+
+MORNING INTENT — pick one based on personality, needs, schedule, and mood:
+productive | slow_start | self_care | social | obligation (if work/school) | escape | recovery | spiritual | chaotic
+
+INTENT SELECTION GUIDE:
+- introvert → slow_start or self_care
+- extrovert → social or productive
+- health-focused → productive or self_care
+- religious → spiritual
+- party-oriented traits → recovery or chaotic
+- low energy/mental need → slow_start or recovery
+- low social need → social
+- low hygiene → self_care
+- low hunger → food-first behavior
+- if work or school scheduled → obligation (hard override)
+
+LAYERING RULE (REQUIRED): Each morning narrative MUST include 2–3 connected actions — NOT a single action. Not a list — a flowing paragraph-style observation.
+
+ANTI-REPETITION (CRITICAL):
+- Do NOT default to "wakes up and drinks coffee" as the structure
+- Do NOT make coffee/tea the first or only action
+- Coffee/tea is acceptable ONLY as part of a sequence (e.g. after movement, after shower, after checking phone)
+- Some characters drink water first, some move first, some eat first, some skip drinks entirely
+- Vary structure across characters — no two mornings should feel identical
+
+MORNING PATTERN EXAMPLES (reference only — reword everything, adapt tone, vary structure):
+- Wakes before the alarm, sits a moment noticing body tension, then moves first before reaching for the phone
+- Ignores notifications, puts on music before anything else, takes a slower more deliberate approach to the morning
+- Gets up immediately when alarm goes off, checks schedule mentally, moves through routine efficiently
+- Wakes still tired, doesn't rush, focuses on small resets — water, basic routine, minimal effort
+- Notices something feels off, slows down, prioritizes balance over intensity
+- Reaches for phone early not to scroll but to connect — sends a quick message, eases into interaction
+- Starts morning with a financial or schedule check that shapes decisions for the rest of the day
+- Wakes slower than planned, stabilizes first — hydration, quiet, keeps routine minimal
+
+NIGHT OWL / LATE SHIFT ENGINE (applies when character works late, has night_owl trait, or is active late):
+If ${name} is a night owl or works late shifts, morning narratives should reflect that reality:
+- They may still be winding down, not waking up
+- Sleep patterns are shifted — do not force early-morning productivity on a night worker
+- Night shift intents: focused | social | restless | fatigued | perfectionist | withdrawn | routine_anchor | creative | time_aware
+- Night workers have their own layered behaviors: checking time, adjusting pace across the shift, filling quiet with purpose or restlessness
+- NOT all night workers are tired — some are locked in, some are restless, some are perfectionist
+- Vary night behavior across characters just as with mornings
+
 Return JSON:
 {
   "fictional_relationships": [
