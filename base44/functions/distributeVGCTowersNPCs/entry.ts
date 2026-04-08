@@ -4,232 +4,279 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Get all VGC Towers NPCs (family members and fictitious relationships)
-    const characters = await base44.entities.Character.filter({ created_by: user.email, status: 'active' });
-    
-    // Get all locations
-    const locations = await base44.entities.LocationReference.list();
-    
-    // Get VGC Towers location to identify which NPCs live there
-    const vgcTowers = locations.find(l => l.name === 'VGC Towers');
-    if (!vgcTowers) {
-      return Response.json({ error: 'VGC Towers location not found' }, { status: 400 });
-    }
-
-    // Identify VGC Towers NPCs (family members at VGC Towers)
-    const vgcTowersNPCs = [];
-    characters.forEach(char => {
-      if (char.current_home_location_id === vgcTowers.id) {
-        // This character lives at VGC Towers
-        // Check if they have family members who are NPCs
-        if (char.family_members && Array.isArray(char.family_members)) {
-          char.family_members.forEach(fm => {
-            if (fm.name) {
-              vgcTowersNPCs.push({
-                name: fm.name,
-                sourceCharacterId: char.id,
-                age: fm.age_at_creation,
-                type: 'family_member'
-              });
-            }
-          });
-        }
-        // Also check fictional relationships for NPCs at VGC Towers
-        if (char.fictional_relationships && Array.isArray(char.fictional_relationships)) {
-          char.fictional_relationships.forEach(rel => {
-            if (!rel.related_character_id && rel.person_name) {
-              // This is an unlinked NPC
-              vgcTowersNPCs.push({
-                name: rel.person_name,
-                sourceCharacterId: char.id,
-                age: null,
-                type: 'npc_fictitious'
-              });
-            }
-          });
-        }
-      }
-    });
-
-    if (vgcTowersNPCs.length === 0) {
-      return Response.json({ 
-        success: true, 
-        message: 'No VGC Towers NPCs to distribute',
-        distributed: 0
-      });
-    }
-
-    // Get current time
     const now = new Date();
     const hour = now.getHours();
-    const isMovementWindow = hour >= 10 && hour < 25; // 10 AM to 1 AM
+    const minute = now.getMinutes();
+    const currentMinutes = hour * 60 + minute;
 
-    if (!isMovementWindow) {
-      return Response.json({ 
-        success: true, 
-        message: 'Outside movement window (10 AM - 1 AM)',
-        distributed: 0
-      });
+    // Active window: 10:00 AM (600) to 1:00 AM next day (60 + 1440 = handled via overnight logic)
+    // Overnight: active if hour >= 10 OR hour < 1
+    const isActiveWindow = hour >= 10 || hour < 1;
+
+    // Lockdown window: 1:00 AM to 10:00 AM → return all NPCs home
+    const isLockdown = hour >= 1 && hour < 10;
+
+    // Load all data
+    const [allCharacters, allLocations] = await Promise.all([
+      base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
+      base44.entities.LocationReference.list(),
+    ]);
+
+    const locationMap = Object.fromEntries(allLocations.map(l => [l.id, l]));
+
+    // Find VGC Towers
+    const vgcTowers = allLocations.find(l => l.name === 'VGC Towers');
+    if (!vgcTowers) return Response.json({ error: 'VGC Towers not found' }, { status: 400 });
+    const VGC_ID = vgcTowers.id;
+
+    // ── IDENTIFY VGC TOWERS NPC CHARACTERS ──────────────────────────────────────
+    // Only Character entities whose current_home_location_id === VGC Towers
+    // AND character_type is npc, family_npc, or background (NOT active)
+    const vgcResidents = allCharacters.filter(c =>
+      c.current_home_location_id === VGC_ID &&
+      ['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type)
+    );
+
+    const log = [];
+
+    // ── LOCKDOWN: Return everyone home ──────────────────────────────────────────
+    if (isLockdown) {
+      const updates = [];
+      for (const npc of vgcResidents) {
+        // Only touch NPCs that are out socially
+        if (npc.presence_state === 'social_visit' || npc.presence_state === 'in_transit') {
+          updates.push(base44.entities.Character.update(npc.id, {
+            resolved_current_location_id: VGC_ID,
+            resolved_current_location_name: 'VGC Towers',
+            presence_state: 'home',
+            presence_reason: 'default_home',
+            source_of_move: 'system',
+            valid_from: now.toISOString(),
+            valid_until: null,
+            return_location_id: null,
+          }));
+          log.push(`${npc.name} → returned home (lockdown)`);
+        }
+      }
+      await Promise.all(updates);
+      return Response.json({ success: true, mode: 'lockdown', returned: updates.length, log });
     }
 
-    // Get valid locations for distribution (exclude VGC Towers and closed locations)
-    const validLocations = locations.filter(loc => {
-      if (loc.id === vgcTowers.id) return false;
+    // ── ACTIVE WINDOW ────────────────────────────────────────────────────────────
+
+    // Build guaranteed-open locations (always valid during active window)
+    const GUARANTEED_NAMES = ['anderson\'s bar', 'andersons bar', 'escuelita\'s nightclub', 'escuelitas nightclub', 'escuelita nightclub'];
+    const guaranteedLocations = allLocations.filter(l =>
+      GUARANTEED_NAMES.some(n => l.name.toLowerCase().replace(/[''']/g, "'").includes(n.replace(/[''']/g, "'")))
+    );
+
+    // Build valid social destinations
+    const socialLocations = allLocations.filter(loc => {
+      if (loc.id === VGC_ID) return false;
+      if (loc.category === 'home') return false;
       if (loc.location_type === 'character_specific') return false;
-      
-      // Check if location is open
-      const isClosed = isLocationClosed(loc, now);
-      return !isClosed;
+      // Check if it's guaranteed open
+      const isGuaranteed = guaranteedLocations.some(g => g.id === loc.id);
+      if (isGuaranteed) return true;
+      // Otherwise check operating hours
+      if (isLocationClosed(loc, now)) return false;
+      return true;
     });
 
-    if (validLocations.length === 0) {
-      return Response.json({ 
-        success: true, 
-        message: 'No valid locations available',
-        distributed: 0
-      });
+    if (socialLocations.length === 0) {
+      return Response.json({ success: true, mode: 'active', message: 'No valid social locations open', distributed: 0 });
     }
 
-    // Separate NPCs: 3 stay at VGC Towers, rest get distributed
-    const stayAtHome = vgcTowersNPCs.slice(0, 3);
-    const toDistribute = vgcTowersNPCs.slice(3);
+    // ── ELIGIBILITY CHECK ─────────────────────────────────────────────────────
+    const BLOCKED_STATES = ['work', 'school', 'hospital', 'supervised'];
+    const SLEEP_START = 2 * 60;  // 2:00 AM
+    const SLEEP_END = 8 * 60;    // 8:00 AM
 
-    const distribution = [];
+    const eligible = [];
+    const ineligible = [];
 
-    // Distribute remaining NPCs to valid locations
-    for (let i = 0; i < toDistribute.length; i++) {
-      const npc = toDistribute[i];
-      
-      // Filter locations based on age
-      const ageAppropriateLocations = validLocations.filter(loc => {
-        // If no age, allow all locations
-        if (!npc.age) return true;
-        
-        // Under 21: exclude bars and clubs
-        if (npc.age < 21) {
-          const barClubKeywords = ['bar', 'club', 'lounge', 'pub', 'tavern'];
+    for (const npc of vgcResidents) {
+      // Block if priority state is already set (work, school, etc.)
+      if (BLOCKED_STATES.includes(npc.presence_state)) {
+        ineligible.push({ name: npc.name, reason: npc.presence_state });
+        continue;
+      }
+
+      // Block if sleeping (2AM-8AM — but we're in active window so this only matters edge cases)
+      if (currentMinutes >= SLEEP_START && currentMinutes < SLEEP_END) {
+        ineligible.push({ name: npc.name, reason: 'sleeping' });
+        continue;
+      }
+
+      // Block if on work schedule
+      if (isOnWorkSchedule(npc, now)) {
+        ineligible.push({ name: npc.name, reason: 'work_schedule' });
+        continue;
+      }
+
+      eligible.push(npc);
+    }
+
+    // ── RETENTION RULE: Minimum 3 stay at VGC Towers ─────────────────────────
+    // Priority: already sleeping → lowest activity → no movement history → stable random
+    const MIN_STAY = 3;
+    const stayingNPCs = selectStayers(eligible, MIN_STAY, now);
+    const travelingNPCs = eligible.filter(n => !stayingNPCs.find(s => s.id === n.id));
+
+    // Mark stayers as home
+    const stayerUpdates = stayingNPCs
+      .filter(n => n.presence_state !== 'home')
+      .map(n => base44.entities.Character.update(n.id, {
+        resolved_current_location_id: VGC_ID,
+        resolved_current_location_name: 'VGC Towers',
+        presence_state: 'home',
+        presence_reason: 'default_home',
+        source_of_move: 'system',
+        valid_from: now.toISOString(),
+      }));
+    await Promise.all(stayerUpdates);
+
+    // ── DISTRIBUTE / ROTATE TRAVELING NPCs ───────────────────────────────────
+    const ROTATION_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+    const updates = [];
+
+    for (let i = 0; i < travelingNPCs.length; i++) {
+      const npc = travelingNPCs[i];
+
+      // Check if NPC needs rotation (been at current location too long)
+      const needsRotation = shouldRotate(npc, ROTATION_THRESHOLD_MS, now);
+      const isAlreadyOut = npc.presence_state === 'social_visit' && npc.resolved_current_location_id && npc.resolved_current_location_id !== VGC_ID;
+
+      if (isAlreadyOut && !needsRotation) {
+        // NPC is already out and doesn't need rotating yet — leave them
+        log.push(`${npc.name} → staying at ${npc.resolved_current_location_name} (no rotation needed)`);
+        continue;
+      }
+
+      // Filter by age restriction
+      const npcAge = npc.age || null;
+      const ageFilteredLocations = socialLocations.filter(loc => {
+        if (npcAge && npcAge < 21) {
+          // Block age-restricted venues
+          if (loc.age_restricted) return false;
           const nameLC = loc.name.toLowerCase();
-          return !barClubKeywords.some(kw => nameLC.includes(kw));
+          const blockedKeywords = ['bar', 'club', 'lounge', 'pub', 'tavern', 'nightclub'];
+          if (blockedKeywords.some(kw => nameLC.includes(kw))) return false;
         }
-        
         return true;
       });
 
-      if (ageAppropriateLocations.length === 0) continue;
-
-      // Pick a random location for this NPC
-      const selectedLocation = ageAppropriateLocations[i % ageAppropriateLocations.length];
-      
-      distribution.push({
-        npcName: npc.name,
-        sourceCharacterId: npc.sourceCharacterId,
-        locationId: selectedLocation.id,
-        locationName: selectedLocation.name,
-        type: npc.type
-      });
-    }
-
-    // Persist location changes to database
-    for (const dist of distribution) {
-      try {
-        const sourceChar = characters.find(c => c.id === dist.sourceCharacterId);
-        if (!sourceChar) continue;
-
-        // Update fictional_relationships with new location for the NPC
-        const updatedRels = (sourceChar.fictional_relationships || []).map(rel => {
-          if (rel.person_name === dist.npcName && !rel.related_character_id) {
-            return {
-              ...rel,
-              current_location_id: dist.locationId,
-              current_location_name: dist.locationName,
-              last_location_update_time: now.toISOString()
-            };
-          }
-          return rel;
-        });
-
-        await base44.entities.Character.update(dist.sourceCharacterId, {
-          fictional_relationships: updatedRels
-        });
-      } catch (err) {
-        console.error(`Failed to update NPC location for ${dist.npcName}:`, err);
+      if (ageFilteredLocations.length === 0) {
+        log.push(`${npc.name} → no age-appropriate locations`);
+        continue;
       }
+
+      // Pick a different location than their current one if possible
+      const currentLocId = npc.resolved_current_location_id;
+      const otherLocations = ageFilteredLocations.filter(l => l.id !== currentLocId);
+      const pool = otherLocations.length > 0 ? otherLocations : ageFilteredLocations;
+
+      // Distribute evenly using index + hash of name for stable variety
+      const nameHash = npc.name.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+      const selectedLoc = pool[(i + nameHash) % pool.length];
+
+      const isRotation = isAlreadyOut && needsRotation;
+      const reason = isRotation ? 'vgc_rotation' : 'vgc_distribution';
+
+      updates.push({
+        id: npc.id,
+        name: npc.name,
+        data: {
+          resolved_current_location_id: selectedLoc.id,
+          resolved_current_location_name: selectedLoc.name,
+          presence_state: 'social_visit',
+          presence_reason: reason,
+          source_of_move: 'system',
+          valid_from: now.toISOString(),
+          valid_until: new Date(now.getTime() + ROTATION_THRESHOLD_MS * 2).toISOString(),
+          return_location_id: VGC_ID,
+        }
+      });
+
+      log.push(`${npc.name} → ${selectedLoc.name} (${reason})`);
     }
 
-    // Log the distribution for debugging
-    const result = {
-      success: true,
-      timestamp: now.toISOString(),
-      totalVGCTowersNPCs: vgcTowersNPCs.length,
-      stayingAtHome: stayAtHome.length,
-      distributed: distribution.length,
-      distribution: distribution,
-      persisted: true
-    };
+    // Write all updates atomically
+    await Promise.all(updates.map(u => base44.entities.Character.update(u.id, u.data)));
 
-    return Response.json(result);
+    return Response.json({
+      success: true,
+      mode: 'active',
+      timestamp: now.toISOString(),
+      totalVGCResidents: vgcResidents.length,
+      eligible: eligible.length,
+      ineligible: ineligible.length,
+      stayingAtHome: stayingNPCs.length,
+      distributed: updates.length,
+      guaranteedLocationsFound: guaranteedLocations.map(l => l.name),
+      socialLocationsAvailable: socialLocations.length,
+      log,
+    });
 
   } catch (error) {
-    return Response.json({ 
-      error: error.message,
-      stack: error.stack 
-    }, { status: 500 });
+    console.error('[distributeVGCTowersNPCs]', error.message);
+    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
   }
 });
 
-/**
- * Check if a location is currently closed
- */
-function isLocationClosed(location, currentTime = new Date()) {
-  if (!location.operating_hours || location.operating_hours.length === 0) {
-    return false; // Assume open if no hours defined
-  }
+// ── HELPERS ──────────────────────────────────────────────────────────────────
 
-  const dayOfWeek = currentTime.getDay();
-  const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+function selectStayers(eligible, minCount, now) {
+  if (eligible.length <= minCount) return eligible;
 
-  const todayEntries = location.operating_hours.filter(h => h.day_of_week === dayOfWeek);
-  const dayAgnosticEntries = location.operating_hours.filter(h => h.day_of_week == null);
+  // Priority: sleeping → no valid_from → oldest valid_from (been out longest → NOT them, pick recently moved)
+  const scored = eligible.map(npc => {
+    let score = 0;
+    if (npc.presence_state === 'sleeping') score += 100;
+    if (!npc.valid_from) score += 50;
+    if (npc.presence_state === 'home') score += 30;
+    return { npc, score };
+  });
 
-  // Check day-specific hours first
-  if (todayEntries.length > 0) {
-    return !todayEntries.some(h => isInWindow(currentMinutes, h.open_time, h.close_time));
-  }
-
-  // Check day-agnostic hours
-  if (dayAgnosticEntries.length > 0) {
-    return !dayAgnosticEntries.some(h => isInWindow(currentMinutes, h.open_time, h.close_time));
-  }
-
-  // If specific day exists but no hours, location is closed
-  if (location.operating_hours.some(h => h.day_of_week != null)) {
-    return true;
-  }
-
-  return false;
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, minCount).map(s => s.npc);
 }
 
-/**
- * Check if a time falls within a window
- */
+function shouldRotate(npc, thresholdMs, now) {
+  if (!npc.valid_from) return true;
+  const movedAt = new Date(npc.valid_from).getTime();
+  return (now.getTime() - movedAt) >= thresholdMs;
+}
+
+function isOnWorkSchedule(npc, now) {
+  if (!npc.work_days || !npc.work_start_time || !npc.work_end_time) return false;
+  const dayOfWeek = now.getDay();
+  if (!npc.work_days.includes(dayOfWeek)) return false;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const [sh, sm] = npc.work_start_time.split(':').map(Number);
+  const [eh, em] = npc.work_end_time.split(':').map(Number);
+  return currentMinutes >= sh * 60 + sm && currentMinutes < eh * 60 + em;
+}
+
+function isLocationClosed(location, currentTime) {
+  if (!location.operating_hours || location.operating_hours.length === 0) return false;
+  const dayOfWeek = currentTime.getDay();
+  const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const todayEntries = location.operating_hours.filter(h => h.day_of_week === dayOfWeek);
+  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+  const entries = todayEntries.length > 0 ? todayEntries : dayAgnostic;
+  if (entries.length === 0) return location.operating_hours.some(h => h.day_of_week != null);
+  return !entries.some(h => isInWindow(currentMinutes, h.open_time, h.close_time));
+}
+
 function isInWindow(currentMinutes, openStr, closeStr) {
   if (!openStr || !closeStr) return false;
-  
-  const [openH, openM] = openStr.split(':').map(Number);
-  const [closeH, closeM] = closeStr.split(':').map(Number);
-  
-  const openMin = openH * 60 + openM;
-  const closeMin = closeH * 60 + closeM;
-
-  if (openMin <= closeMin) {
-    return currentMinutes >= openMin && currentMinutes <= closeMin;
-  }
-  
-  // Overnight window
+  const [oh, om] = openStr.split(':').map(Number);
+  const [ch, cm] = closeStr.split(':').map(Number);
+  const openMin = oh * 60 + om;
+  const closeMin = ch * 60 + cm;
+  if (openMin <= closeMin) return currentMinutes >= openMin && currentMinutes <= closeMin;
   return currentMinutes >= openMin || currentMinutes <= closeMin;
 }
