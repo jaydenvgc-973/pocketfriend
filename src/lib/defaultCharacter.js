@@ -290,7 +290,7 @@ ${buildReligionPromptContext(character)}
 YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
 ${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}
 ${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW (third-person context for grounding — use this to inform how you show up in conversation, what you might mention in passing, what just happened or is happening): ${character.daily_micro_narration}` : ""}
-${(character.city || character.state) ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}. You are aware of the weather in your area. Only mention weather very occasionally and only when it's directly relevant to something specific happening (e.g. you had to be outside in the cold, or a storm literally affected your plans). Do NOT mention weather as small talk, as a conversation opener, or as filler. Most conversations should have zero mention of weather.` : ""}
+${(character.city || character.state) ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}
 ${buildRelationshipsContext(character)}
 
 PHOTO-SENDING BEHAVIOR BASED ON SOCIAL ENERGY:
