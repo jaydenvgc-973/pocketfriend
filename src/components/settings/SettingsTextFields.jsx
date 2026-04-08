@@ -1,21 +1,29 @@
 import { useState, useEffect, useRef } from "react";
 
+const GENDER_OPTIONS = [
+  { value: "male", label: "Male" },
+  { value: "female", label: "Female" },
+  { value: "non-binary", label: "Non-binary" },
+  { value: "other", label: "Other" },
+];
+
 export default function SettingsTextFields({ settings, onSave }) {
   const [worldName, setWorldName] = useState("");
   const [birthday, setBirthday] = useState("");
   const [scheduleNotes, setScheduleNotes] = useState("");
+  const [gender, setGender] = useState("");
   const loadedSettingsId = useRef(null);
 
   // Only load from DB once per settings record (identified by settings.id)
-  // After that, local state is authoritative until the user explicitly changes it
   useEffect(() => {
     if (settings.id && settings.id !== loadedSettingsId.current) {
       setWorldName(settings.fictional_world_name || "");
       setBirthday(settings.user_birthday || "");
       setScheduleNotes(settings.user_schedule_notes || "");
+      setGender(settings.user_gender || "");
       loadedSettingsId.current = settings.id;
     }
-  }, [settings.id, settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes]);
+  }, [settings.id, settings.fictional_world_name, settings.user_birthday, settings.user_schedule_notes, settings.user_gender]);
 
   return (
     <div className="space-y-6 pt-2 border-t border-border">
@@ -31,6 +39,30 @@ export default function SettingsTextFields({ settings, onSave }) {
           onBlur={() => onSave({ fictional_world_name: worldName })}
           className="w-full h-11 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
         />
+      </div>
+
+      {/* Your Gender */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Your Gender</p>
+        <p className="text-xs text-muted-foreground">Used for image generation and character context</p>
+        <div className="grid grid-cols-2 gap-2">
+          {GENDER_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => {
+                setGender(opt.value);
+                onSave({ user_gender: opt.value });
+              }}
+              className={`h-10 rounded-xl border text-sm font-medium transition-colors ${
+                gender === opt.value
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Your Birthday */}
