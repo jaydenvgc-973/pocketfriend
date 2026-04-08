@@ -641,20 +641,17 @@ export default function Scene() {
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
       const zoneImages = currentZone?.image_urls || [];
 
-      let peopleDesc;
-      if (physicallyPresent.length > 0) {
-        peopleDesc = `CRITICAL: Only these specific people may appear in the image: ${physicallyPresent.map(c => c.name).join(", ")}. Absolutely NO other people, NO strangers, NO background figures, NO random people whatsoever.`;
-      } else {
-        // No one is home — generate empty room, absolutely no people
-        peopleDesc = `CRITICAL: The room is completely empty. No people at all — absolutely NO silhouettes, NO background figures, NO one visible anywhere. Empty space only.`;
-      }
+      // Build strict people instruction — only exact named residents, no one else ever
+      const strictPeopleRule = physicallyPresent.length > 0
+        ? `STRICT RULE: The ONLY people who may appear in this image are: ${physicallyPresent.map(c => c.name).join(", ")}. Their appearance must match their reference photos exactly — do NOT alter body type, weight, age, or ethnicity. Generate NO other people, NO strangers, NO background figures, NO silhouettes of anyone else.`
+        : `STRICT RULE: This space is completely empty. NO people, NO silhouettes, NO background figures — only the room itself.`;
 
-      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, warm, authentic atmosphere. This is a home — only residents and brought guests appear here. NO service workers, NO strangers, NO random people.`;
+      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${strictPeopleRule} Photorealistic, warm, authentic atmosphere.`;
 
-      // Gather location zone images first (these are the location's reference photos)
-      const zoneRefs = zoneImages.slice(0, 2);
+      // Use character avatar URLs as primary references so the AI matches their appearance
       const residentAvatars = physicallyPresent.map(c => c.avatar_url).filter(Boolean);
-      const refs = [...zoneRefs, ...(firstImage ? [firstImage] : []), ...residentAvatars].slice(0, 4);
+      const zoneRefs = zoneImages.slice(0, 1);
+      const refs = [...residentAvatars, ...zoneRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
@@ -1439,8 +1436,6 @@ Return JSON:
           </button>
         </div>
       )}
-
-      <BottomNav />
 
       {/* Input bar — stable, never remounts. Uses stable callbacks to prevent re-renders. */}
       <SceneInputBar
