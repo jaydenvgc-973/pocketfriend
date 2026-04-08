@@ -34,9 +34,11 @@ Deno.serve(async (req) => {
     // ── IDENTIFY VGC TOWERS NPC CHARACTERS ──────────────────────────────────────
     // Only Character entities whose current_home_location_id === VGC Towers
     // AND character_type is npc, family_npc, or background (NOT active)
+    // NEVER include protected_active characters — user explicitly marked them as active
     const vgcResidents = allCharacters.filter(c =>
       c.current_home_location_id === VGC_ID &&
-      ['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type)
+      ['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type) &&
+      !c.protected_active
     );
 
     const log = [];

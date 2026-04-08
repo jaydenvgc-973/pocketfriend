@@ -15,7 +15,7 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: npcCharacters = [] } = useQuery({
+  const { data: rawNpcCharacters = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.Character.filter({
@@ -25,6 +25,9 @@ export default function NPCContactPanel() {
       : [],
     enabled: !!currentUser?.email,
   });
+
+  // Always exclude any character the user has marked as a real active character
+  const npcCharacters = rawNpcCharacters.filter(c => !c.protected_active);
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -59,8 +62,11 @@ export default function NPCContactPanel() {
   const handleMarkAsActive = async (e, npc) => {
     e.stopPropagation();
     try {
-      // Change character_type to 'active' — removes them from this NPC list only
-      await base44.entities.Character.update(npc.id, { character_type: 'active' });
+      // Set character_type to 'active' AND protected_active=true so no system process ever re-adds them
+      await base44.entities.Character.update(npc.id, {
+        character_type: 'active',
+        protected_active: true,
+      });
       queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to update character: ' + err.message);
