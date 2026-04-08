@@ -1,28 +1,87 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+/**
+ * processPayroll
+ *
+ * Pays characters based on their ACTUAL scheduled hours, not a flat 40-hr week.
+ *
+ * Priority for shift data (per job location):
+ *   1. LocationReference.worker_shifts[characterId] — specific shift set on the location
+ *   2. Character.work_start_time / work_end_time / work_days — character-level fallback
+ *   3. Nothing — skip that job (no hours = no pay)
+ *
+ * Pay is bi-weekly (called every 2 weeks by automation).
+ * Supports hourly pay (worker_pay_rates) and annual salary (income_sources).
+ */
+
+/** Parse "HH:MM" → total minutes from midnight */
+function timeToMinutes(t) {
+  if (!t) return null;
+  const [h, m] = t.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+}
+
+/**
+ * Calculate weekly hours for a job.
+ * Returns { weeklyHours, daysPerWeek } or null if no schedule found.
+ */
+function calcWeeklyHours(char, location) {
+  const charId = char.id;
+
+  // 1. Location-specific shift for this character
+  const shift = location?.worker_shifts?.[charId];
+  if (shift?.start && shift?.end && Array.isArray(shift.days) && shift.days.length > 0) {
+    const start = timeToMinutes(shift.start);
+    const end = timeToMinutes(shift.end);
+    if (start !== null && end !== null) {
+      let shiftMinutes = end - start;
+      if (shiftMinutes <= 0) shiftMinutes += 24 * 60; // overnight shift
+      const hoursPerShift = shiftMinutes / 60;
+      const daysPerWeek = shift.days.length;
+      return { weeklyHours: hoursPerShift * daysPerWeek, daysPerWeek };
+    }
+  }
+
+  // 2. Character-level fallback
+  if (char.work_start_time && char.work_end_time && Array.isArray(char.work_days) && char.work_days.length > 0) {
+    const start = timeToMinutes(char.work_start_time);
+    const end = timeToMinutes(char.work_end_time);
+    if (start !== null && end !== null) {
+      let shiftMinutes = end - start;
+      if (shiftMinutes <= 0) shiftMinutes += 24 * 60;
+      const hoursPerShift = shiftMinutes / 60;
+      const daysPerWeek = char.work_days.length;
+      return { weeklyHours: hoursPerShift * daysPerWeek, daysPerWeek };
+    }
+  }
+
+  return null; // No schedule found
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Get all characters for this user
     const characters = await base44.entities.Character.filter({
       created_by: user.email,
-      status: 'active'
+      status: 'active',
     });
+
+    // Load all locations once
+    const allLocations = await base44.asServiceRole.entities.LocationReference.list('-created_date', 500);
+    const locationMap = Object.fromEntries(allLocations.map(l => [l.id, l]));
 
     const results = [];
     const today = new Date();
+    const WEEKS_PER_BIWEEKLY = 2;
+    const AVG_WEEKS_PER_MONTH = 4.33;
 
     for (const char of characters) {
       // Get or create financial record
-      const financials = await base44.entities.CharacterFinancial.filter({
-        character_id: char.id
-      });
-
+      const financials = await base44.entities.CharacterFinancial.filter({ character_id: char.id });
       let financial = financials[0];
       if (!financial) {
         financial = await base44.entities.CharacterFinancial.create({
@@ -31,67 +90,128 @@ Deno.serve(async (req) => {
           current_balance: 6000,
           total_income: 0,
           total_expenses: 0,
-          income_sources: []
+          income_sources: [],
         });
       }
 
-      // Calculate bi-weekly pay
-      let biweeklyPay = 0;
-      const incomeSources = financial.income_sources || [];
-      
-      if (char.work_details?.job_title) {
-        // Get hourly rate from occupation location
-        if (char.occupation_location_id) {
-          const locations = await base44.entities.LocationReference.filter({
-            id: char.occupation_location_id
+      const existingSources = financial.income_sources || [];
+      let totalBiweeklyPay = 0;
+      const updatedSources = [];
+
+      // ── Build list of all job locations for this character ──────────────
+      const jobLocations = [];
+
+      if (char.occupation_location_id) {
+        const loc = locationMap[char.occupation_location_id];
+        jobLocations.push({
+          location_id: char.occupation_location_id,
+          location_name: char.occupation_location_name || loc?.name || 'Primary Job',
+          location: loc || null,
+        });
+      }
+
+      for (const extra of (char.additional_occupation_locations || [])) {
+        if (extra.location_id) {
+          const loc = locationMap[extra.location_id];
+          jobLocations.push({
+            location_id: extra.location_id,
+            location_name: extra.location_name || loc?.name || 'Job',
+            location: loc || null,
           });
-          const location = locations[0];
-          if (location && location.worker_pay_rates && location.worker_pay_rates[char.id]) {
-            const hourlyRate = location.worker_pay_rates[char.id];
-            biweeklyPay = hourlyRate * 80; // 40 hours/week * 2 weeks
-          }
         }
       }
 
-      // Check for annual salary in CharacterFinancial income_sources
-      const annualSource = incomeSources.find(s => s.pay_type === 'annual');
-      if (annualSource && annualSource.pay_amount) {
-        biweeklyPay = Math.round((annualSource.pay_amount / 26) * 100) / 100;
+      // If no linked locations but has an annual salary in income_sources, honour it
+      if (jobLocations.length === 0) {
+        const annualSource = existingSources.find(s => s.pay_type === 'annual' && s.pay_amount);
+        if (annualSource) {
+          const biweeklyPay = Math.round((annualSource.pay_amount / 26) * 100) / 100;
+          totalBiweeklyPay += biweeklyPay;
+          updatedSources.push({
+            ...annualSource,
+            total_earned: (annualSource.total_earned || 0) + biweeklyPay,
+            last_payment_date: today.toISOString(),
+          });
+        }
       }
 
-      if (biweeklyPay > 0) {
-        const newBalance = financial.current_balance + biweeklyPay;
-        const newTotalIncome = financial.total_income + biweeklyPay;
+      // ── Process each job ───────────────────────────────────────────────
+      for (const job of jobLocations) {
+        const loc = job.location;
+        const charId = char.id;
 
-        // Update financial record
-        await base44.entities.CharacterFinancial.update(financial.id, {
-          current_balance: newBalance,
-          total_income: newTotalIncome,
-          income_sources: [
-            ...incomeSources.filter(s => s.location_id),
-            {
-              location_id: char.occupation_location_id || 'primary_job',
-              location_name: char.occupation_location_name || char.work_details?.workplace_type || 'Employment',
-              pay_type: annualSource ? 'annual' : 'hourly',
-              pay_amount: biweeklyPay,
-              total_earned: (incomeSources.find(s => s.location_id === (char.occupation_location_id || 'primary_job'))?.total_earned || 0) + biweeklyPay,
-              last_payment_date: today.toISOString()
-            }
-          ]
-        });
+        // Check for annual salary override in existing income_sources
+        const existingSource = existingSources.find(s => s.location_id === job.location_id);
+        if (existingSource?.pay_type === 'annual' && existingSource.pay_amount) {
+          const biweeklyPay = Math.round((existingSource.pay_amount / 26) * 100) / 100;
+          totalBiweeklyPay += biweeklyPay;
+          updatedSources.push({
+            ...existingSource,
+            total_earned: (existingSource.total_earned || 0) + biweeklyPay,
+            last_payment_date: today.toISOString(),
+          });
+          continue;
+        }
 
-        results.push({
-          character_id: char.id,
-          name: char.name,
-          amount: biweeklyPay,
-          new_balance: newBalance,
-          status: 'success'
+        // Hourly pay: rate from location worker_pay_rates
+        const hourlyRate = loc?.worker_pay_rates?.[charId] ?? financial.hourly_rates?.[job.location_id] ?? null;
+        if (!hourlyRate) continue; // No pay rate configured — skip
+
+        // Calculate actual scheduled hours for this job
+        const schedule = calcWeeklyHours(char, loc);
+        if (!schedule) continue; // No schedule found — skip
+
+        const { weeklyHours, daysPerWeek } = schedule;
+        const biweeklyHours = weeklyHours * WEEKS_PER_BIWEEKLY;
+        const biweeklyPay = Math.round(hourlyRate * biweeklyHours * 100) / 100;
+        const monthlyEstimate = Math.round(hourlyRate * weeklyHours * AVG_WEEKS_PER_MONTH * 100) / 100;
+
+        totalBiweeklyPay += biweeklyPay;
+
+        updatedSources.push({
+          location_id: job.location_id,
+          location_name: job.location_name,
+          pay_type: 'hourly',
+          pay_amount: hourlyRate,
+          weekly_hours: Math.round(weeklyHours * 100) / 100,
+          days_per_week: daysPerWeek,
+          monthly_estimate: monthlyEstimate,
+          total_earned: (existingSource?.total_earned || 0) + biweeklyPay,
+          last_payment_date: today.toISOString(),
         });
       }
+
+      if (totalBiweeklyPay <= 0) continue; // Nothing to pay
+
+      const newBalance = Math.round((financial.current_balance + totalBiweeklyPay) * 100) / 100;
+      const newTotalIncome = Math.round((financial.total_income + totalBiweeklyPay) * 100) / 100;
+
+      await base44.entities.CharacterFinancial.update(financial.id, {
+        current_balance: newBalance,
+        total_income: newTotalIncome,
+        income_sources: updatedSources,
+      });
+
+      results.push({
+        character_id: char.id,
+        name: char.name,
+        biweekly_pay: totalBiweeklyPay,
+        new_balance: newBalance,
+        jobs: updatedSources.map(s => ({
+          location: s.location_name,
+          pay_type: s.pay_type,
+          rate: s.pay_amount,
+          weekly_hours: s.weekly_hours,
+          days_per_week: s.days_per_week,
+          biweekly_earned: s.total_earned,
+        })),
+        status: 'paid',
+      });
     }
 
-    return Response.json({ success: true, payroll: results, processed: results.length });
+    return Response.json({ success: true, payroll: results, paid: results.length });
   } catch (error) {
+    console.error('[processPayroll]', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

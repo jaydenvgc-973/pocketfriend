@@ -18,9 +18,14 @@ export default function CharacterFinancialSummary({ characterId }) {
   if (!financial) return null;
 
   const monthlyExpenses = (financial.recurring_expenses || []).reduce((sum, e) => sum + (e.monthly_cost || 0), 0);
-  // Estimate monthly income from sources
+  // Estimate monthly income — use stored monthly_estimate (based on actual scheduled hours) if available
   const monthlyIncome = (financial.income_sources || []).reduce((sum, s) => {
-    if (s.pay_type === 'hourly') return sum + (s.pay_amount || 0) * 160; // ~40 hrs/wk
+    if (s.pay_type === 'hourly') {
+      // Prefer stored monthly_estimate (calculated from real shift hours), fallback to weekly_hours * rate * 4.33
+      if (s.monthly_estimate) return sum + s.monthly_estimate;
+      if (s.weekly_hours) return sum + (s.pay_amount || 0) * s.weekly_hours * 4.33;
+      return sum; // No schedule data — don't guess
+    }
     if (s.pay_type === 'annual') return sum + (s.pay_amount || 0) / 12;
     return sum;
   }, 0);
@@ -98,17 +103,24 @@ export default function CharacterFinancialSummary({ characterId }) {
         <div className="bg-card border border-border rounded-xl p-4 space-y-2">
           <h4 className="text-sm font-semibold text-foreground mb-3">Income Sources</h4>
           {financial.income_sources.map((src, idx) => {
-            const estMonthly = src.pay_type === 'hourly'
-              ? (src.pay_amount || 0) * 160
-              : (src.pay_amount || 0) / 12;
+            const estMonthly = src.monthly_estimate
+              || (src.weekly_hours ? (src.pay_amount || 0) * src.weekly_hours * 4.33 : null)
+              || (src.pay_type === 'annual' ? (src.pay_amount || 0) / 12 : null);
             return (
               <div key={idx} className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 flex-1 min-w-0">
                   <Briefcase className="w-3.5 h-3.5 text-green-400 flex-shrink-0" />
-                  <span className="text-muted-foreground truncate">
-                    {src.location_name}
-                    <span className="text-muted-foreground/60 ml-1">({src.pay_type})</span>
-                  </span>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-muted-foreground truncate">
+                      {src.location_name}
+                      <span className="text-muted-foreground/60 ml-1">({src.pay_type})</span>
+                    </span>
+                    {src.weekly_hours != null && (
+                      <span className="text-[10px] text-muted-foreground/50">
+                        {src.weekly_hours}h/wk · {src.days_per_week}d/wk
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="text-right flex-shrink-0 ml-2">
                   <div className="font-semibold text-green-300">
