@@ -1209,7 +1209,7 @@ Return JSON:
       <ImageLightbox src={lightboxSrc} alt={location.name} onClose={() => setLightboxSrc(null)} />
 
       {/* Scene image */}
-      <div className="relative h-40 flex-shrink-0" style={{ zIndex: 0 }}>
+      <div className="relative h-32 flex-shrink-0" style={{ zIndex: 0 }}>
         {isGeneratingImage ? (
           <div className="w-full h-full bg-secondary flex items-center justify-center">
             <div className="flex items-center gap-2 text-muted-foreground">
@@ -1439,6 +1439,8 @@ Return JSON:
           </button>
         </div>
       )}
+
+      <BottomNav />
 
       {/* Input bar — stable, never remounts. Uses stable callbacks to prevent re-renders. */}
       <SceneInputBar
