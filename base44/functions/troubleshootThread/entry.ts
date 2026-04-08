@@ -296,6 +296,111 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- WORLD NAME ENFORCEMENT ---
+    if (selectedIssues.includes('world_name_enforcement')) {
+      const settingsList = await base44.asServiceRole.entities.UserSettings.list();
+      const worldName = settingsList?.[0]?.fictional_world_name || null;
+
+      if (!worldName) {
+        results.checks.push({ name: 'World Name Enforcement', status: 'warning', message: 'No world name set in user profile — characters will use pronouns. Set a world name in Settings > Your Name (In-World) to enable full enforcement.' });
+      } else {
+        // Scan last 100 messages for "the user" leakage in character dialogue
+        const PLACEHOLDER_PATTERNS = [/\bthe user\b/i, /\bthe player\b/i, /\bplayer\b/i];
+        const charMessages = allMessages.filter(m => m.sender_type === 'character' && m.content);
+        const leakyMessages = charMessages.filter(m => PLACEHOLDER_PATTERNS.some(p => p.test(m.content)));
+
+        if (leakyMessages.length > 0) {
+          results.issues_found.push(`IDENTITY LEAK: ${leakyMessages.length} character message(s) contain "the user" or placeholder identity instead of "${worldName}". Root cause: stale prompt assembly or cache not refreshed after world name was set.`);
+          results.checks.push({ name: 'World Name Enforcement — Dialogue', status: 'failed', message: `Found ${leakyMessages.length} message(s) with "the user" placeholder. World name "${worldName}" is set but not reaching prompt generation for this character. Check: prompt assembly layer, cached context, and system_prompt field.` });
+          // Flag the most recent ones for traceability
+          const recent = leakyMessages.slice(-3);
+          recent.forEach(m => {
+            results.issues_found.push(`  → Message ID ${m.id}: "${m.content.substring(0, 120)}..."`);
+          });
+        } else {
+          results.checks.push({ name: 'World Name Enforcement — Dialogue', status: 'passed', message: `No "the user" leakage found in ${charMessages.length} character message(s). World name "${worldName}" appears to be propagating correctly.` });
+        }
+
+        // Scan character memories for stale identity references
+        const charArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+        const character = charArr[0];
+        if (character) {
+          const memories = await base44.asServiceRole.entities.Memory.filter({ character_id: characterId }, '-timestamp', 200);
+          const staleMemories = memories.filter(m =>
+            PLACEHOLDER_PATTERNS.some(p => p.test(m.title || '') || p.test(m.description || ''))
+          );
+          if (staleMemories.length > 0) {
+            results.issues_found.push(`STALE MEMORY IDENTITY: ${staleMemories.length} memory record(s) for this character still reference "the user" instead of "${worldName}".`);
+            results.checks.push({ name: 'World Name Enforcement — Memory', status: 'failed', message: `${staleMemories.length} memory record(s) contain placeholder identity. These will contaminate future prompt context. Root cause: memories were created before world name was set and never corrected.` });
+            // Auto-correct: replace "the user" with world name in memory descriptions
+            let corrected = 0;
+            for (const mem of staleMemories) {
+              const newTitle = (mem.title || '').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
+              const newDesc = (mem.description || '').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
+              await base44.asServiceRole.entities.Memory.update(mem.id, { title: newTitle, description: newDesc });
+              corrected++;
+            }
+            if (corrected > 0) results.fixes_applied.push(`Corrected ${corrected} stale memory record(s) — replaced "the user" with "${worldName}"`);
+          } else {
+            results.checks.push({ name: 'World Name Enforcement — Memory', status: 'passed', message: `No stale identity references in ${memories.length} memory record(s).` });
+          }
+
+          // Check if character's system_prompt (if cached) contains "the user"
+          if (character.system_prompt && PLACEHOLDER_PATTERNS.some(p => p.test(character.system_prompt))) {
+            results.issues_found.push(`STALE CACHED SYSTEM PROMPT: This character's saved system_prompt contains "the user". This is a cached prompt that was built before the world name was set.`);
+            results.checks.push({ name: 'World Name Enforcement — Cached Prompt', status: 'failed', message: `Character's cached system_prompt still contains placeholder identity. Root cause: CACHE_STALE + PROMPT_ASSEMBLY failure. The system_prompt needs to be regenerated with the current world name injected.` });
+            // Clear the stale system_prompt so it regenerates on next chat
+            await base44.asServiceRole.entities.Character.update(characterId, { system_prompt: null });
+            results.fixes_applied.push(`Cleared stale system_prompt cache for this character — it will regenerate with world name "${worldName}" on next chat.`);
+          } else if (character.system_prompt) {
+            results.checks.push({ name: 'World Name Enforcement — Cached Prompt', status: 'passed', message: `Cached system_prompt does not contain placeholder identity.` });
+          }
+
+          // Check nickname_for_user
+          if (!character.nickname_for_user && worldName) {
+            results.checks.push({ name: 'World Name — Character Nickname Override', status: 'info', message: `No per-character nickname set. Will use global world name "${worldName}". This is fine — just informational.` });
+          }
+        }
+      }
+    }
+
+    // --- STALE PROMPT CACHE ---
+    if (selectedIssues.includes('stale_prompt_cache')) {
+      const charArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+      const character = charArr[0];
+      if (character) {
+        const staleChecks = [];
+
+        // Check system_prompt age — if it exists and is very long it may be a baked-in stale cache
+        if (character.system_prompt && character.system_prompt.length > 500) {
+          staleChecks.push(`Cached system_prompt exists (${character.system_prompt.length} chars). If character behavior feels outdated, clearing this forces a fresh rebuild on next chat.`);
+          results.checks.push({ name: 'Stale Prompt Cache', status: 'warning', message: `Cached system_prompt detected (${character.system_prompt.length} chars). This may contain outdated identity, location, or context references from before your most recent settings changes.` });
+          // Offer action hint
+          results.issues_found.push(`ACTION AVAILABLE: To force prompt rebuild, this character's system_prompt cache can be cleared. Run "Character calling me the user" check to auto-clear if identity leakage is confirmed.`);
+        } else {
+          results.checks.push({ name: 'Stale Prompt Cache', status: 'passed', message: 'No stale system_prompt cache detected.' });
+        }
+
+        // Check if emotional_state is stuck
+        if (!character.emotional_state) {
+          results.checks.push({ name: 'Stale Emotional State', status: 'warning', message: 'No emotional_state set — character will use a generic fallback. This can cause flat or inconsistent tone.' });
+        } else {
+          results.checks.push({ name: 'Stale Emotional State', status: 'passed', message: `Emotional state: ${character.emotional_state}` });
+        }
+
+        // Check last_need_simulated_at — if very old, needs are stale
+        if (character.last_need_simulated_at) {
+          const ageMs = Date.now() - new Date(character.last_need_simulated_at).getTime();
+          const ageHours = Math.floor(ageMs / 3600000);
+          if (ageHours > 48) {
+            results.checks.push({ name: 'Needs Simulation Staleness', status: 'warning', message: `Needs last updated ${ageHours} hours ago. Values may be stale and not reflecting real elapsed time.` });
+          } else {
+            results.checks.push({ name: 'Needs Simulation Staleness', status: 'passed', message: `Needs last updated ${ageHours} hours ago — within acceptable range.` });
+          }
+        }
+      }
+    }
+
     const totalIssues = results.issues_found.length;
     const totalFixes = results.fixes_applied.length;
     if (totalIssues === 0 && totalFixes === 0) {

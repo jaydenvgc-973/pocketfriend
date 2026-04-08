@@ -186,6 +186,112 @@ Deno.serve(async (req) => {
       }
     }
 
+    // --- WORLD NAME ENFORCEMENT ---
+    if (selectedIssues.includes('world_name_enforcement')) {
+      const settingsList = await base44.asServiceRole.entities.UserSettings.list();
+      const worldName = settingsList?.[0]?.fictional_world_name || null;
+      const PLACEHOLDER_PATTERNS = [/\bthe user\b/i, /\bthe player\b/i, /\bplayer\b/i];
+
+      if (!worldName) {
+        results.checks.push({ name: 'World Name Enforcement', status: 'warning', message: 'No world name set in UserSettings. Set one in Settings > Your Name (In-World). Characters will use pronouns until then.' });
+      } else {
+        // Check memories
+        const memories = await base44.asServiceRole.entities.Memory.filter({ character_id: characterId }, '-timestamp', 300);
+        const staleMemories = memories.filter(m => PLACEHOLDER_PATTERNS.some(p => p.test(m.title || '') || p.test(m.description || '')));
+        if (staleMemories.length > 0) {
+          let corrected = 0;
+          for (const mem of staleMemories) {
+            const newTitle = (mem.title || '').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
+            const newDesc = (mem.description || '').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
+            await base44.asServiceRole.entities.Memory.update(mem.id, { title: newTitle, description: newDesc });
+            corrected++;
+          }
+          results.fixes_applied.push(`Corrected ${corrected} memory record(s): replaced placeholder identity with "${worldName}"`);
+          results.checks.push({ name: 'World Name — Memory', status: 'failed', message: `${staleMemories.length} memory record(s) had stale "the user" placeholder. Corrected to "${worldName}". Root cause: memories were created before world name was set.` });
+        } else {
+          results.checks.push({ name: 'World Name — Memory', status: 'passed', message: `All ${memories.length} memory record(s) are free of placeholder identity.` });
+        }
+
+        // Check system_prompt cache
+        if (character.system_prompt && PLACEHOLDER_PATTERNS.some(p => p.test(character.system_prompt))) {
+          await base44.asServiceRole.entities.Character.update(characterId, { system_prompt: null });
+          results.fixes_applied.push(`Cleared stale system_prompt cache — will regenerate with world name "${worldName}" on next chat.`);
+          results.checks.push({ name: 'World Name — Cached Prompt', status: 'failed', message: `system_prompt contained placeholder identity. Cleared. Root cause: CACHE_STALE. Prompt will rebuild on next chat with correct world name.` });
+        } else {
+          results.checks.push({ name: 'World Name — Cached Prompt', status: 'passed', message: 'No placeholder identity found in cached system_prompt.' });
+        }
+
+        // Check relationship labels / nickname
+        const nickname = character.nickname_for_user;
+        if (nickname && PLACEHOLDER_PATTERNS.some(p => p.test(nickname))) {
+          await base44.asServiceRole.entities.Character.update(characterId, { nickname_for_user: worldName });
+          results.fixes_applied.push(`Corrected nickname_for_user from placeholder to "${worldName}"`);
+        }
+        results.checks.push({ name: 'World Name — Nickname Override', status: 'info', message: nickname ? `Per-character nickname: "${nickname}"` : `No per-character nickname — uses global world name "${worldName}"` });
+      }
+    }
+
+    // --- APPEARANCE LOCK CHECK ---
+    if (selectedIssues.includes('appearance_lock_check')) {
+      const lock = character.appearance_lock || {};
+      const lockFields = ['skin_tone', 'hair_type', 'hairstyle', 'overall_aesthetic'];
+      const filledFields = lockFields.filter(f => lock[f] && lock[f].trim());
+      const emptyFields = lockFields.filter(f => !lock[f] || !lock[f].trim());
+
+      if (filledFields.length === 0) {
+        results.checks.push({ name: 'Appearance Lock', status: 'warning', message: `Appearance lock is empty — image generation will not have enforced identity anchors. Go to Character Profile > Appearance Lock to set values or use Auto-detect.` });
+        results.issues_found.push(`No appearance lock data set for ${character.name}. Without this, skin tone, hair type, and aesthetic can drift between generated images.`);
+      } else {
+        results.checks.push({ name: 'Appearance Lock', status: 'passed', message: `${filledFields.length}/${lockFields.length} core appearance fields set. Empty: ${emptyFields.join(', ') || 'none'}.` });
+      }
+
+      const appearanceAge = character.appearance_age;
+      const birthdayAge = character.birthday ? Math.floor((Date.now() - new Date(character.birthday).getTime()) / (365.25 * 24 * 3600 * 1000)) : null;
+      if (appearanceAge != null) {
+        results.checks.push({ name: 'Appearance Age', status: 'passed', message: `appearance_age override = ${appearanceAge}. Birthday age = ${birthdayAge ?? 'N/A'}. Image generation will use ${appearanceAge}.` });
+      } else if (birthdayAge != null) {
+        results.checks.push({ name: 'Appearance Age', status: 'info', message: `No appearance_age override. Image generation will use birthday-calculated age: ${birthdayAge}. If this looks wrong in images, set an appearance_age override.` });
+      } else {
+        results.checks.push({ name: 'Appearance Age', status: 'warning', message: `No appearance_age set and no birthday. Image generation has no age anchor — results may vary.` });
+      }
+
+      const gender = character.gender;
+      if (!gender) {
+        results.checks.push({ name: 'Gender', status: 'warning', message: `No gender set on character. This can affect image generation consistency. Go to Character Profile to set gender.` });
+      } else {
+        results.checks.push({ name: 'Gender', status: 'passed', message: `Gender: ${gender}` });
+      }
+    }
+
+    // --- STALE LOCATION REFERENCES ---
+    if (selectedIssues.includes('stale_location_refs')) {
+      const allLocations = await base44.asServiceRole.functions.invoke('fetchAllLocationsForUser', {}).then(r => r?.locations || []).catch(() => []);
+      const validLocationIds = new Set(allLocations.map(l => l.id));
+
+      const locationFields = [
+        { field: 'current_home_location_id', label: 'Home' },
+        { field: 'current_work_location_id', label: 'Work' },
+        { field: 'occupation_location_id', label: 'Occupation Location' },
+        { field: 'education_location_id', label: 'Education Location' },
+        { field: 'resolved_current_location_id', label: 'Resolved Location' },
+      ];
+
+      let staleCount = 0;
+      for (const { field, label } of locationFields) {
+        const val = character[field];
+        if (val && !validLocationIds.has(val)) {
+          results.issues_found.push(`STALE LOCATION: ${label} field (${field}) points to deleted/missing location ID "${val}". This character may be referencing a location that no longer exists.`);
+          staleCount++;
+        }
+      }
+
+      if (staleCount === 0) {
+        results.checks.push({ name: 'Stale Location References', status: 'passed', message: `All location ID references are valid.` });
+      } else {
+        results.checks.push({ name: 'Stale Location References', status: 'failed', message: `${staleCount} stale location reference(s) found. Characters referencing deleted locations can cause broken invites and scene errors. Update location assignments on the character profile.` });
+      }
+    }
+
     const totalIssues = results.issues_found.length;
     const totalFixes = results.fixes_applied.length;
     if (totalIssues === 0 && totalFixes === 0) {

@@ -12,6 +12,8 @@ const ISSUE_LIST = [
   { id: 'media_missing', label: 'Images not loading', description: 'Deep scan: find messages with missing/failed image URLs and attempt recovery' },
   { id: 'archived_messages', label: 'Hidden or archived messages', description: 'Recover messages hidden from view' },
   { id: 'character_identity', label: 'Wrong character responding', description: 'Detect if messages from another character are appearing in this thread' },
+  { id: 'world_name_enforcement', label: 'Character calling me "the user"', description: 'Full identity propagation diagnostic — detects stale "the user" references in messages, memories, and prompt data. Traces root cause across all layers and corrects stale identity.' },
+  { id: 'stale_prompt_cache', label: 'Character using outdated context', description: 'Detect stale cached prompt fragments, old identity references, or outdated character context that survived a settings change.' },
   { id: 'deep_character_recovery', label: 'Retrieve any & all images, messages, memories for this character', description: 'Deep dive across ALL app data — finds orphaned messages, memories, images, and life events anywhere in the system and reattaches them to this character. Also restores them to the correct chat thread.' },
 ];
 
