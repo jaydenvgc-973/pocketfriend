@@ -708,8 +708,9 @@
     "criminal_record": {
       "type": "string"
     },
-    "system_prompt": {
-      "type": "string"
+    "system_prompt_url": {
+      "type": "string",
+      "description": "URL to large system prompt stored as a file"
     },
     "work_details": {
       "type": "object",
