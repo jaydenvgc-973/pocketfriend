@@ -37,7 +37,6 @@ export default function Settings() {
   const [suggestedDupes, setSuggestedDupes] = useState([]);
 
   const { settings, isLoading: isLoadingSettings, updateSettings } = useUserSettings();
-  const settingsList = settings?.id ? [settings] : [];
 
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
