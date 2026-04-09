@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import { useNavigate, Link } from "react-router-dom";
 import { Plus, Users, Settings, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,10 +25,9 @@ export default function Home() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [invitations, setInvitations] = useState(null);
 
-  const { data: settings = [] } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
-  });
+  const { settings: userSettings } = useUserSettings();
+  // Keep settings as array-compatible for legacy references (onClose invite modal)
+  const settings = userSettings?.id ? [userSettings] : [];
 
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
@@ -235,7 +235,7 @@ export default function Home() {
             <ThomasAndersonFix onSuccess={() => queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] })} />
           )}
           {currentUser && (
-            <UserCard user={currentUser} settings={settings[0] || {}} />
+            <UserCard user={currentUser} settings={userSettings || {}} />
           )}
           {defaultChar && (
             <div>
