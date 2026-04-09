@@ -37,7 +37,13 @@ export default function Settings() {
 
   const { data: settingsList = [], isLoading: isLoadingSettings } = useQuery({
     queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
+    queryFn: async () => {
+      const list = await base44.entities.UserSettings.list();
+      if (list.length <= 1) return list;
+      // Auto-consolidate silently if duplicates exist
+      await base44.functions.invoke('consolidateUserSettings', {});
+      return base44.entities.UserSettings.list();
+    },
   });
 
   const { data: user = {} } = useQuery({
@@ -71,15 +77,17 @@ export default function Settings() {
 
   const mutation = useMutation({
     mutationFn: async (data) => {
-      // Always wait for settings to be loaded before writing
-      // If we have an existing record, update it (merge). If not, create one.
+      if (isLoadingSettings) return;
       const existingId = settingsList[0]?.id;
       if (existingId) {
         return base44.entities.UserSettings.update(existingId, data);
-      } else {
-        // Only create if we're sure there's no existing record (list returned empty)
-        return base44.entities.UserSettings.create(data);
       }
+      // Double-check before creating to avoid race-condition duplicates
+      const freshList = await base44.entities.UserSettings.list();
+      if (freshList[0]?.id) {
+        return base44.entities.UserSettings.update(freshList[0].id, data);
+      }
+      return base44.entities.UserSettings.create(data);
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["userSettings"] }),
   });
