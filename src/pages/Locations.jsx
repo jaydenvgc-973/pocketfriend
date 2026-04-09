@@ -37,7 +37,6 @@ const ZONE_PRESETS = {
   medical: ["Waiting Area", "Front Desk", "Triage", "Patient Room", "Hallway", "Office", "Admin Office", "Operating Room", "Recovery Room", "Pharmacy"],
   business: ["Office", "Office 1", "Office 2", "Admin Office", "Manager Office", "Staff Office", "Conference Room", "Break Room", "Reception", "Hallway"],
   government: ["Office", "Admin Office", "Reception", "Hallway", "Meeting Room", "Entrance"],
-  community: ["Main Hall", "Activity Room", "Office", "Waiting Area", "Kitchen", "Meeting Room", "Playground", "Parking", "Entrance"],
   public: ["Main Area", "Entrance", "Information Desk", "Hallway", "Bathroom"],
   generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
@@ -222,6 +221,7 @@ const SUBTYPE_OPTIONS = {
   religion: ["church", "temple", "mosque", "synagogue", "meditation_center"],
   public: ["museum", "art_gallery", "theater", "cinema", "concert_venue", "sports_arena", "stadium", "community_center"],
   government: ["government_office", "police_station", "courthouse", "city_hall", "park_ranger_station"],
+  community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
 };
 
 // ── ZoneEditor — manages images for a single zone ────────────────────────────
@@ -294,7 +294,7 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
 }
 
 // ── Worker Availability Helper ───────────────────────────────────────────────
-const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government'];
+const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community'];
 const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 function formatShift(shift) {
@@ -830,7 +830,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       )}
 
       {/* ── WORKERS / EMPLOYEES ───────────────────────────────────────── */}
-      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government') && (
+      {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community') && (
         <div className="space-y-3">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
