@@ -39,12 +39,13 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 1: Check work schedule (highest priority obligation)
-  // First try character-level schedule fields, then fall back to location worker_shifts
+  // Try all known work location fields: occupation_location_id, current_work_location_id
+  const workLocId = character.occupation_location_id || character.current_work_location_id;
   if (isCharacterOnWorkSchedule(character, currentTime)) {
-    const workLocation = locationMap[character.occupation_location_id];
+    const workLocation = locationMap[workLocId];
     if (workLocation && isLocationOpen(workLocation, currentTime) !== false) {
       return {
-        resolved_current_location_id: character.occupation_location_id,
+        resolved_current_location_id: workLocId,
         resolved_current_location_name: workLocation.name || 'Work',
         resolved_location_type: 'work',
         resolved_presence_status: 'at_work',
@@ -55,13 +56,13 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 1b: Check worker_shifts on all locations (for characters without work_start/end_time set)
-  if (character.occupation_location_id) {
-    const workLocation = locationMap[character.occupation_location_id];
+  if (workLocId) {
+    const workLocation = locationMap[workLocId];
     if (workLocation) {
       const shift = workLocation.worker_shifts?.[character.id];
       if (shift && isOnShiftNow(shift, currentTime) && isLocationOpen(workLocation, currentTime) !== false) {
         return {
-          resolved_current_location_id: character.occupation_location_id,
+          resolved_current_location_id: workLocId,
           resolved_current_location_name: workLocation.name || 'Work',
           resolved_location_type: 'work',
           resolved_presence_status: 'at_work',
