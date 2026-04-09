@@ -154,7 +154,7 @@ export default function Home() {
   useEffect(() => {
     const defaultChar = characters.find(c => c.is_default);
     if (!defaultChar) return;
-    if (defaultChar.family_history && defaultChar.system_prompt) return;
+    if (defaultChar.family_history && defaultChar.system_prompt_url) return;
     const updated = {
       ...DEFAULT_CHARACTER_DATA,
       name: defaultChar.name,
@@ -162,10 +162,14 @@ export default function Home() {
       reference_image_urls: defaultChar.reference_image_urls || undefined,
       emotional_state: defaultChar.emotional_state || "calm",
     };
-    updated.system_prompt = buildSystemPrompt(updated);
-    base44.entities.Character.update(defaultChar.id, updated).then(() => {
+    const promptText = buildSystemPrompt(updated);
+    base44.integrations.Core.UploadFile({
+      file: new File([promptText], "system_prompt.txt", { type: "text/plain" })
+    }).then(({ file_url }) => {
+      return base44.entities.Character.update(defaultChar.id, { ...updated, system_prompt_url: file_url });
+    }).then(() => {
       queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    });
+    }).catch(() => {});
   }, [characters, currentUser?.email]);
 
   useEffect(() => {
