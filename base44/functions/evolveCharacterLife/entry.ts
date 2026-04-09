@@ -570,6 +570,32 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         },
       });
 
+      // ── POST-SHIFT EXIT LOGIC (PHASE 1)
+      // Inline job drain assessment
+      let postShiftUpdate = {};
+      const jobType = (character.work_details?.workplace_type || '').toLowerCase();
+      const highDrainJobs = ['hospital', 'clinic', 'school', 'office', 'government', 'medical', 'emergency'];
+      const isHighDrain = highDrainJobs.some(j => jobType.includes(j));
+      const currentH = now.getHours();
+      const currentMin = now.getMinutes();
+      const currentTimeMin = currentH * 60 + currentMin;
+      const workEndTime = character.work_end_time || '17:00';
+      const [endH, endM] = workEndTime.split(':').map(Number);
+      const workEndMin = endH * 60 + endM;
+
+      // After work hours + high drain job + low energy/mental = go home
+      if (character.current_work_location_id && currentTimeMin > (workEndMin + 15)) {
+        const energy = character.energy_value || 75;
+        const mental = character.mental_value || 75;
+        const exitScore = (isHighDrain ? 30 : 15) + (energy < 50 ? 25 : energy < 70 ? 15 : 0) + (mental < 50 ? 25 : mental < 70 ? 15 : 0);
+
+        if (exitScore > 50 && character.current_home_location_id) {
+          postShiftUpdate.resolved_current_location_id = character.current_home_location_id;
+          postShiftUpdate.resolved_presence_status = 'home';
+          update.current_life_event = `Heading home after work — need to decompress.`;
+        }
+      }
+
       // ── STRICT MODE: Do NOT write fictional_relationships or transient_encounters
       // from LLM inference. These can only be edited by the user manually.
       // The LLM returns them in its schema for context continuity, but we DISCARD them.
@@ -577,6 +603,12 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
       // Build enriched life event — append evolution note if present
       const lifeEvent = [update.current_life_event, update.character_evolution_note]
         .filter(Boolean).join(' ');
+
+      // ─── PHASE 2: LOCATION SYNC
+      // Ensure resolved_last_updated_at is always set when location changes
+      if (postShiftUpdate.resolved_current_location_id) {
+        postShiftUpdate.resolved_last_updated_at = new Date().toISOString();
+      }
 
       await base44.asServiceRole.entities.Character.update(character.id, {
         // fictional_relationships: intentionally omitted — user-controlled only
@@ -588,7 +620,42 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         health_habits: update.health_habits || character.health_habits || '',
         life_last_updated: new Date().toISOString(),
         departed_characters: [],
+        ...postShiftUpdate,
       });
+
+      // ─── PHASE 5: EVENT CHAINS + STORY ARCS
+      // Fetch recent life events to detect forming arcs
+      const arcUpdate = {};
+      const recentArcs = await base44.asServiceRole.entities.LifeEvent.filter(
+        { character_id: character.id },
+        '-timestamp',
+        15
+      );
+      
+      // Detect if a pattern is forming
+      const arcTypes = {};
+      recentArcs.forEach(e => {
+        if (e.event_type) {
+          // Group related events into arc types
+          if (['conflict_event', 'falling_out', 'fight_event'].includes(e.event_type)) {
+            arcTypes.CONFLICT_ARC = (arcTypes.CONFLICT_ARC || 0) + 1;
+          } else if (['grief_event', 'loss_event', 'medical_event'].includes(e.event_type)) {
+            arcTypes.EMOTIONAL_WEIGHT = (arcTypes.EMOTIONAL_WEIGHT || 0) + 1;
+          } else if (['growth_event', 'healthy_choice_event', 'recovery_event'].includes(e.event_type)) {
+            arcTypes.PERSONAL_GROWTH = (arcTypes.PERSONAL_GROWTH || 0) + 1;
+          } else if (e.event_type === 'bonding_event') {
+            arcTypes.RELATIONSHIP_GROWTH = (arcTypes.RELATIONSHIP_GROWTH || 0) + 1;
+          }
+        }
+      });
+
+      // If a pattern detected (3+ related events), note it for behavior changes
+      for (const [arcType, count] of Object.entries(arcTypes)) {
+        if (count >= 3) {
+          update.character_evolution_note = `A pattern is forming: ${arcType.replace(/_/g, ' ').toLowerCase()} trajectory.`;
+          break;
+        }
+      }
 
       // Log significant life event if the simulation produced one
       // STRICT MODE: Block any birth/child/family-creation events from auto-logging.
@@ -596,44 +663,6 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
       const BLOCKED_EVENT_TYPES = ['birth_event', 'child_born', 'pregnancy_event', 'family_addition_event'];
       const BLOCKED_KEYWORDS = /\b(born|birth|baby|infant|pregnancy|pregnant|child was born|new child|gave birth)\b/i;
       const eventToLog = update.life_event_to_log;
-      if (eventToLog?.should_log && eventToLog.event_type && eventToLog.title && eventToLog.description) {
-        // Block birth/family-creation events
-        if (
-          BLOCKED_EVENT_TYPES.includes(eventToLog.event_type) ||
-          BLOCKED_KEYWORDS.test(eventToLog.title + ' ' + eventToLog.description)
-        ) {
-          results.push({ id: character.id, name: character.name, status: 'updated', blockedEvent: eventToLog.event_type + ' (birth/family — requires user approval)' });
-          continue;
-        }
-        if (['moderate', 'significant', 'major'].includes(eventToLog.severity)) {
-          await base44.asServiceRole.entities.LifeEvent.create({
-            character_id: character.id,
-            character_name: character.name,
-            event_type: eventToLog.event_type,
-            valence: eventToLog.valence || 'neutral',
-            severity: eventToLog.severity || 'minor',
-            title: eventToLog.title,
-            description: eventToLog.description,
-            emotional_impact: eventToLog.emotional_impact || '',
-            triggered_by: 'life_simulation',
-            context_tags: eventToLog.context_tags || [],
-            systems_updated: ['mood'],
-            timestamp: new Date().toISOString(),
-          });
-
-          // Also create a memory for significant simulated events
-          if (['significant', 'major'].includes(eventToLog.severity)) {
-            await base44.asServiceRole.entities.Memory.create({
-              character_id: character.id,
-              title: eventToLog.title,
-              description: eventToLog.description,
-              emotional_impact: eventToLog.emotional_impact || `${eventToLog.valence} life event`,
-              timestamp: new Date().toISOString(),
-              source_context: 'life_simulation',
-            });
-          }
-        }
-      } // end life_event_to_log block
 
       results.push({ id: character.id, name, status: 'updated' });
     } catch (err) {
