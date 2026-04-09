@@ -23,6 +23,7 @@ import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.js
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
+import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -465,8 +466,8 @@ export default function CharacterProfile() {
 
         {/* Work */}
         {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0) && (
-          <div className="bg-card border border-border rounded-2xl p-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Occupation</p>
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Occupation</p>
             <div className="space-y-3">
               {/* Primary job */}
               <div className="space-y-1">
@@ -492,8 +493,11 @@ export default function CharacterProfile() {
                 </div>
               ))}
             </div>
+            {/* Editable work schedule — reads from & writes to LocationReference */}
+            <CharacterWorkScheduleEditor character={character} />
           </div>
         )}
+
 
         {/* Education */}
         {(character.current_education_activity || character.education_location_id || character.additional_education_locations?.length > 0 || character.completed_education?.length > 0) && (
