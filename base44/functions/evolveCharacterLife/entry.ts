@@ -610,6 +610,35 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         postShiftUpdate.resolved_last_updated_at = new Date().toISOString();
       }
 
+      // ─── INTEGRATION: Trigger orchestrator for significant events
+      try {
+        if (postShiftUpdate.resolved_current_location_id) {
+          // Event: work shift ended and character moved home
+          await base44.asServiceRole.functions.invoke('systemIntegrationOrchestrator', {
+            eventType: 'WORK_SHIFT_ENDED',
+            characterId: character.id,
+            eventData: {
+              exitScore: 60,
+              reason: 'High-drain job + low energy',
+            },
+          });
+        }
+        // If forming arc detected, trigger arc progression
+        if (Object.keys(arcTypes).length > 0) {
+          const arcType = Object.entries(arcTypes).sort((a, b) => b[1] - a[1])[0][0];
+          await base44.asServiceRole.functions.invoke('systemIntegrationOrchestrator', {
+            eventType: 'STORY_ARC_PROGRESSED',
+            characterId: character.id,
+            eventData: {
+              arcType,
+              arcStage: 'forming',
+            },
+          }).catch(() => {});
+        }
+      } catch (_) {
+        // Silent fail — orchestrator is optional
+      }
+
       await base44.asServiceRole.entities.Character.update(character.id, {
         // fictional_relationships: intentionally omitted — user-controlled only
         // transient_encounters: intentionally omitted — user-controlled only
