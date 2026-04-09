@@ -258,7 +258,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   iconType = 'prayer';
                   label = 'praying';
                   color = 'text-violet-300';
+                } else if (resolved.resolved_presence_status === 'at_work_off_shift') {
+                  // At workplace but not on shift
+                  iconType = 'out';
+                  label = `at ${resolved.resolved_current_location_name}`;
+                  color = 'text-blue-400';
                 } else if (resolved.resolved_location_type === 'work') {
+                  // On shift at work
                   iconType = 'work';
                   label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-blue-400';
