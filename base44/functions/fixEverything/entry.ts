@@ -58,19 +58,20 @@ Deno.serve(async (req) => {
       addIssue('IDENTITY_LEAK', 'No world name set in UserSettings. Characters will use generic pronouns. Go to Settings → Your Name (In-World).');
       addRecommend('Set fictional_world_name in UserSettings to enable full identity enforcement.');
     } else {
-      // Scan all character system_prompts for stale identity
+      // Scan all character system_prompt_urls for stale identity
       let staleCacheCount = 0;
       const cacheUpdates = [];
       for (const char of allCharacters) {
-        if (char.system_prompt && PLACEHOLDER.some(p => p.test(char.system_prompt))) {
-          cacheUpdates.push(base44.asServiceRole.entities.Character.update(char.id, { system_prompt: null }));
+        if (char.system_prompt_url) {
+          // Clear cached prompt URL to force regeneration
+          cacheUpdates.push(base44.asServiceRole.entities.Character.update(char.id, { system_prompt_url: null }));
           staleCacheCount++;
         }
       }
       if (cacheUpdates.length > 0) {
         await Promise.all(cacheUpdates);
-        addFix(`Cleared ${staleCacheCount} stale system_prompt cache(s) containing "the user" — they will rebuild with world name "${worldName}" on next chat.`);
-        addIssue('CACHE_STALE', `${staleCacheCount} character system_prompt(s) had stale identity. Root cause: CACHE_STALE + PROMPT_ASSEMBLY_FAILURE. Cleared.`);
+        addFix(`Cleared ${staleCacheCount} stale system_prompt_url cache(s) — they will rebuild with world name "${worldName}" on next chat.`);
+        addIssue('CACHE_STALE', `${staleCacheCount} character system_prompt_url(s) were stale. Cleared to force regeneration.`);
         addTrace(`Identity leak → stale system_prompt cache → built before world name was set → cleared now`);
         report.stale_data_detected = true;
       }
