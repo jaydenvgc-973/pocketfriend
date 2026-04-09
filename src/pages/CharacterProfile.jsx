@@ -125,8 +125,13 @@ export default function CharacterProfile() {
     staleTime: 0,
   });
 
+  const { data: currentUser = null } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: allCharacters = [] } = useQuery({
-    queryKey: ["characters", currentUser?.email],
+    queryKey: ["characters", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
       const chars = await base44.entities.Character.filter({ created_by: currentUser.email });
