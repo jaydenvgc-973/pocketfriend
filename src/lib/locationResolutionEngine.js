@@ -73,16 +73,16 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 2: Check school schedule
-  if (character.student_status === 'enrolled' && character.education_location_id) {
-    const schoolLocation = locationMap[character.education_location_id];
-    if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
+  // LAYER 1c: Check if character is at workplace but OFF shift (visiting)
+  if (workLocId) {
+    const workLocation = locationMap[workLocId];
+    if (workLocation && character.resolved_current_location_id === workLocId) {
       return {
-        resolved_current_location_id: character.education_location_id,
-        resolved_current_location_name: schoolLocation.name || 'School',
-        resolved_location_type: 'school',
-        resolved_presence_status: 'at_school',
-        resolved_source_reason: 'school_schedule',
+        resolved_current_location_id: workLocId,
+        resolved_current_location_name: workLocation.name || 'Work',
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work_off_shift',
+        resolved_source_reason: 'at_work_off_shift',
         resolved_zone: null,
       };
     }
@@ -274,51 +274,30 @@ function createFailedResolution(reason) {
 }
 
 /**
+ * Check if character is at workplace but off shift
+ */
+function isAtWorkOffShift(character, locationMap = {}) {
+  const workLocId = character.occupation_location_id || character.current_work_location_id;
+  if (!workLocId || character.resolved_current_location_id !== workLocId) return false;
+  
+  const workLocation = locationMap[workLocId];
+  if (!workLocation) return false;
+  
+  // If they're scheduled to work now, they're not off-shift
+  if (isCharacterOnWorkSchedule(character)) return false;
+  
+  // If there's a worker_shift and they're on it, they're not off-shift
+  const shift = workLocation.worker_shifts?.[character.id];
+  if (shift && isOnShiftNow(shift)) return false;
+  
+  return true;
+}
+
+/**
  * Verify that all characters have unique locations (one presence only)
  * Returns array of violations if any
  */
 export function verifyUniquePresence(characters, locationMap = {}) {
-  const violations = [];
-  const locationOccupants = {};
-
-  characters.forEach(char => {
-    const resolved = resolveCharacterLocation(char, locationMap);
-    const locationId = resolved.resolved_current_location_id;
-
-    if (locationId) {
-      if (!locationOccupants[locationId]) {
-        locationOccupants[locationId] = [];
-      }
-      locationOccupants[locationId].push(char.id);
-    }
-  });
-
-  // Check for duplicates (this shouldn't happen with proper resolution)
-  Object.entries(locationOccupants).forEach(([locId, charIds]) => {
-    const counted = {};
-    charIds.forEach(cid => {
-      counted[cid] = (counted[cid] || 0) + 1;
-    });
-    Object.entries(counted).forEach(([cid, count]) => {
-      if (count > 1) {
-        violations.push({
-          character_id: cid,
-          location_id: locId,
-          count,
-          error: 'Character appears multiple times at same location',
-        });
-      }
-    });
-  });
-
-  return violations;
-}
-
-/**
- * Verify that Home/Travel screens would show the same location
- * Returns true if consistent
- */
-export function verifyScreenConsistency(character, locationMap = {}) {
   const resolved = resolveCharacterLocation(character, locationMap);
   
   // Both screens should read from resolved_current_location_id

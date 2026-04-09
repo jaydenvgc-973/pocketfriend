@@ -258,6 +258,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   iconType = 'prayer';
                   label = 'praying';
                   color = 'text-violet-300';
+                } else if (resolved.resolved_presence_status === 'at_work_off_shift') {
+                  iconType = 'out';
+                  label = `at ${resolved.resolved_current_location_name}`;
+                  color = 'text-blue-400';
                 } else if (resolved.resolved_location_type === 'work') {
                   iconType = 'work';
                   label = `at ${resolved.resolved_current_location_name}`;
@@ -332,7 +336,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                  They moved on. Still out there somewhere.
                </div>
              )}
-           </div>
+            </div>
          ) : (
           <div className="flex items-center gap-2 mt-4">
             <Link to={`/chat/${character.id}`} className="flex-1 relative">
