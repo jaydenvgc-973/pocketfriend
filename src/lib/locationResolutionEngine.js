@@ -298,6 +298,47 @@ function isAtWorkOffShift(character, locationMap = {}) {
  * Returns array of violations if any
  */
 export function verifyUniquePresence(characters, locationMap = {}) {
+  const violations = [];
+  const locationOccupants = {};
+
+  characters.forEach(char => {
+    const resolved = resolveCharacterLocation(char, locationMap);
+    const locationId = resolved.resolved_current_location_id;
+
+    if (locationId) {
+      if (!locationOccupants[locationId]) {
+        locationOccupants[locationId] = [];
+      }
+      locationOccupants[locationId].push(char.id);
+    }
+  });
+
+  // Check for duplicates (this shouldn't happen with proper resolution)
+  Object.entries(locationOccupants).forEach(([locId, charIds]) => {
+    const counted = {};
+    charIds.forEach(cid => {
+      counted[cid] = (counted[cid] || 0) + 1;
+    });
+    Object.entries(counted).forEach(([cid, count]) => {
+      if (count > 1) {
+        violations.push({
+          character_id: cid,
+          location_id: locId,
+          count,
+          error: 'Character appears multiple times at same location',
+        });
+      }
+    });
+  });
+
+  return violations;
+}
+
+/**
+ * Verify that Home/Travel screens would show the same location
+ * Returns true if consistent
+ */
+export function verifyScreenConsistency(character, locationMap = {}) {
   const resolved = resolveCharacterLocation(character, locationMap);
   
   // Both screens should read from resolved_current_location_id
