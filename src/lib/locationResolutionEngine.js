@@ -15,6 +15,12 @@
 
 import { isLocationOpen } from '@/lib/locationHoursUtils';
 
+function toMinutes(timeStr) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
 /**
  * Main resolution function: determine ONE true current location for a character
  * 
@@ -39,13 +45,47 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 1: Check work schedule (highest priority obligation)
-  // Try all known work location fields: occupation_location_id, current_work_location_id
-  const workLocId = character.occupation_location_id || character.current_work_location_id;
-  if (isCharacterOnWorkSchedule(character, currentTime)) {
-    const workLocation = locationMap[workLocId];
-    if (workLocation && isLocationOpen(workLocation, currentTime) !== false) {
+  // Collect ALL possible work location IDs for this character
+  const primaryWorkLocId = character.occupation_location_id || character.current_work_location_id;
+  const additionalWorkLocIds = (character.additional_occupation_locations || []).map(l => l.location_id).filter(Boolean);
+  const allWorkLocIds = [...new Set([primaryWorkLocId, ...additionalWorkLocIds].filter(Boolean))];
+
+  // Helper: check if character should be at a given work location right now
+  // NOTE: We do NOT gate on isLocationOpen for work — characters go to work per their schedule,
+  // not based on whether the UI considers the location "open" (which uses UTC and can be wrong).
+  const checkWorkLocation = (loc) => {
+    if (!loc) return false;
+    // Check character-level work schedule (work_start_time + work_end_time + work_days)
+    if (isCharacterOnWorkSchedule(character, currentTime)) return true;
+    // Check location-specific worker_shifts for this character
+    const shift = loc.worker_shifts?.[character.id];
+    if (shift && isOnShiftNow(shift, currentTime)) return true;
+    // Character is listed as worker + has work_days set → check if today is a work day
+    // and it's within operating hours (use character's local day-of-week from the app's timezone)
+    if ((loc.worker_character_ids || []).includes(character.id) && character.work_days?.length > 0) {
+      const dayOfWeek = currentTime.getDay();
+      if (character.work_days.includes(dayOfWeek)) {
+        // Check operating hours if defined; if none defined, assume working
+        if (!loc.operating_hours || loc.operating_hours.length === 0) return true;
+        // Use operating hours window directly (character IS a worker here)
+        const currentMinutes = currentTime.getHours() * 60 + currentTime.getMinutes();
+        return loc.operating_hours.some(h => {
+          const open = toMinutes(h.open_time);
+          const close = toMinutes(h.close_time);
+          if (open == null || close == null) return true;
+          return currentMinutes >= open && currentMinutes <= close;
+        });
+      }
+    }
+    return false;
+  };
+
+  // Check all known work locations
+  for (const wLocId of allWorkLocIds) {
+    const workLocation = locationMap[wLocId];
+    if (workLocation && checkWorkLocation(workLocation)) {
       return {
-        resolved_current_location_id: workLocId,
+        resolved_current_location_id: wLocId,
         resolved_current_location_name: workLocation.name || 'Work',
         resolved_location_type: 'work',
         resolved_presence_status: 'at_work',
@@ -55,21 +95,19 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 1b: Check worker_shifts on all locations (for characters without work_start/end_time set)
-  if (workLocId) {
-    const workLocation = locationMap[workLocId];
-    if (workLocation) {
-      const shift = workLocation.worker_shifts?.[character.id];
-      if (shift && isOnShiftNow(shift, currentTime) && isLocationOpen(workLocation, currentTime) !== false) {
-        return {
-          resolved_current_location_id: workLocId,
-          resolved_current_location_name: workLocation.name || 'Work',
-          resolved_location_type: 'work',
-          resolved_presence_status: 'at_work',
-          resolved_source_reason: 'work_schedule',
-          resolved_zone: null,
-        };
-      }
+  // LAYER 1b: Scan ALL locations for this character in worker_character_ids (fallback for orphaned data)
+  for (const loc of Object.values(locationMap)) {
+    if (allWorkLocIds.includes(loc.id)) continue; // already checked above
+    if (!(loc.worker_character_ids || []).includes(character.id)) continue;
+    if (checkWorkLocation(loc)) {
+      return {
+        resolved_current_location_id: loc.id,
+        resolved_current_location_name: loc.name || 'Work',
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: 'work_schedule_scanned',
+        resolved_zone: null,
+      };
     }
   }
 
