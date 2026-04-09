@@ -127,16 +127,13 @@ export default function CharacterProfile() {
 
   const { data: allCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email })
-      : [],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const chars = await base44.entities.Character.filter({ created_by: currentUser.email });
+      // Strip legacy system_prompt field from all characters
+      return chars.map(({ system_prompt, ...char }) => char);
+    },
     enabled: !!currentUser?.email,
-  });
-
-  const { data: userSettings = [] } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
-    staleTime: 0,
   });
 
   const getReciprocal = () => {
