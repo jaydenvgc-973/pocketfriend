@@ -141,6 +141,11 @@ export default function CharacterProfile() {
     enabled: !!currentUser?.email,
   });
 
+  const { data: userSettings = [] } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: () => base44.entities.UserSettings.list(),
+  });
+
   const getReciprocal = () => {
     const settings = userSettings[0];
     if (!settings?.user_relatives || !character?.id) return null;
