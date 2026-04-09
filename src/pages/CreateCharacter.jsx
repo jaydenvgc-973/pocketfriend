@@ -447,7 +447,12 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
         is_finalized: true,
         family_members: [],
       };
-      charData.system_prompt = buildSystemPrompt(charData, []);
+      // Upload system prompt as a file instead of storing directly
+      const systemPromptText = buildSystemPrompt(charData, []);
+      const uploadedPrompt = await base44.integrations.Core.UploadFile({
+        file: new Blob([systemPromptText], { type: 'text/plain' })
+      });
+      charData.system_prompt_url = uploadedPrompt.file_url;
 
       const res = await base44.functions.invoke("createCharacterWithRelationships", {
         characterData: charData,
@@ -665,7 +670,12 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         status: "active",
         is_finalized: true,
       };
-      charData.system_prompt = buildSystemPrompt(charData, knownChars);
+      // Upload system prompt as a file instead of storing directly
+      const systemPromptText = buildSystemPrompt(charData, knownChars);
+      const uploadedPrompt = await base44.integrations.Core.UploadFile({
+        file: new Blob([systemPromptText], { type: 'text/plain' })
+      });
+      charData.system_prompt_url = uploadedPrompt.file_url;
 
       // Create character and handle bidirectional relationships
       const res = await base44.functions.invoke("createCharacterWithRelationships", {
