@@ -114,15 +114,15 @@ export default function CharacterProfile() {
     queryKey: ["character", characterId],
     queryFn: async () => {
       const chars = await base44.entities.Character.filter({ id: characterId });
-      return chars[0] || null;
+      if (chars[0]) {
+        // Strip legacy system_prompt field to avoid size limit errors
+        const { system_prompt, ...char } = chars[0];
+        return char;
+      }
+      return null;
     },
     enabled: !!characterId,
     staleTime: 0,
-  });
-
-  const { data: currentUser = null } = useQuery({
-    queryKey: ["user"],
-    queryFn: () => base44.auth.me(),
   });
 
   const { data: allCharacters = [] } = useQuery({
