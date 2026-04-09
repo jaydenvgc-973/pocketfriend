@@ -530,25 +530,64 @@ export default function CharacterProfile() {
                 </span>
               </div>
             )}
-            {character.completed_education?.length > 0 && (
-              <div>
-                <p className="text-xs font-medium text-foreground mb-2">Completed</p>
-                <div className="space-y-1">
-                  {character.completed_education.map((edu, idx) => (
-                    <div key={idx}>
-                      <p className="text-sm text-muted-foreground">
-                        {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                      </p>
-                      {edu.completion_date && (
-                        <p className="text-xs text-muted-foreground/60">
-                          Completed {format(new Date(edu.completion_date), "MMM yyyy")}
-                        </p>
-                      )}
+            {(() => {
+              const now = new Date();
+              const currentItems = (character.completed_education || []).filter(edu => {
+                if (!edu.completion_date) return true; // no date = treat as in-progress
+                return new Date(edu.completion_date) > now;
+              });
+              const completedItems = (character.completed_education || []).filter(edu => {
+                if (!edu.completion_date) return false;
+                return new Date(edu.completion_date) <= now;
+              });
+              return (
+                <>
+                  {currentItems.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-foreground mb-2">Currently Working On</p>
+                      <div className="space-y-1">
+                        {currentItems.map((edu, idx) => (
+                          <div key={idx} className="pl-3 border-l-2 border-primary/40">
+                            <p className="text-sm text-foreground">
+                              {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                            </p>
+                            {edu.start_date && (
+                              <p className="text-xs text-muted-foreground/70">
+                                Started {format(new Date(edu.start_date), "MMM yyyy")}
+                              </p>
+                            )}
+                            {edu.completion_date && (
+                              <p className="text-xs text-primary/70">
+                                Expected {format(new Date(edu.completion_date), "MMM yyyy")}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
+                  )}
+                  {completedItems.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium text-foreground mb-2">Completed</p>
+                      <div className="space-y-1">
+                        {completedItems.map((edu, idx) => (
+                          <div key={idx}>
+                            <p className="text-sm text-muted-foreground">
+                              {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                            </p>
+                            {edu.completion_date && (
+                              <p className="text-xs text-muted-foreground/60">
+                                Completed {format(new Date(edu.completion_date), "MMM yyyy")}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
