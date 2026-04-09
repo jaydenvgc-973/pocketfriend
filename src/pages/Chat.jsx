@@ -1118,7 +1118,19 @@ ${songsInfo}`;
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
-      const systemPrompt = character.system_prompt || buildSystemPrompt(character, [], userDisplayName);
+      // Fetch system prompt from URL if available, otherwise build it
+      let systemPrompt = "";
+      if (character.system_prompt_url) {
+        try {
+          const promptResponse = await fetch(character.system_prompt_url);
+          systemPrompt = await promptResponse.text();
+        } catch (err) {
+          console.warn('[sendMessage] Failed to fetch system_prompt_url, building instead:', err.message);
+          systemPrompt = buildSystemPrompt(character, [], userDisplayName);
+        }
+      } else {
+        systemPrompt = buildSystemPrompt(character, [], userDisplayName);
+      }
       // World name injected into image instruction so LLM uses the right name in prompts — never "the user"
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
