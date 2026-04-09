@@ -52,9 +52,14 @@ export default function UserAppearanceLockEditor({ settings, user }) {
     if (settings.id) {
       await base44.entities.UserSettings.update(settings.id, { appearance_lock: lock });
     } else {
-      await base44.entities.UserSettings.create({ appearance_lock: lock });
+      // Double-check before creating to avoid duplicates
+      const freshList = await base44.entities.UserSettings.list();
+      if (freshList[0]?.id) {
+        await base44.entities.UserSettings.update(freshList[0].id, { appearance_lock: lock });
+      } else {
+        await base44.entities.UserSettings.create({ appearance_lock: lock });
+      }
     }
-    queryClient.invalidateQueries({ queryKey: ["userSettings"] });
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

@@ -23,7 +23,14 @@ export default function MyProfile() {
 
   const { data: settingsList = [], refetch: refetchSettings } = useQuery({
     queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
+    queryFn: async () => {
+      const list = await base44.entities.UserSettings.list();
+      if (list.length > 1) {
+        await base44.functions.invoke('consolidateUserSettings', {});
+        return base44.entities.UserSettings.list();
+      }
+      return list;
+    },
     staleTime: 0,
   });
 
