@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, CheckCircle2, Loader2, AlertCircle } from 'lucide-react';
+import { X, CheckCircle2, Loader2, AlertCircle, Zap } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
@@ -15,6 +15,8 @@ const ISSUE_LIST = [
   { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect and fix characters sharing threads, memories, or routing' },
   { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page and fix created_by' },
   { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
+  { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
+  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values that are out of sync with backend.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
@@ -30,6 +32,29 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
         ? prev.filter(id => id !== issueId)
         : [...prev, issueId]
     );
+  };
+
+  const runFixAll = async () => {
+    setIsRunning(true);
+    setError(null);
+    setResults(null);
+    try {
+      const res = await base44.functions.invoke('autoFixSystemViolations', {});
+      const data = res?.data;
+      setResults({
+        summary: data?.summary || 'Full diagnostic + repair complete.',
+        fixed: data?.fixes_applied || data?.fixed || [],
+        issues_found: data?.issues_found || [],
+        checks: data?.checks || [],
+      });
+    } catch (err) {
+      setError(err.message || 'Fix All failed');
+    } finally {
+      await queryClient.invalidateQueries({ queryKey: ['characters'] });
+      await queryClient.invalidateQueries({ queryKey: ['userSettings'] });
+      await queryClient.invalidateQueries({ queryKey: ['locationReferences'] });
+      setIsRunning(false);
+    }
   };
 
   const runTroubleshooting = async () => {
@@ -60,6 +85,24 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
         } else {
           setError('Simulated interaction diagnostic failed');
         }
+      } else if (selectedIssues.includes('shift_verification') && selectedIssues.length === 1) {
+        const res = await base44.functions.invoke('enforceCharacterWorkSchedule', {});
+        const data = res?.data;
+        setResults({
+          summary: data?.summary || 'Work shift verification complete.',
+          fixed: data?.fixes_applied || data?.fixed || [],
+          issues_found: data?.issues_found || data?.violations || [],
+          checks: data?.checks || [],
+        });
+      } else if (selectedIssues.includes('stale_data_scan') && selectedIssues.length === 1) {
+        const res = await base44.functions.invoke('dailyFullSystemDiagnostic', {});
+        const data = res?.data;
+        setResults({
+          summary: data?.summary || 'Stale data scan complete.',
+          fixed: data?.fixes_applied || data?.fixed || [],
+          issues_found: data?.issues_found || [],
+          checks: data?.checks || [],
+        });
       } else {
         // All other selections go through troubleshootHome with ONLY the selected issues
         const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
@@ -162,6 +205,14 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                       Close
                     </button>
                   </div>
+                  <button
+                    onClick={runFixAll}
+                    disabled={isRunning}
+                    className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/40 text-amber-400 font-medium hover:bg-amber-500/20 transition-colors disabled:opacity-50"
+                  >
+                    <Zap className="w-4 h-4" />
+                    Fix All — Full Diagnostic + Repair
+                  </button>
                 </>
               )}
 
