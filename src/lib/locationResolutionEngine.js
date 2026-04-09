@@ -73,16 +73,16 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 1c: Check if character is at workplace but OFF shift (visiting)
-  if (workLocId) {
-    const workLocation = locationMap[workLocId];
-    if (workLocation && character.resolved_current_location_id === workLocId) {
+  // LAYER 2: Check school schedule
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const schoolLocation = locationMap[character.education_location_id];
+    if (schoolLocation && isLocationOpen(schoolLocation, currentTime) !== false) {
       return {
-        resolved_current_location_id: workLocId,
-        resolved_current_location_name: workLocation.name || 'Work',
-        resolved_location_type: 'work',
-        resolved_presence_status: 'at_work_off_shift',
-        resolved_source_reason: 'at_work_off_shift',
+        resolved_current_location_id: character.education_location_id,
+        resolved_current_location_name: schoolLocation.name || 'School',
+        resolved_location_type: 'school',
+        resolved_presence_status: 'at_school',
+        resolved_source_reason: 'school_schedule',
         resolved_zone: null,
       };
     }
@@ -271,26 +271,6 @@ function createFailedResolution(reason) {
     resolved_source_reason: reason,
     resolved_zone: null,
   };
-}
-
-/**
- * Check if character is at workplace but off shift
- */
-function isAtWorkOffShift(character, locationMap = {}) {
-  const workLocId = character.occupation_location_id || character.current_work_location_id;
-  if (!workLocId || character.resolved_current_location_id !== workLocId) return false;
-  
-  const workLocation = locationMap[workLocId];
-  if (!workLocation) return false;
-  
-  // If they're scheduled to work now, they're not off-shift
-  if (isCharacterOnWorkSchedule(character)) return false;
-  
-  // If there's a worker_shift and they're on it, they're not off-shift
-  const shift = workLocation.worker_shifts?.[character.id];
-  if (shift && isOnShiftNow(shift)) return false;
-  
-  return true;
 }
 
 /**
