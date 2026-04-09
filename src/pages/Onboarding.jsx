@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -22,9 +22,10 @@ export default function Onboarding() {
     },
   });
 
+  // Redirect away from onboarding if already completed
   useEffect(() => {
     if (userSettings?.has_completed_onboarding) {
-      navigate("/home");
+      navigate("/home", { replace: true });
     }
   }, [userSettings, navigate]);
 
@@ -117,6 +118,7 @@ Return JSON matching this schema exactly:
       is_default: true,
       is_finalized: true,
       status: "active",
+      character_type: "active",
       emotional_state: "calm",
       user_respect_level: 50,
       friendship_level: 75,
@@ -124,11 +126,17 @@ Return JSON matching this schema exactly:
       attraction_level: 0,
       chosen_family_level: 100,
     };
-    data.system_prompt = buildSystemPrompt(data);
+
+    // Upload system prompt as file instead of writing directly to field
+    const promptText = buildSystemPrompt(data);
+    const { file_url } = await base44.integrations.Core.UploadFile({
+      file: new File([promptText], "system_prompt.txt", { type: "text/plain" })
+    });
+    data.system_prompt_url = file_url;
 
     await base44.entities.Character.create(data);
 
-    // Upsert UserSettings — update if a record already exists, otherwise create
+    // Mark onboarding as complete — upsert UserSettings
     const existingSettingsId = userSettings?.id;
     if (existingSettingsId) {
       await base44.entities.UserSettings.update(existingSettingsId, { has_completed_onboarding: true });
