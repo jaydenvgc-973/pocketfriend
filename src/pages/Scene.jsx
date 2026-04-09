@@ -596,21 +596,11 @@ export default function Scene() {
     navigate("/travel");
   };
 
-  // Check for pending invitations on first mount only (not on every render)
+  // Check for pending invitations on first mount only — NEVER on the Scene page itself
+  // Invites should not interrupt an active scene
   useEffect(() => {
-    if (!currentUser?.email) return;
-    // Only check once per session using sessionStorage
-    const hasCheckedThisSession = sessionStorage.getItem('invites_checked_this_session');
-    if (hasCheckedThisSession) return;
-
-    sessionStorage.setItem('invites_checked_this_session', 'true');
-    base44.functions.invoke('checkAndTriggerInvites', {})
-      .then(res => {
-        if (res.data?.shouldShow && res.data?.invitations?.length > 0) {
-          setPendingInvitations(res.data.invitations);
-        }
-      })
-      .catch(() => {});
+    // Scene page: skip all invite checks
+    return;
   }, [currentUser?.email]);
 
   // Auto-scroll — only scroll if user is near the bottom, never steal focus

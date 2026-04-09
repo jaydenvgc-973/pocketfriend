@@ -522,14 +522,29 @@ export default function CharacterProfile() {
                 </p>
               </div>
             ))}
+            {character.education_expected_completion_date && character.current_education_activity && character.current_education_activity !== 'none' && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">Expected completion:</span>
+                <span className="text-xs font-medium text-foreground">
+                  {format(new Date(character.education_expected_completion_date), "MMM d, yyyy")}
+                </span>
+              </div>
+            )}
             {character.completed_education?.length > 0 && (
               <div>
                 <p className="text-xs font-medium text-foreground mb-2">Completed</p>
                 <div className="space-y-1">
                   {character.completed_education.map((edu, idx) => (
-                    <p key={idx} className="text-sm text-muted-foreground">
-                      {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                    </p>
+                    <div key={idx}>
+                      <p className="text-sm text-muted-foreground">
+                        {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                      </p>
+                      {edu.completion_date && (
+                        <p className="text-xs text-muted-foreground/60">
+                          Completed {format(new Date(edu.completion_date), "MMM yyyy")}
+                        </p>
+                      )}
+                    </div>
                   ))}
                 </div>
               </div>

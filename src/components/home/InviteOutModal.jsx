@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { MapPin, Home, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 
-export default function InviteOutModal({ invitations, onAccept, onDecline, onClose }) {
+export default function InviteOutModal({ invitations, onAccept, onDecline, onMaybeLater, onSuggestAlternative, onClose }) {
   const [selectedIdx, setSelectedIdx] = React.useState(0);
   
   if (!invitations || invitations.length === 0) return null;
@@ -74,22 +74,42 @@ export default function InviteOutModal({ invitations, onAccept, onDecline, onClo
           ))}
         </div>
 
-        <div className="flex gap-2">
+        <div className="grid grid-cols-2 gap-2">
           <Button
             onClick={() => onDecline(selectedInv)}
             variant="outline"
             size="sm"
-            className="flex-1 rounded-lg"
+            className="rounded-lg text-xs"
           >
-            Not now
+            ❌ Decline
           </Button>
           <Button
             onClick={() => onAccept(selectedInv)}
             size="sm"
-            className="flex-1 rounded-lg gap-2"
+            className="rounded-lg gap-1 text-xs"
           >
-            Let's go
+            ✅ Let's go
           </Button>
+          {onMaybeLater && (
+            <Button
+              onClick={() => onMaybeLater(selectedInv)}
+              variant="outline"
+              size="sm"
+              className="rounded-lg text-xs"
+            >
+              ⏳ Maybe later
+            </Button>
+          )}
+          {onSuggestAlternative && (
+            <Button
+              onClick={() => onSuggestAlternative(selectedInv)}
+              variant="outline"
+              size="sm"
+              className="rounded-lg text-xs"
+            >
+              🔄 Suggest alternative
+            </Button>
+          )}
         </div>
       </motion.div>
     </div>,

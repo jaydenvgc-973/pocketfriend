@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, MapPin, Globe, User, Trash2, Upload, X, Pencil,
   ChevronDown, ChevronUp, Home, Briefcase, Coffee, Trees,
-  Wine, GraduationCap, Heart, Dumbbell, ArrowLeft
+  Wine, GraduationCap, Heart, Dumbbell, ArrowLeft, Users
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,11 +31,13 @@ const ZONE_PRESETS = {
   // School and Education are the same system
   school: ["Classroom", "Classroom 2", "Hallway", "Office", "Admin Office", "Cafeteria", "Gym", "Courtyard", "Library", "Auditorium", "Parking"],
   education: ["Classroom", "Classroom 2", "Hallway", "Office", "Admin Office", "Cafeteria", "Gym", "Courtyard", "Library", "Auditorium", "Parking"],
+  community: ["Main Hall", "Activity Room", "Office", "Waiting Area", "Kitchen", "Meeting Room", "Playground", "Parking", "Entrance"],
   religion: ["Main Sanctuary", "Prayer Room", "Chapel", "Office", "Admin Office", "Fellowship Hall", "Study Room", "Entrance", "Parking"],
   outdoor: ["Main Area", "Trail", "Parking", "Entrance", "Shelter / Pavilion", "Picnic Area", "Playground"],
   medical: ["Waiting Area", "Front Desk", "Triage", "Patient Room", "Hallway", "Office", "Admin Office", "Operating Room", "Recovery Room", "Pharmacy"],
   business: ["Office", "Office 1", "Office 2", "Admin Office", "Manager Office", "Staff Office", "Conference Room", "Break Room", "Reception", "Hallway"],
   government: ["Office", "Admin Office", "Reception", "Hallway", "Meeting Room", "Entrance"],
+  community: ["Main Hall", "Activity Room", "Office", "Waiting Area", "Kitchen", "Meeting Room", "Playground", "Parking", "Entrance"],
   public: ["Main Area", "Entrance", "Information Desk", "Hallway", "Bathroom"],
   generic: ["Main Area", "Entrance", "Back Area", "Bathroom"],
   other: ["Main Area", "Entrance", "Back Area", "Bathroom"],
@@ -53,6 +55,7 @@ const CATEGORIES = [
   { value: "social", label: "Social / Nightlife", icon: Wine, emoji: "🍸" },
   { value: "medical", label: "Medical", icon: Heart, emoji: "🏨" },
   { value: "business", label: "Business", icon: Briefcase, emoji: "🏢" },
+  { value: "community", label: "Community", icon: Users, emoji: "🏘️" },
   { value: "government", label: "Government", icon: MapPin, emoji: "🏛️" },
   { value: "public", label: "Public", icon: MapPin, emoji: "🗺️" },
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },

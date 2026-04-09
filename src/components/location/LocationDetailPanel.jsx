@@ -342,6 +342,17 @@ export default function LocationDetailPanel({ location, characters = [] }) {
       )}
 
       {/* ── ACTIVE HOURS (all categories) ───────────── */}
+      {/* Community */}
+      {cat === 'community' && (
+        <>
+          <SectionHeader icon={Users} label="Community Location" />
+          {location.community_type && <DetailRow label="Type" value={location.community_type.replace(/_/g, ' ')} />}
+          {(location.owner_character_name || location.owner_npc_name) && (
+            <DetailRow label={location.owner_role || 'operator'} value={location.owner_is_npc ? location.owner_npc_name : location.owner_character_name} />
+          )}
+        </>
+      )}
+
       {hoursText && (
         <>
           <SectionHeader icon={Clock} label="Active Hours" />

@@ -323,16 +323,25 @@ export default function Home() {
             const charIds = invite.characterIds ? invite.characterIds.join(",") : invite.characterId;
             navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
           }}
-          onDecline={() => {
-            if (invitations.length > 0) {
-              invitations.forEach(inv => {
-                base44.functions.invoke('recordCharacterInviteDeclined', {
-                  characterId: inv.characterId,
-                  locationId: inv.locationId,
-                }).catch(() => {});
-              });
-            }
-            setInvitations(null);
+          onMaybeLater={(inv) => {
+            base44.functions.invoke('recordCharacterInviteDeclined', {
+              characterId: inv.characterId,
+              locationId: inv.locationId,
+            }).catch(() => {});
+            const remaining = invitations.filter(i => i.characterId !== inv.characterId);
+            setInvitations(remaining.length > 0 ? remaining : null);
+          }}
+          onSuggestAlternative={(inv) => {
+            const remaining = invitations.filter(i => i.characterId !== inv.characterId);
+            setInvitations(remaining.length > 0 ? remaining : null);
+          }}
+          onDecline={(inv) => {
+            base44.functions.invoke('recordCharacterInviteDeclined', {
+              characterId: inv.characterId,
+              locationId: inv.locationId,
+            }).catch(() => {});
+            const remaining = invitations.filter(i => i.characterId !== inv.characterId);
+            setInvitations(remaining.length > 0 ? remaining : null);
           }}
           onClose={() => {
             if (settings[0]?.id) {

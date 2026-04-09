@@ -32,6 +32,7 @@
         "public",
         "business",
         "school",
+        "community",
         "generic"
       ],
       "default": "generic",
@@ -87,6 +88,19 @@
         "other"
       ],
       "description": "Type of school (if category=school or education)"
+    },
+    "community_type": {
+      "type": "string",
+      "enum": [
+        "community_center",
+        "drop_in_center",
+        "after_school_program",
+        "daycare",
+        "youth_center",
+        "resource_hub",
+        "other"
+      ],
+      "description": "Type of community location (if category=community)"
     },
     "tuition_cost": {
       "type": "number",

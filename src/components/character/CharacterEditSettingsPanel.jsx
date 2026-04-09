@@ -484,6 +484,167 @@ function CharacterPickerDropdown({ characters, onSelect }) {
   );
 }
 
+// ── Education Editor ─────────────────────────────────────────────────────────
+function EducationEditor({ character }) {
+  const queryClient = useQueryClient();
+  const [entries, setEntries] = useState(character.completed_education || []);
+  const [showAdd, setShowAdd] = useState(false);
+  const [newEntry, setNewEntry] = useState({ course_name: '', institution: '', completion_date: '', start_date: '' });
+  const [dateError, setDateError] = useState('');
+
+  useEffect(() => { setEntries(character.completed_education || []); }, [character.completed_education]);
+
+  const save = async (updated) => {
+    await base44.entities.Character.update(character.id, { completed_education: updated });
+    queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+  };
+
+  const addEntry = async () => {
+    setDateError('');
+    if (newEntry.start_date && newEntry.completion_date && newEntry.completion_date < newEntry.start_date) {
+      setDateError('Completion date cannot be earlier than start date.');
+      return;
+    }
+    if (!newEntry.course_name.trim()) return;
+    const updated = [...entries, { ...newEntry }];
+    setEntries(updated);
+    await save(updated);
+    setNewEntry({ course_name: '', institution: '', completion_date: '', start_date: '' });
+    setShowAdd(false);
+  };
+
+  const removeEntry = async (idx) => {
+    const updated = entries.filter((_, i) => i !== idx);
+    setEntries(updated);
+    await save(updated);
+  };
+
+  const updateField = (idx, field, value) => {
+    const updated = entries.map((e, i) => i === idx ? { ...e, [field]: value } : e);
+    setEntries(updated);
+  };
+
+  const saveEntry = async () => {
+    await save(entries);
+    queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+  };
+
+  // Active education (current)
+  const activeProgramName = character.education_details?.course_name || character.current_education_activity;
+  const hasActive = activeProgramName && activeProgramName !== 'none';
+
+  return (
+    <div className="space-y-3">
+      {/* Active education display + completion date */}
+      {hasActive && (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+          <p className="text-xs font-semibold text-primary">Currently Enrolled</p>
+          <p className="text-sm text-foreground">{activeProgramName}</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground uppercase">Start Date</p>
+              <input type="date" value={character.education_start_date?.slice(0, 10) || ''}
+                onChange={async (e) => {
+                  await base44.entities.Character.update(character.id, { education_start_date: e.target.value });
+                  queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+                }}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground uppercase">Expected Completion</p>
+              <input type="date" value={character.education_expected_completion_date?.slice(0, 10) || ''}
+                onChange={async (e) => {
+                  await base44.entities.Character.update(character.id, { education_expected_completion_date: e.target.value });
+                  queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+                }}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Completed education list */}
+      {entries.map((edu, idx) => (
+        <div key={idx} className="rounded-xl border border-border bg-secondary/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-foreground truncate">{edu.course_name || 'Untitled'}</p>
+            <button onClick={() => removeEntry(idx)} className="text-muted-foreground hover:text-destructive">
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <input value={edu.course_name || ''} placeholder="Program / Course name"
+            onChange={e => updateField(idx, 'course_name', e.target.value)}
+            onBlur={saveEntry}
+            className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+          />
+          <input value={edu.institution || ''} placeholder="Institution"
+            onChange={e => updateField(idx, 'institution', e.target.value)}
+            onBlur={saveEntry}
+            className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">Start Date</p>
+              <input type="date" value={edu.start_date?.slice(0,10) || ''}
+                onChange={e => { updateField(idx, 'start_date', e.target.value); saveEntry(); }}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">Completion Date</p>
+              <input type="date" value={edu.completion_date?.slice(0,10) || ''}
+                onChange={e => { updateField(idx, 'completion_date', e.target.value); saveEntry(); }}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Add new entry */}
+      {showAdd ? (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
+          <input value={newEntry.course_name} placeholder="Program / Course name *"
+            onChange={e => setNewEntry(p => ({ ...p, course_name: e.target.value }))}
+            className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+          />
+          <input value={newEntry.institution} placeholder="Institution"
+            onChange={e => setNewEntry(p => ({ ...p, institution: e.target.value }))}
+            className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+          />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">Start Date</p>
+              <input type="date" value={newEntry.start_date}
+                onChange={e => setNewEntry(p => ({ ...p, start_date: e.target.value }))}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">Completion Date</p>
+              <input type="date" value={newEntry.completion_date}
+                onChange={e => setNewEntry(p => ({ ...p, completion_date: e.target.value }))}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+          </div>
+          {dateError && <p className="text-xs text-destructive">{dateError}</p>}
+          <div className="flex gap-2">
+            <button onClick={() => setShowAdd(false)} className="flex-1 text-xs text-muted-foreground bg-secondary rounded-xl py-1.5">Cancel</button>
+            <button onClick={addEntry} className="flex-1 text-xs text-primary-foreground bg-primary rounded-xl py-1.5">Add</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-1 text-xs text-primary font-medium">
+          <Plus className="w-3.5 h-3.5" /> Add education entry
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters }) {
   const queryClient = useQueryClient();
@@ -588,6 +749,12 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                 <TextareaField character={character} field="current_situation" label="Current Situation" placeholder="What's going on in their life right now..." />
                 <TextareaField character={character} field="family_history" label="Family History" placeholder="Family background..." />
                 <TextareaField character={character} field="criminal_record" label="Criminal Record" placeholder="None" />
+              </section>
+
+              {/* Education */}
+              <section className="space-y-4">
+                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Education</p>
+                <EducationEditor character={character} />
               </section>
 
               {/* People In Their World */}
