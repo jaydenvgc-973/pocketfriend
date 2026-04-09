@@ -179,15 +179,11 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
           const updatedRelationships = await syncFamilyToRelationships(character, valid);
           const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
           let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
-          if (systemPrompt && systemPrompt.length > 5000) {
+          if (systemPrompt) {
             const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
             const { file_url } = await base44.integrations.Core.UploadFile({ file });
             updateData.system_prompt_url = file_url;
-          } else {
-            updateData.system_prompt = systemPrompt;
           }
-          
-          // Store photo as reference image
           const existingRefs = character.reference_image_urls || [];
           updateData.reference_image_urls = existingRefs.includes(match.photo_url) ? existingRefs : [...existingRefs, match.photo_url];
           
@@ -283,12 +279,10 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
         const updatedRelationships = await syncFamilyToRelationships(character, valid);
         const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
         let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
-        if (systemPrompt && systemPrompt.length > 5000) {
+        if (systemPrompt) {
           const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
           const { file_url } = await base44.integrations.Core.UploadFile({ file });
           updateData.system_prompt_url = file_url;
-        } else {
-          updateData.system_prompt = systemPrompt;
         }
         await base44.entities.Character.update(character.id, updateData);
 
@@ -355,14 +349,11 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
         fictional_relationships: updatedRelationships,
       };
 
-      if (systemPrompt && systemPrompt.length > 5000) {
+      if (systemPrompt) {
         const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
         const { file_url } = await base44.integrations.Core.UploadFile({ file });
         updateData.system_prompt_url = file_url;
-      } else {
-        updateData.system_prompt = systemPrompt;
       }
-
       await base44.entities.Character.update(character.id, updateData);
       queryClient.invalidateQueries({ queryKey: ["character", character.id] });
       queryClient.invalidateQueries({ queryKey: ["characters"] });
