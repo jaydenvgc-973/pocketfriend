@@ -529,6 +529,13 @@ function EducationEditor({ character }) {
     queryClient.invalidateQueries({ queryKey: ['character', character.id] });
   };
 
+  // Use this for date/select onChange — avoids stale closure since state hasn't flushed yet
+  const updateAndSave = async (idx, field, value) => {
+    const updated = entries.map((e, i) => i === idx ? { ...e, [field]: value } : e);
+    setEntries(updated);
+    await save(updated);
+  };
+
   // Active education (current)
   const activeProgramName = character.education_details?.course_name || character.current_education_activity;
   const hasActive = activeProgramName && activeProgramName !== 'none';
@@ -588,14 +595,14 @@ function EducationEditor({ character }) {
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground">Start Date</p>
               <input type="date" value={edu.start_date?.slice(0,10) || ''}
-                onChange={e => { updateField(idx, 'start_date', e.target.value); saveEntry(); }}
+                onChange={e => updateAndSave(idx, 'start_date', e.target.value)}
                 className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
               />
             </div>
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground">Completion Date</p>
               <input type="date" value={edu.completion_date?.slice(0,10) || ''}
-                onChange={e => { updateField(idx, 'completion_date', e.target.value); saveEntry(); }}
+                onChange={e => updateAndSave(idx, 'completion_date', e.target.value)}
                 className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
               />
             </div>
