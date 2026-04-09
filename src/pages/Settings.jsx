@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -35,16 +36,8 @@ export default function Settings() {
   const [showSuggestedDupes, setShowSuggestedDupes] = useState(false);
   const [suggestedDupes, setSuggestedDupes] = useState([]);
 
-  const { data: settingsList = [], isLoading: isLoadingSettings } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: async () => {
-      const list = await base44.entities.UserSettings.list();
-      if (list.length <= 1) return list;
-      // Auto-consolidate silently if duplicates exist
-      await base44.functions.invoke('consolidateUserSettings', {});
-      return base44.entities.UserSettings.list();
-    },
-  });
+  const { settings, isLoading: isLoadingSettings, updateSettings } = useUserSettings();
+  const settingsList = settings?.id ? [settings] : [];
 
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
@@ -73,24 +66,7 @@ export default function Settings() {
     }
   };
 
-  const settings = settingsList[0] || {};
-
-  const mutation = useMutation({
-    mutationFn: async (data) => {
-      if (isLoadingSettings) return;
-      const existingId = settingsList[0]?.id;
-      if (existingId) {
-        return base44.entities.UserSettings.update(existingId, data);
-      }
-      // Double-check before creating to avoid race-condition duplicates
-      const freshList = await base44.entities.UserSettings.list();
-      if (freshList[0]?.id) {
-        return base44.entities.UserSettings.update(freshList[0].id, data);
-      }
-      return base44.entities.UserSettings.create(data);
-    },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["userSettings"] }),
-  });
+  const mutation = { mutate: updateSettings, isPending: false };
 
   const deleteMutation = useMutation({
     mutationFn: async ({ id, cause, closeness }) => {

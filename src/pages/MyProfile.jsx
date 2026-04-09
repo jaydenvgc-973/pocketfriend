@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -21,26 +22,8 @@ export default function MyProfile() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: settingsList = [], refetch: refetchSettings } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: async () => {
-      const list = await base44.entities.UserSettings.list();
-      if (list.length > 1) {
-        await base44.functions.invoke('consolidateUserSettings', {});
-        return base44.entities.UserSettings.list();
-      }
-      return list;
-    },
-    staleTime: 0,
-  });
+  const { settings, updateSettings } = useUserSettings();
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", user?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: user.email, status: "active" }),
-    enabled: !!user?.email,
-  });
-
-  const settings = settingsList[0] || {};
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
   const balance = settings.user_balance ?? 6000;
@@ -56,7 +39,7 @@ export default function MyProfile() {
   // Initialize balance if not set
   useEffect(() => {
     if (settings.id && settings.user_balance === undefined) {
-      base44.entities.UserSettings.update(settings.id, { user_balance: 6000 }).catch(() => {});
+      updateSettings({ user_balance: 6000 });
     }
   }, [settings.id, settings.user_balance]);
 
@@ -112,10 +95,7 @@ export default function MyProfile() {
     setRelativeRelationships(updated);
 
     // Persist to UserSettings
-    if (settings.id) {
-      await base44.entities.UserSettings.update(settings.id, { user_relatives: updated }).catch(() => {});
-      queryClient.invalidateQueries({ queryKey: ["userSettings"] });
-    }
+    updateSettings({ user_relatives: updated });
 
     // Sync reciprocal into character's family_members
     if (character && isFamilyRelationship(relationship || "")) {
@@ -279,12 +259,7 @@ export default function MyProfile() {
         {/* User Aliases */}
         <UserAliasSection
           settings={settings}
-          onSave={async (data) => {
-            if (settings.id) {
-              await base44.entities.UserSettings.update(settings.id, data).catch(() => {});
-              queryClient.invalidateQueries({ queryKey: ["userSettings"] });
-            }
-          }}
+          onSave={(data) => updateSettings(data)}
         />
 
         {/* Appearance Lock */}
