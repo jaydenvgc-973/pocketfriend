@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.21';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 // Inline buildSystemPrompt logic (no local imports allowed)
 function buildRelationshipsContext(character) {
@@ -197,7 +197,11 @@ Deno.serve(async (req) => {
     let updated = 0;
     for (const char of active) {
       const newPrompt = buildSystemPrompt(char);
-      await base44.asServiceRole.entities.Character.update(char.id, { system_prompt: newPrompt });
+      // Upload large prompt as file and store URL instead of direct field
+      const uploadRes = await base44.asServiceRole.integrations.Core.UploadFile({
+        file: btoa(newPrompt)
+      });
+      await base44.asServiceRole.entities.Character.update(char.id, { system_prompt_url: uploadRes.file_url });
       updated++;
     }
 
