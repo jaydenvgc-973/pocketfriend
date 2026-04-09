@@ -24,6 +24,14 @@ export default function MyProfile() {
 
   const { settings, updateSettings } = useUserSettings();
 
+  const { data: characters = [] } = useQuery({
+    queryKey: ["characters", user?.email],
+    queryFn: () => user?.email
+      ? base44.entities.Character.filter({ created_by: user.email, status: "active" }, "-created_date", 100)
+      : [],
+    enabled: !!user?.email,
+  });
+
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
   const balance = settings.user_balance ?? 6000;
