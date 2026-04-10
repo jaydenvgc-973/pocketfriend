@@ -118,7 +118,7 @@ Make it feel like a real person, not a description. No flowery language.`
     let systemPromptUrl = null;
     if (systemPrompt.length > 5000) {
       const uploadRes = await base44.integrations.Core.UploadFile({
-        file: new Blob([systemPrompt], { type: "text/plain" })
+        file: new File([systemPrompt], "system_prompt.txt", { type: "text/plain" })
       });
       systemPromptUrl = uploadRes.file_url;
     }
