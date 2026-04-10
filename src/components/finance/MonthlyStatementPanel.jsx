@@ -67,11 +67,11 @@ export default function MonthlyStatementPanel({ characterId }) {
     queryKey: ["financialTransactions", characterId, selectedMonth],
     queryFn: async () => {
       const txns = await base44.entities.FinancialTransaction.filter({ character_id: characterId }, '-timestamp', 500);
-      // Get current balance from character record
+      // Get current balance from CharacterFinancial record
       if (characterId) {
-        const char = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
-        if (char?.current_balance != null) {
-          setCurrentBalance(char.current_balance);
+        const financialRecords = await base44.entities.CharacterFinancial.filter({ character_id: characterId }).catch(() => []);
+        if (financialRecords && financialRecords.length > 0) {
+          setCurrentBalance(financialRecords[0].current_balance);
         }
       }
       return txns;
