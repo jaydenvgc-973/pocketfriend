@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 const menuItems = [
   { id: "media",        icon: Image,     label: "Media Gallery" },
   { id: "game",         icon: Gamepad2,  label: "Play a Game" },
-  { id: "narrative",    icon: Sparkles,  label: "Narrative Action" },
+  { id: "narrative",    icon: Sparkles,  label: "Action" },
   { id: "contacts",     icon: Globe,     label: "World Contacts" },
   { id: "story",        icon: BookOpen,  label: "Add Story Event" },
   { id: "money",        icon: DollarSign,label: "Send Money" },

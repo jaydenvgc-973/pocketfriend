@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Sparkles, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
@@ -26,6 +27,10 @@ export default function NarrativeActionButton({
   useEffect(() => {
     if (externalTrigger) { setOpen(true); onExternalClose?.(); }
   }, [externalTrigger]);
+
+  useEffect(() => {
+    return () => setOpen(false);
+  }, []);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
@@ -139,38 +144,40 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
         {loading ? "Generating…" : cooldown > 0 ? `${cooldown}s` : "Act"}
       </button>
 
-      {/* Intent picker — fixed centered overlay */}
-      <AnimatePresence>
-        {open && (
-          <>
-            <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setOpen(false)} />
-            <motion.div
-              initial={{ opacity: 0, y: 12, scale: 0.97 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 12, scale: 0.97 }}
-              transition={{ duration: 0.18 }}
-              className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-card border border-border rounded-2xl shadow-2xl p-2 w-64"
-            >
-              <p className="text-[10px] text-muted-foreground px-2 pb-1.5 uppercase tracking-wider font-medium">
-                What should they do?
-              </p>
-              {INTENT_OPTIONS.map(opt => (
-                <button
-                  key={opt.id}
-                  onClick={() => triggerNarrative(opt.id)}
-                  className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary/70 transition-colors text-left group"
-                >
-                  <span className="text-base leading-none">{opt.emoji}</span>
-                  <div>
-                    <p className="text-xs font-medium text-foreground group-hover:text-primary transition-colors">{opt.label}</p>
-                    <p className="text-[10px] text-muted-foreground">{opt.description}</p>
-                  </div>
-                </button>
-              ))}
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {open && (
+            <>
+              <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => setOpen(false)} />
+              <motion.div
+                initial={{ opacity: 0, y: 12, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 12, scale: 0.97 }}
+                transition={{ duration: 0.18 }}
+                className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[201] bg-card border border-border rounded-2xl shadow-2xl p-2 w-64"
+              >
+                <p className="text-[10px] text-muted-foreground px-2 pb-1.5 uppercase tracking-wider font-medium">
+                  What should they do?
+                </p>
+                {INTENT_OPTIONS.map(opt => (
+                  <button
+                    key={opt.id}
+                    onClick={() => triggerNarrative(opt.id)}
+                    className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary/70 transition-colors text-left group"
+                  >
+                    <span className="text-base leading-none">{opt.emoji}</span>
+                    <div>
+                      <p className="text-xs font-medium text-foreground group-hover:text-primary transition-colors">{opt.label}</p>
+                      <p className="text-[10px] text-muted-foreground">{opt.description}</p>
+                    </div>
+                  </button>
+                ))}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
   );
 }
