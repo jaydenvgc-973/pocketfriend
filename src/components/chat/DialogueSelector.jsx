@@ -105,8 +105,8 @@ Return ONLY valid JSON: { "options": [{ "text": string, "tone": string }, ...] }
         </button>
       </div>
 
-      {/* Options */}
-      <div className="px-3 pb-2 space-y-2">
+      {/* Options — scrollable, max height so it doesn't take over the page */}
+      <div className="px-3 pb-2 overflow-y-auto max-h-[140px] space-y-2">
         {isGenerating && options.length === 0 && (
           <div className="flex items-center justify-center gap-2 py-4 text-muted-foreground">
             <div className="w-4 h-4 border-2 border-primary/40 border-t-primary rounded-full animate-spin" />
