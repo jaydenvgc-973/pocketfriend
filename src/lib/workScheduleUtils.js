@@ -146,13 +146,15 @@ export function isCharacterAtWork(character, workplaceLocation = null) {
   if (workplaceLocation && character?.id) {
     const onShift = isCharacterOnShift(character.id, workplaceLocation);
     if (onShift) return true;
-    
-    // If location tracks shifts and character is NOT on the roster → NOT at work
-    if (workplaceLocation.worker_character_ids?.includes(character.id) && !onShift) {
-      // Character works here but not on shift right now
+
+    // Only block if a shift was explicitly defined for this character but they're not on it
+    // If NO shift is defined for this character, fall through to Layer 2 (character's own schedule)
+    const definedShift = getCharacterShiftAtLocation(character.id, workplaceLocation);
+    if (definedShift && workplaceLocation.worker_character_ids?.includes(character.id) && !onShift) {
+      // Character has a defined shift here but is not currently on it
       return false;
     }
-    
+
     // Check if location is even open
     const locationActive = isLocationActiveNow(workplaceLocation);
     if (locationActive === false) {

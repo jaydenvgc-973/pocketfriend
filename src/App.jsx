@@ -81,8 +81,9 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
 
   return (
     <Routes>
-      <Route path="/" element={<OnboardingGuard><Onboarding /></OnboardingGuard>} />
-      <Route path="/home" element={<Home />} />
+      <Route path="/" element={<OnboardingGuard><Home /></OnboardingGuard>} />
+      <Route path="/home" element={<OnboardingGuard><Home /></OnboardingGuard>} />
+      <Route path="/onboarding" element={<Onboarding />} />
       <Route path="/chat/:characterId" element={<Chat />} />
       <Route path="/groups" element={<Groups />} />
       <Route path="/group-chat" element={<GroupChat />} />

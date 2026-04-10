@@ -31,13 +31,13 @@ export default function OnboardingGuard({ children }) {
     if (isLoading) return;
     const hasCompletedOnboarding = settings?.has_completed_onboarding;
     const hasCharacters = characters && characters.length > 0;
-    if (hasCompletedOnboarding || hasCharacters) {
-      navigate("/home", { replace: true });
+    if (!hasCompletedOnboarding && !hasCharacters) {
+      navigate("/onboarding", { replace: true });
     }
   }, [settings, characters, isLoading, navigate]);
 
   if (isLoading) return null;
-  if (settings?.has_completed_onboarding || (characters && characters.length > 0)) return null;
+  if (!settings?.has_completed_onboarding && !(characters && characters.length > 0)) return null;
 
   return children;
 }
