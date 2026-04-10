@@ -3,6 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
 import { DollarSign, TrendingUp, TrendingDown, Wallet, Calendar } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import ExpenseBreakdownChart from './ExpenseBreakdownChart';
 
 export default function FinancialDashboard({ characterId }) {
   const [summary, setSummary] = useState(null);
@@ -118,6 +119,14 @@ export default function FinancialDashboard({ characterId }) {
                 <p className="text-orange-400 font-semibold">{formatCurrency(expense.monthly_cost || 0)}</p>
               </div>
             ))}
+        </div>
+      )}
+
+      {/* Expense Breakdown Chart */}
+      {summary.monthly_expenses > 0 && (
+        <div className="pt-4 border-t border-border">
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider mb-3">Expense Breakdown</p>
+          <ExpenseBreakdownChart transactions={summary.transactions || []} />
         </div>
       )}
 
