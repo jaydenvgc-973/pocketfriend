@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Sparkles, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -19,22 +18,30 @@ export default function NarrativeActionButton({
   character,
   conversationId,
   recentMessages = [],
-  userSettings = {},
   onNarrativeCreated,
   externalTrigger,
   onExternalClose,
 }) {
-  useEffect(() => {
-    if (externalTrigger) { setOpen(true); onExternalClose?.(); }
-  }, [externalTrigger]);
-
-  useEffect(() => {
-    return () => setOpen(false);
-  }, []);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const cooldownRef = useRef(null);
+
+  // Open when triggered externally
+  useEffect(() => {
+    if (externalTrigger) {
+      setOpen(true);
+      onExternalClose?.();
+    }
+  }, [externalTrigger]);
+
+  // Close and clean up on unmount
+  useEffect(() => {
+    return () => {
+      setOpen(false);
+      if (cooldownRef.current) clearInterval(cooldownRef.current);
+    };
+  }, []);
 
   const startCooldown = () => {
     setCooldown(COOLDOWN_SECONDS);
@@ -95,7 +102,6 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
         throw new Error("Empty narrative returned");
       }
 
-      // Save as a narrative message (separate channel from chat bubbles)
       const narrativeMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: "character",
@@ -107,7 +113,6 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
         timestamp: new Date().toISOString(),
       });
 
-      // Update conversation preview
       await base44.entities.Conversation.update(conversationId, {
         last_message_preview: `✦ ${result.trim().substring(0, 80)}...`,
         last_message_date: new Date().toISOString(),
@@ -122,62 +127,43 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
     }
   };
 
-  return (
-    <div className="relative">
-      {/* Main trigger button */}
-      <button
-        onClick={() => !loading && cooldown === 0 && setOpen(prev => !prev)}
-        disabled={loading || cooldown > 0}
-        title={cooldown > 0 ? `Available in ${cooldown}s` : "Trigger a narrative action"}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium transition-all border
-          ${loading || cooldown > 0
-            ? "border-border text-muted-foreground opacity-50 cursor-not-allowed bg-secondary/30"
-            : open
-            ? "border-primary/50 text-primary bg-primary/10"
-            : "border-border text-muted-foreground hover:text-foreground hover:border-primary/30 bg-secondary/50"
-          }`}
-      >
-        {loading
-          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          : <Sparkles className="w-3.5 h-3.5" />
-        }
-        {loading ? "Generating…" : cooldown > 0 ? `${cooldown}s` : "Act"}
-      </button>
-
-      {createPortal(
-        <AnimatePresence>
-          {open && (
-            <>
-              <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => setOpen(false)} />
-              <motion.div
-                initial={{ opacity: 0, y: 12, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: 12, scale: 0.97 }}
-                transition={{ duration: 0.18 }}
-                className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[201] bg-card border border-border rounded-2xl shadow-2xl p-2 w-64"
-              >
-                <p className="text-[10px] text-muted-foreground px-2 pb-1.5 uppercase tracking-wider font-medium">
-                  What should they do?
-                </p>
-                {INTENT_OPTIONS.map(opt => (
-                  <button
-                    key={opt.id}
-                    onClick={() => triggerNarrative(opt.id)}
-                    className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary/70 transition-colors text-left group"
-                  >
-                    <span className="text-base leading-none">{opt.emoji}</span>
-                    <div>
-                      <p className="text-xs font-medium text-foreground group-hover:text-primary transition-colors">{opt.label}</p>
-                      <p className="text-[10px] text-muted-foreground">{opt.description}</p>
-                    </div>
-                  </button>
-                ))}
-              </motion.div>
-            </>
-          )}
-        </AnimatePresence>,
-        document.body
+  // Render nothing into the DOM flow — only a portal overlay when open
+  return createPortal(
+    <AnimatePresence>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => setOpen(false)} />
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.97 }}
+            transition={{ duration: 0.18 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-[201] bg-card border border-border rounded-2xl shadow-2xl p-2 w-64"
+          >
+            <p className="text-[10px] text-muted-foreground px-2 pb-1.5 uppercase tracking-wider font-medium">
+              What should they do?
+            </p>
+            {loading ? (
+              <p className="text-xs text-muted-foreground px-2 py-3 text-center">Generating…</p>
+            ) : (
+              INTENT_OPTIONS.map(opt => (
+                <button
+                  key={opt.id}
+                  onClick={() => triggerNarrative(opt.id)}
+                  className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary/70 transition-colors text-left group"
+                >
+                  <span className="text-base leading-none">{opt.emoji}</span>
+                  <div>
+                    <p className="text-xs font-medium text-foreground group-hover:text-primary transition-colors">{opt.label}</p>
+                    <p className="text-[10px] text-muted-foreground">{opt.description}</p>
+                  </div>
+                </button>
+              ))
+            )}
+          </motion.div>
+        </>
       )}
-    </div>
+    </AnimatePresence>,
+    document.body
   );
 }
