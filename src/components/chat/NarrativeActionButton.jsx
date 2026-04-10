@@ -6,12 +6,12 @@ import { motion, AnimatePresence } from "framer-motion";
 const COOLDOWN_SECONDS = 30;
 
 const INTENT_OPTIONS = [
-  { id: "action",       label: "Let Them Act",   emoji: "🎬", description: "Natural context-driven action" },
-  { id: "comfort",      label: "Comfort Me",     emoji: "🤍", description: "Warmth, closeness, care" },
-  { id: "flirt",        label: "Flirt",          emoji: "✨", description: "Playful or romantic tension" },
-  { id: "confront",     label: "Confront",       emoji: "⚡", description: "Tension or emotional confrontation" },
-  { id: "spend_time",   label: "Spend Time",     emoji: "🕰️", description: "Hang out, just be present" },
-  { id: "check_in",     label: "Check In",       emoji: "💬", description: "See how you're doing" },
+  { id: "action",     label: "Let Them Act", emoji: "🎬", description: "Natural context-driven action" },
+  { id: "comfort",    label: "Comfort Me",   emoji: "🤍", description: "Warmth, closeness, care" },
+  { id: "flirt",      label: "Flirt",        emoji: "✨", description: "Playful or romantic tension" },
+  { id: "confront",   label: "Confront",     emoji: "⚡", description: "Tension or emotional confrontation" },
+  { id: "spend_time", label: "Spend Time",   emoji: "🕰️", description: "Hang out, just be present" },
+  { id: "check_in",   label: "Check In",     emoji: "💬", description: "See how you're doing" },
 ];
 
 export default function NarrativeActionButton({
@@ -27,7 +27,6 @@ export default function NarrativeActionButton({
   const [cooldown, setCooldown] = useState(0);
   const cooldownRef = useRef(null);
 
-  // Open when triggered externally
   useEffect(() => {
     if (externalTrigger) {
       setOpen(true);
@@ -35,7 +34,6 @@ export default function NarrativeActionButton({
     }
   }, [externalTrigger]);
 
-  // Close and clean up on unmount
   useEffect(() => {
     return () => {
       setOpen(false);
@@ -65,22 +63,35 @@ export default function NarrativeActionButton({
 
       const last5 = recentMessages.slice(-5).map(m => m.content || "").join(" ").toLowerCase();
 
-      // Detect tone tier from recent messages
       const hasRomantic = /kiss|hold|closer|touch|pull|press|wrap|grip|lean|body|skin|breathe|heartbeat|forehead|cheek|waist|wrist|neck|lips|chest|hands/.test(last5);
       const hasFlirt = /flirt|tease|smile|wink|playful|tension|lingering|stare|gaze|electricity|charged|heat/.test(last5);
       const hasEmotional = /feel|hurt|cry|miss|scared|vulnerable|open|trust|honest|hard|difficult|breakdown|overwhelm|alone|together/.test(last5);
-      const isNeutral = !hasRomantic && !hasFlirt && !hasEmotional;
 
       const friendshipLevel = character.friendship_level ?? 75;
       const romanticLevel = character.romantic_level ?? 0;
+      const attractionLevel = character.attraction_level ?? 0;
       const emotionalState = character.emotional_state || "calm";
       const location = character.resolved_current_location_name || character.city || "home";
 
-      // Determine context tier
+      // Context tier
       let contextTier = "low";
       if (hasRomantic || (romanticLevel >= 60 && hasFlirt)) contextTier = "high";
       else if (hasFlirt || hasEmotional || romanticLevel >= 30) contextTier = "medium";
 
+      // Relationship gating
+      const isFamilial = (character.fictional_relationships || []).some(r =>
+        ['parent','sibling','child','cousin','aunt','uncle','grandparent','family'].some(f =>
+          (r.relationship_type || '').toLowerCase().includes(f)
+        )
+      );
+      const isMentor = (character.fictional_relationships || []).some(r =>
+        ['mentor','teacher','coach','supervisor','boss'].some(f =>
+          (r.relationship_type || '').toLowerCase().includes(f)
+        )
+      );
+      const romanticOk = !isFamilial && !isMentor && attractionLevel >= 20 && (intent === 'flirt' || contextTier !== 'low' || romanticLevel >= 30);
+
+      // Intent descriptions (per-button locked behavior)
       const intentMap = {
         action: contextTier === "high"
           ? "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently HIGH (passionate/romantic buildup)"
@@ -96,25 +107,12 @@ export default function NarrativeActionButton({
         check_in: "an attentive, observant, emotionally aware moment — noticing their mood, asking quietly, soft tone, slight physical grounding. Observational, not action-heavy. Do NOT escalate physically or jump into intensity.",
       };
 
+      // Tier instructions
       const tierInstructions = contextTier === "high"
-        ? `CONTEXT TIER: HIGH. The conversation has clearly built toward romantic/passionate territory. Use strong physical closeness, kissing, pulling closer, hands moving with intention. Include environmental disruption (sheets shifting, papers falling, a door clicking shut). Intensify with metaphor (tidal waves, pressure against a dam, floodwater breaking through). Keep it non-explicit but immersive.`
+        ? `CONTEXT TIER: HIGH. The conversation has clearly built toward romantic/passionate territory. Use strong physical closeness, kissing, pulling closer, hands moving with intention. Include environmental disruption. Intensify with metaphor. Keep it non-explicit but immersive.`
         : contextTier === "medium"
-        ? `CONTEXT TIER: MEDIUM. There is growing warmth, flirtation, or emotional openness. Use moderate physical closeness — touching a hand, guiding them in, a brief soft kiss, leaning in. Include a small environmental detail. Let the metaphor deepen the tone without overwhelming the moment.`
-        : `CONTEXT TIER: LOW. The conversation is relatively neutral or just warming up. Do NOT jump to romantic or passionate actions. Use a soft, grounding action — stepping closer, a hand brushing theirs, sitting beside them, a lingering look. Let imagination do the work. Do not escalate.`;
-
-      // Determine relationship context for intent gating
-      const isFamilial = (character.fictional_relationships || []).some(r =>
-        ['parent','sibling','child','cousin','aunt','uncle','grandparent','family'].some(f =>
-          (r.relationship_type || '').toLowerCase().includes(f)
-        )
-      );
-      const isMentor = (character.fictional_relationships || []).some(r =>
-        ['mentor','teacher','coach','supervisor','boss'].some(f =>
-          (r.relationship_type || '').toLowerCase().includes(f)
-        )
-      );
-      const attractionLevel = character.attraction_level ?? 0;
-      const romanticOk = !isFamilial && !isMentor && attractionLevel >= 20 && (intent === 'flirt' || contextTier !== 'low' || romanticLevel >= 30);
+        ? `CONTEXT TIER: MEDIUM. There is growing warmth, flirtation, or emotional openness. Use moderate physical closeness. Include a small environmental detail. Let the metaphor deepen the tone.`
+        : `CONTEXT TIER: LOW. The conversation is relatively neutral or just warming up. Do NOT jump to romantic or passionate actions. Use a soft, grounding action. Let imagination do the work.`;
 
       // Intent type classification
       const intentTypeMap = {
@@ -149,21 +147,20 @@ BEFORE WRITING, enforce these rules:
 
 INTENSITY ≠ ROMANCE. Intensity describes emotional energy. Relationship type determines how it is expressed.
 
-${isFamilial ? `FAMILY BOUNDARY — HARD BLOCK (HIGHEST PRIORITY): This character has a familial relationship. Romantic or sexual behavior is NEVER allowed under any circumstances. No kissing, no romantic touching, no sensual metaphor, no body-merging language. Allowed: hugs (non-romantic), emotional comfort, protective actions, everyday interaction only.` : ''}
+${isFamilial ? `FAMILY BOUNDARY — HARD BLOCK: This character has a familial relationship. Romantic or sexual behavior is NEVER allowed. No kissing, no romantic touching, no sensual metaphor. Allowed: non-romantic hugs, emotional comfort, protective actions, everyday interaction only.` : ''}
 
-${isMentor ? `MENTORSHIP BOUNDARY: This is a mentor/authority relationship. Romantic or flirtatious behavior is NEVER allowed. Allowed: firm correction, grounded presence, controlled eye contact, stopping someone non-intimately. Never: flirting, kissing, sensual touch, romantic metaphors.` : ''}
+${isMentor ? `MENTORSHIP BOUNDARY: This is a mentor/authority relationship. Romantic or flirtatious behavior is NEVER allowed. Allowed: firm correction, grounded presence, controlled eye contact. Never: flirting, kissing, sensual touch, romantic metaphors.` : ''}
 
-${intentType === 'CONFLICT' ? `CONFLICT INTENT: Generate tension, confrontation, emotional pressure. NOT romance. Actions: stepping into space, blocking movement, grabbing arm (non-romantic), sharp tone, controlled aggression. Remove all kissing, romantic touching, body-merging language, and sexual metaphor.` : ''}
+${intentType === 'CONFLICT' ? `CONFLICT INTENT: Generate tension, confrontation, emotional pressure. NOT romance. Actions: stepping into space, blocking movement, grabbing arm (non-romantic), sharp tone, controlled aggression. Remove all kissing, romantic touching, and sensual metaphor.` : ''}
 
-${intentType === 'FRIENDSHIP' ? `FRIENDSHIP INTENT: Emotional closeness and strong connection are allowed. Physical presence is allowed. Touch must NOT be romantic in tone. Allowed: grabbing arm to stop them, non-romantic hug, sitting close, shoulder-to-shoulder, expressive gestures. Never: kissing, romantic body alignment, waist/face touching in a romantic way, romantic metaphors.` : ''}
+${intentType === 'FRIENDSHIP' ? `FRIENDSHIP INTENT: Emotional closeness is allowed. Touch must NOT be romantic in tone. Allowed: grabbing arm to stop them, non-romantic hug, sitting close, shoulder-to-shoulder. Never: kissing, romantic body alignment, waist/face touching in a romantic way.` : ''}
 
 ${intentType === 'ROMANTIC' ? `ROMANTIC INTENT: Romantic and physical escalation is allowed because attraction level (${attractionLevel}/100) and relationship context support it. Scale to context tier.` : ''}
 
-CONSENT CHECK: Before any physical escalation, evaluate whether the other person is receptive based on recent dialogue and tone.
-- If both parties seem engaged and receptive → allow escalation.
-- If hesitation or uncertainty is present → reduce intensity, show a mixed-intent moment where the character pauses or adjusts.
-- If clear resistance is present → block escalation entirely.
-Do not force actions onto a character showing discomfort. Generate a natural reaction.
+CONSENT CHECK: Before any physical escalation, evaluate whether the other person is receptive.
+- Both engaged and receptive → allow escalation.
+- Hesitation present → reduce intensity, show a mixed moment.
+- Clear resistance → block escalation entirely.
 
 ---
 STYLE RULES:
@@ -171,45 +168,15 @@ STYLE RULES:
 - ONE continuous paragraph, no double spacing, no em dashes mid-sentence, clean punctuation
 - Clearly state what the character is physically doing — metaphor must intensify the action, NOT replace it
 - 2-4 sentences max. Tight. Cinematic. Real.
-- The action must feel like the NEXT CORRECT CHAPTER, not a random scene change
-- No explicit content — suggestive and emotionally charged is fine, imagination fills the gaps
+- No explicit content — suggestive and emotionally charged is fine
 - One short quoted line of dialogue is allowed if it fits, but not required
 
----
-ACTION RULE:
-Name the physical action clearly. The metaphor intensifies it, never replaces it.
-
----
 ENVIRONMENT VARIATION ENGINE (ANTI-REPETITION):
-Every narrative MUST include at least one grounded environmental interaction. Do NOT repeat the same environmental detail. Rotate from these categories — use 2-4 types per scene:
+Every narrative MUST include at least one grounded environmental interaction. Do NOT repeat the same environmental detail. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
+Do NOT default to "sheets crumpling." Choose something specific to the actual location.
 
-- SURFACE: edge of mattress dipping, pressed against dresser, counter pressing into their back, railing contact, desk edge catching movement, couch dipping
-- OBJECTS: lamp flickering, phone sliding off nightstand, papers scattering, glass shifting, folded clothes slipping, folders spilling
-- FABRIC: shirt pulled aside or falling, jacket pushed free, blanket dragged halfway, rug bunching underfoot
-- SOUND: chair scraping floor, soft thud, machine hum underfoot, bed frame creaking, something tapping a surface, breath filling a small space
-- LIGHT: window light shifting across bodies, lamp shadows, streetlights flickering through windows, mirror reflecting fragments, windows fogging
-- MOVEMENT: footing shifting, balance adjusting, weight transferring unevenly, knees pressing together
-- TEMPERATURE: cool surface contrast against warm bodies, night air sharpening the warmth between them
-- CONSTRAINT: tight space forcing closeness, limited room leaving no hesitation
-
-Do NOT default to "sheets crumpling" or "sheets twisting." Choose something specific to the actual location. Use 1-2 strong environment interactions and 1 subtle sensory layer.
-
----
 ROOM TRANSITION RULE:
-If the scene shifts location, show the movement (walking, guiding, pulling, leading). Never teleport characters. Each room needs at least one environmental cue. Keep momentum continuous.
-
----
-INTENSITY BY RELATIONSHIP TYPE REFERENCE (do not copy — tone guide only):
-
-FRIENDSHIP HIGH: He catches their arm before they can walk off, not gentle, just enough to stop them. His voice tightens as he steps closer, not invading, but not giving space either. The moment builds, grounded, like something that matters too much to let go casually.
-
-CONFLICT HIGH: He steps in front of them, stopping their movement completely. His hand catches their arm, not rough, just enough to make them stay. His voice tightens and the air between them sharpens, like something that has been building finally refuses to stay quiet.
-
-MENTORSHIP HIGH: He steps closer, not soft, just enough to make the point land. His voice lowers, controlled, like he expects them to listen this time. He does not reach for them, but he does not step back either. The space holds tension, but it stays exactly where it belongs.
-
-ROMANTIC MEDIUM: He catches their hand before they can pull it back, using the contact to guide them closer until their bodies nearly meet. When he kisses them it starts brief and teasing, and the edge of the desk presses lightly against them as papers slide out of place. He does not let the space return when he pulls back.
-
-ROMANTIC HIGH: He pulls them closer by the waist and their kiss lands soft, then deepens, his shirt falling wherever it lands without either of them looking. The edge of the mattress dips unevenly as they move, the curtains stirring from the air shifting through the room. They hold onto each other tighter, bodies aligning, finding rhythm, like something pulling them into the same current.
+If the scene shifts location, show the movement. Never teleport characters.
 
 Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
 
@@ -244,7 +211,6 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
     }
   };
 
-  // Render nothing into the DOM flow — only a portal overlay when open
   return createPortal(
     <AnimatePresence>
       {open && (
@@ -267,7 +233,8 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
                 <button
                   key={opt.id}
                   onClick={() => triggerNarrative(opt.id)}
-                  className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary/70 transition-colors text-left group"
+                  disabled={cooldown > 0}
+                  className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-secondary/70 transition-colors text-left group disabled:opacity-40"
                 >
                   <span className="text-base leading-none">{opt.emoji}</span>
                   <div>
@@ -276,6 +243,9 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
                   </div>
                 </button>
               ))
+            )}
+            {cooldown > 0 && (
+              <p className="text-[10px] text-muted-foreground text-center py-1">Cooldown: {cooldown}s</p>
             )}
           </motion.div>
         </>
