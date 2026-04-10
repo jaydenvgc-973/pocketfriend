@@ -16,7 +16,7 @@ const TYPE_LABELS = {
   gym: "Gym",
   tuition: "Tuition",
   childcare: "Childcare",
-  bar_restaurant: "Bar / Restaurant",
+  bar_restaurant: "Food Order",
   entertainment: "Entertainment",
   transport: "Transport",
   clothing: "Clothing",
@@ -57,13 +57,21 @@ export default function MonthlyStatementPanel({ characterId }) {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
 
-  const [year, month] = selectedMonth.split("-").map(Number);
-  const monthStart = startOfMonth(new Date(year, month - 1));
-  const monthEnd = endOfMonth(new Date(year, month - 1));
+  const [currentBalance, setCurrentBalance] = useState(0);
 
   const { data: transactions = [], isLoading } = useQuery({
     queryKey: ["financialTransactions", characterId, selectedMonth],
-    queryFn: () => base44.entities.FinancialTransaction.filter({ character_id: characterId }),
+    queryFn: async () => {
+      const txns = await base44.entities.FinancialTransaction.filter({ character_id: characterId }, '-timestamp', 500);
+      // Get current balance from character record
+      if (characterId) {
+        const char = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
+        if (char?.current_balance != null) {
+          setCurrentBalance(char.current_balance);
+        }
+      }
+      return txns;
+    },
     enabled: !!characterId && isOpen,
     staleTime: 30000,
   });
@@ -183,17 +191,22 @@ export default function MonthlyStatementPanel({ characterId }) {
                       <p className={`text-sm font-semibold ${t.direction === "income" ? "text-green-400" : "text-red-400"}`}>
                         {t.direction === "income" ? "+" : "-"}${(t.amount || 0).toLocaleString()}
                       </p>
-                      {t.balance_after !== undefined && t.balance_after !== null && (
-                        <p className="text-[10px] text-muted-foreground/50">bal ${t.balance_after.toLocaleString()}</p>
-                      )}
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+                  ))}
+                  </div>
+                  )}
+                  </div>
+
+                  {/* Current Balance Footer */}
+                  <div className="border-t border-border px-4 py-3 bg-secondary/30 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Current Balance</span>
+                  <span className={`text-lg font-bold ${currentBalance >= 0 ? "text-green-400" : "text-red-400"}`}>
+                  ${currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                  </div>
+                  </div>
+                  )}
+                  </div>
+                  );
+                  }
