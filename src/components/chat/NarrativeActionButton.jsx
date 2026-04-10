@@ -138,7 +138,7 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.18 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[201] bg-card border border-border rounded-2xl shadow-2xl p-2 w-[min(260px,90vw)]"
+            className="fixed top-[40%] left-1/2 -translate-x-1/2 -translate-y-1/2 z-[201] bg-card border border-border rounded-2xl shadow-2xl p-2 w-[min(260px,90vw)] max-h-[70vh] overflow-y-auto"
           >
             <p className="text-[10px] text-muted-foreground px-2 pb-1.5 uppercase tracking-wider font-medium">
               What should they do?
