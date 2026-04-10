@@ -73,22 +73,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 1c: Character is at their work location but NOT on shift (off-shift presence)
-  if (workLocId) {
-    const workLocation = locationMap[workLocId];
-    if (workLocation && isLocationOpen(workLocation, currentTime) !== false) {
-      // Check if this is a valid "at work but off shift" scenario
-      // (e.g., Ethan at Anderson's Bar with a friend, but not working)
-      return {
-        resolved_current_location_id: workLocId,
-        resolved_current_location_name: workLocation.name || 'Work',
-        resolved_location_type: 'work',
-        resolved_presence_status: 'at_work_off_shift',
-        resolved_source_reason: 'at_workplace_off_shift',
-        resolved_zone: null,
-      };
-    }
-  }
+  // LAYER 1c: REMOVED — characters must NOT default to work location when off shift.
+  // Off-shift characters fall through to sleep check and home fallback below.
 
   // LAYER 2: Check school schedule
   if (character.student_status === 'enrolled' && character.education_location_id) {

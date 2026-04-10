@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -146,6 +146,35 @@ export default function CharacterProfile() {
     queryKey: ["userSettings"],
     queryFn: () => base44.entities.UserSettings.list(),
   });
+
+  const { data: workLocations = [] } = useQuery({
+    queryKey: ['workLocations', characterId],
+    queryFn: () => base44.entities.LocationReference.filter({ worker_character_ids: [characterId] }),
+    enabled: !!characterId,
+    staleTime: 30000,
+  });
+
+  const getWorkLocationName = (locationId) => {
+    if (!locationId) return null;
+    const found = workLocations.find(l => l.id === locationId);
+    return found?.name || null;
+  };
+
+  const getWorkShift = (locationId) => {
+    if (!locationId) return null;
+    const found = workLocations.find(l => l.id === locationId);
+    if (!found) return null;
+    const shift = found.worker_shifts?.[characterId];
+    if (!shift?.start || !shift?.end) return null;
+    const fmt = (t) => {
+      const [h, m] = t.split(':').map(Number);
+      const period = h >= 12 ? 'pm' : 'am';
+      return `${h % 12 || 12}:${String(m).padStart(2, '0')}${period}`;
+    };
+    const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+    const days = shift.days?.map(d => DAY_LABELS[d]).join('/') || '';
+    return `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
+  };
 
   const getReciprocal = () => {
     const settings = userSettings[0];
@@ -495,14 +524,23 @@ export default function CharacterProfile() {
                 )}
               </div>
               {/* Additional jobs */}
-              {character.additional_occupation_locations?.map((loc, idx) => (
-                <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
-                  {loc.job_title && <p className="text-sm text-foreground font-medium">{loc.job_title}</p>}
-                  <p className="text-sm text-muted-foreground flex items-center gap-1">
-                    <Briefcase className="w-3 h-3" /> {loc.location_name}
-                  </p>
-                </div>
-              ))}
+              {character.additional_occupation_locations?.map((loc, idx) => {
+                const realName = getWorkLocationName(loc.location_id) || loc.location_name;
+                const shiftDisplay = getWorkShift(loc.location_id);
+                return (
+                  <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
+                    {loc.job_title && <p className="text-sm text-foreground font-medium">{loc.job_title}</p>}
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Briefcase className="w-3 h-3" /> {realName || 'Secondary Job'}
+                    </p>
+                    {shiftDisplay && (
+                      <p className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> {shiftDisplay}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             {/* Editable work schedule — reads from & writes to LocationReference */}
             <CharacterWorkScheduleEditor character={character} />

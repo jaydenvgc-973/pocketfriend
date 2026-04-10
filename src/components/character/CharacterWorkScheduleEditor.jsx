@@ -6,10 +6,18 @@ import { Input } from "@/components/ui/input";
 
 const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
 
+function formatTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const period = h >= 12 ? 'pm' : 'am';
+  const hour = h % 12 || 12;
+  return `${hour}:${String(m).padStart(2, '0')}${period}`;
+}
+
 function formatShift(shift) {
   if (!shift?.start || !shift?.end) return null;
   const days = shift.days?.map(d => DAY_LABELS[d]).join('/') || '';
-  return `${shift.start}–${shift.end}${days ? ' · ' + days : ''}`;
+  return `${formatTime(shift.start)}–${formatTime(shift.end)}${days ? ' · ' + days : ''}`;
 }
 
 function WorkLocationEditor({ location, characterId, onSaved }) {
