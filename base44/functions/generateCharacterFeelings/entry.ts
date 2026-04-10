@@ -14,7 +14,7 @@ Deno.serve(async (req) => {
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
 
     const userSettings = await base44.entities.UserSettings.list();
-    const userDisplayName = userSettings?.[0]?.fictional_world_name || "the user";
+    const userDisplayName = userSettings?.[0]?.fictional_world_name || "you";
     const nickname = character.nickname_for_user || userDisplayName;
 
     const respect = character.user_respect_level ?? 50;
@@ -23,38 +23,37 @@ Deno.serve(async (req) => {
     const attraction = character.attraction_level ?? 0;
     const chosenFamily = character.chosen_family_level ?? 0;
     const emotionalState = character.emotional_state || "calm";
-    const currentEvent = character.current_life_event || "";
 
     const recentMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 5);
     const memorySummary = recentMemories.map(m => m.title + ": " + m.description).join("\n") || "None";
 
-    const prompt = `You are ${character.name}. You are a real person, not an AI. Based on the context below, write 2-3 short, raw, honest sentences describing exactly how you feel about ${nickname} right now and WHY you feel that way. Be specific — reference the actual reasons from your relationship with them.
+    const prompt = `You are ${character.name} speaking directly in first person. Write 2-3 short, honest sentences about how YOU feel toward ${nickname} right now and exactly why.
 
-CRITICAL RULES:
-- Write ONLY about your feelings toward ${nickname}. Do NOT mention any other characters, NPCs, friends, or people in your life.
-- Do NOT reference what is happening with other people or in your world generally.
-- If memories or baggage involve other people, reframe it ONLY in terms of how it shapes what you feel toward ${nickname}.
-- Write in first person. No bullet points. No labels. No assistant language. Sound like a real person reflecting quietly, not performing.
+CRITICAL RULES — violating any = wrong answer:
+1. STRICT FIRST PERSON ONLY. Use "I", "me", "my". NEVER say "${character.name}" — you are the speaker, not the subject.
+2. Address or reference the other person ONLY as "${nickname}". Never "the user".
+3. Talk ONLY about your feelings toward ${nickname}. No other people, no life summary.
+4. Sound like a real person thinking quietly — not performing, not explaining.
+5. No bullet points. No headers. No labels. Just the raw feeling + the reason behind it.
 
-YOUR PERSONALITY:
-${character.personality_summary || ""}
+WRONG (third person — forbidden):
+"${character.name} feels deep admiration for ${nickname}. He is grappling with..."
 
-YOUR CURRENT EMOTIONAL STATE: ${emotionalState}
+RIGHT (first person — correct):
+"I feel something I can't fully name with ${nickname}. There's a pull there I don't know what to do with yet, and that scares me a little."
 
-YOUR RELATIONSHIP WITH ${nickname.toUpperCase()}:
+YOUR PERSONALITY: ${character.personality_summary || ""}
+YOUR EMOTIONAL STATE RIGHT NOW: ${emotionalState}
+YOUR FEELINGS TOWARD ${nickname.toUpperCase()}:
 - Respect: ${respect}/100
 - Friendship: ${friendship}/100
-- Romantic feelings: ${romantic}/100
+- Romantic: ${romantic}/100
 - Attraction: ${attraction}/100
-- Chosen family bond: ${chosenFamily}/100
+- Chosen family: ${chosenFamily}/100
+RECENT MEMORIES: ${memorySummary}
+EMOTIONAL BAGGAGE (only as it relates to ${nickname}): ${character.emotional_baggage || "none"}
 
-RECENT MEMORIES WITH ${nickname.toUpperCase()}:
-${memorySummary}
-
-EMOTIONAL BAGGAGE (only reference how it affects your feelings toward ${nickname}):
-${character.emotional_baggage || "none"}
-
-Write only the feelings + reasons. No headers. No labels. Just say it.`;
+Write it now. First person. No self-name. Direct.`;
 
     const result = await base44.integrations.Core.InvokeLLM({ prompt });
     return Response.json({ feelings: result.trim() });
