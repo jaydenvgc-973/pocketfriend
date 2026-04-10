@@ -3,15 +3,10 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 
-/**
- * Wraps the Onboarding page and redirects to /home
- * if the user has already completed onboarding.
- * This prevents any accidental navigation back to the onboarding flow.
- */
 export default function OnboardingGuard({ children }) {
   const navigate = useNavigate();
 
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isLoading: isLoadingSettings } = useQuery({
     queryKey: ["userSettings"],
     queryFn: async () => {
       const list = await base44.entities.UserSettings.list();
@@ -19,15 +14,30 @@ export default function OnboardingGuard({ children }) {
     },
   });
 
+  const { data: currentUser, isLoading: isLoadingUser } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
+  const { data: characters, isLoading: isLoadingChars } = useQuery({
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date", 1),
+    enabled: !!currentUser?.email,
+  });
+
+  const isLoading = isLoadingSettings || isLoadingUser || isLoadingChars;
+
   useEffect(() => {
-    if (!isLoading && settings?.has_completed_onboarding) {
+    if (isLoading) return;
+    const hasCompletedOnboarding = settings?.has_completed_onboarding;
+    const hasCharacters = characters && characters.length > 0;
+    if (hasCompletedOnboarding || hasCharacters) {
       navigate("/home", { replace: true });
     }
-  }, [settings, isLoading, navigate]);
+  }, [settings, characters, isLoading, navigate]);
 
-  // Don't flash the onboarding page while checking
   if (isLoading) return null;
-  if (settings?.has_completed_onboarding) return null;
+  if (settings?.has_completed_onboarding || (characters && characters.length > 0)) return null;
 
   return children;
 }
