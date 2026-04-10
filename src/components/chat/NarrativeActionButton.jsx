@@ -115,18 +115,63 @@ ${tierInstructions}
 
 INTENT: Generate ${intentMap[intent] || intentMap.action}.
 
+---
 STYLE RULES:
 - Third person only ("${character.name} reaches...", "He looks up...")
-- ONE continuous paragraph, no double spacing, no em dashes mid-sentence
-- Clearly state what the character is physically doing — do not hide action behind metaphor alone
-- Include at least one grounded environmental detail (a pillow shifting, papers sliding, a chair scraping back, the couch dipping)
-- After grounding the scene in action and environment, intensify with metaphor only if context tier supports it
-- No dialogue (one short quoted line max)
-- No explicit content — suggestive and emotionally charged is fine, imagination fills the gaps
-- Fits the current location — do NOT invent new locations
+- ONE continuous paragraph, no double spacing, no em dashes mid-sentence, clean punctuation
+- Clearly state what the character is physically doing — metaphor must intensify the action, NOT replace it
 - 2-4 sentences max. Tight. Cinematic. Real.
 - The action must feel like the NEXT CORRECT CHAPTER, not a random scene change
 - HARD BLOCK: If the recent conversation is neutral/work/daily life, do NOT write romantic or passionate content
+- No explicit content — suggestive and emotionally charged is fine, imagination fills the gaps
+- One short quoted line of dialogue is allowed if it fits, but not required
+
+---
+ACTION RULE:
+The narrative must clearly name what the character is physically doing. Examples: pulling them closer, touching their face, holding them, gripping their wrist gently, guiding them by the waist, kissing, resting their forehead against theirs, brushing fingers along their arm or back, sitting down together, wrapping arms around each other. The metaphor must intensify the action, never replace it.
+
+---
+ENVIRONMENT VARIATION ENGINE (ANTI-REPETITION):
+Every narrative MUST include at least one grounded environmental interaction. You MUST NOT repeat the same environmental detail across scenes. Rotate from the following categories — use 2-4 different category types per scene, never just one:
+
+- SURFACE: edge of mattress dipping, pressed against dresser, counter pressing into their back, railing contact, desk edge catching movement, couch dipping, leaning into headboard
+- OBJECTS: lamp flickering, phone sliding off nightstand, papers scattering, pen rolling off desk, glass shifting on table, folded clothes slipping, detergent shifting, folders spilling
+- FABRIC: shirt pulled aside or falling, jacket pushed free, blanket dragged halfway, rug bunching underfoot, fabric stretching
+- SOUND: chair scraping floor, soft thud on carpet, machine hum underfoot, bed frame creaking, footsteps going quiet, something tapping a surface, breath filling a small space
+- LIGHT: window light shifting across bodies, lamp casting uneven shadows, streetlights flickering through windows, mirror reflecting movement in fragments, overhead light humming, windows fogging from inside
+- MOVEMENT: footing shifting, balance adjusting toward the other person, weight transferring unevenly, knees pressing together
+- TEMPERATURE: cool surface contrast against warm bodies, night air sharpening the warmth between them
+- CONSTRAINT: tight space forcing closeness, limited room leaving no hesitation, open space making the moment pull inward
+
+Do NOT overload the scene. Use 1-2 strong environment interactions and 1 subtle sensory layer. Do not default to "sheets crumpling" or "sheets twisting" — these are overused. Choose something physically specific to the actual current location.
+
+---
+ROOM TRANSITION RULE:
+If the scene shifts location mid-narrative, characters CANNOT teleport. Movement between rooms must be shown: walking, guiding, pulling, leading, following, shifting together through space. Each room must have at least one environmental cue. Movement must feel like part of the moment — not a pause or scene break. Keep momentum continuous.
+
+EXAMPLE (correct): He pulls them off the couch, their feet catching slightly on the rug as he guides them back into the hallway where the space tightens, then into the bedroom where the edge of the bed meets them before they stop.
+EXAMPLE (wrong): They were suddenly in the bedroom.
+
+---
+STYLE REFERENCE EXAMPLES (do not copy — use as tone guide only):
+
+LOW: He does not interrupt the flow of the conversation. He just steps a little closer, close enough that the tone changes without either of them having to name it. His hand brushes theirs for a second, light and almost absentminded, but it lingers just long enough to feel intentional. The room stays quiet around them, the kind of quiet that settles when something small shifts and both people notice it.
+
+LOW-MEDIUM: He looks at them a second longer than usual, then closes the distance by half a step, not enough to overwhelm the moment, just enough to change it. His fingers graze their wrist before settling there properly, warm and certain, and when he speaks again it is softer than before. Something on the table beside them shifts when he leans in, barely enough to matter, but it makes the air feel smaller.
+
+MEDIUM (comfort): He reaches for them without making a performance out of it, one hand settling at their side as he pulls them into him. Their bodies settle against each other and the couch dips under the added weight, his hand moving once along their back in a quiet rhythm that says more than any line of dialogue could.
+
+MEDIUM (flirt): He catches their hand before they can pull it back, using the contact to guide them closer until their bodies nearly meet. When he kisses them it starts brief and teasing, and the edge of the desk presses lightly against them as papers slide out of place behind the movement. He does not let the space return when he pulls back.
+
+HIGH (bedroom, varied): He pulls them closer by the waist and their kiss lands soft, then deepens, and somewhere in it he pushes his shirt up and off without looking. The edge of the mattress dips unevenly as they move, the curtains stirring slightly from the air shifting through the room. They hold onto each other tighter after that, bodies aligning, finding rhythm, like something pulling them into the same current.
+
+HIGH (dresser/mirror): He turns with them, guiding them back until they meet the edge of the dresser, the surface pressing into their lower back. The mirror behind them catches just enough of the movement to reflect it back in fragments. Something small rattles on the dresser top before settling, and the moment keeps building, their bodies pressing together like waves folding into each other.
+
+HIGH (kitchen): He pulls them toward him near the counter and the shift presses them lightly against it, the surface cool against their back in contrast to everything building between them. A utensil shifts somewhere behind them, metal tapping softly before settling. They kiss, deeper now, his hand sliding along their side, the overhead light humming steadily while everything beneath it feels anything but.
+
+HIGH (car): He leans across the seat, pulling them closer until the limited space leaves no room for hesitation. Their knees press together, the seat creaking slightly under the movement, and the windows begin to fog faintly, softening the outside world into something distant. Inside, everything feels contained, like a storm building quietly in a place that does not have room to release it.
+
+HIGH (office): He turns them toward the desk in one smooth motion and papers slide loose the second their bodies meet the edge. The chair rolls back behind them with a soft scrape, a stack of folders tipping sideways and spilling to the floor forgotten. The tension between them rises like pressure against a dam until it feels as if the whole space is holding its breath.
 
 Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
 
