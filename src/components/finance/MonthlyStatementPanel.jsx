@@ -135,23 +135,16 @@ export default function MonthlyStatementPanel({ characterId }) {
           </div>
 
           {/* Summary row */}
-          <div className="grid grid-cols-3 gap-2 px-4 pb-3">
+          <div className="grid grid-cols-2 gap-2 px-4 pb-3">
             <div className="bg-green-500/10 rounded-xl p-2.5 text-center">
               <TrendingUp className="w-3.5 h-3.5 text-green-400 mx-auto mb-1" />
-              <p className="text-[10px] text-muted-foreground">Income</p>
-              <p className="text-sm font-bold text-green-400">${totalIncome.toLocaleString()}</p>
+              <p className="text-[10px] text-muted-foreground">Current Balance</p>
+              <p className="text-sm font-bold text-green-400">${currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
             </div>
             <div className="bg-red-500/10 rounded-xl p-2.5 text-center">
               <TrendingDown className="w-3.5 h-3.5 text-red-400 mx-auto mb-1" />
-              <p className="text-[10px] text-muted-foreground">Spent</p>
+              <p className="text-[10px] text-muted-foreground">Total Spent</p>
               <p className="text-sm font-bold text-red-400">${totalExpenses.toLocaleString()}</p>
-            </div>
-            <div className={`rounded-xl p-2.5 text-center ${net >= 0 ? "bg-emerald-500/10" : "bg-orange-500/10"}`}>
-              <DollarSign className={`w-3.5 h-3.5 mx-auto mb-1 ${net >= 0 ? "text-emerald-400" : "text-orange-400"}`} />
-              <p className="text-[10px] text-muted-foreground">Net</p>
-              <p className={`text-sm font-bold ${net >= 0 ? "text-emerald-400" : "text-orange-400"}`}>
-                {net >= 0 ? "+" : ""}${net.toLocaleString()}
-              </p>
             </div>
           </div>
 
@@ -196,14 +189,6 @@ export default function MonthlyStatementPanel({ characterId }) {
                   ))}
                   </div>
                   )}
-                  </div>
-
-                  {/* Current Balance Footer */}
-                  <div className="border-t border-border px-4 py-3 bg-secondary/30 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Current Balance</span>
-                  <span className={`text-lg font-bold ${currentBalance >= 0 ? "text-green-400" : "text-red-400"}`}>
-                  ${currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
                   </div>
                   </div>
                   )}
