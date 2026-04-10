@@ -56,8 +56,12 @@ export default function MonthlyStatementPanel({ characterId }) {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
-
   const [currentBalance, setCurrentBalance] = useState(0);
+
+  // Parse selected month to get start/end dates
+  const [year, month] = selectedMonth.split("-").map(Number);
+  const monthStart = startOfMonth(new Date(year, month - 1, 1));
+  const monthEnd = endOfMonth(new Date(year, month - 1, 1));
 
   const { data: transactions = [], isLoading } = useQuery({
     queryKey: ["financialTransactions", characterId, selectedMonth],
