@@ -1779,6 +1779,16 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       </div>
       {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
+      {character && conversationId && (
+        <NarrativeActionButton
+          character={character}
+          conversationId={conversationId}
+          recentMessages={messages}
+          onNarrativeCreated={(msg) => setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])}
+          externalTrigger={showNarrativeAction}
+          onExternalClose={() => setShowNarrativeAction(false)}
+        />
+      )}
       {character && !isPhone && (
         <GameLauncher
           character={character}
