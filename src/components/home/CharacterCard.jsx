@@ -264,10 +264,20 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                     label = `working at ${resolved.resolved_current_location_name}`;
                     color = 'text-blue-400';
                 } else if (resolved.resolved_location_type === 'work' || resolved.resolved_presence_status === 'at_work_off_shift') {
-                    // At work location but OFF SHIFT — show pin (visitor)
-                    iconType = 'visit';
+                    // At work location but OFF SHIFT — use location's category icon
+                    const loc = locationMap[resolved.resolved_current_location_id];
+                    const category = loc?.category;
+                    if (category === 'gym') {
+                      iconType = 'gym';
+                      color = 'text-cyan-400';
+                    } else if (category === 'food_drink') {
+                      iconType = 'bar';
+                      color = 'text-amber-400';
+                    } else {
+                      iconType = 'visit';
+                      color = 'text-cyan-400';
+                    }
                     label = `at ${resolved.resolved_current_location_name}`;
-                    color = 'text-cyan-400';
                 } else if (resolved.resolved_location_type === 'school') {
                   iconType = 'school';
                   label = `at ${resolved.resolved_current_location_name}`;
@@ -281,28 +291,24 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   label = `headed to ${resolved.resolved_current_location_name}`;
                   color = 'text-orange-400';
                 } else {
-                  iconType = 'out';
+                  // At any other location — use its category icon
+                  const loc = locationMap[resolved.resolved_current_location_id];
+                  const category = loc?.category;
+                  if (category === 'gym') {
+                    iconType = 'gym';
+                  } else if (category === 'food_drink') {
+                    iconType = 'bar';
+                  } else if (category === 'home') {
+                    iconType = 'home';
+                  } else if (category === 'school' || category === 'education') {
+                    iconType = 'school';
+                  } else {
+                    iconType = 'out';
+                  }
                   label = `at ${resolved.resolved_current_location_name}`;
                   color = 'text-blue-400';
                 }
                 
-                const iconComponents = {
-                  'sleep': Moon,
-                  'work': Briefcase,
-                  'school': BookOpen,
-                  'gym': Dumbbell,
-                  'bar': Wine,
-                  'club': Music,
-                  'mall': ShoppingBag,
-                  'home': Home,
-                  'out': MapPin,
-                  'visit': MapPin,
-                  'hospital': AlertTriangle,
-                  'prayer': Sparkles,
-                  'calm': null
-                };
-                const IconComponent = iconComponents[iconType];
-
                 return (
                   <div className="flex items-center gap-1.5">
                     {IconComponent ? (
