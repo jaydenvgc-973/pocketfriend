@@ -7,8 +7,12 @@ import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { generateImageWithUserIdentity, buildUserAppearanceData, buildUserReferenceImages } from "@/lib/userImageGeneration";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
-export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated }) {
+export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated, externalTrigger, onExternalClose }) {
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    if (externalTrigger) { setIsOpen(true); onExternalClose?.(); }
+  }, [externalTrigger]);
   const [selectedImage, setSelectedImage] = useState(null);
   const [regenTarget, setRegenTarget] = useState(null); // { id, url } of image to regenerate
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -405,19 +409,6 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
   return (
     <>
-      {/* Media button in header — always show if character exists */}
-      <button
-        onClick={() => setIsOpen(true)}
-        className="relative p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-        title="View media & generate photos"
-      >
-        <Images className="w-4 h-4" />
-        {images.length > 0 && (
-          <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full bg-primary text-primary-foreground text-[10px] font-semibold flex items-center justify-center">
-            {images.length}
-          </span>
-        )}
-      </button>
 
       {/* Media modal */}
       {createPortal(

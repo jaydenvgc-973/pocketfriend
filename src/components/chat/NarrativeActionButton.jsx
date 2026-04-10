@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Sparkles, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { motion, AnimatePresence } from "framer-motion";
@@ -20,7 +20,12 @@ export default function NarrativeActionButton({
   recentMessages = [],
   userSettings = {},
   onNarrativeCreated,
+  externalTrigger,
+  onExternalClose,
 }) {
+  useEffect(() => {
+    if (externalTrigger) { setOpen(true); onExternalClose?.(); }
+  }, [externalTrigger]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [cooldown, setCooldown] = useState(0);

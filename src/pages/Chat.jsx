@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Wrench } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { AnimatePresence } from "framer-motion";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
@@ -16,7 +16,7 @@ import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
-import { BarChart2, BookOpen, Globe, DollarSign } from "lucide-react";
+
 import SendMoneyModal from "@/components/chat/SendMoneyModal";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
@@ -27,6 +27,7 @@ import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
+import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
 import {
@@ -66,6 +67,9 @@ export default function Chat() {
   const [forwardTarget, setForwardTarget] = useState(null); // message pending forward
   const [showSendMoney, setShowSendMoney] = useState(false);
   const [isSendingMoney, setIsSendingMoney] = useState(false);
+  const [showMediaGallery, setShowMediaGallery] = useState(false);
+  const [showGameLauncher, setShowGameLauncher] = useState(false);
+  const [showNarrativeAction, setShowNarrativeAction] = useState(false);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1753,64 +1757,39 @@ Reply with ONLY the single emoji or the word "none".`,
           <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
           <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
         </div>
-        {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} />}
-
-        {character && !isPhone && (
-          <GameLauncher
-            character={character}
-            conversationId={conversationId}
-            onGameEnd={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
-          />
-        )}
-
-        {character && conversationId && (
-          <NarrativeActionButton
-            character={character}
-            conversationId={conversationId}
-            recentMessages={messages}
-            userSettings={userSettings}
-            onNarrativeCreated={(msg) => setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])}
-          />
-        )}
-        {character && conversationId && (
-          <button
-            onClick={() => setShowTroubleshooting(true)}
-            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-            title="Troubleshoot this thread"
-          >
-            <Wrench className="w-4 h-4" />
-          </button>
-        )}
-
-        {character && (character.fictional_relationships || []).length > 0 && (
-          <button
-            onClick={() => setShowWorldContacts(true)}
-            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-            title="Speak to people in their world"
-          >
-            <Globe className="w-4 h-4" />
-          </button>
-        )}
-
-        {character && (
-          <button
-            onClick={() => setShowNarrativeBuilder(true)}
-            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-            title="Add narrative event"
-          >
-            <BookOpen className="w-4 h-4" />
-          </button>
-        )}
-        {character && (
-          <button
-            onClick={() => setShowSendMoney(true)}
-            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-            title="Send money"
-          >
-            <DollarSign className="w-4 h-4" />
-          </button>
-        )}
+        <ChatActionsMenu
+          visible={{
+            media: !!character,
+            game: !!character && !isPhone,
+            narrative: !!character && !!conversationId,
+            contacts: !!character && (character.fictional_relationships || []).length > 0,
+            story: !!character,
+            money: !!character,
+            troubleshoot: !!character && !!conversationId,
+          }}
+          onSelect={(id) => {
+            if (id === "media") setShowMediaGallery(true);
+            if (id === "game") setShowGameLauncher(true);
+            if (id === "narrative") setShowNarrativeAction(true);
+            if (id === "contacts") setShowWorldContacts(true);
+            if (id === "story") setShowNarrativeBuilder(true);
+            if (id === "money") setShowSendMoney(true);
+            if (id === "troubleshoot") setShowTroubleshooting(true);
+          }}
+        />
       </div>
+      {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
+      {character && !isPhone && (
+        <GameLauncher
+          character={character}
+          conversationId={conversationId}
+          onGameEnd={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+          externalTrigger={showGameLauncher}
+          onExternalClose={() => setShowGameLauncher(false)}
+        />
+      )}
+
+      )}
       {showSendMoney && character && (
         <SendMoneyModal
           character={character}

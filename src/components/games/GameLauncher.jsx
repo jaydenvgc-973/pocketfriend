@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Gamepad2, X } from "lucide-react";
@@ -13,8 +13,12 @@ const GAMES = [
   { id: "gemduel",      label: "Gem Duel",       emoji: "💎", desc: "Match gems, chain combos, score big",      color: "from-purple-500/20 to-violet-700/10" },
 ];
 
-export default function GameLauncher({ character, conversationId, onGameEnd }) {
+export default function GameLauncher({ character, conversationId, onGameEnd, externalTrigger, onExternalClose }) {
   const [pickerOpen, setPickerOpen] = useState(false);
+
+  useEffect(() => {
+    if (externalTrigger) { setPickerOpen(true); onExternalClose?.(); }
+  }, [externalTrigger]);
   const [activeGame, setActiveGame] = useState(null);
 
   const launchGame = (gameId) => {
@@ -28,15 +32,6 @@ export default function GameLauncher({ character, conversationId, onGameEnd }) {
 
   return (
     <>
-      <motion.button
-        whileTap={{ scale: 0.88 }}
-        whileHover={{ scale: 1.08 }}
-        onClick={() => setPickerOpen(true)}
-        className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-primary hover:bg-primary/10 transition-all"
-        title="Play a game with this character"
-      >
-        <Gamepad2 className="w-4 h-4" />
-      </motion.button>
 
       {createPortal(
         <AnimatePresence>
