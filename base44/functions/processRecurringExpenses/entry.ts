@@ -2,8 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 /**
  * Process recurring monthly expenses
- * Runs daily to check if any monthly expenses are due today
- * and creates transactions for them
+ * Runs daily on day 1 of month to create transactions for all recurring expenses
  */
 
 Deno.serve(async (req) => {
@@ -16,6 +15,11 @@ Deno.serve(async (req) => {
 
     const today = new Date();
     const dayOfMonth = today.getDate();
+
+    // Only process on day 1 of each month
+    if (dayOfMonth !== 1) {
+      return Response.json({ success: true, processedCount: 0, results: [] });
+    }
 
     // Get all characters created by this user
     const characters = await base44.entities.Character.filter({
@@ -34,60 +38,61 @@ Deno.serve(async (req) => {
         if (!financial || financial.length === 0) continue;
 
         const fin = financial[0];
-        const recurringExpenses = fin.recurring_expenses || [];
+        const recurringExpenses = fin.other_monthly_expenses || [];
 
         for (const expense of recurringExpenses) {
-          // Check if this expense is due today
-          const dueDay = expense.due_day || 1;
-          if (dueDay !== dayOfMonth) continue;
-
-          // Check if transaction already exists for today
+          // Check if transaction already created today for this expense
           const existingTxn = await base44.asServiceRole.entities.FinancialTransaction.filter({
             character_id: character.id,
-            transaction_type: expense.expense_type,
-            location_id: expense.location_id,
+            transaction_type: expense.type,
+            description: expense.name,
           });
 
           const today_str = today.toISOString().split('T')[0];
           const alreadyPosted = existingTxn.some(t => {
             if (!t.timestamp) return false;
             const txn_date = new Date(t.timestamp).toISOString().split('T')[0];
-            return txn_date === today_str && t.description?.includes(expense.description || expense.expense_type);
+            return txn_date === today_str;
           });
 
           if (alreadyPosted) continue;
 
-          // Create transaction
+          // Create transaction for this recurring expense
+          const newBalance = fin.current_balance - (expense.amount || 0);
           const transaction = await base44.asServiceRole.entities.FinancialTransaction.create({
             character_id: character.id,
             character_name: character.name,
             sender_type: 'system',
-            sender_name: 'Recurring Charge',
+            sender_name: 'Monthly Expense',
             receiver_type: 'system',
-            receiver_name: 'Account',
-            amount: expense.monthly_cost || 0,
+            receiver_name: expense.name,
+            amount: expense.amount || 0,
             direction: 'expense',
-            transaction_type: expense.expense_type,
-            description: `${expense.description || expense.expense_type} (Monthly)`,
-            location_id: expense.location_id || null,
-            location_name: expense.location_name || null,
-            balance_after: fin.current_balance - (expense.monthly_cost || 0),
+            transaction_type: expense.type,
+            description: expense.name,
+            location_id: null,
+            location_name: null,
+            balance_after: newBalance,
             timestamp: new Date().toISOString(),
           });
 
           // Update character's current balance
-          const newBalance = fin.current_balance - (expense.monthly_cost || 0);
+          const updatedExpenses = fin.other_monthly_expenses.map(e => 
+            e.name === expense.name ? { ...e, last_payment_date: new Date().toISOString(), total_paid: (e.total_paid || 0) + (e.amount || 0) } : e
+          );
+          
           await base44.asServiceRole.entities.CharacterFinancial.update(fin.id, {
             current_balance: newBalance,
-            total_expenses: (fin.total_expenses || 0) + (expense.monthly_cost || 0),
+            total_expenses: (fin.total_expenses || 0) + (expense.amount || 0),
+            other_monthly_expenses: updatedExpenses,
             last_updated: new Date().toISOString(),
           });
 
           results.push({
             characterId: character.id,
             characterName: character.name,
-            expenseType: expense.expense_type,
-            amount: expense.monthly_cost,
+            expenseName: expense.name,
+            amount: expense.amount,
             transactionId: transaction.id,
             newBalance,
           });
