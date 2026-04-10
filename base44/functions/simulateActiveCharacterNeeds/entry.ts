@@ -26,13 +26,19 @@ const RATES = {
   hospital:    { hunger: -1,  energy: +2,  social: -1,   health: +3,   mental: -1,  hygiene: 0,   comfort: +1  },
   social_out:  { hunger: -2,  energy: -3,  social: +4,   health: 0,    mental: +1,  hygiene: -1,  comfort: -0.5},
   traveling:   { hunger: -3,  energy: -3,  social: -1,   health: 0,    mental: -1,  hygiene: -2,  comfort: -3  },
+  eating:      { hunger: +15, energy: +2,  social: +1,   health: +0.5, mental: +1,  hygiene: 0,   comfort: +2  },
+  resting:     { hunger: -1,  energy: +6,  social: -0.5, health: +1,   mental: +2,  hygiene: 0,   comfort: +3  },
   default:     { hunger: -2,  energy: -2,  social: -1,   health: 0,    mental: -0.5,hygiene: -1,  comfort: -1  },
 };
 
 function getLocationContext(character, locationMap) {
+  // Proactive activity overrides — character is actively doing something to meet a need
+  const activity = (character.current_activity || '').toLowerCase();
+  if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
+  if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
+
   const locId = character.resolved_current_location_id;
   if (!locId) {
-    // Check if sleeping
     const presenceStatus = character.resolved_presence_status;
     if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
     return 'default';
@@ -50,10 +56,10 @@ function getLocationContext(character, locationMap) {
 
   if (cat === 'gym') return 'gym';
   if (cat === 'medical') return 'hospital';
+  if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) return 'eating';
   if (cat === 'social' || name.includes('bar') || name.includes('club') || name.includes('lounge') || name.includes('nightclub')) return 'bar_club';
-  if (cat === 'food_drink' || cat === 'outdoor') return 'social_out';
+  if (cat === 'outdoor') return 'social_out';
   if (cat === 'home') {
-    // At home: resting vs active
     if (presenceStatus === 'home') return 'home_resting';
     return 'home_active';
   }
@@ -74,8 +80,17 @@ function applyElapsedTime(needs, elapsedHours, context) {
   };
 }
 
-// Health degrades when other needs are critically low
+// Health and comfort degrade when hunger is critical (< 20)
+// Also degrades when multiple other needs are critically low
 function applyHealthDegradation(needs) {
+  // Hunger critical: directly impacts health and comfort
+  if (needs.hunger < 20) {
+    const severity = (20 - needs.hunger) / 20; // 0 to 1, higher = worse
+    needs.health  = clamp(needs.health  - 1.5 * severity);
+    needs.comfort = clamp(needs.comfort - 1.0 * severity);
+    needs.energy  = clamp(needs.energy  - 0.5 * severity);
+  }
+  // Multiple critical needs also hurt health
   const criticalCount = [needs.hunger, needs.energy, needs.mental, needs.hygiene, needs.comfort]
     .filter(v => v < 20).length;
   if (criticalCount >= 3) {
@@ -190,16 +205,40 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const context = getLocationContext(char, locationMap);
-      let newNeeds = applyElapsedTime({
-        hunger: currentNeeds.hunger,
-        energy: currentNeeds.energy,
-        social: currentNeeds.social,
-        health: currentNeeds.health,
-        mental: currentNeeds.mental,
-        hygiene: currentNeeds.hygiene,
-        comfort: currentNeeds.comfort,
-      }, cappedHours, context);
+      // Proactive need resolution: if a need is critical (<20) or low (<50),
+      // inject a corrective activity into current_activity so the context picks it up.
+      // This simulates the character autonomously addressing their needs.
+      let proactiveActivity = null;
+      const hunger = currentNeeds.hunger ?? 70;
+      const energy = currentNeeds.energy ?? 75;
+      const hygiene = currentNeeds.hygiene ?? 75;
+      const mental = currentNeeds.mental ?? 70;
+
+      // Priority order: critical needs first, then below-50 needs
+      if (hunger < 20) {
+        // Critical hunger — character MUST eat regardless of what they're doing
+        proactiveActivity = 'eating a meal (critical hunger)';
+      } else if (hunger < 50 && context === 'home_resting') {
+        // Low hunger + home = grab food
+        proactiveActivity = 'cooking and eating at home';
+      } else if (energy < 20 && context !== 'sleeping') {
+        proactiveActivity = 'resting urgently (critical energy)';
+      } else if (hygiene < 20) {
+        proactiveActivity = 'showering (critical hygiene)';
+      } else if (mental < 20) {
+        proactiveActivity = 'resting and decompressing';
+      }
+
+      // Apply proactive override to character (fire and forget, non-blocking)
+      if (proactiveActivity && char.current_activity !== proactiveActivity) {
+        sdk.entities.Character.update(char.id, { current_activity: proactiveActivity }).catch(() => {});
+      }
+
+      // Use proactive activity for context if overriding
+      const overriddenChar = proactiveActivity
+        ? { ...char, current_activity: proactiveActivity }
+        : char;
+      const context = getLocationContext(overriddenChar, locationMap);
 
       newNeeds = applyHealthDegradation(newNeeds);
       const financialNeed = deriveFinancialNeed(char);
