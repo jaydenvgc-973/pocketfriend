@@ -309,6 +309,23 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   color = 'text-blue-400';
                 }
                 
+                const iconComponents = {
+                  'sleep': Moon,
+                  'work': Briefcase,
+                  'school': BookOpen,
+                  'gym': Dumbbell,
+                  'bar': Wine,
+                  'club': Music,
+                  'mall': ShoppingBag,
+                  'home': Home,
+                  'out': MapPin,
+                  'visit': MapPin,
+                  'hospital': AlertTriangle,
+                  'prayer': Sparkles,
+                  'calm': null
+                };
+                const IconComponent = iconComponents[iconType];
+                
                 return (
                   <div className="flex items-center gap-1.5">
                     {IconComponent ? (
