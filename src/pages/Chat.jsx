@@ -16,7 +16,8 @@ import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
-import { BarChart2, BookOpen, Globe } from "lucide-react";
+import { BarChart2, BookOpen, Globe, DollarSign } from "lucide-react";
+import SendMoneyModal from "@/components/chat/SendMoneyModal";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
@@ -61,6 +62,8 @@ export default function Chat() {
   const [voiceErrors, setVoiceErrors] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null); // message pending delete choice
   const [forwardTarget, setForwardTarget] = useState(null); // message pending forward
+  const [showSendMoney, setShowSendMoney] = useState(false);
+  const [isSendingMoney, setIsSendingMoney] = useState(false);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1807,20 +1810,35 @@ Reply with ONLY the single emoji or the word "none".`,
         )}
         {character && (
           <button
-            onClick={() => setShowStatusPopup(true)}
+            onClick={() => setShowSendMoney(true)}
             className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
-            title="View relationship status"
+            title="Send money"
           >
-            <BarChart2 className="w-4 h-4" />
+            <DollarSign className="w-4 h-4" />
           </button>
         )}
       </div>
-      {showStatusPopup && character && (
-        <CharacterStatusPopup
+      {showSendMoney && character && (
+        <SendMoneyModal
           character={character}
-          onClose={() => setShowStatusPopup(false)}
-          previousLevels={previousLevels}
-          lastChangeReason={lastChangeReason}
+          userBalance={userSettings.user_balance ?? 0}
+          isSending={isSendingMoney}
+          onClose={() => setShowSendMoney(false)}
+          onSend={async (amount) => {
+            setIsSendingMoney(true);
+            try {
+              await base44.functions.invoke('sendMoneyToCharacter', {
+                characterId,
+                conversationId,
+                amount,
+              });
+              setShowSendMoney(false);
+              queryClient.invalidateQueries({ queryKey: ['userSettings'] });
+              queryClient.invalidateQueries({ queryKey: ['character', characterId] });
+            } finally {
+              setIsSendingMoney(false);
+            }
+          }}
         />
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
