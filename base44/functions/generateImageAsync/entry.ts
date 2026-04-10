@@ -701,7 +701,7 @@ Deno.serve(async (req) => {
             console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
           }
         } else {
-          // ── AUTOMATIC TEXT-PARSING PATH (fallback when no manual selection) ──
+          // ── AUTOMATIC PATH: real-time location lock FIRST, text-parse as fallback ──
           const charRecord = characterId
             ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
             : null;
@@ -712,17 +712,73 @@ Deno.serve(async (req) => {
               { created_by: createdBy }, '-created_date', 100
             );
 
-            const { locationImages: imgs, locationName, zoneName, matchConfidence, confidenceScore } =
-              resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
+            // ── STEP 1: Real-time location lock (highest priority) ──
+            // Use the character's authoritative current location from the location engine.
+            // This mirrors what the character card + travel page show — images must match.
+            const currentLocId = charRecord?.resolved_current_location_id
+              || charRecord?.current_home_location_id;
 
-            if (imgs.length > 0 && confidenceScore >= 0.7) {
-              locationImages = imgs;
-              resolvedLocationName = locationName;
-              resolvedZoneName = zoneName;
-              locationNote = buildRoomLockNote(locationName, zoneName);
-              console.log(`[LOCATION] ✓ AUTO: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)} | Images: ${imgs.length}`);
-            } else if (imgs.length > 0) {
-              console.log(`[LOCATION] ✗ Auto match below threshold (score=${confidenceScore.toFixed(2)}) — no environment applied`);
+            let realTimeLoc = currentLocId
+              ? savedLocations.find(l => l.id === currentLocId) || null
+              : null;
+
+            // Also try occupation location if character is at work
+            if (!realTimeLoc && charRecord?.resolved_location_type === 'work' && charRecord?.occupation_location_id) {
+              realTimeLoc = savedLocations.find(l => l.id === charRecord.occupation_location_id) || null;
+            }
+
+            if (realTimeLoc) {
+              // Character has a confirmed real-time location — use it as the base.
+              // Still run zone inference from the prompt to pick the right zone within it.
+              const zoneHint = null; // let resolveZoneImages infer from prompt keywords
+              const { zoneImages, zoneName } = resolveZoneImages(cleanPrompt.toLowerCase(), realTimeLoc, zoneHint);
+              const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
+
+              if (imgs.length > 0) {
+                locationImages = imgs;
+                resolvedLocationName = realTimeLoc.name;
+                resolvedZoneName = zoneName;
+                locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
+
+                // Residential enforcement: only allowed people are residents + the user
+                if (realTimeLoc.category === 'home') {
+                  const residentNames = [
+                    ...(realTimeLoc.resident_character_names || []),
+                    ...(realTimeLoc.resident_family_members || []).map(r => r.name),
+                  ].filter(Boolean);
+                  const residentList = residentNames.length > 0
+                    ? `Only the following people may appear: ${residentNames.join(', ')}${userWorldName ? `, and ${userWorldName}` : ''}. `
+                    : '';
+                  locationNote += `\n\n🏠 RESIDENTIAL LOCATION RULE (MANDATORY):\nThis is a private home. ${residentList}NO random strangers, background extras, or unspecified people. This home must feel personal and specific — not a generic stock-photo house.`;
+                }
+
+                console.log(`[LOCATION] ✓ REALTIME LOCK: "${resolvedLocationName}" (type: ${charRecord?.resolved_location_type || 'home'}) → Zone: "${zoneName}" | Images: ${imgs.length}`);
+              } else {
+                // Location found but no images — text-parse as fallback
+                console.log(`[LOCATION] Real-time location "${realTimeLoc.name}" has no images — falling back to text parse`);
+                const { locationImages: parsedImgs, locationName, zoneName: parsedZone, confidenceScore } =
+                  resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
+                if (parsedImgs.length > 0 && confidenceScore >= 0.7) {
+                  locationImages = parsedImgs;
+                  resolvedLocationName = locationName;
+                  resolvedZoneName = parsedZone;
+                  locationNote = buildRoomLockNote(locationName, parsedZone);
+                }
+              }
+            } else {
+              // ── STEP 2: No real-time location — fall back to text parsing ──
+              const { locationImages: imgs, locationName, zoneName, matchConfidence, confidenceScore } =
+                resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
+
+              if (imgs.length > 0 && confidenceScore >= 0.7) {
+                locationImages = imgs;
+                resolvedLocationName = locationName;
+                resolvedZoneName = zoneName;
+                locationNote = buildRoomLockNote(locationName, zoneName);
+                console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)} | Images: ${imgs.length}`);
+              } else if (imgs.length > 0) {
+                console.log(`[LOCATION] ✗ Text parse below threshold (score=${confidenceScore.toFixed(2)}) — no environment applied`);
+              }
             }
           }
         }
