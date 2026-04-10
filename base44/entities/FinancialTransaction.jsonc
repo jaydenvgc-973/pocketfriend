@@ -1,0 +1,115 @@
+{
+  "name": "FinancialTransaction",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this transaction belongs to"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "sender_id": {
+      "type": "string",
+      "description": "ID of the character or user initiating the transaction"
+    },
+    "sender_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "character",
+        "system"
+      ],
+      "description": "Type of sender"
+    },
+    "sender_name": {
+      "type": "string",
+      "description": "Display name of the sender"
+    },
+    "receiver_id": {
+      "type": "string",
+      "description": "ID of the character or user receiving the transaction"
+    },
+    "receiver_type": {
+      "type": "string",
+      "enum": [
+        "user",
+        "character",
+        "system"
+      ],
+      "description": "Type of receiver"
+    },
+    "receiver_name": {
+      "type": "string",
+      "description": "Display name of the receiver"
+    },
+    "amount": {
+      "type": "number",
+      "description": "The amount of money (positive value)"
+    },
+    "direction": {
+      "type": "string",
+      "enum": [
+        "income",
+        "expense"
+      ],
+      "description": "Whether this is money coming in (income) or going out (expense) for the character"
+    },
+    "transaction_type": {
+      "type": "string",
+      "enum": [
+        "gift",
+        "loan",
+        "repayment",
+        "purchase",
+        "income",
+        "rent",
+        "utilities",
+        "groceries",
+        "gym",
+        "tuition",
+        "childcare",
+        "bar_restaurant",
+        "entertainment",
+        "transport",
+        "clothing",
+        "healthcare",
+        "simulated_need",
+        "scene_purchase",
+        "payroll",
+        "other"
+      ],
+      "description": "Category of the financial transaction"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the transaction"
+    },
+    "location_id": {
+      "type": "string",
+      "description": "Optional: ID of the LocationReference where the transaction occurred"
+    },
+    "location_name": {
+      "type": "string",
+      "description": "Display name of the location"
+    },
+    "balance_after": {
+      "type": "number",
+      "description": "Character's balance after this transaction was applied"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when the transaction occurred"
+    }
+  },
+  "required": [
+    "character_id",
+    "amount",
+    "direction",
+    "transaction_type",
+    "description",
+    "timestamp"
+  ]
+}

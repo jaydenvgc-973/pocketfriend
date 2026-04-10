@@ -22,6 +22,7 @@ import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
+import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 
@@ -305,6 +306,9 @@ export default function CharacterProfile() {
 
         {/* Financial Summary */}
         <CharacterFinancialSummary characterId={characterId} />
+
+        {/* Monthly Statement */}
+        <MonthlyStatementPanel characterId={characterId} />
 
         {/* Monthly Expenses */}
         <CharacterExpenseManager characterId={characterId} readOnly={character.is_default} />
