@@ -26,6 +26,7 @@ import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
+import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
 import {
@@ -1762,6 +1763,15 @@ Reply with ONLY the single emoji or the word "none".`,
           />
         )}
 
+        {character && conversationId && (
+          <NarrativeActionButton
+            character={character}
+            conversationId={conversationId}
+            recentMessages={messages}
+            userSettings={userSettings}
+            onNarrativeCreated={(msg) => setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg])}
+          />
+        )}
         {character && conversationId && (
           <button
             onClick={() => setShowTroubleshooting(true)}
