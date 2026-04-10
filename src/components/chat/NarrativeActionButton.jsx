@@ -73,12 +73,7 @@ export default function NarrativeActionButton({
       const emotionalState = character.emotional_state || "calm";
       const location = character.resolved_current_location_name || character.city || "home";
 
-      // Context tier
-      let contextTier = "low";
-      if (hasRomantic || (romanticLevel >= 60 && hasFlirt)) contextTier = "high";
-      else if (hasFlirt || hasEmotional || romanticLevel >= 30) contextTier = "medium";
-
-      // Relationship gating
+      // Relationship type detection — evaluated FIRST, gates everything below
       const isFamilial = (character.fictional_relationships || []).some(r =>
         ['parent','sibling','child','cousin','aunt','uncle','grandparent','family'].some(f =>
           (r.relationship_type || '').toLowerCase().includes(f)
@@ -89,94 +84,109 @@ export default function NarrativeActionButton({
           (r.relationship_type || '').toLowerCase().includes(f)
         )
       );
-      const romanticOk = !isFamilial && !isMentor && attractionLevel >= 20 && (intent === 'flirt' || contextTier !== 'low' || romanticLevel >= 30);
 
-      // Intent descriptions (per-button locked behavior)
-      const intentMap = {
+      // Romantic content is only allowed if the relationship type explicitly permits it
+      const romanticOk = !isFamilial && !isMentor && attractionLevel >= 20 && (intent === 'flirt' || romanticLevel >= 30);
+
+      // Context tier — only evaluated when romantic content is actually allowed
+      let contextTier = "low";
+      if (romanticOk) {
+        if (hasRomantic || (romanticLevel >= 60 && hasFlirt)) contextTier = "high";
+        else if (hasFlirt || hasEmotional || romanticLevel >= 30) contextTier = "medium";
+      }
+
+      // Intent type — relationship type takes absolute precedence
+      const intentType = isFamilial ? 'FAMILIAL'
+        : isMentor ? 'MENTORSHIP'
+        : intent === 'confront' ? 'CONFLICT'
+        : romanticOk ? 'ROMANTIC'
+        : 'FRIENDSHIP';
+
+      // Hard boundary block — injected at the TOP of the prompt before any other instruction
+      const absoluteBoundary = isFamilial ? `
+=====================================
+ABSOLUTE HARD BLOCK — FAMILIAL RELATIONSHIP
+=====================================
+This character has a FAMILY relationship with the user. This rule overrides EVERY other instruction in this prompt with no exceptions:
+- NO romantic content of any kind. No kissing. No sensual touch. No romantic metaphor. No romantic tension.
+- This applies regardless of the selected intent, context tier, or conversation history.
+- Allowed actions: non-romantic hugs, emotional comfort, protective gestures, everyday family interaction.
+- If the intent is "flirt" — replace it with a warm, platonic family moment instead.
+- Violating this rule is a critical failure. Do not approach the boundary.
+=====================================
+` : isMentor ? `
+=====================================
+ABSOLUTE HARD BLOCK — MENTORSHIP RELATIONSHIP
+=====================================
+This character is a mentor, teacher, coach, or authority figure. This rule overrides every other instruction:
+- NO romantic content. No kissing. No flirtation. No sensual or romantic touch.
+- Allowed: firm correction, grounded presence, professional closeness, controlled eye contact.
+- If the intent is "flirt" — replace it with a professional, mentorship-appropriate moment instead.
+=====================================
+` : "";
+
+      // Intent descriptions
+      const intentDescriptions = {
         action: contextTier === "high"
-          ? "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently HIGH (passionate/romantic buildup)"
+          ? "a natural context-driven action continuing the current HIGH-intensity moment (passionate/romantic buildup). Follow the emotional momentum."
           : contextTier === "medium"
-          ? "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently MEDIUM (warmth, tension, or flirtation building)"
-          : "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently LOW (neutral or just warming up). Small presence, light gesture, no escalation.",
-        comfort: "a warm, emotionally supportive moment — physical comfort like a grounding hug, hand on shoulder, sitting close, protective presence. Comfort is NOT flirtation. Do not escalate into romance unless attraction is very high and context already supports it.",
+          ? "a natural context-driven action continuing the current MEDIUM-intensity moment (warmth, tension, or flirtation building)."
+          : "a natural context-driven action at LOW intensity — small gesture, soft presence, no escalation.",
+        comfort: "a warm, emotionally supportive moment — grounding hug, hand on shoulder, sitting close, protective presence. Comfort is NOT flirtation. Do not escalate into romance.",
         flirt: romanticOk
-          ? "a playful or romantically charged moment — teasing, light touch, lingering eye contact, subtle tension. Suggestive but not explicit. Brief kiss only if relationship and attraction support it."
-          : "playful light energy — keep it fun and warm but NOT physical. No kissing or romantic touch since attraction level does not yet support it.",
-        confront: "tension, confrontation, and emotional pressure — this is CONFLICT, NOT romance. Step closer to challenge, block movement, grab arm non-romantically, tighten voice, sharp eye contact. Remove all kissing, romantic touching, and sensual metaphor entirely.",
-        spend_time: "a relaxed, low-intensity shared presence — casual interaction, sitting together, walking, light environment use. Do NOT escalate. This is not flirtation, conflict, or intense emotional scenes.",
-        check_in: "an attentive, observant, emotionally aware moment — noticing their mood, asking quietly, soft tone, slight physical grounding. Observational, not action-heavy. Do NOT escalate physically or jump into intensity.",
+          ? "a playful or romantically charged moment — teasing, light touch, lingering eye contact, subtle tension. Suggestive but not explicit. Brief kiss only if relationship and attraction clearly support it."
+          : "playful, light, warm energy — fun banter or a playful nudge. NOT physical. No kissing, no romantic touch.",
+        confront: "tension and emotional confrontation — CONFLICT only, NOT romance. Step into space, block movement, grab arm non-romantically, sharpen voice, hard eye contact. Absolutely zero kissing, zero sensual touch, zero romantic metaphor.",
+        spend_time: "a relaxed, low-intensity shared presence — casual togetherness, sitting nearby, walking, light environment use. No escalation. Not flirtatious, not intense.",
+        check_in: "a quiet, attentive moment — noticing their mood, asking softly, gentle grounding. Observational and low-key. Do not escalate physically or emotionally.",
       };
 
-      // Tier instructions
-      const tierInstructions = contextTier === "high"
-        ? `CONTEXT TIER: HIGH. The conversation has clearly built toward romantic/passionate territory. Use strong physical closeness, kissing, pulling closer, hands moving with intention. Include environmental disruption. Intensify with metaphor. Keep it non-explicit but immersive.`
-        : contextTier === "medium"
-        ? `CONTEXT TIER: MEDIUM. There is growing warmth, flirtation, or emotional openness. Use moderate physical closeness. Include a small environmental detail. Let the metaphor deepen the tone.`
-        : `CONTEXT TIER: LOW. The conversation is relatively neutral or just warming up. Do NOT jump to romantic or passionate actions. Use a soft, grounding action. Let imagination do the work.`;
-
-      // Intent type classification
-      const intentTypeMap = {
-        action: romanticOk ? 'ROMANTIC' : 'FRIENDSHIP',
-        comfort: 'FRIENDSHIP',
-        flirt: romanticOk ? 'ROMANTIC' : 'FRIENDSHIP',
-        confront: 'CONFLICT',
-        spend_time: 'FRIENDSHIP',
-        check_in: 'FRIENDSHIP',
-      };
-      const intentType = isFamilial ? 'FAMILIAL' : isMentor ? 'MENTORSHIP' : (intentTypeMap[intent] || 'FRIENDSHIP');
+      // Context tier instruction — overridden to neutral if relationship type blocks romance
+      const tierInstruction = (isFamilial || isMentor)
+        ? "CONTEXT TIER: OVERRIDDEN — relationship type enforces non-romantic content regardless of conversation history or tier."
+        : contextTier === "high"
+          ? "CONTEXT TIER: HIGH. Strong physical closeness, kissing, and passionate intensity are allowed. Keep it non-explicit but immersive."
+          : contextTier === "medium"
+          ? "CONTEXT TIER: MEDIUM. Growing warmth and emotional openness. Moderate physical closeness allowed."
+          : "CONTEXT TIER: LOW. Conversation is neutral. Do not jump to romantic or passionate actions. Use a soft, grounding action only.";
 
       const prompt = `You are writing a SHORT third-person narrative scene (2-4 sentences) for ${character.name}.
 
+${absoluteBoundary}
 CHARACTER: ${character.name}
 Personality: ${character.personality_summary || "unknown"}
 Emotional state: ${emotionalState}
 Location: ${location}
-Relationship — Friendship: ${friendshipLevel}/100, Romantic: ${romanticLevel}/100, Attraction: ${attractionLevel}/100
+Relationship Type: ${intentType}
+Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
 
 RECENT CONVERSATION:
 ${recentContext || "(no recent messages)"}
 
-${tierInstructions}
+${tierInstruction}
 
-INTENT: Generate ${intentMap[intent] || intentMap.action}.
+INTENT: Generate ${intentDescriptions[intent] || intentDescriptions.action}
 
 ---
-🔴 INTENT TYPE: ${intentType}
+INTENT TYPE RULES (${intentType}):
 
-BEFORE WRITING, enforce these rules:
+${intentType === 'FAMILIAL' ? "FAMILIAL: The absolute hard block at the top of this prompt applies. No exceptions. Generate a warm, non-romantic family moment." : ""}
+${intentType === 'MENTORSHIP' ? "MENTORSHIP: The absolute hard block at the top of this prompt applies. No exceptions. Generate a professional, grounded moment." : ""}
+${intentType === 'CONFLICT' ? "CONFLICT: Tension and confrontation only. NOT romance. Physical actions must be non-romantic: stepping into space, blocking movement, grabbing arm to stop — not to pull close. Remove all kissing, sensual touch, and romantic metaphor." : ""}
+${intentType === 'FRIENDSHIP' ? "FRIENDSHIP: Emotional closeness is fine. Touch must not be romantic in tone. Allowed: non-romantic hug, grabbing arm to stop someone, sitting shoulder-to-shoulder. Never: kissing, romantic body alignment, romantic face/waist touching." : ""}
+${intentType === 'ROMANTIC' ? `ROMANTIC: Romantic and physical escalation is allowed — attraction level (${attractionLevel}/100) and relationship context support it. Scale intensity to the context tier above.` : ""}
 
-INTENSITY ≠ ROMANCE. Intensity describes emotional energy. Relationship type determines how it is expressed.
-
-${isFamilial ? `FAMILY BOUNDARY — HARD BLOCK: This character has a familial relationship. Romantic or sexual behavior is NEVER allowed. No kissing, no romantic touching, no sensual metaphor. Allowed: non-romantic hugs, emotional comfort, protective actions, everyday interaction only.` : ''}
-
-${isMentor ? `MENTORSHIP BOUNDARY: This is a mentor/authority relationship. Romantic or flirtatious behavior is NEVER allowed. Allowed: firm correction, grounded presence, controlled eye contact. Never: flirting, kissing, sensual touch, romantic metaphors.` : ''}
-
-${intentType === 'CONFLICT' ? `CONFLICT INTENT: Generate tension, confrontation, emotional pressure. NOT romance. Actions: stepping into space, blocking movement, grabbing arm (non-romantic), sharp tone, controlled aggression. Remove all kissing, romantic touching, and sensual metaphor.` : ''}
-
-${intentType === 'FRIENDSHIP' ? `FRIENDSHIP INTENT: Emotional closeness is allowed. Touch must NOT be romantic in tone. Allowed: grabbing arm to stop them, non-romantic hug, sitting close, shoulder-to-shoulder. Never: kissing, romantic body alignment, waist/face touching in a romantic way.` : ''}
-
-${intentType === 'ROMANTIC' ? `ROMANTIC INTENT: Romantic and physical escalation is allowed because attraction level (${attractionLevel}/100) and relationship context support it. Scale to context tier.` : ''}
-
-CONSENT CHECK: Before any physical escalation, evaluate whether the other person is receptive.
-- Both engaged and receptive → allow escalation.
-- Hesitation present → reduce intensity, show a mixed moment.
-- Clear resistance → block escalation entirely.
+CONSENT CHECK: If the other person shows hesitation, reduce intensity. If there is clear resistance, block escalation entirely.
 
 ---
 STYLE RULES:
 - Third person only ("${character.name} reaches...", "He looks up...")
 - ONE continuous paragraph, no double spacing, no em dashes mid-sentence, clean punctuation
-- Clearly state what the character is physically doing — metaphor must intensify the action, NOT replace it
+- Clearly state what the character is physically doing — metaphor intensifies the action, does NOT replace it
 - 2-4 sentences max. Tight. Cinematic. Real.
-- No explicit content — suggestive and emotionally charged is fine
-- One short quoted line of dialogue is allowed if it fits, but not required
-
-ENVIRONMENT VARIATION ENGINE (ANTI-REPETITION):
-Every narrative MUST include at least one grounded environmental interaction. Do NOT repeat the same environmental detail. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
-Do NOT default to "sheets crumpling." Choose something specific to the actual location.
-
-ROOM TRANSITION RULE:
-If the scene shifts location, show the movement. Never teleport characters.
+- No explicit content — emotionally charged and suggestive is fine
+- One short quoted line of dialogue is allowed if it fits naturally
+- Include at least one grounded environmental detail specific to the actual location. Do NOT default to "sheets crumpling." Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
 
 Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
 
