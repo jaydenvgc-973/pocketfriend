@@ -37,6 +37,7 @@ import {
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
 import { filterDashes } from "@/lib/dashFilter";
+import { parseCharacterResponse } from "@/lib/chatResponseParser";
 
 // Voice playback cache and active audio tracking
 const voiceCache = new Map();
@@ -1138,10 +1139,10 @@ ${songsInfo}`;
           systemPrompt = await promptResponse.text();
         } catch (err) {
           console.warn('[sendMessage] Failed to fetch system_prompt_url, building instead:', err.message);
-          systemPrompt = buildSystemPrompt(character, [], userDisplayName);
+          systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false });
         }
       } else {
-        systemPrompt = buildSystemPrompt(character, [], userDisplayName);
+        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false });
       }
       // World name injected into image instruction so LLM uses the right name in prompts — never "the user"
       const userNameForPrompts = userDisplayName || null;
@@ -1312,57 +1313,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
 
 
-      // Robust parser: returns structured { message_type, text_content, image_generation_prompt, image_generation_prompts, scheduled_events }
-      const parseCharacterResponse = (raw) => {
-        if (!raw) return { message_type: "text_only", text_content: "" };
-
-        let obj = null;
-
-        // 1. Try direct JSON parse
-        try { obj = JSON.parse(raw); } catch {}
-
-        // 2. Try markdown code fence
-        if (!obj) {
-          const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
-          if (fenceMatch) try { obj = JSON.parse(fenceMatch[1].trim()); } catch {}
-        }
-
-        // 3. Try to find a JSON object anywhere in the string
-        if (!obj) {
-          const braceMatch = raw.match(/\{[\s\S]*\}/);
-          if (braceMatch) try { obj = JSON.parse(braceMatch[0]); } catch {}
-        }
-
-        if (obj && typeof obj === "object") {
-          // Normalize: support both old schema (text/image_prompt) and new schema (text_content/image_generation_prompt)
-          const messageType = obj.message_type || (obj.image_prompt || obj.image_prompts?.length > 0 ? "text_then_image" : "text_only");
-          const textContent = obj.text_content || obj.text || "";
-          const imgPrompt = obj.image_generation_prompt || obj.image_prompt || null;
-          const imgPrompts = obj.image_generation_prompts || obj.image_prompts || (imgPrompt ? [imgPrompt] : []);
-          return {
-            message_type: messageType,
-            text_content: textContent,
-            image_generation_prompt: imgPrompt,
-            image_generation_prompts: imgPrompts,
-            scheduled_events: obj.scheduled_events || [],
-          };
-        }
-
-        // 4. Fallback: try to extract text_content or text field
-        const textMatch = raw.match(/"(?:text_content|text)"\s*:\s*"((?:[^"\\]|\\.)*)"/);
-        if (textMatch) {
-          try { return { message_type: "text_only", text_content: JSON.parse(`"${textMatch[1]}"`), image_generation_prompts: [] }; }
-          catch { return { message_type: "text_only", text_content: textMatch[1], image_generation_prompts: [] }; }
-        }
-
-        // 5. Last resort: plain text
-        const stripped = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").replace(/[{}\[\]]/g, "").replace(/\\n/g, " ").replace(/\\"/g, '"').trim();
-        if (stripped.length > 10 && /[a-zA-Z]/.test(stripped)) {
-          return { message_type: "text_only", text_content: stripped, image_generation_prompts: [] };
-        }
-
-        return { message_type: "text_only", text_content: "", image_generation_prompts: [] };
-      };
+      // parseCharacterResponse is imported from @/lib/chatResponseParser
 
       let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       try {
@@ -1396,6 +1347,29 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
         responseText = "";
       }
+      // NARRATION BLEED FILTER: strip any third-person narration that leaked into dialogue despite strict prompt
+      // Detect patterns like "CharacterName verb..." or "He/She/They verb..." prose blocks
+      if (responseText) {
+        const charFirstName = character.name.split(' ')[0];
+        const narrationLinePattern = new RegExp(
+          `^(?:${charFirstName}|He|She|They|His|Her|Their)\\s+(?:pulls|settles|leans|moves|looks|reaches|sits|stands|shifts|sighs|turns|walks|steps|grabs|holds|wraps|places|rests|draws|closes|opens|breathes|exhales|inhales|drops|lifts|slides|presses|curls|stretches|rolls|nods|shakes|smiles|frowns|watches|stares|gazes|feels|senses|notices|realizes|allows|lets|keeps|stays|remains|becomes|seems|appears)`,
+          'i'
+        );
+        const lines = responseText.split('\n');
+        const cleanLines = lines.filter(line => {
+          const trimmed = line.trim();
+          if (!trimmed) return true;
+          if (narrationLinePattern.test(trimmed)) {
+            console.warn(`[NARRATION_BLEED] Stripped prose line from message: "${trimmed.substring(0, 80)}..."`);
+            return false;
+          }
+          return true;
+        });
+        responseText = cleanLines.join('\n').trim();
+        // If filtering left nothing, keep a minimal fallback so message isn't empty
+        if (!responseText && hasText) responseText = '...';
+      }
+
       // DASH FILTER: remove AI-generated dashes (— – and spaced -) from visible dialogue
       // Real people texting never use dashes for pauses or dramatic effect
       responseText = filterDashes(responseText);

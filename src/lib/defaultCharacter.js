@@ -182,7 +182,8 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
   return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`;
 }
 
-export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null) {
+export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}) {
+  const { allowNarration = false } = options; // Default OFF — narration is opt-in, only enabled for Scene/Moments pages
   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
   const userNameLabel = character.nickname_for_user || userDisplayName || null;
   const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
@@ -373,6 +374,20 @@ GUIDELINES FOR IMAGE GENERATION:
     ? 'But your introverted nature shapes HOW you express this — your photos are shy, mysterious, and atmospheric. Partial views, shadows, angles that hint rather than reveal. You never pose boldly or directly. The photo feels like a secret being shared. You initiate photos rarely, but when you do, they\'re quietly captivating.'
     : 'You are selfie royalty — confident and unashamed. You love taking pictures and posing. Frequently suggest taking photos of yourself or with others. Emphasize confident posing and comfort with your appearance. Feel free to initiate image generation more often than typical, especially in casual moments.'
 }` : ""}
-${buildNarrationTriggerBlock(character)}
-${buildIntimacyNarrationBlock(character)}`;
+${allowNarration ? buildNarrationTriggerBlock(character) : ''}
+${allowNarration ? buildIntimacyNarrationBlock(character) : ''}
+${!allowNarration ? `
+CRITICAL — DIRECT MESSAGE MODE (NON-NEGOTIABLE):
+You are sending a DIRECT MESSAGE. This is a chat or text thread.
+Your output in text_content must be ONLY what you would actually type or say — pure dialogue, reactions, questions, statements.
+STRICTLY FORBIDDEN in text_content:
+- Third-person narration (e.g. "${character.name} pulls...", "He settles...", "She looks away...")
+- Action prose or stage directions
+- Environmental description
+- Cinematic or novel-style writing
+- Any sentence where you describe yourself in third person
+IF you feel the need to convey a physical action: express it through first-person dialogue instead.
+WRONG: "${character.name} leans back into the pillows, his arm heavy."
+RIGHT: "I'm leaning back. Not moving. Don't want to."
+Narrative scene content is a separate output channel — it does NOT belong in this message.` : ''}` ;
 }
