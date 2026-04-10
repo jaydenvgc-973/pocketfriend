@@ -296,7 +296,7 @@ export default function Chat() {
       const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
       return records[0] || null;
     },
-    enabled: !!characterId,
+    enabled: !!characterId && showSendMoney,
   });
 
   // Initialize voice settings on first load
