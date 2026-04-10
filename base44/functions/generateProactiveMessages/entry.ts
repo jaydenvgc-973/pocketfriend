@@ -169,6 +169,71 @@ async function getRecentConversationContext(base44, characterId) {
   return recentTopics;
 }
 
+// Need-driven narrative examples — inlined (no local imports in Deno)
+// These are style patterns, not scripts. LLM must generate NEW variations.
+const NEED_NARRATIVE_EXAMPLES = {
+  hunger: [
+    "He drifts into the kitchen without much thought, the fridge light spilling across the room as he pulls something together quickly.",
+    "He decides not to eat alone tonight, heading somewhere he can be around people while he sorts himself out.",
+    "He steps away just long enough to grab something quick — it's not a full reset, but it stops things from getting worse.",
+  ],
+  energy: [
+    "He doesn't ease into it. He just drops onto the bed and stays there, letting everything finally catch up.",
+    "He actually leaves when his shift ends this time, stepping outside instead of lingering.",
+    "Instead of pushing through, he decides to call it early and head home, choosing recovery over momentum.",
+  ],
+  social: [
+    "He doesn't message. He just shows up, knocking once before stepping into the moment.",
+    "He pulls a couple people together casually, nothing structured, just enough presence to shift the mood.",
+    "He focuses on just one person, letting the interaction go deeper instead of wider.",
+  ],
+  mental: [
+    "He turns everything off and just sits in the quiet for a while.",
+    "He lets something out instead of holding it in, even if it's incomplete.",
+    "He physically moves to a different space to break the mental loop.",
+  ],
+  health: [
+    "He gets outside instead of staying in, letting the change in environment do part of the work.",
+    "He pauses and corrects something simple — water first, then food — stabilizing himself properly.",
+    "He actively treats himself like he needs care, not pressure.",
+  ],
+  financial_need: [
+    "He arrives on time and stays focused, knowing this directly affects his stability.",
+    "He chooses not to go out tonight, recognizing what that would cost him.",
+  ],
+  hygiene: [
+    "He takes his time, not rushing, letting the moment actually reset him.",
+    "He swaps into something clean, shifting how he feels immediately.",
+  ],
+  comfort: [
+    "He returns to a place that consistently makes him feel grounded.",
+    "He stays near someone who makes things easier without needing to explain why.",
+  ],
+};
+
+function getNeedExamples(character) {
+  const lowNeeds = [];
+  const needMap = {
+    hunger: character.hunger_value,
+    energy: character.energy_value,
+    social: character.social_value,
+    health: character.health_value,
+    mental: character.mental_value,
+    financial_need: character.financial_need_value,
+    hygiene: character.hygiene_value,
+    comfort: character.comfort_value,
+  };
+  for (const [need, val] of Object.entries(needMap)) {
+    if (val != null && val < 40) lowNeeds.push(need);
+  }
+  if (!lowNeeds.length) return '';
+  const examples = lowNeeds
+    .flatMap(n => (NEED_NARRATIVE_EXAMPLES[n] || []).slice(0, 1))
+    .slice(0, 3);
+  if (!examples.length) return '';
+  return `\n\nCURRENT NEEDS (low): ${lowNeeds.join(', ')}\nNARRATIVE STYLE PATTERNS (use these as inspiration — generate a NEW variation, never copy verbatim):\n${examples.map(e => `- ${e}`).join('\n')}`;
+}
+
 async function generateProactiveMessage(base44, character, user, recentContext) {
   const et = getEasternTime();
   const hour = et.getHours();
@@ -183,15 +248,17 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
   // Resolve user's in-world name — never fall back to "the user"
   const userSettings = await base44.entities.UserSettings.list().catch(() => []);
   const worldName = character.nickname_for_user || userSettings?.[0]?.fictional_world_name || null;
-  const userAddressName = worldName || null; // null = use natural pronouns, not "the user"
+  const userAddressName = worldName || null;
 
   const locationAffinityNote = buildLocationAffinityContext(character);
+  const needExamples = getNeedExamples(character);
+
   const systemPrompt = `You are ${character.name}. Generate a natural, spontaneous proactive message right now (1-3 sentences).
 ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling.'}
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
 Your friendship level is ${relationshipLevel}/100 — adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
-Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}
+Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}
 ${userAddressName ? `The person you're messaging is named ${userAddressName}. Use that name naturally when addressing them directly (sparingly — not in every sentence). NEVER say "the user".` : `You don't know their name. Use natural pronouns (you, them) — NEVER say "the user" or "user".`}
 WRITING STYLE — NON-NEGOTIABLE:
 - Write like a real person texting. No theatrical or literary language.
