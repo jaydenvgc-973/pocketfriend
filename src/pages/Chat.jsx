@@ -962,10 +962,7 @@ export default function Chat() {
           return info;
         }).join('\n\n---\n\n');
         
-        songsContext = `\n\nMUSIC SHARED BY ${userDisplayName ? userDisplayName.toUpperCase() : 'THE PERSON YOU ARE TALKING TO'}: The following songs/albums were shared with you by ${userDisplayName || 'the person you are talking to'} — they belong to THEM. When referencing this music in conversation, always say "your lyrics", "your music", "your song" etc. NEVER say "${userDisplayName || 'their'}'s lyrics" or refer to them in the third person as if they are absent.
-CRITICAL RULE: ${userDisplayName || 'This person'} is WHO YOU ARE TALKING TO right now. They are not a third party. Their content = "your [content]" when speaking to them directly.
-
-Multi-layer understanding has been built for these songs/albums:
+        songsContext = `\n\nMUSIC SHARED WITH YOU: Multi-layer understanding has been built for these songs/albums:
 CRITICAL RULES:
 1. Use the ACTUAL TRACKS list (not made-up songs)
 2. Reference the MOOD & FEEL, THEMES, and TRACK INSIGHTS provided
@@ -1133,16 +1130,6 @@ ${songsInfo}`;
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
-      // CRITICAL: inject an identity-anchoring rule so the LLM never treats the world name as a third party
-      const identityAnchorRule = userDisplayName
-        ? `\n\nCRITICAL IDENTITY RULE — NON-NEGOTIABLE: "${userDisplayName}" is the name of the PERSON YOU ARE CURRENTLY TALKING TO in this conversation. They are NOT a third party. They are NOT absent. They are RIGHT HERE talking to you.
-- When speaking TO them, use "you" and "your" naturally.
-- Only use "${userDisplayName}" occasionally as a direct address (e.g. "You good, ${userDisplayName}?") — NOT in every sentence.
-- NEVER say "${userDisplayName}'s [something]" when talking TO them — say "your [something]" instead.
-  WRONG: "I was thinking about ${userDisplayName}'s lyrics again"
-  RIGHT: "I was thinking about your lyrics again"
-- NEVER refer to ${userDisplayName} as if they are a separate person you are describing to someone else.`
-        : "";
       // Fetch system prompt from URL if available, otherwise build it
       let systemPrompt = "";
       if (character.system_prompt_url) {
@@ -1297,7 +1284,8 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const fullPrompt = `${systemPrompt}${identityAnchorRule}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
 
