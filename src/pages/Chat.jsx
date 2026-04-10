@@ -290,6 +290,15 @@ export default function Chat() {
     queryFn: () => base44.auth.me(),
   });
 
+  const { data: characterFinancial = null } = useQuery({
+    queryKey: ["characterFinancial", characterId],
+    queryFn: async () => {
+      const records = await base44.entities.CharacterFinancial.filter({ character_id: characterId });
+      return records[0] || null;
+    },
+    enabled: !!characterId,
+  });
+
   // Initialize voice settings on first load
   useEffect(() => {
     base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
@@ -1824,13 +1833,14 @@ Reply with ONLY the single emoji or the word "none".`,
           userBalance={userSettings.user_balance ?? 0}
           isSending={isSendingMoney}
           onClose={() => setShowSendMoney(false)}
-          onSend={async (amount) => {
+          onSend={async (amount, direction) => {
             setIsSendingMoney(true);
             try {
               await base44.functions.invoke('sendMoneyToCharacter', {
                 characterId,
                 conversationId,
                 amount,
+                direction,
               });
               setShowSendMoney(false);
               queryClient.invalidateQueries({ queryKey: ['userSettings'] });
@@ -1839,6 +1849,7 @@ Reply with ONLY the single emoji or the word "none".`,
               setIsSendingMoney(false);
             }
           }}
+          characterBalance={characterFinancial?.current_balance ?? 0}
         />
       )}
       <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
