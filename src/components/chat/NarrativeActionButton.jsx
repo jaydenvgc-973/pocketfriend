@@ -83,15 +83,17 @@ export default function NarrativeActionButton({
 
       const intentMap = {
         action: contextTier === "high"
-          ? "a passionate, physically grounded action that feels earned by the buildup — pulling closer, kissing deeper, bodies meeting with intention"
+          ? "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently HIGH (passionate/romantic buildup)"
           : contextTier === "medium"
-          ? "a warm, emotionally charged physical action — touching their hand, guiding them closer, a brief kiss, leaning in with intention"
-          : "a subtle but meaningful physical presence — stepping a little closer, a hand brushing theirs, sitting beside them, a lingering look that changes the tone",
-        comfort: "a comforting, warm, caring moment — physical closeness, reassurance, or emotional support",
-        flirt: "a playful, flirtatious, or romantically charged moment — subtle tension or bold intention",
-        confront: "an emotionally honest confrontation — unresolved tension surfacing, a feeling being named or acted on",
-        spend_time: "a quiet, present moment — just existing together, doing something simple, no agenda",
-        check_in: "a genuine check-in — noticing something about the user, asking how they are, showing they care",
+          ? "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently MEDIUM (warmth, tension, or flirtation building)"
+          : "a natural context-driven action that continues the current moment — follow the emotional momentum, which is currently LOW (neutral or just warming up). Small presence, light gesture, no escalation.",
+        comfort: "a warm, emotionally supportive moment — physical comfort like a grounding hug, hand on shoulder, sitting close, protective presence. Comfort is NOT flirtation. Do not escalate into romance unless attraction is very high and context already supports it.",
+        flirt: romanticOk
+          ? "a playful or romantically charged moment — teasing, light touch, lingering eye contact, subtle tension. Suggestive but not explicit. Brief kiss only if relationship and attraction support it."
+          : "playful light energy — keep it fun and warm but NOT physical. No kissing or romantic touch since attraction level does not yet support it.",
+        confront: "tension, confrontation, and emotional pressure — this is CONFLICT, NOT romance. Step closer to challenge, block movement, grab arm non-romantically, tighten voice, sharp eye contact. Remove all kissing, romantic touching, and sensual metaphor entirely.",
+        spend_time: "a relaxed, low-intensity shared presence — casual interaction, sitting together, walking, light environment use. Do NOT escalate. This is not flirtation, conflict, or intense emotional scenes.",
+        check_in: "an attentive, observant, emotionally aware moment — noticing their mood, asking quietly, soft tone, slight physical grounding. Observational, not action-heavy. Do NOT escalate physically or jump into intensity.",
       };
 
       const tierInstructions = contextTier === "high"
