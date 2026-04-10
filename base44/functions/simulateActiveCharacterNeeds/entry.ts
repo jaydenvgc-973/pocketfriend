@@ -16,20 +16,38 @@ const clamp = (v) => Math.max(0, Math.min(100, v));
 // Per-hour decay/gain rates per need per context
 const RATES = {
   // [hunger_per_hr, energy_per_hr, social_per_hr, health_per_hr, mental_per_hr, hygiene_per_hr, comfort_per_hr]
-  sleeping:    { hunger: -1,  energy: +12, social: -0.5, health: +0.5, mental: +3,  hygiene: 0,   comfort: +4  },
-  at_work:     { hunger: -4,  energy: -5,  social: +1,   health: -0.5, mental: -2,  hygiene: -2,  comfort: -2  },
-  at_school:   { hunger: -3,  energy: -4,  social: +2,   health: -0.5, mental: -1,  hygiene: -1,  comfort: -1  },
-  gym:         { hunger: -6,  energy: -7,  social: +1,   health: +1,   mental: +1,  hygiene: -5,  comfort: -2  },
-  bar_club:    { hunger: -2,  energy: -4,  social: +5,   health: -1,   mental: +1,  hygiene: -1,  comfort: -1  },
-  home_resting:{ hunger: -1,  energy: +3,  social: -1,   health: +0.5, mental: +1,  hygiene: 0,   comfort: +3  },
-  home_active: { hunger: -2,  energy: -1,  social: -1,   health: 0,    mental: 0,   hygiene: -0.5,comfort: +1  },
-  hospital:    { hunger: -1,  energy: +2,  social: -1,   health: +3,   mental: -1,  hygiene: 0,   comfort: +1  },
-  social_out:  { hunger: -2,  energy: -3,  social: +4,   health: 0,    mental: +1,  hygiene: -1,  comfort: -0.5},
-  traveling:   { hunger: -3,  energy: -3,  social: -1,   health: 0,    mental: -1,  hygiene: -2,  comfort: -3  },
-  eating:      { hunger: +15, energy: +2,  social: +1,   health: +0.5, mental: +1,  hygiene: 0,   comfort: +2  },
-  resting:     { hunger: -1,  energy: +6,  social: -0.5, health: +1,   mental: +2,  hygiene: 0,   comfort: +3  },
-  default:     { hunger: -2,  energy: -2,  social: -1,   health: 0,    mental: -0.5,hygiene: -1,  comfort: -1  },
+  sleeping:        { hunger: -1,  energy: +12, social: -0.5, health: +0.5, mental: +3,  hygiene: 0,   comfort: +4  },
+  at_work:         { hunger: -4,  energy: -5,  social: +1,   health: -0.5, mental: -2,  hygiene: -2,  comfort: -2  },
+  at_work_medical: { hunger: -5,  energy: -7,  social: -1,   health: -0.5, mental: -4,  hygiene: -3,  comfort: -4  }, // hospitals/ER: high stress
+  at_work_service: { hunger: -5,  energy: -6,  social: +2,   health: -1,   mental: -3,  hygiene: -3,  comfort: -3  }, // bars/restaurants: physical + social
+  at_work_office:  { hunger: -3,  energy: -4,  social: +1,   health: -0.5, mental: -2,  hygiene: -1,  comfort: -1  }, // office: moderate
+  work_off_shift:  { hunger: -3,  energy: -3,  social: -1,   health: -0.5, mental: -3,  hygiene: -2,  comfort: -4  }, // lingering at work: no purpose, draining
+  at_school:       { hunger: -3,  energy: -4,  social: +2,   health: -0.5, mental: -1,  hygiene: -1,  comfort: -1  },
+  gym:             { hunger: -6,  energy: -7,  social: +1,   health: +1,   mental: +1,  hygiene: -5,  comfort: -2  },
+  bar_club:        { hunger: -2,  energy: -4,  social: +5,   health: -1,   mental: +1,  hygiene: -1,  comfort: -1  },
+  home_resting:    { hunger: -1,  energy: +3,  social: -1,   health: +0.5, mental: +1,  hygiene: 0,   comfort: +3  },
+  home_active:     { hunger: -2,  energy: -1,  social: -1,   health: 0,    mental: 0,   hygiene: -0.5,comfort: +1  },
+  hospital:        { hunger: -1,  energy: +2,  social: -1,   health: +3,   mental: -1,  hygiene: 0,   comfort: +1  },
+  food_drink:      { hunger: +15, energy: +2,  social: +1,   health: +0.5, mental: +1,  hygiene: 0,   comfort: +2  },
+  social_out:      { hunger: -2,  energy: -3,  social: +4,   health: 0,    mental: +1,  hygiene: -1,  comfort: -0.5},
+  traveling:       { hunger: -3,  energy: -3,  social: -1,   health: 0,    mental: -1,  hygiene: -2,  comfort: -3  },
+  eating:          { hunger: +15, energy: +2,  social: +1,   health: +0.5, mental: +1,  hygiene: 0,   comfort: +2  },
+  resting:         { hunger: -1,  energy: +6,  social: -0.5, health: +1,   mental: +2,  hygiene: 0,   comfort: +3  },
+  default:         { hunger: -2,  energy: -2,  social: -1,   health: 0,    mental: -0.5,hygiene: -1,  comfort: -1  },
 };
+
+// Determine if character is currently on shift at a given location
+function isOnShift(character) {
+  if (!character.work_start_time || !character.work_end_time || !character.work_days) return false;
+  const now = new Date();
+  const dayOfWeek = now.getDay();
+  const currentMins = now.getHours() * 60 + now.getMinutes();
+  const [startH, startM = 0] = character.work_start_time.split(':').map(Number);
+  const [endH, endM = 0] = character.work_end_time.split(':').map(Number);
+  return character.work_days.includes(dayOfWeek) &&
+    currentMins >= startH * 60 + startM &&
+    currentMins < endH * 60 + endM;
+}
 
 function getLocationContext(character, locationMap) {
   // Proactive activity overrides — character is actively doing something to meet a need
@@ -48,7 +66,22 @@ function getLocationContext(character, locationMap) {
 
   const presenceStatus = character.resolved_presence_status;
   if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
-  if (presenceStatus === 'at_work') return 'at_work';
+
+  // Work context: differentiate by job type AND shift status
+  const workLocId = character.current_work_location_id || character.occupation_location_id;
+  if (locId === workLocId) {
+    if (!isOnShift(character)) {
+      // Character is lingering at work after shift — location fatigue kicks in
+      return 'work_off_shift';
+    }
+    // On shift — differentiate by job type for realistic work stress
+    const cat = (loc.category || '').toLowerCase();
+    const name = (loc.name || '').toLowerCase();
+    if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency')) return 'at_work_medical';
+    if (cat === 'food_drink' || name.includes('bar') || name.includes('restaurant') || name.includes('cafe') || name.includes('diner')) return 'at_work_service';
+    return 'at_work_office'; // default office/generic work
+  }
+
   if (presenceStatus === 'at_school') return 'at_school';
 
   const cat = (loc.category || '').toLowerCase();
@@ -56,7 +89,7 @@ function getLocationContext(character, locationMap) {
 
   if (cat === 'gym') return 'gym';
   if (cat === 'medical') return 'hospital';
-  if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) return 'eating';
+  if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) return 'food_drink';
   if (cat === 'social' || name.includes('bar') || name.includes('club') || name.includes('lounge') || name.includes('nightclub')) return 'bar_club';
   if (cat === 'outdoor') return 'social_out';
   if (cat === 'home') {
@@ -227,6 +260,19 @@ Deno.serve(async (req) => {
         proactiveActivity = 'showering (critical hygiene)';
       } else if (mental < 20) {
         proactiveActivity = 'resting and decompressing';
+      } else if (context === 'work_off_shift') {
+        // Home pull: off-shift at work — character should head home
+        const homeLocId = char.current_home_location_id;
+        if (homeLocId) {
+          // Move them home via the work schedule enforcer logic inline
+          sdk.entities.Character.update(char.id, {
+            resolved_current_location_id: homeLocId,
+            resolved_presence_status: 'home',
+            resolved_location_type: 'home',
+            resolved_last_updated_at: now.toISOString(),
+            current_activity: 'arrived home after work',
+          }).catch(() => {});
+        }
       }
 
       // Apply proactive override to character (fire and forget, non-blocking)
@@ -240,6 +286,8 @@ Deno.serve(async (req) => {
         : char;
       const context = getLocationContext(overriddenChar, locationMap);
 
+      // Apply elapsed-time decay/gain using the correct context
+      let newNeeds = applyElapsedTime(currentNeeds, cappedHours, context);
       newNeeds = applyHealthDegradation(newNeeds);
       const financialNeed = deriveFinancialNeed(char);
 
