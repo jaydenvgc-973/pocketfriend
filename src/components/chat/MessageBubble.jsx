@@ -118,6 +118,16 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
 
         {/* Message bubble with reaction trigger */}
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
+          {/* Narrative delete button — shown on hover */}
+          {isNarrative && onDelete && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
+              className="absolute -right-7 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 z-50"
+              title="Remove narrative"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          )}
           <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {/* Image placeholder: character tried to send an image but URL never attached */}
             {isImagePlaceholder && (
