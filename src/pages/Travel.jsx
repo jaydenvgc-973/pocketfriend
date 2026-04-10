@@ -3,6 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowLeft, MapPin, Users, Navigation, Plus, Wrench } from "lucide-react";
+import FixLocationsButton from "@/components/home/FixLocationsButton";
 import { toDisplay12h } from "@/lib/timeFormat";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -376,6 +377,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
           <h1 className="text-base font-bold text-foreground">Travel</h1>
           <p className="text-xs text-muted-foreground">Choose a place, then who's coming</p>
         </div>
+        <FixLocationsButton currentUserEmail={currentUser?.email} />
         <button
           onClick={() => setShowDebug(!showDebug)}
           className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"

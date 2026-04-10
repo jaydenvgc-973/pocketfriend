@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUserSettings } from "@/hooks/useUserSettings";
 import { useNavigate, Link } from "react-router-dom";
 import { Plus, Users, Settings, Wrench } from "lucide-react";
+import FixLocationsButton from "@/components/home/FixLocationsButton";
 import { Button } from "@/components/ui/button";
 import { motion, AnimatePresence } from "framer-motion";
 import CharacterCard from "@/components/home/CharacterCard";
@@ -210,6 +211,7 @@ export default function Home() {
                   <Users className="w-5 h-5" />
                 </Button>
               </Link>
+              <FixLocationsButton currentUserEmail={currentUser?.email} />
               <button
                 onClick={() => setShowTroubleshooting(true)}
                 className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground transition-colors"
