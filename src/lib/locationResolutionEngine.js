@@ -38,12 +38,45 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     return createFailedResolution('No character provided');
   }
 
-  // LAYER 1: Check work schedule (highest priority obligation)
-  // Try all known work location fields: occupation_location_id, current_work_location_id
-  const workLocId = character.occupation_location_id || character.current_work_location_id;
-  if (isCharacterOnWorkSchedule(character, currentTime)) {
+  // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
+  // Collect every location this character is linked to as a worker
+  const allWorkLocIds = [];
+  if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
+  if (character.current_work_location_id) allWorkLocIds.push(character.current_work_location_id);
+  if (character.additional_occupation_locations?.length > 0) {
+    character.additional_occupation_locations.forEach(loc => {
+      if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
+        allWorkLocIds.push(loc.location_id);
+      }
+    });
+  }
+
+  // For each work location, check if character is on shift right now
+  for (const workLocId of allWorkLocIds) {
     const workLocation = locationMap[workLocId];
-    if (workLocation && isLocationOpen(workLocation, currentTime) !== false) {
+    if (!workLocation) continue;
+    if (isLocationOpen(workLocation, currentTime) === false) continue;
+
+    // Check 1: Location has an explicit shift for this character → use it
+    const locationShift = workLocation.worker_shifts?.[character.id];
+    if (locationShift) {
+      if (isOnShiftNow(locationShift, currentTime)) {
+        return {
+          resolved_current_location_id: workLocId,
+          resolved_current_location_name: workLocation.name || 'Work',
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: 'work_schedule',
+          resolved_zone: null,
+        };
+      }
+      // Shift defined but not active — don't fall through to character schedule for this location
+      continue;
+    }
+
+    // Check 2: No explicit shift saved — fall back to character's own work_start/end/days
+    // This handles characters who are on the roster but their shift hasn't been explicitly saved
+    if (isCharacterOnWorkSchedule(character, currentTime)) {
       return {
         resolved_current_location_id: workLocId,
         resolved_current_location_name: workLocation.name || 'Work',
@@ -54,27 +87,6 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       };
     }
   }
-
-  // LAYER 1b: Check worker_shifts on all locations (for characters without work_start/end_time set)
-  if (workLocId) {
-    const workLocation = locationMap[workLocId];
-    if (workLocation) {
-      const shift = workLocation.worker_shifts?.[character.id];
-      if (shift && isOnShiftNow(shift, currentTime) && isLocationOpen(workLocation, currentTime) !== false) {
-        return {
-          resolved_current_location_id: workLocId,
-          resolved_current_location_name: workLocation.name || 'Work',
-          resolved_location_type: 'work',
-          resolved_presence_status: 'at_work',
-          resolved_source_reason: 'work_schedule',
-          resolved_zone: null,
-        };
-      }
-    }
-  }
-
-  // LAYER 1c: REMOVED — characters must NOT default to work location when off shift.
-  // Off-shift characters fall through to sleep check and home fallback below.
 
   // LAYER 2: Check school schedule
   if (character.student_status === 'enrolled' && character.education_location_id) {
