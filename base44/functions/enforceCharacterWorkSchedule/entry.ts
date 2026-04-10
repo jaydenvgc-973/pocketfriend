@@ -42,24 +42,50 @@ Deno.serve(async (req) => {
       let newLocationId = null;
       let reason = '';
 
+      const workLocId = character.current_work_location_id || character.occupation_location_id;
+      const resolvedLocId = character.resolved_current_location_id;
+      const isSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
+      const isAtWork = workLocId && resolvedLocId === workLocId;
+      const activity = (character.current_activity || '').toLowerCase();
+      const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
+      const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
+
       if (isOnShift(character)) {
-        if (character.current_work_location_id) {
-          newLocationId = character.current_work_location_id;
+        if (workLocId) {
+          newLocationId = workLocId;
           shouldUpdate = true;
           reason = 'On shift now — moved to workplace';
         }
-      } else if (character.current_home_location_id) {
-        newLocationId = character.current_home_location_id;
-        reason = 'Not scheduled now — moved home';
-        shouldUpdate = true;
-      }
-
-      if (shouldUpdate && newLocationId) {
-        const oldLocation = character.resolved_current_location_id || character.current_work_location_id;
-        await base44.asServiceRole.entities.Character.update(characterId, {
-          resolved_current_location_id: newLocationId
-        });
-        return Response.json({ updated: true, oldLocation, newLocation: newLocationId, reason });
+      } else if (!isOnShift(character)) {
+        // Off shift: sleeping at work (invalid) or just stuck at work
+        if (isAtWork && isSleeping && !hasValidSleepReason) {
+          newLocationId = character.current_home_location_id;
+          shouldUpdate = !!newLocationId;
+          reason = 'SLEEPING_AT_WORK_INVALID — relocating to home to sleep';
+          // Keep sleeping status but at home
+          if (shouldUpdate) {
+            await base44.asServiceRole.entities.Character.update(characterId, {
+              resolved_current_location_id: newLocationId,
+              resolved_presence_status: 'sleeping',
+              resolved_location_type: 'home',
+              resolved_last_updated_at: new Date().toISOString(),
+            });
+            return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: newLocationId, reason });
+          }
+        } else if (character.current_home_location_id) {
+          newLocationId = character.current_home_location_id;
+          const energy = character.energy_value ?? 75;
+          const newStatus = energy < 40 ? 'sleeping' : 'home';
+          shouldUpdate = true;
+          reason = `POST_SHIFT_EXIT — shift ended, going home (${newStatus})`;
+          await base44.asServiceRole.entities.Character.update(characterId, {
+            resolved_current_location_id: newLocationId,
+            resolved_presence_status: newStatus,
+            resolved_location_type: 'home',
+            resolved_last_updated_at: new Date().toISOString(),
+          });
+          return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: newLocationId, reason });
+        }
       }
 
       return Response.json({ updated: false, reason: 'No schedule change needed' });
@@ -73,15 +99,47 @@ Deno.serve(async (req) => {
     const checks = [];
     let fixCount = 0;
 
+    // Valid reasons to sleep at work
+    const validSleepAtWorkReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
+    const hasValidSleepAtWorkReason = (char) => {
+      const activity = (char.current_activity || '').toLowerCase();
+      return validSleepAtWorkReasons.some(r => activity.includes(r));
+    };
+
     for (const char of allChars) {
-      if (!char.work_start_time || !char.work_end_time || !char.work_days) continue;
+      // Work location: check both fields
+      const workLocId = char.current_work_location_id || char.occupation_location_id;
+
+      // Also scan characters without work schedules for asleep-at-work errors
+      if (!char.work_start_time || !char.work_end_time || !char.work_days) {
+        // No schedule — if they're somehow asleep at a work location, fix it
+        const resolvedLocId = char.resolved_current_location_id;
+        const isSleepingAtWork = workLocId && resolvedLocId === workLocId &&
+          (char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping');
+        if (isSleepingAtWork && !hasValidSleepAtWorkReason(char)) {
+          const homeLocId = char.current_home_location_id;
+          if (homeLocId) {
+            issues_found.push(`${char.name}: SLEEPING_AT_WORK_INVALID — no schedule, asleep at work with no valid reason`);
+            await base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_current_location_id: homeLocId,
+              resolved_presence_status: 'sleeping',
+              resolved_location_type: 'home',
+              resolved_last_updated_at: new Date().toISOString(),
+            });
+            fixes_applied.push(`${char.name}: relocated from work (sleeping) → home`);
+            fixCount++;
+          }
+        }
+        continue;
+      }
 
       const onShift = isOnShift(char);
-      const workLocId = char.current_work_location_id || char.occupation_location_id;
       const resolvedLocId = char.resolved_current_location_id;
+      const isSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+      const isAtWorkLocation = workLocId && (resolvedLocId === workLocId);
 
       if (onShift) {
-        const isAtWork = workLocId && (resolvedLocId === workLocId);
+        const isAtWork = isAtWorkLocation;
         const checkResult = {
           name: `${char.name} — shift check`,
           status: isAtWork ? 'passed' : 'fixed',
@@ -103,19 +161,41 @@ Deno.serve(async (req) => {
           fixCount++;
         }
       } else {
-        // Off shift — verify they're not incorrectly stuck at work
+        // OFF SHIFT — must not remain at work
         const homeLocId = char.current_home_location_id;
-        if (homeLocId && resolvedLocId === workLocId && workLocId) {
-          issues_found.push(`${char.name}: off shift but still showing at work — stale location`);
-          await base44.asServiceRole.entities.Character.update(char.id, {
-            resolved_current_location_id: homeLocId,
-            resolved_presence_status: 'home',
-            resolved_location_type: 'home',
-            resolved_last_updated_at: new Date().toISOString(),
-          });
-          fixes_applied.push(`${char.name}: returned home after shift ended`);
-          fixCount++;
-          checks.push({ name: `${char.name} — off-shift check`, status: 'fixed', message: 'Was stuck at work after shift ended — moved home' });
+
+        // Case 1: Asleep at work after shift — CRITICAL error (unless valid reason)
+        if (isAtWorkLocation && isSleeping && !hasValidSleepAtWorkReason(char)) {
+          issues_found.push(`${char.name}: SLEEPING_AT_WORK_INVALID — shift ended, asleep at work with no valid reason`);
+          if (homeLocId) {
+            await base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_current_location_id: homeLocId,
+              resolved_presence_status: 'sleeping',
+              resolved_location_type: 'home',
+              resolved_last_updated_at: new Date().toISOString(),
+            });
+            fixes_applied.push(`${char.name}: SLEEPING_AT_WORK_INVALID fixed — relocated to home to sleep`);
+            fixCount++;
+            checks.push({ name: `${char.name} — sleep-at-work check`, status: 'fixed', message: 'Was asleep at work after shift ended — relocated to home' });
+          }
+        }
+        // Case 2: Still at work (awake) after shift ended
+        else if (isAtWorkLocation && !isSleeping) {
+          issues_found.push(`${char.name}: POST_SHIFT_EXIT_NOT_TRIGGERED — off shift but still at work location`);
+          if (homeLocId) {
+            const energy = char.energy_value || 75;
+            // Low energy → go home to sleep; otherwise heading home
+            const newStatus = energy < 40 ? 'sleeping' : 'home';
+            await base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_current_location_id: homeLocId,
+              resolved_presence_status: newStatus,
+              resolved_location_type: 'home',
+              resolved_last_updated_at: new Date().toISOString(),
+            });
+            fixes_applied.push(`${char.name}: POST_SHIFT_EXIT applied — moved home (${newStatus})`);
+            fixCount++;
+            checks.push({ name: `${char.name} — post-shift exit`, status: 'fixed', message: `Shift ended — moved to home with status '${newStatus}'` });
+          }
         } else {
           checks.push({ name: `${char.name} — off-shift check`, status: 'passed', message: 'Off shift, location looks correct' });
         }
@@ -124,7 +204,7 @@ Deno.serve(async (req) => {
 
     const summary = issues_found.length === 0
       ? `✅ All ${allChars.filter(c => c.work_start_time).length} characters with work schedules checked — no shift/location mismatches found.`
-      : `⚠️ Found ${issues_found.length} shift/location mismatch(es). Applied ${fixCount} fix(es).`;
+      : `⚠️ Found ${issues_found.length} issue(s): POST_SHIFT_EXIT_NOT_TRIGGERED=${issues_found.filter(i=>i.includes('POST_SHIFT')).length}, SLEEPING_AT_WORK_INVALID=${issues_found.filter(i=>i.includes('SLEEPING')).length}. Applied ${fixCount} fix(es).`;
 
     return Response.json({ summary, issues_found, fixes_applied, checks });
   } catch (error) {

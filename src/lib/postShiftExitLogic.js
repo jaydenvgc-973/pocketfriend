@@ -199,3 +199,52 @@ export function shouldEvaluateExit(lastEvaluatedAt) {
   const minutesAgo = (Date.now() - new Date(lastEvaluatedAt).getTime()) / (1000 * 60);
   return minutesAgo > 30;
 }
+
+/**
+ * Check if a character is invalidly asleep at work
+ * Returns true if sleeping at work with no valid justification
+ */
+export function isAsleepAtWorkInvalid(character, currentLocationId) {
+  const workLocId = character.current_work_location_id || character.occupation_location_id;
+  if (!workLocId || currentLocationId !== workLocId) return false;
+
+  const isSleeping = character.resolved_presence_status === 'sleeping'
+    || character.resolved_presence_status === 'napping';
+  if (!isSleeping) return false;
+
+  // Valid reasons to be asleep at work
+  const activity = (character.current_activity || '').toLowerCase();
+  const validReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
+  return !validReasons.some(r => activity.includes(r));
+}
+
+/**
+ * Determine the correct post-shift destination and status.
+ * Low energy strongly prioritizes going home to sleep.
+ */
+export function resolvePostShiftDestination(character) {
+  const energy = character.energy_value ?? 75;
+  const homeLocId = character.current_home_location_id;
+
+  // Low/critical energy → go home to sleep
+  if (energy < 40 && homeLocId) {
+    return {
+      locationId: homeLocId,
+      presenceStatus: 'sleeping',
+      locationType: 'home',
+      reason: 'POST_SHIFT_HOME_SLEEP — low energy after shift',
+    };
+  }
+
+  // Default → go home
+  if (homeLocId) {
+    return {
+      locationId: homeLocId,
+      presenceStatus: 'home',
+      locationType: 'home',
+      reason: 'POST_SHIFT_HOME — shift ended, returning home',
+    };
+  }
+
+  return null; // No home assigned — can't relocate
+}
