@@ -77,7 +77,7 @@ export default function MonthlyStatementPanel({ characterId }) {
       return txns;
     },
     enabled: !!characterId && isOpen,
-    staleTime: 30000,
+    staleTime: 0,
   });
 
   // Filter to the selected month
@@ -129,7 +129,7 @@ export default function MonthlyStatementPanel({ characterId }) {
           <div className="px-4 pt-3 pb-2">
             <select
               value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
+              onChange={e => { setSelectedMonth(e.target.value); }}
               className="w-full px-3 py-1.5 rounded-lg bg-secondary border border-border text-foreground text-xs outline-none focus:ring-1 focus:ring-primary/50"
             >
               {monthOptions.map(o => (
@@ -153,8 +153,8 @@ export default function MonthlyStatementPanel({ characterId }) {
           </div>
 
           {/* Transaction list */}
-          <div className="border-t border-border max-h-80 overflow-y-auto">
-            {isLoading ? (
+          <div className="border-t border-border max-h-96 overflow-y-auto">
+            {isLoading && monthTransactions.length === 0 ? (
               <div className="flex justify-center py-6">
                 <div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
               </div>
