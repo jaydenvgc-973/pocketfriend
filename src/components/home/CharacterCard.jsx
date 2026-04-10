@@ -266,15 +266,15 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                     const isWorker = workLocIds.includes(resolved.resolved_current_location_id);
 
                     if (isWorker) {
-                      // Character works here
+                      // Character works here — show briefcase
                       iconType = 'work';
-                      label = `at ${resolved.resolved_current_location_name}`;
+                      label = `working at ${resolved.resolved_current_location_name}`;
                       color = 'text-blue-400';
                     } else {
-                      // Character is visiting (customer, not staff)
-                      iconType = 'out';
+                      // Character is visiting (customer, not staff) — show pin
+                      iconType = 'visit';
                       label = `at ${resolved.resolved_current_location_name}`;
-                      color = 'text-blue-400';
+                      color = 'text-cyan-400';
                     }
                   } else if (resolved.resolved_presence_status === 'at_work_off_shift') {
                     // At workplace but not on shift
@@ -309,6 +309,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   'mall': ShoppingBag,
                   'home': Home,
                   'out': MapPin,
+                  'visit': MapPin,
                   'hospital': AlertTriangle,
                   'prayer': Sparkles,
                   'calm': null
