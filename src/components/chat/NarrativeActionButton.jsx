@@ -63,36 +63,70 @@ export default function NarrativeActionButton({
         `${m.sender_type === "user" ? "User" : character.name}: ${m.content || "(image)"}`
       ).join("\n");
 
+      const last5 = recentMessages.slice(-5).map(m => m.content || "").join(" ").toLowerCase();
+
+      // Detect tone tier from recent messages
+      const hasRomantic = /kiss|hold|closer|touch|pull|press|wrap|grip|lean|body|skin|breathe|heartbeat|forehead|cheek|waist|wrist|neck|lips|chest|hands/.test(last5);
+      const hasFlirt = /flirt|tease|smile|wink|playful|tension|lingering|stare|gaze|electricity|charged|heat/.test(last5);
+      const hasEmotional = /feel|hurt|cry|miss|scared|vulnerable|open|trust|honest|hard|difficult|breakdown|overwhelm|alone|together/.test(last5);
+      const isNeutral = !hasRomantic && !hasFlirt && !hasEmotional;
+
+      const friendshipLevel = character.friendship_level ?? 75;
+      const romanticLevel = character.romantic_level ?? 0;
+      const emotionalState = character.emotional_state || "calm";
+      const location = character.resolved_current_location_name || character.city || "home";
+
+      // Determine context tier
+      let contextTier = "low";
+      if (hasRomantic || (romanticLevel >= 60 && hasFlirt)) contextTier = "high";
+      else if (hasFlirt || hasEmotional || romanticLevel >= 30) contextTier = "medium";
+
       const intentMap = {
-        action:     "a natural, context-driven action that fits the current moment — whatever feels most authentic given the situation",
-        comfort:    "a comforting, warm, caring moment — physical closeness, reassurance, or emotional support",
-        flirt:      "a playful, flirtatious, or romantically charged moment — subtle tension or bold intention",
-        confront:   "an emotionally honest confrontation — unresolved tension surfacing, a feeling being named or acted on",
+        action: contextTier === "high"
+          ? "a passionate, physically grounded action that feels earned by the buildup — pulling closer, kissing deeper, bodies meeting with intention"
+          : contextTier === "medium"
+          ? "a warm, emotionally charged physical action — touching their hand, guiding them closer, a brief kiss, leaning in with intention"
+          : "a subtle but meaningful physical presence — stepping a little closer, a hand brushing theirs, sitting beside them, a lingering look that changes the tone",
+        comfort: "a comforting, warm, caring moment — physical closeness, reassurance, or emotional support",
+        flirt: "a playful, flirtatious, or romantically charged moment — subtle tension or bold intention",
+        confront: "an emotionally honest confrontation — unresolved tension surfacing, a feeling being named or acted on",
         spend_time: "a quiet, present moment — just existing together, doing something simple, no agenda",
-        check_in:   "a genuine check-in — noticing something about the user, asking how they are, showing they care",
+        check_in: "a genuine check-in — noticing something about the user, asking how they are, showing they care",
       };
+
+      const tierInstructions = contextTier === "high"
+        ? `CONTEXT TIER: HIGH. The conversation has clearly built toward romantic/passionate territory. Use strong physical closeness, kissing, pulling closer, hands moving with intention. Include environmental disruption (sheets shifting, papers falling, a door clicking shut). Intensify with metaphor (tidal waves, pressure against a dam, floodwater breaking through). Keep it non-explicit but immersive.`
+        : contextTier === "medium"
+        ? `CONTEXT TIER: MEDIUM. There is growing warmth, flirtation, or emotional openness. Use moderate physical closeness — touching a hand, guiding them in, a brief soft kiss, leaning in. Include a small environmental detail. Let the metaphor deepen the tone without overwhelming the moment.`
+        : `CONTEXT TIER: LOW. The conversation is relatively neutral or just warming up. Do NOT jump to romantic or passionate actions. Use a soft, grounding action — stepping closer, a hand brushing theirs, sitting beside them, a lingering look. Let imagination do the work. Do not escalate.`;
 
       const prompt = `You are writing a SHORT third-person narrative scene (2-4 sentences) for ${character.name}.
 
 CHARACTER: ${character.name}
 Personality: ${character.personality_summary || "unknown"}
-Emotional state: ${character.emotional_state || "calm"}
-Location: ${character.resolved_current_location_name || character.city || "home"}
-Relationship to user — Friendship: ${character.friendship_level ?? 75}/100, Romantic: ${character.romantic_level ?? 0}/100
+Emotional state: ${emotionalState}
+Location: ${location}
+Relationship — Friendship: ${friendshipLevel}/100, Romantic: ${romanticLevel}/100
 
 RECENT CONVERSATION:
 ${recentContext || "(no recent messages)"}
 
+${tierInstructions}
+
 INTENT: Generate ${intentMap[intent] || intentMap.action}.
 
-STRICT RULES:
-- Third person only ("${character.name} reaches...", "She looks up...")
-- Physically grounded — describe posture, movement, proximity, sensation
-- NO dialogue (character may say ONE short line max, in quotes)
-- NO explicit content — suggestive and emotionally charged is fine
+STYLE RULES:
+- Third person only ("${character.name} reaches...", "He looks up...")
+- ONE continuous paragraph, no double spacing, no em dashes mid-sentence
+- Clearly state what the character is physically doing — do not hide action behind metaphor alone
+- Include at least one grounded environmental detail (a pillow shifting, papers sliding, a chair scraping back, the couch dipping)
+- After grounding the scene in action and environment, intensify with metaphor only if context tier supports it
+- No dialogue (one short quoted line max)
+- No explicit content — suggestive and emotionally charged is fine, imagination fills the gaps
 - Fits the current location — do NOT invent new locations
 - 2-4 sentences max. Tight. Cinematic. Real.
-- Do NOT be random. This must feel earned by the context above.
+- The action must feel like the NEXT CORRECT CHAPTER, not a random scene change
+- HARD BLOCK: If the recent conversation is neutral/work/daily life, do NOT write romantic or passionate content
 
 Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
 
