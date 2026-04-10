@@ -258,29 +258,16 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   iconType = 'prayer';
                   label = 'praying';
                   color = 'text-violet-300';
-                } else if (resolved.resolved_location_type === 'work') {
-                    // Check if character is actually a worker at this location
-                    const workLocIds = [character.occupation_location_id, character.current_work_location_id]
-                      .concat((character.additional_occupation_locations || []).map(l => l.location_id))
-                      .filter(Boolean);
-                    const isWorker = workLocIds.includes(resolved.resolved_current_location_id);
-
-                    if (isWorker) {
-                      // Character works here — show briefcase
-                      iconType = 'work';
-                      label = `working at ${resolved.resolved_current_location_name}`;
-                      color = 'text-blue-400';
-                    } else {
-                      // Character is visiting (customer, not staff) — show pin
-                      iconType = 'visit';
-                      label = `at ${resolved.resolved_current_location_name}`;
-                      color = 'text-cyan-400';
-                    }
-                  } else if (resolved.resolved_presence_status === 'at_work_off_shift') {
-                    // At workplace but not on shift
-                    iconType = 'out';
-                    label = `at ${resolved.resolved_current_location_name}`;
+                } else if (resolved.resolved_presence_status === 'at_work') {
+                    // At work AND currently on shift — show briefcase
+                    iconType = 'work';
+                    label = `working at ${resolved.resolved_current_location_name}`;
                     color = 'text-blue-400';
+                } else if (resolved.resolved_location_type === 'work' || resolved.resolved_presence_status === 'at_work_off_shift') {
+                    // At work location but OFF SHIFT — show pin (visitor)
+                    iconType = 'visit';
+                    label = `at ${resolved.resolved_current_location_name}`;
+                    color = 'text-cyan-400';
                 } else if (resolved.resolved_location_type === 'school') {
                   iconType = 'school';
                   label = `at ${resolved.resolved_current_location_name}`;
