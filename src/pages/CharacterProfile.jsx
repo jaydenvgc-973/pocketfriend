@@ -25,7 +25,7 @@ import CharacterExpenseManager from "@/components/finance/CharacterExpenseManage
 import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
-import OwnedLocationsPanel from "@/components/character/OwnedLocationsPanel";
+import CharacterBusinessesPanel from "@/components/character/CharacterBusinessesPanel";
 import LifeJournal from "@/components/character/LifeJournal";
 
 
@@ -568,8 +568,8 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Locations Owned */}
-        <OwnedLocationsPanel characterId={characterId} />
+        {/* Businesses */}
+        <CharacterBusinessesPanel characterId={characterId} />
 
         {/* Education */}
         {(character.current_education_activity || character.education_location_id || character.additional_education_locations?.length > 0 || character.completed_education?.length > 0) && (
