@@ -712,19 +712,18 @@ Deno.serve(async (req) => {
               { created_by: createdBy }, '-created_date', 100
             );
 
-            // ── STEP 1: Real-time location lock (highest priority) ──
-            // Use the character's authoritative current location from the location engine.
-            // This mirrors what the character card + travel page show — images must match.
+            // ── STEP 1: Direct ID lookup (highest priority — bypasses created_by and limits) ──
             const currentLocId = charRecord?.resolved_current_location_id
               || charRecord?.current_home_location_id;
 
+            // Always fetch the location directly by ID first — ownership is irrelevant
             let realTimeLoc = currentLocId
-              ? savedLocations.find(l => l.id === currentLocId) || null
+              ? await base44.asServiceRole.entities.LocationReference.get(currentLocId).catch(() => null)
               : null;
 
             // Also try occupation location if character is at work
             if (!realTimeLoc && charRecord?.resolved_location_type === 'work' && charRecord?.occupation_location_id) {
-              realTimeLoc = savedLocations.find(l => l.id === charRecord.occupation_location_id) || null;
+              realTimeLoc = await base44.asServiceRole.entities.LocationReference.get(charRecord.occupation_location_id).catch(() => null);
             }
 
             if (realTimeLoc) {
