@@ -1,9 +1,10 @@
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Briefcase, Plus, Globe, Eye, EyeOff, Edit2 } from "lucide-react";
+import { Briefcase, Plus } from "lucide-react";
 import BusinessPaymentEditor from "./BusinessPaymentEditor";
 import CharacterBusinessModal from "./CharacterBusinessModal";
+import BusinessCard from "./BusinessCard";
 
 const BUSINESS_TYPE_CATEGORIES = {
   "Retail & Sales": ["Clothing Store / Boutique", "Convenience Store / Bodega", "Supermarket / Grocery Store", "Electronics Store", "Furniture Store", "Jewelry Store", "Online Retail Store (E-commerce)", "Thrift / Resale Shop"],
@@ -18,21 +19,11 @@ const BUSINESS_TYPE_CATEGORIES = {
   "Financial & Investment": ["Investment Firm", "Trading / Stock Business", "Lending / Finance Company"],
 };
 
-function VisibilityIcon({ visibility }) {
-  if (visibility === "public") return <Globe className="w-4 h-4 text-green-500" />;
-  if (visibility === "private") return <Eye className="w-4 h-4 text-amber-500" />;
-  return <EyeOff className="w-4 h-4 text-red-500" />;
-}
 
-function VisibilityLabel({ visibility }) {
-  const map = { public: "Public", private: "Private", secret: "Secret" };
-  return <span className="text-xs font-medium capitalize">{map[visibility] || visibility}</span>;
-}
 
 export default function CharacterBusinessesPanel({ characterId }) {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
-  const [editingPayment, setEditingPayment] = useState(null);
 
   const { data: character = {} } = useQuery({
     queryKey: ["character", characterId],
@@ -54,11 +45,19 @@ export default function CharacterBusinessesPanel({ characterId }) {
     isLocationBased: true,
     linkedLocationId: loc.id,
     income: loc.income_generated || 0,
-    workers: loc.worker_character_ids?.length || 0,
+    notes: loc.description || "",
+    worker_character_ids: loc.worker_character_ids || [],
   }));
 
   const customBusinesses = character.businesses || [];
-  const allBusinesses = [...locationBasedBusinesses, ...customBusinesses];
+
+  const handleDeleteBusiness = async (businessId) => {
+    if (!confirm("Delete this business?")) return;
+    const char = await base44.entities.Character.get(characterId);
+    const updated = (char.businesses || []).filter(b => b.id !== businessId);
+    await base44.entities.Character.update(characterId, { businesses: updated });
+    queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+  };
 
   if (!ownedLocations.length && !customBusinesses.length) {
     return (
@@ -104,89 +103,32 @@ export default function CharacterBusinessesPanel({ characterId }) {
         </button>
       </div>
 
-      {customBusinesses.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Other Businesses</p>
-          {customBusinesses.map(biz => (
-            <div key={biz.id} className="pl-3 border-l-2 border-primary/30 space-y-1.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-foreground">{biz.name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{biz.type}</p>
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <VisibilityIcon visibility={biz.visibility} />
-                </div>
-              </div>
-              <button
-                onClick={() => setEditingPayment({ business: biz, type: "worker-pay" })}
-                className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors group"
-              >
-                <span className="text-xs text-muted-foreground group-hover:text-foreground">Weekly worker pay</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs font-medium text-foreground">${(biz.monthly_worker_pay || 0).toFixed(2)}</span>
-                  <Edit2 className="w-3 h-3 text-muted-foreground group-hover:text-foreground" />
-                </div>
-              </button>
-              {biz.notes && (
-                <p className="text-xs text-muted-foreground">{biz.notes}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {locationBasedBusinesses.length > 0 && (
-        <div className="space-y-3">
-          <p className="text-xs text-muted-foreground uppercase tracking-wider">Locations Owned</p>
-          {locationBasedBusinesses.map(biz => (
-            <div key={biz.id} className="pl-3 border-l-2 border-primary/30 space-y-1.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-foreground">{biz.name}</p>
-                  <p className="text-xs text-muted-foreground capitalize">{biz.type}</p>
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <VisibilityIcon visibility={biz.visibility} />
-                </div>
-              </div>
-              <button
-                onClick={() => setEditingPayment({ business: biz, type: "revenue" })}
-                className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors group"
-              >
-                <span className="text-xs text-muted-foreground group-hover:text-foreground">Monthly revenue</span>
-                <div className="flex items-center gap-1">
-                  <span className="text-xs font-medium text-green-500">${(biz.income || 0).toFixed(2)}</span>
-                  <Edit2 className="w-3 h-3 text-muted-foreground group-hover:text-foreground" />
-                </div>
-              </button>
-              {biz.workers > 0 && (
-                <p className="text-xs text-muted-foreground">{biz.workers} {biz.workers === 1 ? "worker" : "workers"}</p>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="space-y-3">
+        {customBusinesses.map(biz => (
+          <BusinessCard
+            key={biz.id}
+            business={biz}
+            characterId={characterId}
+            isLocationBased={false}
+            onDelete={handleDeleteBusiness}
+          />
+        ))}
+        {locationBasedBusinesses.map(biz => (
+          <BusinessCard
+            key={biz.id}
+            business={biz}
+            characterId={characterId}
+            isLocationBased={true}
+            onDelete={handleDeleteBusiness}
+          />
+        ))}
+      </div>
 
       {showModal && (
         <CharacterBusinessModal
           characterId={characterId}
           onClose={() => setShowModal(false)}
           onBusinessAdded={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
-        />
-      )}
-
-      {editingPayment && (
-        <BusinessPaymentEditor
-          business={editingPayment.business}
-          characterId={characterId}
-          type={editingPayment.type}
-          onClose={() => setEditingPayment(null)}
-          onSaved={() => {
-            setEditingPayment(null);
-            queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-            queryClient.invalidateQueries({ queryKey: ["ownedLocations", characterId] });
-          }}
         />
       )}
     </div>

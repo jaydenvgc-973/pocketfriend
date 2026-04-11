@@ -59,10 +59,19 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
     setIsSubmitting(true);
     
     try {
+      const paymentAmount = parseFloat(amount);
+      
       if (type === "revenue" && business.isLocationBased) {
         // Update location revenue
         await base44.entities.LocationReference.update(business.linkedLocationId, {
-          income_generated: parseFloat(amount)
+          income_generated: paymentAmount
+        });
+        // Process immediate payment
+        await base44.functions.invoke('processBusinessPaymentImmediate', {
+          characterId,
+          businessId: business.id,
+          amount: paymentAmount,
+          type: 'revenue',
         });
       } else if (type === "worker-pay") {
         // Update custom business worker pay and workers
@@ -71,9 +80,22 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
         const idx = businesses.findIndex(b => b.id === business.id);
         
         if (idx >= 0) {
-          businesses[idx].monthly_worker_pay = parseFloat(amount);
+          businesses[idx].monthly_worker_pay = paymentAmount;
           businesses[idx].worker_character_ids = selectedWorkers;
           await base44.entities.Character.update(characterId, { businesses });
+        }
+        
+        // Process immediate payment to each worker
+        if (selectedWorkers.length > 0) {
+          for (const workerId of selectedWorkers) {
+            await base44.functions.invoke('processBusinessPaymentImmediate', {
+              characterId: workerId,
+              businessId: business.id,
+              amount: paymentAmount,
+              type: 'worker-pay',
+              workerIds: selectedWorkers,
+            });
+          }
         }
       }
       
