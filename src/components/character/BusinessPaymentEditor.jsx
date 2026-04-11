@@ -51,6 +51,31 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
       const char = await base44.entities.Character.get(characterId);
       
       if (type === "revenue") {
+        // Location-based vs custom business logic
+        const isLocationBased = !!business.linkedLocationId;
+        
+        if (isLocationBased) {
+          // For location-based: ONLY update the LocationReference
+          await base44.entities.LocationReference.update(business.linkedLocationId, {
+            income_generated: paymentAmount
+          });
+        } else {
+          // For custom businesses: update character.businesses array
+          const businesses = (char.businesses || []).map(b => {
+            if (b.id === business.id) {
+              return { ...b, income: paymentAmount };
+            }
+            return b;
+          });
+          
+          // Add if not found
+          if (!businesses.find(b => b.id === business.id)) {
+            businesses.push({ ...business, income: paymentAmount });
+          }
+          
+          await base44.entities.Character.update(characterId, { businesses });
+        }
+        
         // Get or create financial record
         let financial = (await base44.entities.CharacterFinancial.filter({ character_id: characterId }))[0];
         if (!financial) {
@@ -61,22 +86,6 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
             total_income: 0,
             total_expenses: 0,
           });
-        }
-
-        // Determine if location-based and update accordingly
-        const isLocationBased = !!business.linkedLocationId;
-        
-        if (isLocationBased) {
-          await base44.entities.LocationReference.update(business.linkedLocationId, {
-            income_generated: paymentAmount
-          });
-        } else {
-          const businesses = char.businesses || [];
-          const idx = businesses.findIndex(b => b.id === business.id);
-          if (idx >= 0) {
-            businesses[idx].income = paymentAmount;
-            await base44.entities.Character.update(characterId, { businesses });
-          }
         }
         
         // Create income transaction and update balance
