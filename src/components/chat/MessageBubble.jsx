@@ -32,6 +32,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
 
+  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && message.content === "";
+
   const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
     setIsRegenerating(true);
     setRegenError(null);
