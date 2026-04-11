@@ -5,6 +5,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key, MapPin, Briefcase, Home } from "lucide-react";
 import VGCRevenueDashboard from "@/components/finance/VGCRevenueDashboard";
+import { Button } from "@/components/ui/button";
+import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
+import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
+import BottomNav from "@/components/BottomNav";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
 export default function MyProfile() {
