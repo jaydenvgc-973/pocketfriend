@@ -27,18 +27,28 @@ export default function VGCRevenueDashboard({ userSettings }) {
   const [months] = useState(6);
 
   // Fetch all financial transactions
-  const { data: transactions = [], isLoading } = useQuery({
+  const { data: transactions = [], isLoading: txLoading } = useQuery({
     queryKey: ["allFinancialTransactions"],
     queryFn: () => base44.entities.FinancialTransaction.list("-timestamp", 500),
   });
 
-  // Fetch character financials for balance snapshots
-  const { data: charFinancials = [] } = useQuery({
+  // Fetch only active, user-created characters
+  const { data: activeCharacters = [] } = useQuery({
+    queryKey: ["activeCharacters"],
+    queryFn: () => base44.entities.Character.filter({ character_type: "active", created_by_user: true }, null, 100),
+  });
+
+  // Fetch all character financials
+  const { data: allCharFinancials = [] } = useQuery({
     queryKey: ["allCharacterFinancials"],
     queryFn: () => base44.entities.CharacterFinancial.list(),
   });
 
-  if (isLoading) {
+  // Filter financials to only active created characters
+  const activeCharIds = new Set(activeCharacters.map(c => c.id));
+  const charFinancials = allCharFinancials.filter(cf => activeCharIds.has(cf.character_id));
+
+  if (txLoading) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground text-sm">
         Loading revenue data...
@@ -105,7 +115,7 @@ export default function VGCRevenueDashboard({ userSettings }) {
         <StatCard icon={DollarSign} label="Your Balance" value={`$${userBalance.toLocaleString()}`} sub="current" color="text-green-400" />
         <StatCard icon={Phone} label="Total VGC Revenue" value={`$${Math.round(totalVGCRevenue).toLocaleString()}`} sub="all time" color="text-primary" />
         <StatCard icon={TrendingUp} label="Char. Expenses" value={`$${Math.round(totalCharExp).toLocaleString()}`} sub="all time tracked" color="text-amber-400" />
-        <StatCard icon={Users} label="Active Accounts" value={activeCharCount} sub="characters tracked" color="text-blue-400" />
+        <StatCard icon={Users} label="Active Accounts" value={activeCharCount} sub="active created characters" color="text-blue-400" />
       </div>
 
       {/* Revenue trend */}
@@ -139,7 +149,7 @@ export default function VGCRevenueDashboard({ userSettings }) {
         )}
       </div>
 
-      {/* Per-character balance bars */}
+      {/* Per-character balance bars — only active created characters */}
       {charFinancials.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Character Balances</p>
