@@ -1,11 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-/**
- * retroactiveVGCMobileCharge
- * 
- * One-time function to charge all active characters for April 2026 VGC Mobile.
- * Can be called manually or as part of setup.
- */
+const VGC_MOBILE_MONTHLY_COST = 50;
 
 Deno.serve(async (req) => {
   try {
@@ -25,10 +20,57 @@ Deno.serve(async (req) => {
     // Charge each character for April 2026
     for (const char of allChars) {
       try {
-        await base44.asServiceRole.functions.invoke('chargeVGCMobileBill', {
-          characterId: char.id,
-          billingMonth: 'April 2026',
+        // Fetch or create CharacterFinancial
+        const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: char.id });
+        let financial = financialRecs[0];
+        
+        if (!financial) {
+          financial = await base44.asServiceRole.entities.CharacterFinancial.create({
+            character_id: char.id,
+            character_name: char.name,
+            current_balance: 6000,
+          });
+        }
+
+        // Deduct from character balance
+        const newBalance = Math.max(0, (financial.current_balance || 6000) - VGC_MOBILE_MONTHLY_COST);
+        await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+          current_balance: newBalance,
+          total_expenses: (financial.total_expenses || 0) + VGC_MOBILE_MONTHLY_COST,
         });
+
+        // Create transaction record
+        const now = new Date();
+        const displayMonth = 'April 2026';
+        
+        await base44.asServiceRole.entities.FinancialTransaction.create({
+          character_id: char.id,
+          character_name: char.name,
+          sender_id: 'vgc_mobile_system',
+          sender_type: 'system',
+          sender_name: 'VGC Mobile',
+          receiver_id: char.id,
+          receiver_type: 'character',
+          receiver_name: char.name,
+          amount: VGC_MOBILE_MONTHLY_COST,
+          direction: 'expense',
+          transaction_type: 'utilities',
+          description: `VGC Mobile monthly phone bill (${displayMonth})`,
+          timestamp: now.toISOString(),
+          balance_after: newBalance,
+        });
+
+        // Increase user revenue (character's creator benefits from this)
+        if (char.created_by) {
+          const userSettings = await base44.asServiceRole.entities.UserSettings.filter({ created_by: char.created_by });
+          if (userSettings[0]) {
+            const currentRevenue = userSettings[0].vgc_mobile_revenue || 0;
+            await base44.asServiceRole.entities.UserSettings.update(userSettings[0].id, {
+              vgc_mobile_revenue: currentRevenue + VGC_MOBILE_MONTHLY_COST,
+            });
+          }
+        }
+
         successCount++;
       } catch (err) {
         console.error(`[retroactiveVGCMobileCharge] Failed to charge ${char.name}:`, err.message);
