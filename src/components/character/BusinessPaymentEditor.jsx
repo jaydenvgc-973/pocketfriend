@@ -66,13 +66,15 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
         await base44.entities.LocationReference.update(business.linkedLocationId, {
           income_generated: paymentAmount
         });
-        // Process immediate payment
-        await base44.functions.invoke('processBusinessPaymentImmediate', {
+        
+        // Process immediate payment to owner
+        const response = await base44.functions.invoke('processBusinessPaymentImmediate', {
           characterId,
           businessId: business.id,
           amount: paymentAmount,
           type: 'revenue',
         });
+        console.log('Revenue payment response:', response.data);
       } else if (type === "worker-pay") {
         // Update custom business worker pay and workers
         const char = await base44.entities.Character.get(characterId);
@@ -88,13 +90,14 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
         // Process immediate payment to each worker
         if (selectedWorkers.length > 0) {
           for (const workerId of selectedWorkers) {
-            await base44.functions.invoke('processBusinessPaymentImmediate', {
+            const response = await base44.functions.invoke('processBusinessPaymentImmediate', {
               characterId: workerId,
               businessId: business.id,
               amount: paymentAmount,
               type: 'worker-pay',
               workerIds: selectedWorkers,
             });
+            console.log(`Worker ${workerId} payment response:`, response.data);
           }
         }
       }
@@ -103,6 +106,7 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
       onClose();
     } catch (err) {
       console.error("Failed to save:", err);
+      alert('Error processing payment: ' + err.message);
     } finally {
       setIsSubmitting(false);
     }

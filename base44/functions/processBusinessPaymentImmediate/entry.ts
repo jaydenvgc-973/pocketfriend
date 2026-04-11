@@ -57,41 +57,8 @@ Deno.serve(async (req) => {
       timestamp: new Date().toISOString(),
     });
 
-    // Setup monthly automation for owner revenue
-    if (type === 'revenue') {
-      const monthlyFunctionName = 'processMonthlyBusinessRevenue';
-      await base44.asServiceRole.automations.create({
-        name: `Monthly Revenue: ${businessId}`,
-        automation_type: 'scheduled',
-        function_name: monthlyFunctionName,
-        schedule_type: 'cron',
-        cron_expression: '0 0 1 * *', // 1st of every month at midnight
-        function_args: {
-          characterId,
-          businessId,
-          amount,
-        },
-        is_active: true,
-      });
-    }
-
-    // Setup weekly automation for worker payments
-    if (type === 'worker-pay' && workerIds && workerIds.length > 0) {
-      const weeklyFunctionName = 'processWeeklyWorkerPayment';
-      await base44.asServiceRole.automations.create({
-        name: `Weekly Payroll: ${businessId}`,
-        automation_type: 'scheduled',
-        function_name: weeklyFunctionName,
-        schedule_type: 'cron',
-        cron_expression: '0 9 * * 5', // Every Friday at 9am
-        function_args: {
-          businessId,
-          workerIds,
-          amountPerWorker: amount,
-        },
-        is_active: true,
-      });
-    }
+    // TODO: Setup scheduled automations for recurring payments (monthly revenue on 1st, weekly worker pay on Fridays)
+    // This will be implemented via the dashboard automations feature
 
     return Response.json({
       success: true,
