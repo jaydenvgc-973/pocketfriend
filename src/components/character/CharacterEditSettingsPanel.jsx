@@ -519,17 +519,7 @@ function EducationEditor({ character }) {
     await save(updated);
   };
 
-  const updateField = (idx, field, value) => {
-    const updated = entries.map((e, i) => i === idx ? { ...e, [field]: value } : e);
-    setEntries(updated);
-  };
-
-  const saveEntry = async () => {
-    await save(entries);
-    queryClient.invalidateQueries({ queryKey: ['character', character.id] });
-  };
-
-  // Use this for date/select onChange — avoids stale closure since state hasn't flushed yet
+  // Single update path — always saves with the freshly computed value to avoid stale closure bugs
   const updateAndSave = async (idx, field, value) => {
     const updated = entries.map((e, i) => i === idx ? { ...e, [field]: value } : e);
     setEntries(updated);
@@ -582,13 +572,11 @@ function EducationEditor({ character }) {
             </button>
           </div>
           <input value={edu.course_name || ''} placeholder="Program / Course name"
-            onChange={e => updateField(idx, 'course_name', e.target.value)}
-            onBlur={saveEntry}
+            onChange={e => updateAndSave(idx, 'course_name', e.target.value)}
             className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
           />
           <input value={edu.institution || ''} placeholder="Institution"
-            onChange={e => updateField(idx, 'institution', e.target.value)}
-            onBlur={saveEntry}
+            onChange={e => updateAndSave(idx, 'institution', e.target.value)}
             className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
           />
           <div className="grid grid-cols-2 gap-2">
