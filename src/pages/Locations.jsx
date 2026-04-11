@@ -432,7 +432,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       ? characters.find(c => c.id === form.character_id)
       : null;
     const ownerChar = !form.owner_is_npc && form.owner_character_id
-      ? characters.find(c => c.id === form.owner_character_id)
+      ? (form.owner_character_id === currentUser?.id
+          ? { name: currentUser?.full_name || "You" }
+          : characters.find(c => c.id === form.owner_character_id))
       : null;
     onSave({
       ...form,
@@ -720,20 +722,27 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
             {/* User (current player) - always first */}
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">The Player</p>
-            <button
-              onClick={() => {
-                // Placeholder: user would be represented with their world name or special marker
-                // For now, we'll add a visual indicator but this would need backend support
-              }}
-              disabled={true}
-              className="w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg bg-primary/10 border-l-2 border-primary opacity-50 cursor-default"
-            >
-              <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                <span className="text-xs font-bold text-primary">U</span>
-              </div>
-              <span className="text-sm text-foreground font-medium flex-1">{currentUser?.full_name || "You"}</span>
-              <span className="text-xs text-primary font-medium">✓ Player</span>
-            </button>
+            {(() => {
+              const userId = currentUser?.id;
+              const alreadyResident = userId && form.resident_character_ids?.includes(userId);
+              return (
+                <button
+                  onClick={() => {
+                    if (!alreadyResident && userId) {
+                      update("resident_character_ids", [...(form.resident_character_ids || []), userId]);
+                    }
+                  }}
+                  disabled={alreadyResident || !userId}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
+                >
+                  <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-bold text-primary">U</span>
+                  </div>
+                  <span className="text-sm text-foreground font-medium flex-1">{currentUser?.full_name || "You"}</span>
+                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                </button>
+              );
+            })()}
 
             {/* Active Characters (sorted: primary characters first, NPCs last) */}
             {characters.length > 0 && (
@@ -1146,6 +1155,19 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs">—</span>
               No owner assigned
             </button>
+            {/* Current user (player) as owner */}
+            {currentUser?.id && (
+              <button
+                onClick={() => update("owner_character_id", currentUser.id)}
+                className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}
+              >
+                <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                  <span className="text-xs font-bold text-primary">U</span>
+                </div>
+                <span className="text-sm text-foreground">{currentUser?.full_name || "You (Player)"}</span>
+                <span className="text-xs text-primary/60 ml-auto">Player</span>
+              </button>
+            )}
             {characters.map(c => (
               <button key={c.id} onClick={() => update("owner_character_id", c.id)}
                 className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
