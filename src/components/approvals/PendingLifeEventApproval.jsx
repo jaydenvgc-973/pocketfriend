@@ -90,28 +90,47 @@ export default function PendingLifeEventApproval({ characterId, character }) {
     return "Job Training Change";
   };
 
+  const currentEvent = visibleEvents[0]; // Show one at a time as a modal
+
   return createPortal(
-    <div className="fixed bottom-24 right-4 z-50 w-80 space-y-2 max-h-[60vh] overflow-y-auto">
-      <AnimatePresence>
-        {visibleEvents.map(event => {
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+
+      {/* Modal */}
+      <AnimatePresence mode="wait">
+        {currentEvent && (() => {
+          const event = currentEvent;
           const existingOptions = getExistingOptions(event);
           const isLinking = showLinkOptions === event.id;
 
           return (
             <motion.div
               key={event.id}
-              initial={{ opacity: 0, x: 40, scale: 0.95 }}
-              animate={{ opacity: 1, x: 0, scale: 1 }}
-              exit={{ opacity: 0, x: 40, scale: 0.95 }}
-              className="bg-card border border-border rounded-2xl p-4 shadow-xl"
+              initial={{ opacity: 0, scale: 0.92, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.92, y: 20 }}
+              className="relative z-10 bg-card border border-border rounded-2xl p-5 shadow-2xl w-full max-w-sm"
             >
+              {/* Queue indicator */}
+              {visibleEvents.length > 1 && (
+                <div className="mb-3 flex items-center gap-1.5">
+                  {visibleEvents.map((_, i) => (
+                    <div key={i} className={`h-1.5 flex-1 rounded-full ${i === 0 ? 'bg-primary' : 'bg-border'}`} />
+                  ))}
+                </div>
+              )}
+
               {/* Header */}
               <div className="flex items-start gap-2 mb-3">
                 {typeIcon(event.change_type)}
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-foreground">{typeLabel(event.change_type)}</p>
+                  <p className="text-sm font-semibold text-foreground">{typeLabel(event.change_type)}</p>
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Requires your approval</p>
                 </div>
+                {visibleEvents.length > 1 && (
+                  <span className="text-xs text-muted-foreground">{visibleEvents.length} pending</span>
+                )}
               </div>
 
               {/* Summary */}
@@ -167,15 +186,15 @@ export default function PendingLifeEventApproval({ characterId, character }) {
 
               {/* Actions */}
               {!isLinking && (
-                <div className="flex gap-1.5">
+                <div className="flex gap-1.5 mt-4">
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={() => handleAction(event.id, "reject")}
                     disabled={!!resolving}
-                    className="flex-1 h-8 text-[10px] rounded-xl text-destructive border-destructive/30 hover:bg-destructive/10 gap-1"
+                    className="flex-1 h-9 text-xs rounded-xl text-destructive border-destructive/30 hover:bg-destructive/10 gap-1"
                   >
-                    <XCircle className="w-3 h-3" /> Reject
+                    <XCircle className="w-3.5 h-3.5" /> Reject
                   </Button>
                   {existingOptions.length > 0 && (
                     <Button
@@ -183,25 +202,25 @@ export default function PendingLifeEventApproval({ characterId, character }) {
                       variant="outline"
                       onClick={() => setShowLinkOptions(event.id)}
                       disabled={!!resolving}
-                      className="flex-1 h-8 text-[10px] rounded-xl gap-1"
+                      className="flex-1 h-9 text-xs rounded-xl gap-1"
                     >
-                      <LinkIcon className="w-3 h-3" /> Already exists
+                      <LinkIcon className="w-3.5 h-3.5" /> Already exists
                     </Button>
                   )}
                   <Button
                     size="sm"
                     onClick={() => handleAction(event.id, "approve")}
                     disabled={!!resolving}
-                    className="flex-1 h-8 text-[10px] rounded-xl gap-1"
+                    className="flex-1 h-9 text-xs rounded-xl gap-1"
                   >
-                    <CheckCircle className="w-3 h-3" />
+                    <CheckCircle className="w-3.5 h-3.5" />
                     {resolving === event.id ? "..." : "Approve"}
                   </Button>
                 </div>
               )}
             </motion.div>
           );
-        })}
+        })()}
       </AnimatePresence>
     </div>,
     document.body
