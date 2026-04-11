@@ -637,11 +637,20 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 <div className="space-y-2 max-h-44 overflow-y-auto">
                   {/* Active character residents */}
                   {form.resident_character_ids.map((resId, idx) => {
-                    const resChar = characters.find(c => c.id === resId);
+                    const isUser = resId === currentUser?.id;
+                    const resChar = isUser ? null : characters.find(c => c.id === resId);
+                    const displayName = isUser ? (currentUser?.full_name || "You") : (resChar?.name || resId);
                     return (
                       <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
-                        {resChar && <CharacterAvatar character={resChar} size="sm" />}
-                        <span className="text-sm text-foreground flex-1">{resChar?.name || resId}</span>
+                        {isUser ? (
+                          <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                            <span className="text-xs font-bold text-primary">U</span>
+                          </div>
+                        ) : resChar ? (
+                          <CharacterAvatar character={resChar} size="sm" />
+                        ) : null}
+                        <span className="text-sm text-foreground flex-1">{displayName}</span>
+                        {isUser && <span className="text-xs text-primary/60">Player</span>}
                         <button
                           onClick={() => update("resident_character_ids", form.resident_character_ids.filter((_, i) => i !== idx))}
                           className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
