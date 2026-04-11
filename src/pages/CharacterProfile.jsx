@@ -506,26 +506,34 @@ export default function CharacterProfile() {
         )}
 
         {/* Work */}
-        {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0) && (
+        {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0 || workLocations.length > 0) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Occupation</p>
             <div className="space-y-3">
               {/* Primary job */}
-              <div className="space-y-1">
-                {character.work_details?.job_title && (
-                  <p className="text-sm text-foreground font-medium">{character.work_details.job_title}</p>
-                )}
-                {character.occupation_location_name && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1">
-                    <Briefcase className="w-3 h-3" /> {character.occupation_location_name}
-                  </p>
-                )}
-                {character.work_details?.workplace_type && !character.occupation_location_name && (
-                  <p className="text-sm text-muted-foreground">{character.work_details.workplace_type}</p>
-                )}
-              </div>
-              {/* Additional jobs */}
-              {character.additional_occupation_locations?.map((loc, idx) => {
+              {(character.work_details?.job_title || character.occupation_location_name) && (
+                <div className="space-y-1">
+                  {character.work_details?.job_title && (
+                    <p className="text-sm text-foreground font-medium">{character.work_details.job_title}</p>
+                  )}
+                  {character.occupation_location_name && (
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Briefcase className="w-3 h-3" /> {character.occupation_location_name}
+                    </p>
+                  )}
+                  {character.work_details?.workplace_type && !character.occupation_location_name && (
+                    <p className="text-sm text-muted-foreground">{character.work_details.workplace_type}</p>
+                  )}
+                  {/* Show primary job shift if it exists in workLocations */}
+                  {character.occupation_location_id && getWorkShift(character.occupation_location_id) && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> {getWorkShift(character.occupation_location_id)}
+                    </p>
+                  )}
+                </div>
+              )}
+              {/* Additional jobs from character field */}
+              {(character.additional_occupation_locations || []).map((loc, idx) => {
                 const realName = getWorkLocationName(loc.location_id) || loc.location_name;
                 const shiftDisplay = getWorkShift(loc.location_id);
                 return (
@@ -542,6 +550,31 @@ export default function CharacterProfile() {
                   </div>
                 );
               })}
+              {/* Jobs only in LocationReference but NOT in additional_occupation_locations */}
+              {workLocations
+                .filter(wl => {
+                  const isAdditional = (character.additional_occupation_locations || []).some(l => l.location_id === wl.id);
+                  const isPrimary = character.occupation_location_id === wl.id;
+                  return !isAdditional && !isPrimary;
+                })
+                .map((wl, idx) => {
+                  const jobTitle = wl.worker_job_titles?.[characterId];
+                  const shiftDisplay = getWorkShift(wl.id);
+                  return (
+                    <div key={`wl-${idx}`} className="pl-3 border-l-2 border-border space-y-0.5">
+                      {jobTitle && <p className="text-sm text-foreground font-medium">{jobTitle}</p>}
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Briefcase className="w-3 h-3" /> {wl.name}
+                      </p>
+                      {shiftDisplay && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {shiftDisplay}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })
+              }
             </div>
             {/* Editable work schedule — reads from & writes to LocationReference */}
             <CharacterWorkScheduleEditor character={character} />
