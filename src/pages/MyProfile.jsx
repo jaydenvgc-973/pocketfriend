@@ -277,26 +277,33 @@ export default function MyProfile() {
         </div>
 
         {/* Owned Locations / Businesses */}
-        {ownedLocations.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            <div className="flex items-center gap-2">
-              <Briefcase className="w-4 h-4 text-primary" />
-              <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses & Locations You Own</p>
-            </div>
-            <div className="space-y-2">
-              {ownedLocations.map(loc => (
-                <div key={loc.id} className="flex items-start gap-2">
-                  <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm text-foreground font-medium">{loc.name}</p>
-                    <p className="text-xs text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
-                    {loc.owner_role && <p className="text-xs text-muted-foreground/70">{loc.owner_role}</p>}
-                  </div>
-                </div>
-              ))}
-            </div>
+        <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <Briefcase className="w-4 h-4 text-primary" />
+            <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses & Locations You Own</p>
           </div>
-        )}
+          <div className="space-y-2">
+            {/* VGC Mobile — always listed as a user-owned in-world business */}
+            <div className="flex items-start gap-2 p-2 rounded-xl bg-primary/5 border border-primary/20">
+              <span className="text-base flex-shrink-0">📱</span>
+              <div>
+                <p className="text-sm text-foreground font-medium">VGC Mobile</p>
+                <p className="text-xs text-muted-foreground">Phone company · Owner</p>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">Characters pay monthly phone bills — revenue goes to you</p>
+              </div>
+            </div>
+            {ownedLocations.map(loc => (
+              <div key={loc.id} className="flex items-start gap-2">
+                <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm text-foreground font-medium">{loc.name}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
+                  {loc.owner_role && <p className="text-xs text-muted-foreground/70">{loc.owner_role}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
 
         {/* Residences */}
         {residentLocations.length > 0 && (
