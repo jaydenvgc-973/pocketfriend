@@ -3,7 +3,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key } from "lucide-react";
+import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key, MapPin, Briefcase, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import BottomNav from "@/components/BottomNav";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
@@ -30,6 +30,18 @@ export default function MyProfile() {
       ? base44.entities.Character.filter({ created_by: user.email, status: "active" }, "-created_date", 100)
       : [],
     enabled: !!user?.email,
+  });
+
+  const { data: ownedLocations = [] } = useQuery({
+    queryKey: ["userOwnedLocations", user?.id],
+    queryFn: () => base44.entities.LocationReference.filter({ owner_character_id: user.id }),
+    enabled: !!user?.id,
+  });
+
+  const { data: residentLocations = [] } = useQuery({
+    queryKey: ["userResidentLocations", user?.id],
+    queryFn: () => base44.entities.LocationReference.filter({ resident_character_ids: [user.id] }),
+    enabled: !!user?.id,
   });
 
   const displayName = settings.fictional_world_name || user?.full_name || "You";
@@ -264,13 +276,50 @@ export default function MyProfile() {
           </Link>
         </div>
 
-        {/* User Aliases */}
-        <UserAliasSection
-          settings={settings}
-          onSave={(data) => updateSettings(data)}
-        />
+        {/* Owned Locations / Businesses */}
+        {ownedLocations.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Briefcase className="w-4 h-4 text-primary" />
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses & Locations You Own</p>
+            </div>
+            <div className="space-y-2">
+              {ownedLocations.map(loc => (
+                <div key={loc.id} className="flex items-start gap-2">
+                  <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-foreground font-medium">{loc.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
+                    {loc.owner_role && <p className="text-xs text-muted-foreground/70">{loc.owner_role}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
-        {/* Appearance Lock */}
+        {/* Residences */}
+        {residentLocations.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
+            <div className="flex items-center gap-2">
+              <Home className="w-4 h-4 text-primary" />
+              <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Where You Live</p>
+            </div>
+            <div className="space-y-2">
+              {residentLocations.map(loc => (
+                <div key={loc.id} className="flex items-start gap-2">
+                  <MapPin className="w-3.5 h-3.5 text-primary flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-sm text-foreground font-medium">{loc.name}</p>
+                    <p className="text-xs text-muted-foreground capitalize">{loc.category || loc.location_type}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* User Aliases */}
         <UserAppearanceLockEditor settings={settings} user={user} />
 
         {/* Characters in their world — with full relationship selector */}
