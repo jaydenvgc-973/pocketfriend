@@ -32,12 +32,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
 
-  const handleRegenSelect = async (reason, customPrompt) => {
+  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
     setIsRegenerating(true);
     setRegenError(null);
     let hadError = false;
     try {
-      const res = await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt });
+      const res = await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
       if (res?.data?.filtered) {
         setRegenError(res.data.error || 'Image was blocked by content filter. Try a different description.');
         hadError = true;
@@ -49,37 +49,6 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     } finally {
       setIsRegenerating(false);
       if (!hadError) setShowRegenModal(false);
-    }
-  };
-
-  // A message is an "image placeholder" if it has no content, no image_url, no media, and was sent by a character
-  const hasMedia = (message.songs_heard?.length > 0) || (message.videos_watched?.length > 0);
-  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && !message.content?.trim() && !hasMedia;
-
-  const handleImageRetry = async (forceRegenerate = false) => {
-    if (imageRetrying) return;
-    setImageRetrying(true);
-    setImageRetryFailed(false);
-    setImageRetryStatus(forceRegenerate ? 'regenerating' : 'recovering');
-
-    try {
-      const res = await base44.functions.invoke('recoverSingleImage', {
-        messageId: message.id,
-        forceRegenerate,
-      });
-      if (res?.data?.success && res?.data?.image_url) {
-        setImageRetrying(false);
-        setImageRetryStatus('idle');
-        setImageRetryFailed(false);
-      } else {
-        setImageRetrying(false);
-        setImageRetryFailed(true);
-        setImageRetryStatus('failed');
-      }
-    } catch {
-      setImageRetrying(false);
-      setImageRetryFailed(true);
-      setImageRetryStatus('failed');
     }
   };
 

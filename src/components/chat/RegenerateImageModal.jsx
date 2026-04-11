@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine } from "lucide-react";
+import { X, AlertTriangle, UserX, ThumbsDown, Loader2, PenLine, MapPin } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 
 const REASONS = [
   {
@@ -19,6 +20,14 @@ const REASONS = [
     description: "Same scene, stronger character likeness",
     color: "text-blue-400",
     bg: "bg-blue-500/10 border-blue-500/30 hover:border-blue-500/60",
+  },
+  {
+    id: "wrong_location",
+    icon: MapPin,
+    label: "Location is incorrect",
+    description: "Pick the correct location and zone to use as the background",
+    color: "text-emerald-400",
+    bg: "bg-emerald-500/10 border-emerald-500/30 hover:border-emerald-500/60",
   },
   {
     id: "dont_like",
@@ -42,12 +51,20 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [editPrompt, setEditPrompt] = useState("");
   const [showPromptInput, setShowPromptInput] = useState(false);
   const [promptMode, setPromptMode] = useState(null); // 'dont_like' | 'custom_prompt'
+  const [showLocationPicker, setShowLocationPicker] = useState(false);
+  const [locations, setLocations] = useState([]);
+  const [selectedLocation, setSelectedLocation] = useState(null);
+  const [selectedZone, setSelectedZone] = useState(null);
+  const [loadingLocations, setLoadingLocations] = useState(false);
 
   useEffect(() => {
     if (!isOpen) {
       setShowPromptInput(false);
       setEditPrompt("");
       setPromptMode(null);
+      setShowLocationPicker(false);
+      setSelectedLocation(null);
+      setSelectedZone(null);
     }
   }, [isOpen]);
 
@@ -59,6 +76,15 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   }, [originalPrompt, promptMode, isOpen]);
 
   const handleSelect = (id) => {
+    if (id === "wrong_location") {
+      setShowLocationPicker(true);
+      setLoadingLocations(true);
+      base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
+        const locs = (res?.data?.locations || []).filter(l => l.image_urls?.length > 0 || l.zones?.some(z => z.image_urls?.length > 0));
+        setLocations(locs);
+      }).catch(() => setLocations([])).finally(() => setLoadingLocations(false));
+      return;
+    }
     if (id === "dont_like") {
       setPromptMode("dont_like");
       setEditPrompt(originalPrompt || "");
@@ -86,7 +112,15 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     setShowPromptInput(false);
     setEditPrompt("");
     setPromptMode(null);
+    setShowLocationPicker(false);
+    setSelectedLocation(null);
+    setSelectedZone(null);
     onClose();
+  };
+
+  const handleLocationConfirm = () => {
+    if (!selectedLocation) return;
+    onSelect('wrong_location', null, selectedLocation.id, selectedZone?.zone_name || null);
   };
 
   const promptTitle = promptMode === "dont_like"
@@ -123,7 +157,76 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
               </button>
             </div>
 
-            {showPromptInput ? (
+            {showLocationPicker ? (
+            <div className="p-4 space-y-3">
+              {!selectedLocation ? (
+                <>
+                  <p className="text-xs text-muted-foreground">Select the correct location:</p>
+                  {loadingLocations ? (
+                    <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
+                  ) : (
+                    <div className="max-h-56 overflow-y-auto space-y-1.5">
+                      {locations.map(loc => (
+                        <button
+                          key={loc.id}
+                          onClick={() => { setSelectedLocation(loc); setSelectedZone(null); }}
+                          className="w-full text-left px-3 py-2.5 rounded-xl border border-border bg-secondary/40 hover:border-primary/50 hover:bg-primary/5 transition-all"
+                        >
+                          <p className="text-sm font-medium text-foreground">{loc.name}</p>
+                          {loc.zones?.length > 0 && <p className="text-[10px] text-muted-foreground">{loc.zones.length} zone{loc.zones.length > 1 ? 's' : ''}</p>}
+                        </button>
+                      ))}
+                      {locations.length === 0 && <p className="text-xs text-muted-foreground italic text-center py-3">No locations with images found</p>}
+                    </div>
+                  )}
+                  <button onClick={() => setShowLocationPicker(false)} className="text-xs text-muted-foreground hover:text-foreground">← Back</button>
+                </>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => setSelectedLocation(null)} className="text-xs text-muted-foreground hover:text-foreground">←</button>
+                    <p className="text-sm font-semibold text-foreground">{selectedLocation.name}</p>
+                  </div>
+                  {selectedLocation.zones?.filter(z => z.image_urls?.length > 0).length > 0 ? (
+                    <>
+                      <p className="text-xs text-muted-foreground">Select a zone (optional):</p>
+                      <div className="space-y-1.5 max-h-44 overflow-y-auto">
+                        <button
+                          onClick={() => setSelectedZone(null)}
+                          className={`w-full text-left px-3 py-2 rounded-xl border transition-all text-sm ${
+                            !selectedZone ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                          }`}
+                        >
+                          Any zone (auto-detect)
+                        </button>
+                        {selectedLocation.zones.filter(z => z.image_urls?.length > 0).map(zone => (
+                          <button
+                            key={zone.zone_name}
+                            onClick={() => setSelectedZone(zone)}
+                            className={`w-full text-left px-3 py-2 rounded-xl border transition-all text-sm ${
+                              selectedZone?.zone_name === zone.zone_name ? 'border-primary bg-primary/10 text-primary font-medium' : 'border-border bg-secondary/40 text-foreground hover:border-primary/40'
+                            }`}
+                          >
+                            {zone.zone_name}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">No zones — will use location images directly.</p>
+                  )}
+                  <button
+                    onClick={handleLocationConfirm}
+                    disabled={isRegenerating}
+                    className="w-full py-2.5 rounded-2xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <MapPin className="w-4 h-4" />}
+                    Regenerate with this location
+                  </button>
+                </>
+              )}
+            </div>
+          ) : showPromptInput ? (
               <div className="p-4 space-y-3">
                 {promptMode === "dont_like" && originalPrompt && (
                   <p className="text-[10px] text-muted-foreground/60">Original prompt pre-loaded — edit it below</p>

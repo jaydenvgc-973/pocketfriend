@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { messageId, reason, customPrompt } = await req.json();
+    const { messageId, reason, customPrompt, manualLocationId, manualZoneId } = await req.json();
     if (!messageId || !reason) return Response.json({ error: 'messageId and reason required' }, { status: 400 });
 
     // Fetch the message
@@ -56,8 +56,31 @@ Deno.serve(async (req) => {
       } catch (_) {}
     }
 
+    // If user manually selected a correct location, override the stored generation context
+    let effectiveLocationId = originalLocationId;
+    let effectiveZoneName = originalZoneName;
+    let effectiveLocationName = originalLocationName;
+    if (manualLocationId) {
+      effectiveLocationId = manualLocationId;
+      effectiveZoneName = manualZoneId || null;
+      const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
+      if (manualLoc) {
+        effectiveLocationName = manualLoc.name;
+        locationRefImages = [];
+        if (effectiveZoneName && manualLoc.zones?.length > 0) {
+          const zone = manualLoc.zones.find(z => z.zone_name === effectiveZoneName);
+          if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.slice(0, 3);
+        }
+        if (locationRefImages.length === 0) {
+          const firstZone = manualLoc.zones?.find(z => z.image_urls?.length > 0);
+          locationRefImages = firstZone?.image_urls?.slice(0, 3) || manualLoc.image_urls?.slice(0, 3) || [];
+          if (!effectiveZoneName && firstZone) effectiveZoneName = firstZone.zone_name;
+        }
+      }
+    }
+
     const hasLocation = locationRefImages.length > 0;
-    const locationLabel = [originalLocationName, originalZoneName].filter(Boolean).join(' → ');
+    const locationLabel = [effectiveLocationName, effectiveZoneName].filter(Boolean).join(' → ');
 
     // ── ROOM LOCK BLOCK ────────────────────────────────────────────────────────
     const roomLock = hasLocation ? `
@@ -79,7 +102,7 @@ ONLY the camera angle and subject placement may change.
     let referenceImages;
     let prompt = '';
 
-    if (reason === 'flawed') {
+    if (reason === 'wrong_location' || reason === 'flawed') {
       // Fix technical errors AND enforce location/zone + character fidelity strictly
       const scenePrompt = originalPrompt
         ? originalPrompt
@@ -177,7 +200,7 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
       ].filter(Boolean);
     }
 
-    console.log(`[regen] reason=${reason} | hasLocation=${hasLocation} | locationLabel="${locationLabel}" | originalPrompt="${(originalPrompt || '').substring(0, 80)}" | refs=${referenceImages.length}`);
+    console.log(`[regen] reason=${reason} | hasLocation=${hasLocation} | locationLabel="${locationLabel}" | manualLocationId=${manualLocationId || 'none'} | originalPrompt="${(originalPrompt || '').substring(0, 80)}" | refs=${referenceImages.length}`);
 
     // ── GENERATE ──────────────────────────────────────────────────────────────
     let genRes;
