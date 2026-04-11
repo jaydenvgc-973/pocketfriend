@@ -26,8 +26,8 @@ import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import OwnedLocationsPanel from "@/components/character/OwnedLocationsPanel";
-import OccupationEducationApprovalModal from "@/components/approvals/OccupationEducationApprovalModal";
 import LifeJournal from "@/components/character/LifeJournal";
+import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -494,9 +494,6 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Pending Occupation/Education Approvals — renders nothing when no pending events */}
-        {character && <OccupationEducationApprovalModal character={character} />}
-
         {/* Work */}
         {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0 || workLocations.length > 0) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
@@ -523,16 +520,17 @@ export default function CharacterProfile() {
                 </div>
               )}
               {(character.additional_occupation_locations || []).map((loc, idx) => {
-                const realLocationName = getWorkLocationName(loc.location_id) || loc.location_name || null;
+                // Always prefer the resolved location name from workLocations, then loc.location_name, never raw IDs
+                const resolvedLoc = workLocations.find(wl => wl.id === loc.location_id);
+                const realName = resolvedLoc?.name || loc.location_name || null;
                 const shiftDisplay = getWorkShift(loc.location_id);
+                if (!realName) return null; // Don't display entries with no resolved name
                 return (
                   <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
                     {loc.job_title && <p className="text-sm text-foreground font-medium">{loc.job_title}</p>}
-                    {realLocationName && (
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        <Briefcase className="w-3 h-3" /> {realLocationName}
-                      </p>
-                    )}
+                    <p className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Briefcase className="w-3 h-3" /> {realName}
+                    </p>
                     {shiftDisplay && (
                       <p className="text-xs text-muted-foreground flex items-center gap-1">
                         <Clock className="w-3 h-3" /> {shiftDisplay}
@@ -989,36 +987,9 @@ export default function CharacterProfile() {
       </div>
       <BottomNav />
 
-      {editingNPCPhoto && character && (
-      <NPCPhotoEditor
-        npc={editingNPCPhoto.npc}
-        sourceCharacter={character}
-        onPhotoUpdate={async (photoUrl) => {
-          try {
-            const updatedRels = (character.fictional_relationships || []).map(r => {
-              if (r.person_name === editingNPCPhoto.npc.person_name) {
-                const existingRefs = r.reference_image_urls || [];
-                return {
-                  ...r,
-                  photo_url: photoUrl,
-                  reference_image_urls: existingRefs.includes(photoUrl) ? existingRefs : [...existingRefs, photoUrl]
-                };
-              }
-              return r;
-            });
-            await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
-            queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-            await refetch();
-            setEditingNPCPhoto(null);
-          } catch (error) {
-            console.error('Failed to update NPC photo:', error);
-          }
-        }}
-        onClose={() => setEditingNPCPhoto(null)}
-      />
-      )}
+      <PendingLifeEventApproval characterId={characterId} character={character} />
 
-      {promotingNPC && (
+      {editingNPCPhoto && character && (
         <NPCPromotionModal
           npcData={promotingNPC.rel}
           sourceCharacter={promotingNPC.sourceCharacter}

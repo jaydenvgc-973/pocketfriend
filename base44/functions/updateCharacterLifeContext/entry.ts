@@ -144,99 +144,91 @@ Rules:
 
     const patch = {};
 
-    // Work details — REQUIRES USER APPROVAL: create PendingLifeEvent instead of applying directly
-    if (analysis.work_details_update?.apply) {
-      const current = character.work_details || {};
-      const merged = {
-        ...current,
-        ...(analysis.work_details_update.job_title != null && { job_title: analysis.work_details_update.job_title }),
-        ...(analysis.work_details_update.workplace_type != null && { workplace_type: analysis.work_details_update.workplace_type }),
-        ...(analysis.work_details_update.work_environment != null && { work_environment: analysis.work_details_update.work_environment }),
-      };
-      if (
-        merged.job_title !== current.job_title ||
-        merged.workplace_type !== current.workplace_type ||
-        merged.work_environment !== current.work_environment
-      ) {
-        const workPatch = { work_details: merged };
-        if (analysis.work_schedule_update?.apply) {
-          if (analysis.work_schedule_update.work_start_time != null) workPatch.work_start_time = analysis.work_schedule_update.work_start_time;
-          if (analysis.work_schedule_update.work_end_time != null) workPatch.work_end_time = analysis.work_schedule_update.work_end_time;
-          if (analysis.work_schedule_update.work_days != null) workPatch.work_days = analysis.work_schedule_update.work_days;
-        }
-        const jobTitle = analysis.work_details_update.job_title || current.job_title || 'a new role';
-        const workplace = analysis.work_details_update.workplace_type || current.workplace_type || '';
-        await base44.asServiceRole.entities.PendingLifeEvent.create({
-          character_id: character_id,
-          character_name: character.name,
-          event_category: 'occupation',
-          description: `${character.name} is proposed to update their occupation: ${jobTitle}${workplace ? ` at ${workplace}` : ''}.`,
-          proposed_data: workPatch,
-          source_context: event_description?.substring(0, 120) || '',
-          status: 'pending',
-        });
-        console.log('[updateCharacterLifeContext] Occupation change queued for user approval.');
-      }
-    }
+    // Work details handled above in gated section — skip here
 
-    // Work schedule (standalone — only if work_details was NOT changed)
-    if (analysis.work_schedule_update?.apply && !analysis.work_details_update?.apply) {
+    if (analysis.work_schedule_update?.apply) {
       if (analysis.work_schedule_update.work_start_time != null) patch.work_start_time = analysis.work_schedule_update.work_start_time;
       if (analysis.work_schedule_update.work_end_time != null) patch.work_end_time = analysis.work_schedule_update.work_end_time;
       if (analysis.work_schedule_update.work_days != null) patch.work_days = analysis.work_schedule_update.work_days;
     }
 
-    // Education — REQUIRES USER APPROVAL: create PendingLifeEvent instead of applying directly
-    if (analysis.education_update?.apply) {
-      const eduPatch = {};
-      if (analysis.education_update.current_education_activity != null) eduPatch.current_education_activity = analysis.education_update.current_education_activity;
-      if (analysis.education_update.education_details != null) eduPatch.education_details = analysis.education_update.education_details;
-      if (analysis.education_update.education_start_date != null) eduPatch.education_start_date = analysis.education_update.education_start_date;
-      if (analysis.education_update.education_expected_completion_date != null) eduPatch.education_expected_completion_date = analysis.education_update.education_expected_completion_date;
-      if (Object.keys(eduPatch).length > 0) {
-        const courseName = analysis.education_update.education_details?.course_name || analysis.education_update.current_education_activity || 'a course';
-        const institution = analysis.education_update.education_details?.institution ? ` at ${analysis.education_update.education_details.institution}` : '';
-        const completionNote = analysis.education_update.education_expected_completion_date ? ` (expected completion: ${new Date(analysis.education_update.education_expected_completion_date).toLocaleDateString()})` : '';
-        await base44.asServiceRole.entities.PendingLifeEvent.create({
-          character_id: character_id,
-          character_name: character.name,
-          event_category: 'education',
-          description: `${character.name} is proposed to start/update: ${courseName}${institution}${completionNote}.`,
-          proposed_data: eduPatch,
-          source_context: event_description?.substring(0, 120) || '',
-          status: 'pending',
-        });
-        console.log('[updateCharacterLifeContext] Education change queued for user approval.');
+    // Education — handled below in gated section, skip direct patch
+
+    // Job training — GATE: create PendingLifeEvent instead of applying directly
+    if (analysis.job_training_update?.apply) {
+      const existingTraining = character.current_job_training_activity && character.current_job_training_activity !== 'none';
+      const proposedTrainingName = analysis.job_training_update.current_job_training_activity || analysis.job_training_update.job_training_details?.training_name || '';
+      const alreadyMatchesTraining = existingTraining && (
+        (character.current_job_training_activity || '').toLowerCase().includes((proposedTrainingName || '').toLowerCase()) ||
+        (proposedTrainingName || '').toLowerCase().includes((character.current_job_training_activity || '').toLowerCase())
+      );
+      if (!alreadyMatchesTraining && proposedTrainingName) {
+        const trainingPatch = {};
+        if (analysis.job_training_update.current_job_training_activity != null) trainingPatch.current_job_training_activity = analysis.job_training_update.current_job_training_activity;
+        if (analysis.job_training_update.job_training_details != null) trainingPatch.job_training_details = analysis.job_training_update.job_training_details;
+        if (analysis.job_training_update.job_training_start_date != null) trainingPatch.job_training_start_date = analysis.job_training_update.job_training_start_date;
+        if (analysis.job_training_update.job_training_expected_completion_date != null) trainingPatch.job_training_expected_completion_date = analysis.job_training_update.job_training_expected_completion_date;
+        try {
+          await base44.asServiceRole.entities.PendingLifeEvent.create({
+            character_id: character_id,
+            character_name: character.name,
+            change_type: 'job_training_change',
+            proposed_data: trainingPatch,
+            source_description: event_description,
+            human_summary: `Start job training for ${character.name}: "${proposedTrainingName}"${analysis.job_training_update.job_training_details?.company ? ' at ' + analysis.job_training_update.job_training_details.company : ''}`,
+            reasoning: analysis.reasoning || '',
+            status: 'pending',
+          });
+        } catch (e) { console.warn('Could not create PendingLifeEvent for job training:', e.message); }
+        // Do NOT patch character
       }
     }
 
-    // Job training — REQUIRES USER APPROVAL: create PendingLifeEvent instead of applying directly
-    if (analysis.job_training_update?.apply) {
-      const trainingPatch = {};
-      if (analysis.job_training_update.current_job_training_activity != null) trainingPatch.current_job_training_activity = analysis.job_training_update.current_job_training_activity;
-      if (analysis.job_training_update.job_training_details != null) trainingPatch.job_training_details = analysis.job_training_update.job_training_details;
-      if (analysis.job_training_update.job_training_start_date != null) trainingPatch.job_training_start_date = analysis.job_training_update.job_training_start_date;
-      if (analysis.job_training_update.job_training_expected_completion_date != null) trainingPatch.job_training_expected_completion_date = analysis.job_training_update.job_training_expected_completion_date;
-      if (Object.keys(trainingPatch).length > 0) {
-        const trainingName = analysis.job_training_update.job_training_details?.training_name || analysis.job_training_update.current_job_training_activity || 'training program';
-        const company = analysis.job_training_update.job_training_details?.company ? ` at ${analysis.job_training_update.job_training_details.company}` : '';
-        const role = analysis.job_training_update.job_training_details?.position_title ? ` for ${analysis.job_training_update.job_training_details.position_title}` : '';
-        await base44.asServiceRole.entities.PendingLifeEvent.create({
-          character_id: character_id,
-          character_name: character.name,
-          event_category: 'job_training',
-          description: `${character.name} is proposed to start/update job training: ${trainingName}${company}${role}.`,
-          proposed_data: trainingPatch,
-          source_context: event_description?.substring(0, 120) || '',
-          status: 'pending',
-        });
-        console.log('[updateCharacterLifeContext] Job training change queued for user approval.');
+    // Work details — GATE: create PendingLifeEvent if it's a new/different job title
+    if (analysis.work_details_update?.apply) {
+      const newJobTitle = analysis.work_details_update.job_title;
+      const existingTitle = character.work_details?.job_title;
+      const isSameJob = existingTitle && newJobTitle && (
+        existingTitle.toLowerCase().includes(newJobTitle.toLowerCase()) ||
+        newJobTitle.toLowerCase().includes(existingTitle.toLowerCase())
+      );
+      if (newJobTitle && !isSameJob) {
+        const workPatch = {
+          work_details: {
+            ...(character.work_details || {}),
+            ...(analysis.work_details_update.job_title != null && { job_title: analysis.work_details_update.job_title }),
+            ...(analysis.work_details_update.workplace_type != null && { workplace_type: analysis.work_details_update.workplace_type }),
+            ...(analysis.work_details_update.work_environment != null && { work_environment: analysis.work_details_update.work_environment }),
+          }
+        };
+        try {
+          await base44.asServiceRole.entities.PendingLifeEvent.create({
+            character_id: character_id,
+            character_name: character.name,
+            change_type: 'occupation_change',
+            proposed_data: workPatch,
+            source_description: event_description,
+            human_summary: `Update ${character.name}'s job title to: "${newJobTitle}"${analysis.work_details_update.workplace_type ? ' at ' + analysis.work_details_update.workplace_type : ''}`,
+            reasoning: analysis.reasoning || '',
+            status: 'pending',
+          });
+        } catch (e) { console.warn('Could not create PendingLifeEvent for occupation:', e.message); }
+        // Remove work_details from the patch below so it's not applied
+        delete analysis.work_details_update;
+      } else {
+        // Same job, non-title updates only — safe to apply
+        const current = character.work_details || {};
+        patch.work_details = {
+          ...current,
+          ...(analysis.work_details_update.job_title != null && { job_title: analysis.work_details_update.job_title }),
+          ...(analysis.work_details_update.workplace_type != null && { workplace_type: analysis.work_details_update.workplace_type }),
+          ...(analysis.work_details_update.work_environment != null && { work_environment: analysis.work_details_update.work_environment }),
+        };
       }
     }
 
     // Current activity
-    if (analysis.current_activity_update?.apply
- && analysis.current_activity_update.current_activity != null) {
+    if (analysis.current_activity_update?.apply && analysis.current_activity_update.current_activity != null) {
       patch.current_activity = analysis.current_activity_update.current_activity;
     }
 
