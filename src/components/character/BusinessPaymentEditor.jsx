@@ -8,8 +8,13 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
   const [selectedWorkers, setSelectedWorkers] = useState(business.worker_character_ids || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const { data: ownerChar = null } = useQuery({
+    queryKey: ["ownerCharacter", characterId],
+    queryFn: () => base44.entities.Character.get(characterId),
+  });
+
   const { data: allCharacters = [] } = useQuery({
-    queryKey: ["allCharacters"],
+    queryKey: ["allCharacters", characterId],
     queryFn: async () => {
       const char = await base44.entities.Character.get(characterId);
       if (!char?.created_by) return [];
@@ -17,6 +22,39 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
       return chars.filter(c => c.id !== characterId && c.character_type === "active");
     },
   });
+
+  // Build worker options: active characters, then fictional NPCs, then family members
+  const workerOptions = (() => {
+    const options = [];
+
+    // Active created characters
+    if (allCharacters.length > 0) {
+      options.push({
+        category: "Active Characters",
+        items: allCharacters.map(c => ({ id: c.id, name: c.name, type: "active" }))
+      });
+    }
+
+    // Fictional NPCs (fictional_relationships)
+    if (ownerChar?.fictional_relationships?.length > 0) {
+      const npcs = ownerChar.fictional_relationships
+        .filter(r => !r.related_character_id) // Unlinked NPCs
+        .map(r => ({ id: r.person_name, name: r.person_name, type: "npc" }));
+      if (npcs.length > 0) {
+        options.push({ category: "NPCs", items: npcs });
+      }
+    }
+
+    // Family members
+    if (ownerChar?.family_members?.length > 0) {
+      const family = ownerChar.family_members.map(f => ({ id: f.name, name: f.name, type: "family" }));
+      if (family.length > 0) {
+        options.push({ category: "Family", items: family });
+      }
+    }
+
+    return options;
+  })();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -85,35 +123,44 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
             <div>
               <label className="text-xs font-medium text-foreground mb-2 block">Workers</label>
               <p className="text-xs text-muted-foreground mb-2">Who works at this business?</p>
-              <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                {allCharacters.length > 0 ? (
-                  allCharacters.map(char => (
-                    <button
-                      key={char.id}
-                      type="button"
-                      onClick={() => {
-                        setSelectedWorkers(prev =>
-                          prev.includes(char.id)
-                            ? prev.filter(id => id !== char.id)
-                            : [...prev, char.id]
-                        );
-                      }}
-                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-left ${
-                        selectedWorkers.includes(char.id)
-                          ? "border-primary bg-primary/10"
-                          : "border-border hover:border-primary/40"
-                      }`}
-                    >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                        selectedWorkers.includes(char.id) ? "bg-primary" : "bg-secondary"
-                      }`}>
-                        {selectedWorkers.includes(char.id) && <Check className="w-3 h-3 text-primary-foreground" />}
+              <div className="space-y-2 max-h-56 overflow-y-auto">
+                {workerOptions.length > 0 ? (
+                  workerOptions.map((group) => (
+                    <div key={group.category}>
+                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 px-1">
+                        {group.category}
+                      </p>
+                      <div className="space-y-1">
+                        {group.items.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedWorkers(prev =>
+                                prev.includes(item.id)
+                                  ? prev.filter(id => id !== item.id)
+                                  : [...prev, item.id]
+                              );
+                            }}
+                            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-left ${
+                              selectedWorkers.includes(item.id)
+                                ? "border-primary bg-primary/10"
+                                : "border-border hover:border-primary/40"
+                            }`}
+                          >
+                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                              selectedWorkers.includes(item.id) ? "bg-primary" : "bg-secondary"
+                            }`}>
+                              {selectedWorkers.includes(item.id) && <Check className="w-3 h-3 text-primary-foreground" />}
+                            </div>
+                            <span className="text-xs text-foreground font-medium">{item.name}</span>
+                          </button>
+                        ))}
                       </div>
-                      <span className="text-xs text-foreground font-medium">{char.name}</span>
-                    </button>
+                    </div>
                   ))
                 ) : (
-                  <p className="text-xs text-muted-foreground italic">No other active characters</p>
+                  <p className="text-xs text-muted-foreground italic">No workers available</p>
                 )}
               </div>
             </div>
