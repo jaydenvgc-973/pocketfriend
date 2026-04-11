@@ -8,7 +8,7 @@ const REASONS = [
     id: "flawed",
     icon: AlertTriangle,
     label: "Image is flawed",
-    description: "Wrong anatomy, artifacts, or composition errors — retry the same scene",
+    description: "Wrong anatomy, artifacts, wrong location/zone, or bad composition — retry with strict enforcement",
     color: "text-amber-400",
     bg: "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/60",
   },

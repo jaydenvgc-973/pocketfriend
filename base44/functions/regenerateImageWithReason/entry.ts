@@ -82,23 +82,38 @@ ONLY the camera angle and subject placement may change.
     let prompt = '';
 
     if (reason === 'flawed') {
-      // Same scene, same everything — just fix technical/rendering errors
-      // Use original prompt verbatim. Add a hidden anatomy/quality correction pass.
+      // Same scene — fix technical errors AND enforce location/zone strictly
       const scenePrompt = originalPrompt
         ? originalPrompt
         : `${charName} in a natural candid scene`;
 
-      prompt = `${scenePrompt}${roomLock}
+      const locationStrictBlock = hasLocation ? `
+
+════════════════════════════════════════════════════════════
+LOCATION/ZONE CORRECTION - STRICT ENFORCEMENT
+════════════════════════════════════════════════════════════
+The previous image FAILED to correctly reproduce the location: ${locationLabel}
+This regeneration requires MAXIMUM fidelity to the environment reference images.
+The first ${locationRefImages.length} reference image(s) are GROUND TRUTH photographs of this EXACT space.
+YOU MUST REPRODUCE every piece of furniture, flooring, walls, window treatments, lighting, and decor exactly.
+ZONE INTEGRITY: Stay strictly inside the "${originalZoneName || 'matched zone'}" — do NOT blend other zones.
+ACCESS POINTS ARE SACRED: Doors, closets, and walkways must remain unblocked. No furniture overlap.
+Do NOT fall back to a generic room. The reference IS the room. Reproduce it exactly.
+════════════════════════════════════════════════════════════` : '';
+
+      prompt = `${scenePrompt}${roomLock}${locationStrictBlock}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
 REFERENCE PHOTOS ARE THE SOURCE OF TRUTH for both the room and the person.
 
-TECHNICAL CORRECTION PASS — fix these issues from the previous render:
-• Perfect human anatomy: correct proportions, exactly 5 fingers per hand, no extra or merged limbs
-• Natural facial symmetry, correct eye gaze, no artifacts or distortions
-• Furniture must not overlap, clip, or block access points (doors, closets, walkways)
-• Room layout must match the reference images exactly — same floor, walls, furniture positions
-• No floating objects. Physically believable placement of all elements.
+TECHNICAL CORRECTION PASS - fix these issues from the previous render:
+- Perfect human anatomy: correct proportions, exactly 5 fingers per hand, no extra or merged limbs
+- Natural facial symmetry, correct eye gaze, no artifacts or distortions
+- HAIR LENGTH: Match EXACT hair length from reference photos - do NOT shorten or lengthen. Shoulder-length stays shoulder-length. Short stays short. Long stays long.
+- Hair texture, color, and style must match reference exactly
+- Furniture must not overlap, clip, or block access points (doors, closets, walkways)
+- Room layout must match the reference images exactly
+- No floating objects. Physically believable placement of all elements.
 Ultra high-resolution photorealistic photograph. Real photo, not illustration.${qualityFooter}`;
 
       referenceImages = [
