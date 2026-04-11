@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { X, DollarSign, Check } from "lucide-react";
@@ -18,44 +18,44 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
     queryFn: async () => {
       const char = await base44.entities.Character.get(characterId);
       if (!char?.created_by) return [];
-      const chars = await base44.entities.Character.filter({ created_by: char.created_by, status: "active" });
+      const chars = await base44.entities.Character.filter({ created_by: char.created_by, status: "active", character_type: "active" });
       return chars.filter(c => c.id !== characterId);
     },
   });
 
-  // Build worker options: all Character entities (active/npc/family_npc), then unlinked fictional NPCs, then unlinked family members
-  // Priority: Character entities take precedence, then deduplicate by name
+  // Build worker options: active created characters > NPC fictional people > NPC family members
+  // Strict order with no mixing of types
   const workerOptions = (() => {
     const options = [];
     const usedNames = new Set();
 
-    // All Character entities (active, npc, family_npc types) — age filter: 16+ or undefined
+    // Active created characters only (age filter: 16+ or undefined)
     if (allCharacters.length > 0) {
-      const linkedItems = allCharacters
+      const active = allCharacters
         .filter(c => !c.age || c.age >= 16)
         .map(c => {
           usedNames.add(c.name.toLowerCase());
           return { id: c.id, name: c.name, type: 'character' };
         });
-      if (linkedItems.length > 0) {
-        options.push({ category: 'Characters', items: linkedItems });
+      if (active.length > 0) {
+        options.push({ category: 'Active Created Characters', items: active });
       }
     }
 
-    // Unlinked Fictional NPCs from fictional_relationships (deduplicated)
+    // NPC fictional people from fictional_relationships (deduplicated against active characters only)
     if (ownerChar?.fictional_relationships?.length > 0) {
       const npcs = ownerChar.fictional_relationships
-        .filter(r => !r.related_character_id && !usedNames.has(r.person_name?.toLowerCase()))
+        .filter(r => !usedNames.has(r.person_name?.toLowerCase()))
         .map(r => {
           usedNames.add(r.person_name.toLowerCase());
           return { id: r.person_name, name: r.person_name, type: 'npc' };
         });
       if (npcs.length > 0) {
-        options.push({ category: 'Fictional NPCs', items: npcs });
+        options.push({ category: 'NPC Fictional People', items: npcs });
       }
     }
 
-    // Unlinked Family Members from family_members (age filter: 16+ or undefined, deduplicated)
+    // NPC family members from family_members (age filter: 16+ or undefined, deduplicated)
     if (ownerChar?.family_members?.length > 0) {
       const family = ownerChar.family_members
         .filter(f => !usedNames.has(f.name?.toLowerCase()) && (!f.age_at_creation || f.age_at_creation >= 16))
@@ -64,7 +64,7 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           return { id: f.name, name: f.name, type: 'family' };
         });
       if (family.length > 0) {
-        options.push({ category: 'Family Members', items: family });
+        options.push({ category: 'NPC Family Members', items: family });
       }
     }
 
