@@ -388,6 +388,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     worker_job_titles: editingLocation?.worker_job_titles || {},
     worker_shifts: editingLocation?.worker_shifts || {},
   });
+  const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
+  const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
 
@@ -431,9 +433,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     const charObj = effectiveType === "character_specific"
       ? characters.find(c => c.id === form.character_id)
       : null;
-    const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
-  const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
-  const ownerChar = !form.owner_is_npc && form.owner_character_id
+    const ownerChar = !form.owner_is_npc && form.owner_character_id
       ? (form.owner_character_id === currentUser?.id
           ? { name: worldName }
           : characters.find(c => c.id === form.owner_character_id))
