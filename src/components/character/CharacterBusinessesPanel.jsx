@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Briefcase, Plus, Globe, Eye, EyeOff } from "lucide-react";
+import { Briefcase, Plus, Globe, Eye, EyeOff, Edit2 } from "lucide-react";
+import BusinessPaymentEditor from "./BusinessPaymentEditor";
 import CharacterBusinessModal from "./CharacterBusinessModal";
 
 const BUSINESS_TYPE_CATEGORIES = {
@@ -31,6 +32,7 @@ function VisibilityLabel({ visibility }) {
 export default function CharacterBusinessesPanel({ characterId }) {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
+  const [editingPayment, setEditingPayment] = useState(null);
 
   const { data: character = {} } = useQuery({
     queryKey: ["character", characterId],
@@ -116,9 +118,16 @@ export default function CharacterBusinessesPanel({ characterId }) {
                   <VisibilityIcon visibility={biz.visibility} />
                 </div>
               </div>
-              {biz.income > 0 && (
-                <p className="text-xs text-green-500">Income: ${biz.income.toLocaleString()}</p>
-              )}
+              <button
+                onClick={() => setEditingPayment({ business: biz, type: "worker-pay" })}
+                className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors group"
+              >
+                <span className="text-xs text-muted-foreground group-hover:text-foreground">Weekly worker pay</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-medium text-foreground">${(biz.monthly_worker_pay || 0).toFixed(2)}</span>
+                  <Edit2 className="w-3 h-3 text-muted-foreground group-hover:text-foreground" />
+                </div>
+              </button>
               {biz.notes && (
                 <p className="text-xs text-muted-foreground">{biz.notes}</p>
               )}
@@ -141,9 +150,16 @@ export default function CharacterBusinessesPanel({ characterId }) {
                   <VisibilityIcon visibility={biz.visibility} />
                 </div>
               </div>
-              {biz.income > 0 && (
-                <p className="text-xs text-green-500">Income: ${biz.income.toLocaleString()}</p>
-              )}
+              <button
+                onClick={() => setEditingPayment({ business: biz, type: "revenue" })}
+                className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors group"
+              >
+                <span className="text-xs text-muted-foreground group-hover:text-foreground">Monthly revenue</span>
+                <div className="flex items-center gap-1">
+                  <span className="text-xs font-medium text-green-500">${(biz.income || 0).toFixed(2)}</span>
+                  <Edit2 className="w-3 h-3 text-muted-foreground group-hover:text-foreground" />
+                </div>
+              </button>
               {biz.workers > 0 && (
                 <p className="text-xs text-muted-foreground">{biz.workers} {biz.workers === 1 ? "worker" : "workers"}</p>
               )}
@@ -157,6 +173,20 @@ export default function CharacterBusinessesPanel({ characterId }) {
           characterId={characterId}
           onClose={() => setShowModal(false)}
           onBusinessAdded={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+        />
+      )}
+
+      {editingPayment && (
+        <BusinessPaymentEditor
+          business={editingPayment.business}
+          characterId={characterId}
+          type={editingPayment.type}
+          onClose={() => setEditingPayment(null)}
+          onSaved={() => {
+            setEditingPayment(null);
+            queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+            queryClient.invalidateQueries({ queryKey: ["ownedLocations", characterId] });
+          }}
         />
       )}
     </div>
