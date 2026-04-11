@@ -24,6 +24,7 @@ export default function PendingLifeEventApproval({ characterId, character }) {
   const [resolving, setResolving] = useState(null);
   const [showLinkOptions, setShowLinkOptions] = useState(null);
   const [editedDates, setEditedDates] = useState({}); // { [pendingId]: { education_start_date, education_expected_completion_date } }
+  const [editedNames, setEditedNames] = useState({}); // { [pendingId]: string }
 
   const { data: pendingEvents = [] } = useQuery({
     queryKey: ["pendingLifeEvents", characterId],
@@ -39,7 +40,8 @@ export default function PendingLifeEventApproval({ characterId, character }) {
     setResolving(pendingId);
     const overrideDates = editedDates[pendingId] || {};
     try {
-      await base44.functions.invoke("approvePendingLifeEvent", { pendingId, action, linkedToLabel, overrideDates });
+      const overrideName = editedNames[pendingId];
+      await base44.functions.invoke("approvePendingLifeEvent", { pendingId, action, linkedToLabel, overrideDates, overrideName });
       queryClient.invalidateQueries({ queryKey: ["pendingLifeEvents", characterId] });
       queryClient.invalidateQueries({ queryKey: ["character", characterId] });
     } finally {
@@ -137,6 +139,28 @@ export default function PendingLifeEventApproval({ characterId, character }) {
               <p className="text-xs text-foreground mb-1 font-medium">{event.human_summary}</p>
               {event.reasoning && (
                 <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{event.reasoning}</p>
+              )}
+
+              {/* Editable course/training name */}
+              {(event.change_type === "education_change" || event.change_type === "job_training_change") && (
+                <div className="mb-3 bg-secondary/40 rounded-xl p-3">
+                  <label className="text-[10px] text-muted-foreground uppercase tracking-wider block mb-1">
+                    {event.change_type === "education_change" ? "Course Name" : "Training Name"}
+                  </label>
+                  <input
+                    type="text"
+                    defaultValue={
+                      event.proposed_data?.education_details?.course_name ||
+                      event.proposed_data?.current_education_activity ||
+                      event.proposed_data?.job_training_details?.training_name ||
+                      event.proposed_data?.current_job_training_activity ||
+                      ''
+                    }
+                    onChange={e => setEditedNames(prev => ({ ...prev, [event.id]: e.target.value }))}
+                    placeholder="Enter course name..."
+                    className="w-full h-8 px-2 rounded-lg bg-input border border-border text-foreground text-xs outline-none focus:ring-1 focus:ring-primary/50"
+                  />
+                </div>
               )}
 
               {/* Editable dates for education changes */}

@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { pendingId, action, linkedToLabel, overrideDates } = await req.json();
+    const { pendingId, action, linkedToLabel, overrideDates, overrideName } = await req.json();
 
     if (!pendingId || !action) {
       return Response.json({ error: 'pendingId and action required' }, { status: 400 });
@@ -31,8 +31,23 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'approve') {
-      // Apply the proposed_data patch to the Character, merging any user-edited dates
-      const proposedData = { ...(pending.proposed_data || {}), ...(overrideDates || {}) };
+      // Apply the proposed_data patch to the Character, merging any user-edited dates and name
+      let proposedData = { ...(pending.proposed_data || {}), ...(overrideDates || {}) };
+
+      // Apply user-edited course/training name override
+      if (overrideName) {
+        if (pending.change_type === 'education_change') {
+          proposedData.current_education_activity = overrideName;
+          if (proposedData.education_details) {
+            proposedData.education_details = { ...proposedData.education_details, course_name: overrideName };
+          }
+        } else if (pending.change_type === 'job_training_change') {
+          proposedData.current_job_training_activity = overrideName;
+          if (proposedData.job_training_details) {
+            proposedData.job_training_details = { ...proposedData.job_training_details, training_name: overrideName };
+          }
+        }
+      }
       if (Object.keys(proposedData).length > 0) {
         await base44.asServiceRole.entities.Character.update(pending.character_id, proposedData);
       }
