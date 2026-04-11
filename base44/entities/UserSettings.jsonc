@@ -87,6 +87,11 @@
       "default": 6000,
       "description": "User's in-world financial balance (USD)."
     },
+    "vgc_mobile_revenue": {
+      "type": "number",
+      "default": 0,
+      "description": "Total revenue earned from character VGC Mobile phone bills (USD)."
+    },
     "user_relatives": {
       "type": "object",
       "description": "Map of character IDs to their relationship to the user",

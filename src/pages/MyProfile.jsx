@@ -23,6 +23,11 @@ export default function MyProfile() {
   });
 
   const { settings, updateSettings } = useUserSettings();
+  
+  // Refetch user settings on mount to ensure fresh data (cache invalidation)
+  useEffect(() => {
+    queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+  }, []);
 
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", user?.email],
@@ -47,6 +52,7 @@ export default function MyProfile() {
   const displayName = settings.fictional_world_name || user?.full_name || "You";
   const avatarUrl = user?.generated_avatar_urls?.[0] || user?.reference_image_urls?.[0] || null;
   const balance = settings.user_balance ?? 6000;
+  const vgcRevenue = settings.vgc_mobile_revenue ?? 0;
   const userGender = settings.user_gender || "other";
 
   // Sync local state from settings
@@ -211,7 +217,7 @@ export default function MyProfile() {
               <div>
                 <p className="text-xs text-muted-foreground uppercase tracking-wider">VGC Revenue</p>
                 <p className="text-xl font-bold text-foreground">
-                  ${(settings.vgc_mobile_revenue || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  ${vgcRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
             </div>

@@ -60,12 +60,11 @@ Deno.serve(async (req) => {
 
         // Increase user revenue (character's creator benefits from this)
         if (char.created_by) {
-          const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: char.created_by }, null, 1);
+          const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({}, null, 1);
           let userSettings = userSettingsList[0];
           
           if (!userSettings) {
             userSettings = await base44.asServiceRole.entities.UserSettings.create({
-              created_by: char.created_by,
               vgc_mobile_revenue: VGC_MOBILE_MONTHLY_COST,
             });
           } else {
