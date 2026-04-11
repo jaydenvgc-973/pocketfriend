@@ -19,30 +19,30 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
       const char = await base44.entities.Character.get(characterId);
       if (!char?.created_by) return [];
       const chars = await base44.entities.Character.filter({ created_by: char.created_by, status: "active" });
-      return chars.filter(c => c.id !== characterId && c.character_type === "active");
+      return chars.filter(c => c.id !== characterId);
     },
   });
 
-  // Build worker options: active characters, then fictional NPCs, then family members
-  // Deduplication: names from active characters are excluded from NPCs and family members
+  // Build worker options: all Character entities (active/npc/family_npc), then unlinked fictional NPCs, then unlinked family members
+  // Priority: Character entities take precedence, then deduplicate by name
   const workerOptions = (() => {
     const options = [];
     const usedNames = new Set();
 
-    // Active created characters (age filter: 16+ or undefined)
+    // All Character entities (active, npc, family_npc types) — age filter: 16+ or undefined
     if (allCharacters.length > 0) {
-      const activeItems = allCharacters
+      const linkedItems = allCharacters
         .filter(c => !c.age || c.age >= 16)
         .map(c => {
           usedNames.add(c.name.toLowerCase());
-          return { id: c.id, name: c.name, type: 'active' };
+          return { id: c.id, name: c.name, type: 'character' };
         });
-      if (activeItems.length > 0) {
-        options.push({ category: 'Active Characters', items: activeItems });
+      if (linkedItems.length > 0) {
+        options.push({ category: 'Characters', items: linkedItems });
       }
     }
 
-    // Fictional NPCs (unlinked, age filter: no age field so all included, deduplicated)
+    // Unlinked Fictional NPCs from fictional_relationships (deduplicated)
     if (ownerChar?.fictional_relationships?.length > 0) {
       const npcs = ownerChar.fictional_relationships
         .filter(r => !r.related_character_id && !usedNames.has(r.person_name?.toLowerCase()))
@@ -51,11 +51,11 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           return { id: r.person_name, name: r.person_name, type: 'npc' };
         });
       if (npcs.length > 0) {
-        options.push({ category: 'NPCs', items: npcs });
+        options.push({ category: 'Fictional NPCs', items: npcs });
       }
     }
 
-    // Family members (age filter: 16+ or undefined, deduplicated)
+    // Unlinked Family Members from family_members (age filter: 16+ or undefined, deduplicated)
     if (ownerChar?.family_members?.length > 0) {
       const family = ownerChar.family_members
         .filter(f => !usedNames.has(f.name?.toLowerCase()) && (!f.age_at_creation || f.age_at_creation >= 16))
@@ -64,7 +64,7 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           return { id: f.name, name: f.name, type: 'family' };
         });
       if (family.length > 0) {
-        options.push({ category: 'Family', items: family });
+        options.push({ category: 'Family Members', items: family });
       }
     }
 
