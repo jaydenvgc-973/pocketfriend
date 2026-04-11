@@ -137,6 +137,7 @@ export default function CharacterProfile() {
     queryKey: ["characters", currentUser?.email || ""],
     queryFn: async () => {
       if (!currentUser?.email) return [];
+      await new Promise(r => setTimeout(r, 100));
       const chars = await base44.entities.Character.filter({ created_by: currentUser.email });
       return chars.map(({ system_prompt, ...char }) => char);
     },
@@ -145,12 +146,18 @@ export default function CharacterProfile() {
 
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
+    queryFn: async () => {
+      await new Promise(r => setTimeout(r, 200));
+      return base44.entities.UserSettings.list();
+    },
   });
 
   const { data: workLocations = [] } = useQuery({
     queryKey: ['workLocations', characterId],
-    queryFn: () => base44.entities.LocationReference.filter({ worker_character_ids: [characterId] }),
+    queryFn: async () => {
+      await new Promise(r => setTimeout(r, 150));
+      return base44.entities.LocationReference.filter({ worker_character_ids: [characterId] });
+    },
     enabled: !!characterId,
     staleTime: 30000,
   });
