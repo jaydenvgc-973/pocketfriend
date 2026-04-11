@@ -87,3 +87,78 @@ export default function CharacterBusinessesPanel({ characterId }) {
   }
 
   return (
+    <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Briefcase className="w-4 h-4 text-primary" />
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses</p>
+        </div>
+        <button
+          onClick={() => setShowModal(true)}
+          className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+          title="Add business"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
+      </div>
+
+      {customBusinesses.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Other Businesses</p>
+          {customBusinesses.map(biz => (
+            <div key={biz.id} className="pl-3 border-l-2 border-primary/30 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-foreground">{biz.name}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{biz.type}</p>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <VisibilityIcon visibility={biz.visibility} />
+                </div>
+              </div>
+              {biz.income > 0 && (
+                <p className="text-xs text-green-500">Income: ${biz.income.toLocaleString()}</p>
+              )}
+              {biz.notes && (
+                <p className="text-xs text-muted-foreground">{biz.notes}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {locationBasedBusinesses.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Locations Owned</p>
+          {locationBasedBusinesses.map(biz => (
+            <div key={biz.id} className="pl-3 border-l-2 border-primary/30 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-foreground">{biz.name}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{biz.type}</p>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <VisibilityIcon visibility={biz.visibility} />
+                </div>
+              </div>
+              {biz.income > 0 && (
+                <p className="text-xs text-green-500">Income: ${biz.income.toLocaleString()}</p>
+              )}
+              {biz.workers > 0 && (
+                <p className="text-xs text-muted-foreground">{biz.workers} {biz.workers === 1 ? "worker" : "workers"}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showModal && (
+        <CharacterBusinessModal
+          characterId={characterId}
+          onClose={() => setShowModal(false)}
+          onBusinessAdded={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+        />
+      )}
+    </div>
+  );
+}
