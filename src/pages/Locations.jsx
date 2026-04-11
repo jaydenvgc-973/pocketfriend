@@ -1593,6 +1593,7 @@ export default function Locations() {
                         onDuplicate={() => handleDuplicate(loc)}
                         isWorkerTooYoung={isWorkerTooYoung}
                         getNPCAge={getNPCAge}
+                        currentUser={currentUser}
                       />
                     )}
                   </React.Fragment>
