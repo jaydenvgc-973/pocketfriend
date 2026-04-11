@@ -1,5 +1,24 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
+// Retry helper with exponential backoff
+const retryWithBackoff = async (fn, maxRetries = 3) => {
+  let lastError;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (error.message?.includes('Rate limit')) {
+        const delay = Math.pow(2, attempt) * 1000; // 1s, 2s, 4s
+        await new Promise(r => setTimeout(r, delay));
+      } else {
+        throw error;
+      }
+    }
+  }
+  throw lastError;
+};
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -8,8 +27,10 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Fetch all active characters
-    const allCharacters = await base44.entities.Character.filter({ status: 'active' });
+    // Fetch all active characters with retry
+    const allCharacters = await retryWithBackoff(() => 
+      base44.entities.Character.filter({ status: 'active' })
+    );
     const results = {
       processed: 0,
       businesses: 0,
@@ -21,9 +42,11 @@ Deno.serve(async (req) => {
       try {
         // Collect all businesses (custom + location-based)
         const customBusinesses = character.businesses || [];
-        const ownedLocations = await base44.entities.LocationReference.filter({ 
-          owner_character_id: character.id 
-        });
+        const ownedLocations = await retryWithBackoff(() =>
+          base44.entities.LocationReference.filter({ 
+            owner_character_id: character.id 
+          })
+        );
 
         const allBusinesses = [
           ...customBusinesses,
@@ -42,30 +65,32 @@ Deno.serve(async (req) => {
 
           try {
             // Get or create financial record
-            let financial = (await base44.entities.CharacterFinancial.filter({ 
-              character_id: character.id 
-            }))[0];
+            let financial = (await retryWithBackoff(() =>
+              base44.entities.CharacterFinancial.filter({ 
+                character_id: character.id 
+              })
+            ))[0];
 
             if (!financial) {
-              financial = await base44.entities.CharacterFinancial.create({
+              financial = await retryWithBackoff(() => base44.entities.CharacterFinancial.create({
                 character_id: character.id,
                 character_name: character.name,
                 current_balance: 6000,
                 total_income: 0,
                 total_expenses: 0,
-              });
+              }));
             }
 
             const newBalance = financial.current_balance + business.income;
 
-            // Update financial record
-            await base44.entities.CharacterFinancial.update(financial.id, {
+            // Update financial record with retry
+            await retryWithBackoff(() => base44.entities.CharacterFinancial.update(financial.id, {
               current_balance: newBalance,
               total_income: financial.total_income + business.income,
-            });
+            }));
 
-            // Create transaction
-            await base44.entities.FinancialTransaction.create({
+            // Create transaction with retry
+            await retryWithBackoff(() => base44.entities.FinancialTransaction.create({
               character_id: character.id,
               character_name: character.name,
               sender_id: 'system',
@@ -80,7 +105,7 @@ Deno.serve(async (req) => {
               description: `Monthly business income from ${business.name}`,
               balance_after: newBalance,
               timestamp: new Date().toISOString(),
-            });
+            }));
 
             results.businesses++;
             results.details.push({
