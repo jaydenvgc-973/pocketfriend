@@ -23,10 +23,25 @@ Deno.serve(async (req) => {
       let financial = financialRecs[0];
       
       if (!financial) {
+        // Before creating with default, check if transactions exist
+        const transactions = await base44.asServiceRole.entities.FinancialTransaction.filter({ character_id: character.id }, null, 1);
+        let startingBalance = 6000;
+        if (transactions.length > 0) {
+          // Recalculate from transactions
+          const allTxns = await base44.asServiceRole.entities.FinancialTransaction.filter({ character_id: character.id }, null, 500);
+          startingBalance = 6000;
+          for (const tx of allTxns) {
+            if (tx.direction === 'income') {
+              startingBalance += tx.amount || 0;
+            } else if (tx.direction === 'expense') {
+              startingBalance -= tx.amount || 0;
+            }
+          }
+        }
         financial = await base44.asServiceRole.entities.CharacterFinancial.create({
           character_id: character.id,
           character_name: character.name,
-          current_balance: 6000,
+          current_balance: Math.max(0, startingBalance),
         });
       }
 
