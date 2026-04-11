@@ -146,10 +146,20 @@ Ultra high-resolution photorealistic photograph. Real photo, not illustration.${
         ? originalPrompt
         : `${charName} in a natural candid scene`;
 
+      // Detect if multiple people should be in this image
+      const isMultiPerson = originalSubjectType === 'joint' || (originalCharRefs.length > 0 && originalLocationRefs.some(ref => ref.includes('both') || ref.includes('together')));
+      const multiPersonNote = isMultiPerson ? `
+
+CRITICAL — MULTIPLE PEOPLE IN THIS IMAGE:
+• There are multiple distinct individuals. Each person must have a DIFFERENT face — no person appears twice.
+• Reference all provided avatars and ensure each person is uniquely identifiable.
+• Even if people are similar in appearance (e.g. siblings), they MUST have subtle but clear differences: slightly different nose shape, eye spacing, facial structure, or bone structure.
+• Every face in the image must correspond to one of the provided reference photos.` : '';
+
       prompt = `${scenePrompt}${roomLock}
 
-EXTREME CHARACTER LIKENESS REQUIREMENT for ${charName}:
-The reference photos define this person's exact appearance. Match with maximum fidelity:
+EXTREME CHARACTER LIKENESS REQUIREMENT${isMultiPerson ? ' (MULTI-PERSON)' : ''} for ${charName}:
+The reference photos define ${isMultiPerson ? 'each person\'s' : 'this person\'s'} exact appearance. Match with maximum fidelity:
 • FACE: Exact facial bone structure, jaw, cheekbones, forehead, chin — replicate from reference
 • EYES: Exact shape, size, spacing, color, expression
 • NOSE & MOUTH: Exact nose shape, lip shape, mouth structure
@@ -157,7 +167,7 @@ The reference photos define this person's exact appearance. Match with maximum f
 • HAIR: Exact color, texture, cut, LENGTH, style — replicate precisely. Do NOT shorten or lengthen.
 • BODY: Exact build, height proportions, posture
 • FACIAL HAIR: Match exactly — if the reference shows none, generate none; if it shows a beard, match it
-Do NOT invent, average, or approximate this person. The reference photos ARE this person.
+Do NOT invent, average, or approximate. The reference photos ARE the people.${multiPersonNote}
 ${charDesc ? `Additional context: ${charDesc}.` : ''}
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
