@@ -24,32 +24,47 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
   });
 
   // Build worker options: active characters, then fictional NPCs, then family members
+  // Deduplication: names from active characters are excluded from NPCs and family members
   const workerOptions = (() => {
     const options = [];
+    const usedNames = new Set();
 
-    // Active created characters
+    // Active created characters (age filter: 16+ or undefined)
     if (allCharacters.length > 0) {
-      options.push({
-        category: "Active Characters",
-        items: allCharacters.map(c => ({ id: c.id, name: c.name, type: "active" }))
-      });
-    }
-
-    // Fictional NPCs (fictional_relationships)
-    if (ownerChar?.fictional_relationships?.length > 0) {
-      const npcs = ownerChar.fictional_relationships
-        .filter(r => !r.related_character_id) // Unlinked NPCs
-        .map(r => ({ id: r.person_name, name: r.person_name, type: "npc" }));
-      if (npcs.length > 0) {
-        options.push({ category: "NPCs", items: npcs });
+      const activeItems = allCharacters
+        .filter(c => !c.age || c.age >= 16)
+        .map(c => {
+          usedNames.add(c.name.toLowerCase());
+          return { id: c.id, name: c.name, type: 'active' };
+        });
+      if (activeItems.length > 0) {
+        options.push({ category: 'Active Characters', items: activeItems });
       }
     }
 
-    // Family members
+    // Fictional NPCs (unlinked, age filter: no age field so all included, deduplicated)
+    if (ownerChar?.fictional_relationships?.length > 0) {
+      const npcs = ownerChar.fictional_relationships
+        .filter(r => !r.related_character_id && !usedNames.has(r.person_name?.toLowerCase()))
+        .map(r => {
+          usedNames.add(r.person_name.toLowerCase());
+          return { id: r.person_name, name: r.person_name, type: 'npc' };
+        });
+      if (npcs.length > 0) {
+        options.push({ category: 'NPCs', items: npcs });
+      }
+    }
+
+    // Family members (age filter: 16+ or undefined, deduplicated)
     if (ownerChar?.family_members?.length > 0) {
-      const family = ownerChar.family_members.map(f => ({ id: f.name, name: f.name, type: "family" }));
+      const family = ownerChar.family_members
+        .filter(f => !usedNames.has(f.name?.toLowerCase()) && (!f.age_at_creation || f.age_at_creation >= 16))
+        .map(f => {
+          usedNames.add(f.name.toLowerCase());
+          return { id: f.name, name: f.name, type: 'family' };
+        });
       if (family.length > 0) {
-        options.push({ category: "Family", items: family });
+        options.push({ category: 'Family', items: family });
       }
     }
 
