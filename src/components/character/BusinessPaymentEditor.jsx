@@ -121,109 +121,115 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
       
       onSaved?.();
       onClose();
-    } catch (err) {
+      } catch (err) {
+      console.error("Failed to save:", err);
+      alert('Error processing payment: ' + err.message);
+      } finally {
+      setIsSubmitting(false);
+      }
+      };
 
-  const label = type === "revenue" ? "Monthly Revenue" : "Weekly Worker Pay";
-  const description = type === "revenue" 
-    ? "Income from this business location"
-    : "What each worker earns per week (paid Fridays)";
+      const label = type === "revenue" ? "Monthly Revenue" : "Weekly Worker Pay";
+      const description = type === "revenue" 
+      ? "Income from this business location"
+      : "What each worker earns per week (paid Fridays)";
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4" onClick={onClose}>
+      return (
+      <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4" onClick={onClose}>
       <div
-        className="w-full max-w-sm bg-card border border-border rounded-t-3xl p-6 space-y-4"
-        onClick={(e) => e.stopPropagation()}
+       className="w-full max-w-sm bg-card border border-border rounded-t-3xl p-6 space-y-4"
+       onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">Edit {label}</h3>
-          <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
+       <div className="flex items-center justify-between">
+         <h3 className="text-sm font-semibold text-foreground">Edit {label}</h3>
+         <button onClick={onClose} className="p-1 text-muted-foreground hover:text-foreground">
+           <X className="w-4 h-4" />
+         </button>
+       </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {type === "worker-pay" && (
-            <div>
-              <label className="text-xs font-medium text-foreground mb-2 block">Workers</label>
-              <p className="text-xs text-muted-foreground mb-2">Who works at this business?</p>
-              <div className="space-y-2 max-h-56 overflow-y-auto">
-                {workerOptions.length > 0 ? (
-                  workerOptions.map((group) => (
-                    <div key={group.category}>
-                      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 px-1">
-                        {group.category}
-                      </p>
-                      <div className="space-y-1">
-                        {group.items.map((item) => (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => {
-                              setSelectedWorkers(prev =>
-                                prev.includes(item.id)
-                                  ? prev.filter(id => id !== item.id)
-                                  : [...prev, item.id]
-                              );
-                            }}
-                            className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-left ${
-                              selectedWorkers.includes(item.id)
-                                ? "border-primary bg-primary/10"
-                                : "border-border hover:border-primary/40"
-                            }`}
-                          >
-                            <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                              selectedWorkers.includes(item.id) ? "bg-primary" : "bg-secondary"
-                            }`}>
-                              {selectedWorkers.includes(item.id) && <Check className="w-3 h-3 text-primary-foreground" />}
-                            </div>
-                            <span className="text-xs text-foreground font-medium">{item.name}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-xs text-muted-foreground italic">No workers available</p>
-                )}
-              </div>
-            </div>
-          )}
+       <form onSubmit={handleSubmit} className="space-y-4">
+         {type === "worker-pay" && (
+           <div>
+             <label className="text-xs font-medium text-foreground mb-2 block">Workers</label>
+             <p className="text-xs text-muted-foreground mb-2">Who works at this business?</p>
+             <div className="space-y-2 max-h-56 overflow-y-auto">
+               {workerOptions.length > 0 ? (
+                 workerOptions.map((group) => (
+                   <div key={group.category}>
+                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1 px-1">
+                       {group.category}
+                     </p>
+                     <div className="space-y-1">
+                       {group.items.map((item) => (
+                         <button
+                           key={item.id}
+                           type="button"
+                           onClick={() => {
+                             setSelectedWorkers(prev =>
+                               prev.includes(item.id)
+                                 ? prev.filter(id => id !== item.id)
+                                 : [...prev, item.id]
+                             );
+                           }}
+                           className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-left ${
+                             selectedWorkers.includes(item.id)
+                               ? "border-primary bg-primary/10"
+                               : "border-border hover:border-primary/40"
+                           }`}
+                         >
+                           <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                             selectedWorkers.includes(item.id) ? "bg-primary" : "bg-secondary"
+                           }`}>
+                             {selectedWorkers.includes(item.id) && <Check className="w-3 h-3 text-primary-foreground" />}
+                           </div>
+                           <span className="text-xs text-foreground font-medium">{item.name}</span>
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+                 ))
+               ) : (
+                 <p className="text-xs text-muted-foreground italic">No workers available</p>
+               )}
+             </div>
+           </div>
+         )}
 
-          <div>
-            <label className="text-xs font-medium text-foreground mb-2 block">{label}</label>
-            <p className="text-xs text-muted-foreground mb-3">{description}</p>
-            <div className="flex items-center gap-2">
-              <DollarSign className="w-4 h-4 text-muted-foreground" />
-              <input
-                type="number"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                min="0"
-                step="0.01"
-                placeholder="0.00"
-                className="flex-1 px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm outline-none focus:ring-1 focus:ring-primary"
-              />
-            </div>
-          </div>
+         <div>
+           <label className="text-xs font-medium text-foreground mb-2 block">{label}</label>
+           <p className="text-xs text-muted-foreground mb-3">{description}</p>
+           <div className="flex items-center gap-2">
+             <DollarSign className="w-4 h-4 text-muted-foreground" />
+             <input
+               type="number"
+               value={amount}
+               onChange={(e) => setAmount(e.target.value)}
+               min="0"
+               step="0.01"
+               placeholder="0.00"
+               className="flex-1 px-3 py-2 rounded-lg bg-secondary border border-border text-foreground text-sm outline-none focus:ring-1 focus:ring-primary"
+             />
+           </div>
+         </div>
 
-          <div className="flex gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-            >
-              {isSubmitting ? "Saving..." : "Save"}
-            </button>
-          </div>
-        </form>
+         <div className="flex gap-2 pt-2">
+           <button
+             type="button"
+             onClick={onClose}
+             className="flex-1 py-2.5 rounded-lg border border-border text-sm text-muted-foreground hover:text-foreground"
+           >
+             Cancel
+           </button>
+           <button
+             type="submit"
+             disabled={isSubmitting}
+             className="flex-1 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+           >
+             {isSubmitting ? "Saving..." : "Save"}
+           </button>
+         </div>
+       </form>
       </div>
-    </div>
-  );
-}
+      </div>
+      );
+      }
