@@ -18,54 +18,37 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
     queryFn: async () => {
       const char = await base44.entities.Character.get(characterId);
       if (!char?.created_by) return [];
-      const chars = await base44.entities.Character.filter({ created_by: char.created_by, status: "active", character_type: "active" });
+      const chars = await base44.entities.Character.filter({ created_by: char.created_by, status: "active" });
       return chars.filter(c => c.id !== characterId);
     },
   });
 
-  // Build worker options: active created characters > NPC fictional people > NPC family members
-  // Strict order with no mixing of types
+  // Build worker options: use character_type field from Character entity as source of truth
   const workerOptions = (() => {
     const options = [];
-    const usedNames = new Set();
-
-    // Active created characters only (age filter: 16+ or undefined)
-    if (allCharacters.length > 0) {
-      const active = allCharacters
-        .filter(c => !c.age || c.age >= 16)
-        .map(c => {
-          usedNames.add(c.name.toLowerCase());
-          return { id: c.id, name: c.name, type: 'character' };
-        });
-      if (active.length > 0) {
-        options.push({ category: 'Active Created Characters', items: active });
-      }
+    
+    // Active created characters (character_type === 'active')
+    const active = allCharacters
+      .filter(c => c.character_type === 'active' && (!c.age || c.age >= 16))
+      .map(c => ({ id: c.id, name: c.name, type: 'character' }));
+    if (active.length > 0) {
+      options.push({ category: 'Active Created Characters', items: active });
     }
 
-    // NPC fictional people from fictional_relationships (deduplicated against active characters only)
-    if (ownerChar?.fictional_relationships?.length > 0) {
-      const npcs = ownerChar.fictional_relationships
-        .filter(r => !usedNames.has(r.person_name?.toLowerCase()))
-        .map(r => {
-          usedNames.add(r.person_name.toLowerCase());
-          return { id: r.person_name, name: r.person_name, type: 'npc' };
-        });
-      if (npcs.length > 0) {
-        options.push({ category: 'NPC Fictional People', items: npcs });
-      }
+    // NPC fictional people (character_type === 'npc')
+    const npcs = allCharacters
+      .filter(c => c.character_type === 'npc' && (!c.age || c.age >= 16))
+      .map(c => ({ id: c.id, name: c.name, type: 'npc' }));
+    if (npcs.length > 0) {
+      options.push({ category: 'NPC Fictional People', items: npcs });
     }
 
-    // NPC family members from family_members (age filter: 16+ or undefined, deduplicated)
-    if (ownerChar?.family_members?.length > 0) {
-      const family = ownerChar.family_members
-        .filter(f => !usedNames.has(f.name?.toLowerCase()) && (!f.age_at_creation || f.age_at_creation >= 16))
-        .map(f => {
-          usedNames.add(f.name.toLowerCase());
-          return { id: f.name, name: f.name, type: 'family' };
-        });
-      if (family.length > 0) {
-        options.push({ category: 'NPC Family Members', items: family });
-      }
+    // NPC family members (character_type === 'family_npc')
+    const family = allCharacters
+      .filter(c => c.character_type === 'family_npc' && (!c.age || c.age >= 16))
+      .map(c => ({ id: c.id, name: c.name, type: 'family' }));
+    if (family.length > 0) {
+      options.push({ category: 'NPC Family Members', items: family });
     }
 
     return options;
