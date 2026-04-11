@@ -1500,10 +1500,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           prompt: imageGenPrompt,
           characterReferenceImages: charRefs,
           userReferenceImages: useUserRefs ? userRefImages : [],
-          characterName: character.name,
+          characterName: character.name.split(' ')[0],
           userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
           subjectType,
           characterId,
+          manualLocationId: character.resolved_current_location_id || character.current_home_location_id || null,
         }).then(() => {
           base44.entities.Conversation.update(convoId, {
             last_message_preview: "(photo)",
