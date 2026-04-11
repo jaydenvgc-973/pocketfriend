@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { Briefcase, MapPin, Lock, Globe, Eye, EyeOff } from "lucide-react";
+import { Briefcase, Plus, Globe, Eye, EyeOff } from "lucide-react";
+import CharacterBusinessModal from "./CharacterBusinessModal";
 
 const BUSINESS_TYPE_CATEGORIES = {
   "Retail & Sales": ["Clothing Store / Boutique", "Convenience Store / Bodega", "Supermarket / Grocery Store", "Electronics Store", "Furniture Store", "Jewelry Store", "Online Retail Store (E-commerce)", "Thrift / Resale Shop"],
@@ -28,6 +29,9 @@ function VisibilityLabel({ visibility }) {
 }
 
 export default function CharacterBusinessesPanel({ characterId }) {
+  const queryClient = useQueryClient();
+  const [showModal, setShowModal] = useState(false);
+
   const { data: character = {} } = useQuery({
     queryKey: ["character", characterId],
     queryFn: () => base44.entities.Character.filter({ id: characterId }).then(r => r[0] || {}),
@@ -40,27 +44,88 @@ export default function CharacterBusinessesPanel({ characterId }) {
     enabled: !!characterId,
   });
 
-  if (!ownedLocations.length) {
-    return null;
+  if (!ownedLocations.length && !customBusinesses.length) {
+    return (
+      <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Briefcase className="w-4 h-4 text-primary" />
+            <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses</p>
+          </div>
+          <button
+            onClick={() => setShowModal(true)}
+            className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+            title="Add business"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-sm text-muted-foreground italic">No businesses yet</p>
+        {showModal && (
+          <CharacterBusinessModal
+            characterId={characterId}
+            onClose={() => setShowModal(false)}
+            onBusinessAdded={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+          />
+        )}
+      </div>
+    );
   }
 
   const locationBasedBusinesses = ownedLocations.map(loc => ({
     id: loc.id,
     name: loc.name,
     type: loc.category || loc.location_type || "Location",
-    visibility: loc.vip_access?.has_vip ? "private" : "public", // placeholder; extend Location schema for actual visibility
+    visibility: loc.vip_access?.has_vip ? "private" : "public",
     isLocationBased: true,
     linkedLocationId: loc.id,
     income: loc.income_generated || 0,
     workers: loc.worker_character_ids?.length || 0,
   }));
 
+  const customBusinesses = character.businesses || [];
+  const allBusinesses = [...locationBasedBusinesses, ...customBusinesses];
+
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-      <div className="flex items-center gap-2">
-        <Briefcase className="w-4 h-4 text-primary" />
-        <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Briefcase className="w-4 h-4 text-primary" />
+          <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Businesses</p>
+        </div>
+        <button
+          onClick={() => setShowModal(true)}
+          className="p-1.5 rounded-lg bg-primary/10 text-primary hover:bg-primary/20 transition-colors"
+          title="Add business"
+        >
+          <Plus className="w-4 h-4" />
+        </button>
       </div>
+
+      {customBusinesses.length > 0 && (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground uppercase tracking-wider">Other Businesses</p>
+          {customBusinesses.map(biz => (
+            <div key={biz.id} className="pl-3 border-l-2 border-primary/30 space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-foreground">{biz.name}</p>
+                  <p className="text-xs text-muted-foreground capitalize">{biz.type}</p>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <VisibilityIcon visibility={biz.visibility} />
+                </div>
+              </div>
+              {biz.income > 0 && (
+                <p className="text-xs text-green-500">Income: ${biz.income.toLocaleString()}</p>
+              )}
+              {biz.notes && (
+                <p className="text-xs text-muted-foreground">{biz.notes}</p>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {locationBasedBusinesses.length > 0 && (
         <div className="space-y-3">
@@ -85,6 +150,14 @@ export default function CharacterBusinessesPanel({ characterId }) {
             </div>
           ))}
         </div>
+      )}
+
+      {showModal && (
+        <CharacterBusinessModal
+          characterId={characterId}
+          onClose={() => setShowModal(false)}
+          onBusinessAdded={() => queryClient.invalidateQueries({ queryKey: ["character", characterId] })}
+        />
       )}
     </div>
   );
