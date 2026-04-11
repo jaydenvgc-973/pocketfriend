@@ -8,7 +8,7 @@ const REASONS = [
     id: "flawed",
     icon: AlertTriangle,
     label: "Image is flawed",
-    description: "Wrong anatomy, artifacts, wrong location/zone, or bad composition — retry with strict enforcement",
+    description: "Wrong anatomy, wrong location/zone, or rendering artifacts — retry with strict environment & character fidelity",
     color: "text-amber-400",
     bg: "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/60",
   },
@@ -43,7 +43,6 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const [showPromptInput, setShowPromptInput] = useState(false);
   const [promptMode, setPromptMode] = useState(null); // 'dont_like' | 'custom_prompt'
 
-  // When opening dont_like, pre-fill with original prompt
   useEffect(() => {
     if (!isOpen) {
       setShowPromptInput(false);

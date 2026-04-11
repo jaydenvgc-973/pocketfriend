@@ -15,7 +15,6 @@ Deno.serve(async (req) => {
     if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
 
     // ── RESTORE ORIGINAL GENERATION CONTEXT ──────────────────────────────────
-    // Always pull the stored context first. This is the authoritative source.
     const ctx = message.generation_context || {};
     const originalPrompt = ctx.prompt || null;
     const originalCharId = ctx.character_id || message.character_id || null;
@@ -34,12 +33,12 @@ Deno.serve(async (req) => {
     const charName = character?.name || 'the character';
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
-    // Build character reference images: prefer stored context refs, fall back to character record
+    // Build character reference images
     let charRefImages = originalCharRefs.length > 0
       ? originalCharRefs
       : [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean);
 
-    // Fetch location reference images if we have a location_id and the stored refs are empty
+    // Fetch location reference images if needed
     let locationRefImages = originalLocationRefs;
     if (locationRefImages.length === 0 && originalLocationId) {
       try {
@@ -60,7 +59,7 @@ Deno.serve(async (req) => {
     const hasLocation = locationRefImages.length > 0;
     const locationLabel = [originalLocationName, originalZoneName].filter(Boolean).join(' → ');
 
-    // ── ROOM LOCK BLOCK (reused from generateImageAsync logic) ─────────────────
+    // ── ROOM LOCK BLOCK ────────────────────────────────────────────────────────
     const roomLock = hasLocation ? `
 
 ════════════════════════════════════════════════════════════
@@ -77,43 +76,40 @@ ONLY the camera angle and subject placement may change.
     const qualityFooter = `\nABSOLUTE RULES: No floating text, no overlays, no watermarks, no brand logos. Photorealistic photograph only.`;
 
     // ── REFERENCE IMAGE ASSEMBLY ──────────────────────────────────────────────
-    // Location refs always come first (environment anchor), then character refs
     let referenceImages;
     let prompt = '';
 
     if (reason === 'flawed') {
-      // Same scene — fix technical errors AND enforce location/zone strictly
+      // Fix technical errors AND enforce location/zone + character fidelity strictly
       const scenePrompt = originalPrompt
         ? originalPrompt
         : `${charName} in a natural candid scene`;
 
-      const locationStrictBlock = hasLocation ? `
-
-════════════════════════════════════════════════════════════
-LOCATION/ZONE CORRECTION - STRICT ENFORCEMENT
-════════════════════════════════════════════════════════════
-The previous image FAILED to correctly reproduce the location: ${locationLabel}
-This regeneration requires MAXIMUM fidelity to the environment reference images.
-The first ${locationRefImages.length} reference image(s) are GROUND TRUTH photographs of this EXACT space.
-YOU MUST REPRODUCE every piece of furniture, flooring, walls, window treatments, lighting, and decor exactly.
-ZONE INTEGRITY: Stay strictly inside the "${originalZoneName || 'matched zone'}" — do NOT blend other zones.
-ACCESS POINTS ARE SACRED: Doors, closets, and walkways must remain unblocked. No furniture overlap.
-Do NOT fall back to a generic room. The reference IS the room. Reproduce it exactly.
-════════════════════════════════════════════════════════════` : '';
-
-      prompt = `${scenePrompt}${roomLock}${locationStrictBlock}
+      prompt = `${scenePrompt}${roomLock}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
 REFERENCE PHOTOS ARE THE SOURCE OF TRUTH for both the room and the person.
 
-TECHNICAL CORRECTION PASS - fix these issues from the previous render:
-- Perfect human anatomy: correct proportions, exactly 5 fingers per hand, no extra or merged limbs
-- Natural facial symmetry, correct eye gaze, no artifacts or distortions
-- HAIR LENGTH: Match EXACT hair length from reference photos - do NOT shorten or lengthen. Shoulder-length stays shoulder-length. Short stays short. Long stays long.
-- Hair texture, color, and style must match reference exactly
-- Furniture must not overlap, clip, or block access points (doors, closets, walkways)
-- Room layout must match the reference images exactly
-- No floating objects. Physically believable placement of all elements.
+TECHNICAL CORRECTION PASS — fix these issues from the previous render:
+• Perfect human anatomy: correct proportions, exactly 5 fingers per hand, no extra or merged limbs
+• Natural facial symmetry, correct eye gaze, no artifacts or distortions
+• Furniture must not overlap, clip, or block access points (doors, closets, walkways)
+• No floating objects. Physically believable placement of all elements.
+
+LOCATION & ZONE CORRECTION — CRITICAL (this may be the primary flaw):
+${hasLocation
+  ? `The previous image may have failed to correctly represent the location: "${locationLabel}".
+The first ${locationRefImages.length} reference image(s) ARE photographs of this exact room — study them carefully.
+• Match the EXACT zone: "${originalZoneName || originalLocationName}" — do NOT substitute a generic or invented room.
+• Reproduce every visible detail: flooring, wall color, furniture style and placement, lighting, window treatments, decorative objects.
+• The character must be placed INSIDE this specific room — not a similar one, not a reimagined version.
+• If the previous image showed a wrong room or wrong zone, correcting this is the highest priority fix.`
+  : `No specific location was locked — ensure the background/environment matches the scene described in the prompt naturally.`}
+
+CHARACTER HAIR — STRICT:
+• Hair LENGTH must exactly match the reference photos — do NOT shorten or lengthen
+• Hair texture, curl pattern, color, and style must also match the reference precisely
+
 Ultra high-resolution photorealistic photograph. Real photo, not illustration.${qualityFooter}`;
 
       referenceImages = [
@@ -122,7 +118,7 @@ Ultra high-resolution photorealistic photograph. Real photo, not illustration.${
       ].filter(Boolean);
 
     } else if (reason === 'no_avatar') {
-      // Same scene, same location — but push much harder on character likeness
+      // Same scene, same location — push hard on character likeness
       const scenePrompt = originalPrompt
         ? originalPrompt
         : `${charName} in a natural candid scene`;
@@ -135,7 +131,7 @@ The reference photos define this person's exact appearance. Match with maximum f
 • EYES: Exact shape, size, spacing, color, expression
 • NOSE & MOUTH: Exact nose shape, lip shape, mouth structure
 • SKIN: Exact complexion, undertone, skin texture, any marks
-• HAIR: Exact color, texture, cut, length, style — replicate precisely
+• HAIR: Exact color, texture, cut, LENGTH, style — replicate precisely. Do NOT shorten or lengthen.
 • BODY: Exact build, height proportions, posture
 • FACIAL HAIR: Match exactly — if the reference shows none, generate none; if it shows a beard, match it
 Do NOT invent, average, or approximate this person. The reference photos ARE this person.
@@ -148,7 +144,6 @@ Photorealistic photograph. Natural lighting.${qualityFooter}`;
       ].filter(Boolean);
 
     } else if (reason === 'dont_like' && customPrompt) {
-      // User edited the original prompt — use their edited version with same location/character refs
       prompt = `${customPrompt}${roomLock}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
@@ -161,8 +156,6 @@ Photorealistic photograph. Natural lighting.${qualityFooter}`;
       ].filter(Boolean);
 
     } else if (reason === 'custom_prompt' && customPrompt) {
-      // Fully custom prompt — use whatever references the user context provides
-      // Still include location and character refs as optional anchors
       prompt = `${customPrompt}${roomLock}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
@@ -175,7 +168,6 @@ Photorealistic photograph. Natural lighting.${qualityFooter}`;
       ].filter(Boolean);
 
     } else {
-      // Fallback: shouldn't normally hit this — treat as flawed retry
       const scenePrompt = originalPrompt || `${charName} in a natural candid scene`;
       prompt = `${scenePrompt}${roomLock}
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photograph.${qualityFooter}`;
@@ -205,10 +197,8 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
 
     if (!genRes?.url) return Response.json({ success: false, error: 'Generation returned no URL' }, { status: 500 });
 
-    // Update the message image — preserve the existing generation_context (prompt stays the same)
     await base44.asServiceRole.entities.Message.update(messageId, { image_url: genRes.url });
 
-    // Memory
     if (character?.id) {
       await base44.asServiceRole.entities.Memory.create({
         character_id: character.id,
