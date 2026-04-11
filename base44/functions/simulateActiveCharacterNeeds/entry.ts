@@ -238,6 +238,9 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      // Compute context first (needed for proactive logic below)
+      const context = getLocationContext(char, locationMap);
+
       // Proactive need resolution: if a need is critical (<20) or low (<50),
       // inject a corrective activity into current_activity so the context picks it up.
       // This simulates the character autonomously addressing their needs.
@@ -246,45 +249,6 @@ Deno.serve(async (req) => {
       const energy = currentNeeds.energy ?? 75;
       const hygiene = currentNeeds.hygiene ?? 75;
       const mental = currentNeeds.mental ?? 70;
-
-      // Priority order: critical needs first, then below-50 needs
-      if (hunger < 20) {
-        // Critical hunger — character MUST eat regardless of what they're doing
-        proactiveActivity = 'eating a meal (critical hunger)';
-      } else if (hunger < 50 && context === 'home_resting') {
-        // Low hunger + home = grab food
-        proactiveActivity = 'cooking and eating at home';
-      } else if (energy < 20 && context !== 'sleeping') {
-        proactiveActivity = 'resting urgently (critical energy)';
-      } else if (hygiene < 20) {
-        proactiveActivity = 'showering (critical hygiene)';
-      } else if (mental < 20) {
-        proactiveActivity = 'resting and decompressing';
-      } else if (context === 'work_off_shift') {
-        // Home pull: off-shift at work — character should head home
-        const homeLocId = char.current_home_location_id;
-        if (homeLocId) {
-          // Move them home via the work schedule enforcer logic inline
-          sdk.entities.Character.update(char.id, {
-            resolved_current_location_id: homeLocId,
-            resolved_presence_status: 'home',
-            resolved_location_type: 'home',
-            resolved_last_updated_at: now.toISOString(),
-            current_activity: 'arrived home after work',
-          }).catch(() => {});
-        }
-      }
-
-      // Apply proactive override to character (fire and forget, non-blocking)
-      if (proactiveActivity && char.current_activity !== proactiveActivity) {
-        sdk.entities.Character.update(char.id, { current_activity: proactiveActivity }).catch(() => {});
-      }
-
-      // Use proactive activity for context if overriding
-      const overriddenChar = proactiveActivity
-        ? { ...char, current_activity: proactiveActivity }
-        : char;
-      const context = getLocationContext(overriddenChar, locationMap);
 
       // Apply elapsed-time decay/gain using the correct context
       let newNeeds = applyElapsedTime(currentNeeds, cappedHours, context);
