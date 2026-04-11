@@ -4,33 +4,46 @@
   "properties": {
     "character_id": {
       "type": "string",
-      "description": "ID of the character this pending change is for"
+      "description": "ID of the character this pending change belongs to"
     },
     "character_name": {
       "type": "string",
       "description": "Display name of the character"
     },
-    "event_category": {
+    "change_type": {
       "type": "string",
       "enum": [
-        "occupation",
-        "education",
-        "job_training"
+        "occupation_change",
+        "education_change",
+        "job_training_change"
       ],
-      "description": "What category of change is being proposed"
+      "description": "What kind of change the AI is proposing"
+    },
+    "event_category": {
+      "type": "string",
+      "default": "life_change",
+      "description": "Category for platform validation"
     },
     "description": {
       "type": "string",
-      "description": "Human-readable description of the proposed change"
+      "description": "Description of the pending event (mirrors human_summary)"
     },
     "proposed_data": {
       "type": "object",
-      "description": "The exact Character field patch that would be applied if approved",
+      "description": "The exact fields the AI wants to apply to the Character entity",
       "additionalProperties": true
     },
-    "source_context": {
+    "source_description": {
       "type": "string",
-      "description": "Brief context about where/why this was proposed (e.g. conversation summary)"
+      "description": "The original event description that triggered this proposal"
+    },
+    "human_summary": {
+      "type": "string",
+      "description": "Plain-language description of the proposed change shown to the user"
+    },
+    "reasoning": {
+      "type": "string",
+      "description": "AI reasoning for why this change is proposed"
     },
     "status": {
       "type": "string",
@@ -43,17 +56,16 @@
       "default": "pending",
       "description": "Current approval status"
     },
-    "resolved_at": {
+    "linked_to_label": {
       "type": "string",
-      "format": "date-time",
-      "description": "When the user resolved this pending event"
+      "description": "If linked, the label of the existing entry it was linked to"
     }
   },
   "required": [
     "character_id",
-    "character_name",
-    "event_category",
+    "change_type",
+    "proposed_data",
     "description",
-    "proposed_data"
+    "event_category"
   ]
 }
