@@ -62,11 +62,22 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
     try {
       const paymentAmount = parseFloat(amount);
       
-      if (type === "revenue" && business.isLocationBased) {
-        // Update location revenue
-        await base44.entities.LocationReference.update(business.linkedLocationId, {
-          income_generated: paymentAmount
-        });
+      if (type === "revenue") {
+        if (business.isLocationBased) {
+          // Update location revenue
+          await base44.entities.LocationReference.update(business.linkedLocationId, {
+            income_generated: paymentAmount
+          });
+        } else {
+          // Update custom business revenue
+          const char = await base44.entities.Character.get(characterId);
+          const businesses = char.businesses || [];
+          const idx = businesses.findIndex(b => b.id === business.id);
+          if (idx >= 0) {
+            businesses[idx].income = paymentAmount;
+            await base44.entities.Character.update(characterId, { businesses });
+          }
+        }
         
         // Process immediate payment to owner
         const response = await base44.functions.invoke('processBusinessPaymentImmediate', {
@@ -111,12 +122,6 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
       onSaved?.();
       onClose();
     } catch (err) {
-      console.error("Failed to save:", err);
-      alert('Error processing payment: ' + err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   const label = type === "revenue" ? "Monthly Revenue" : "Weekly Worker Pay";
   const description = type === "revenue" 
