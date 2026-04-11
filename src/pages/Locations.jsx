@@ -344,7 +344,7 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
 }
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
-function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {} }) {
+function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
   // Collect all unique NPCs from fictional_relationships across all characters
   const allNPCs = [];
   const seenNames = new Set();
@@ -431,9 +431,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     const charObj = effectiveType === "character_specific"
       ? characters.find(c => c.id === form.character_id)
       : null;
-    const ownerChar = !form.owner_is_npc && form.owner_character_id
+    const worldName = userSettings?.fictional_world_name || currentUser?.full_name || "You";
+  const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
+  const ownerChar = !form.owner_is_npc && form.owner_character_id
       ? (form.owner_character_id === currentUser?.id
-          ? { name: currentUser?.full_name || "You" }
+          ? { name: worldName }
           : characters.find(c => c.id === form.owner_character_id))
       : null;
     onSave({
@@ -744,10 +746,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   disabled={alreadyResident || !userId}
                   className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
                 >
-                  <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                    <span className="text-xs font-bold text-primary">U</span>
-                  </div>
-                  <span className="text-sm text-foreground font-medium flex-1">{currentUser?.full_name || "You"}</span>
+                  {userAvatarUrl ? (
+                    <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                      <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
+                    </div>
+                  )}
+                  <span className="text-sm text-foreground font-medium flex-1">{worldName}</span>
                   {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
                 </button>
               );
@@ -1166,16 +1172,20 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             </button>
             {/* Current user (player) as owner */}
             {currentUser?.id && (
-              <button
-                onClick={() => update("owner_character_id", currentUser.id)}
-                className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}
-              >
-                <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                  <span className="text-xs font-bold text-primary">U</span>
-                </div>
-                <span className="text-sm text-foreground">{currentUser?.full_name || "You (Player)"}</span>
-                <span className="text-xs text-primary/60 ml-auto">Player</span>
-              </button>
+             <button
+               onClick={() => update("owner_character_id", currentUser.id)}
+               className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}
+             >
+               {userAvatarUrl ? (
+                 <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+               ) : (
+                 <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                   <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
+                 </div>
+               )}
+               <span className="text-sm text-foreground">{worldName}</span>
+               <span className="text-xs text-primary/60 ml-auto">Player</span>
+             </button>
             )}
             {characters.map(c => (
               <button key={c.id} onClick={() => update("owner_character_id", c.id)}
@@ -1357,6 +1367,12 @@ export default function Locations() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
     queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }),
+    enabled: !!currentUser?.email,
+  });
+
+  const { data: userSettings = null } = useQuery({
+    queryKey: ["userSettings"],
+    queryFn: async () => { const s = await base44.entities.UserSettings.list(); return s[0] || null; },
     enabled: !!currentUser?.email,
   });
 
@@ -1572,6 +1588,7 @@ export default function Locations() {
               isWorkerTooYoung={isWorkerTooYoung}
               getNPCAge={getNPCAge}
               currentUser={currentUser}
+              userSettings={userSettings}
             />
           )}
         </AnimatePresence>
@@ -1603,6 +1620,7 @@ export default function Locations() {
                         isWorkerTooYoung={isWorkerTooYoung}
                         getNPCAge={getNPCAge}
                         currentUser={currentUser}
+                        userSettings={userSettings}
                       />
                     )}
                   </React.Fragment>
@@ -1626,17 +1644,18 @@ export default function Locations() {
                     />
                     {inlineEditId === loc.id && (
                         <LocationForm
-                          key={`edit-${loc.id}`}
-                          editingLocation={loc}
-                          characters={characters}
-                          allLocations={locations}
-                          onSave={(data) => handleSave(data, loc.id)}
-                          onCancel={() => setInlineEditId(null)}
-                          onDuplicate={() => handleDuplicate(loc)}
-                          isWorkerTooYoung={isWorkerTooYoung}
-                          getNPCAge={getNPCAge}
-                          currentUser={currentUser}
-                        />
+                           key={`edit-${loc.id}`}
+                           editingLocation={loc}
+                           characters={characters}
+                           allLocations={locations}
+                           onSave={(data) => handleSave(data, loc.id)}
+                           onCancel={() => setInlineEditId(null)}
+                           onDuplicate={() => handleDuplicate(loc)}
+                           isWorkerTooYoung={isWorkerTooYoung}
+                           getNPCAge={getNPCAge}
+                           currentUser={currentUser}
+                           userSettings={userSettings}
+                         />
                       )}
                     </React.Fragment>
                     ))}
@@ -1667,6 +1686,7 @@ export default function Locations() {
                       isWorkerTooYoung={isWorkerTooYoung}
                       getNPCAge={getNPCAge}
                       currentUser={currentUser}
+                      userSettings={userSettings}
                     />
                   )}
                   </React.Fragment>
