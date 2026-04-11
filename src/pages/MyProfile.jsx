@@ -3,7 +3,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key, MapPin, Briefcase, Home, Phone } from "lucide-react";
+import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key, MapPin, Briefcase, Home, Phone, Send } from "lucide-react";
 import VGCRevenueDashboard from "@/components/finance/VGCRevenueDashboard";
 import { Button } from "@/components/ui/button";
 import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
@@ -16,6 +16,9 @@ export default function MyProfile() {
   const [narrative, setNarrative] = useState("");
   const [isGeneratingNarrative, setIsGeneratingNarrative] = useState(false);
   const [relativeRelationships, setRelativeRelationships] = useState({});
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferAmount, setTransferAmount] = useState("");
+  const [isTransferring, setIsTransferring] = useState(false);
 
   const { data: user = {} } = useQuery({
     queryKey: ["user"],
@@ -210,16 +213,27 @@ export default function MyProfile() {
             <p className="text-xs text-muted-foreground mt-2">Personal spending</p>
           </div>
           <div className="bg-card border border-border rounded-2xl p-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
-                <Phone className="w-5 h-5 text-blue-500" />
+            <div className="flex items-center gap-3 justify-between">
+              <div className="flex items-center gap-3 flex-1">
+                <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center">
+                  <Phone className="w-5 h-5 text-blue-500" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground uppercase tracking-wider">VGC Revenue</p>
+                  <p className="text-xl font-bold text-foreground">
+                    ${vgcRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-xs text-muted-foreground uppercase tracking-wider">VGC Revenue</p>
-                <p className="text-xl font-bold text-foreground">
-                  ${vgcRevenue.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
-              </div>
+              {vgcRevenue > 0 && (
+                <button
+                  onClick={() => setShowTransferModal(true)}
+                  className="p-2 rounded-xl bg-primary/10 text-primary hover:bg-primary/20 transition-colors flex-shrink-0"
+                  title="Transfer to balance"
+                >
+                  <Send className="w-4 h-4" />
+                </button>
+              )}
             </div>
             <p className="text-xs text-muted-foreground mt-2">Character phone bills</p>
           </div>
@@ -424,6 +438,64 @@ export default function MyProfile() {
                   </div>
 
       <BottomNav />
+
+      {/* Transfer VGC Revenue Modal */}
+      {showTransferModal && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4" onClick={() => setShowTransferModal(false)}>
+          <div className="w-full max-w-sm bg-card border border-border rounded-t-3xl p-6 space-y-4" onClick={e => e.stopPropagation()}>
+            <h3 className="text-sm font-semibold text-foreground">Transfer from VGC Revenue</h3>
+            <p className="text-xs text-muted-foreground">Move money from your character phone bill revenue to your personal balance.</p>
+            
+            <div className="space-y-2">
+              <p className="text-xs text-muted-foreground">Available: ${vgcRevenue.toLocaleString("en-US", { minimumFractionDigits: 2 })}</p>
+              <input
+                type="number"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                placeholder="Amount to transfer"
+                max={vgcRevenue}
+                min="0"
+                step="0.01"
+                className="w-full px-4 py-3 rounded-xl bg-secondary border border-border text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
+              />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => { setShowTransferModal(false); setTransferAmount(""); }}
+                className="flex-1 py-2.5 rounded-xl border border-border text-sm text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  const amount = parseFloat(transferAmount);
+                  if (amount > 0 && amount <= vgcRevenue) {
+                    setIsTransferring(true);
+                    try {
+                      await updateSettings({
+                        user_balance: (settings.user_balance || 0) + amount,
+                        vgc_mobile_revenue: Math.max(0, vgcRevenue - amount),
+                      });
+                      setShowTransferModal(false);
+                      setTransferAmount("");
+                      queryClient.invalidateQueries({ queryKey: ["userSettings"] });
+                    } catch (err) {
+                      console.error('Transfer failed:', err);
+                    } finally {
+                      setIsTransferring(false);
+                    }
+                  }
+                }}
+                disabled={!transferAmount || parseFloat(transferAmount) <= 0 || parseFloat(transferAmount) > vgcRevenue || isTransferring}
+                className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {isTransferring ? "Transferring..." : "Transfer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
