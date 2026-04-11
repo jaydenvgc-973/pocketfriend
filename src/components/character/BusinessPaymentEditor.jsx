@@ -48,15 +48,29 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
     
     try {
       const paymentAmount = parseFloat(amount);
-      const isLocationBased = !!business.linkedLocationId;
+      const char = await base44.entities.Character.get(characterId);
       
       if (type === "revenue") {
+        // Get or create financial record
+        let financial = (await base44.entities.CharacterFinancial.filter({ character_id: characterId }))[0];
+        if (!financial) {
+          financial = await base44.entities.CharacterFinancial.create({
+            character_id: characterId,
+            character_name: char.name,
+            current_balance: 6000,
+            total_income: 0,
+            total_expenses: 0,
+          });
+        }
+
+        // Determine if location-based and update accordingly
+        const isLocationBased = !!business.linkedLocationId;
+        
         if (isLocationBased) {
           await base44.entities.LocationReference.update(business.linkedLocationId, {
             income_generated: paymentAmount
           });
         } else {
-          const char = await base44.entities.Character.get(characterId);
           const businesses = char.businesses || [];
           const idx = businesses.findIndex(b => b.id === business.id);
           if (idx >= 0) {
@@ -65,15 +79,30 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           }
         }
         
-        const response = await base44.functions.invoke('processBusinessPaymentImmediate', {
-          characterId,
-          businessId: business.id,
-          amount: paymentAmount,
-          type: 'revenue',
+        // Create income transaction and update balance
+        const newBalance = financial.current_balance + paymentAmount;
+        await base44.entities.CharacterFinancial.update(financial.id, {
+          current_balance: newBalance,
+          total_income: (financial.total_income || 0) + paymentAmount,
         });
-        console.log('Revenue payment response:', response.data);
+
+        await base44.entities.FinancialTransaction.create({
+          character_id: characterId,
+          character_name: char.name,
+          sender_id: 'system',
+          sender_type: 'system',
+          sender_name: 'Business System',
+          receiver_id: characterId,
+          receiver_type: 'character',
+          receiver_name: char.name,
+          amount: paymentAmount,
+          direction: 'income',
+          transaction_type: 'income',
+          description: `Business revenue from ${business.name}`,
+          balance_after: newBalance,
+          timestamp: new Date().toISOString(),
+        });
       } else if (type === "worker-pay") {
-        const char = await base44.entities.Character.get(characterId);
         const businesses = char.businesses || [];
         const idx = businesses.findIndex(b => b.id === business.id);
         
