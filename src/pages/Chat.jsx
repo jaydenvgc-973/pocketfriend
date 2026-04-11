@@ -26,9 +26,7 @@ import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
-import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
-import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
-import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
+import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
 import {
   getCharacterStatus,
@@ -1932,6 +1930,9 @@ Reply with ONLY the single emoji or the word "none".`,
           onDeny={dismissApproval}
         />
       )}
+
+      {/* Life event approval pop-up (education/occupation/job training) */}
+      {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
     </div>
   );
 }

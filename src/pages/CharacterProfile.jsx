@@ -27,7 +27,7 @@ import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import OwnedLocationsPanel from "@/components/character/OwnedLocationsPanel";
 import LifeJournal from "@/components/character/LifeJournal";
-import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
+
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -987,7 +987,7 @@ export default function CharacterProfile() {
       </div>
       <BottomNav />
 
-      <PendingLifeEventApproval characterId={characterId} character={character} />
+
 
       {editingNPCPhoto && character && (
         <NPCPromotionModal
