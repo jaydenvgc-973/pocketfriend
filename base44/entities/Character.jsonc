@@ -885,6 +885,60 @@
         }
       }
     },
+    "businesses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique business ID"
+          },
+          "name": {
+            "type": "string",
+            "description": "Business name"
+          },
+          "type": {
+            "type": "string",
+            "description": "Business type (inherited from location or custom)"
+          },
+          "visibility": {
+            "type": "string",
+            "enum": [
+              "public",
+              "private",
+              "secret"
+            ],
+            "description": "Ownership visibility"
+          },
+          "income": {
+            "type": "number",
+            "description": "Monthly income from this business",
+            "default": 0
+          },
+          "notes": {
+            "type": "string",
+            "description": "Additional notes about the business"
+          },
+          "linked_location_id": {
+            "type": "string",
+            "description": "ID of linked location if this is location-based"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "type",
+          "visibility"
+        ]
+      },
+      "default": [],
+      "description": "List of businesses owned by this character"
+    },
     "current_life_event": {
       "type": "string"
     },
