@@ -1478,7 +1478,8 @@ export default function Locations() {
     l.location_type === "character_specific" || 
     characterIds.has(l.character_id) ||
     characterIds.has(l.owner_character_id) ||
-    (l.resident_character_ids || []).some(id => characterIds.has(id));
+    l.owner_character_id === currentUser?.id ||
+    (l.resident_character_ids || []).some(id => characterIds.has(id) || id === currentUser?.id);
   
   // Group and sort locations
   const getFilteredAndGrouped = () => {
