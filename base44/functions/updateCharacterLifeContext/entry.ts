@@ -114,6 +114,7 @@ Rules:
 - For appointments/surgery/hospital: set a scheduled_event with an appropriate trigger_time
 - For gym/coffee shop/park visits: update current_activity only, not permanent fields
 - For new jobs: update work_details AND work_schedule if inferable
+- CRITICAL FOR COURSES/TRAINING: Extract the EXACT course or training name as stated in the EVENT DESCRIPTION. Do NOT generalize or summarize. If the event says "LGBTQ Equity in HIV Care certification course", use that exact phrase for both current_education_activity and education_details.course_name. Never substitute with generic labels like "certification course" or "training program".
 - For classes/courses: update education fields with realistic duration
 - For job training: update job_training fields
 - For moving cities: update location
