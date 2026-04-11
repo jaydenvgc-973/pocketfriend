@@ -5,7 +5,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Plus, MapPin, Globe, User, Trash2, Upload, X, Pencil,
   ChevronDown, ChevronUp, Home, Briefcase, Coffee, Trees,
-  Wine, GraduationCap, Heart, Dumbbell, ArrowLeft, Users
+  Wine, GraduationCap, Heart, Dumbbell, ArrowLeft, Users,
+  Search
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,7 +29,6 @@ const ZONE_PRESETS = {
   social: ["Main Floor", "Bar Area", "VIP Section", "Outdoor Patio", "Entrance", "Bathroom"],
   food_drink: ["Dining Area", "Counter / Bar", "Outdoor Seating", "Bathroom", "Entrance"],
   grocery: ["Main Floor", "Produce", "Deli", "Checkout", "Entrance", "Bakery", "Pharmacy"],
-  // School and Education are the same system
   school: ["Classroom", "Classroom 2", "Hallway", "Office", "Admin Office", "Cafeteria", "Gym", "Courtyard", "Library", "Auditorium", "Parking"],
   education: ["Classroom", "Classroom 2", "Hallway", "Office", "Admin Office", "Cafeteria", "Gym", "Courtyard", "Library", "Auditorium", "Parking"],
   community: ["Main Hall", "Activity Room", "Office", "Waiting Area", "Kitchen", "Meeting Room", "Playground", "Parking", "Entrance"],
@@ -66,7 +66,6 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
   const zones = location.zones || [];
   const totalImages = zones.reduce((sum, z) => sum + (z.image_urls?.length || 0), 0);
-  const isGenericHome = location.is_default_generic;
 
   return (
     <motion.div
@@ -93,7 +92,6 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
               </span>
             )}
             {(location.category === 'home' || location.category === 'generic') && (() => {
-              // Resolve names: prefer resident_character_names, fall back to looking up by ID
               const activeNames = (location.resident_character_ids || []).map(id => {
                 const found = characters.find(c => c.id === id);
                 return found?.name || null;
@@ -101,9 +99,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
               const npcNames = (location.resident_family_members || []).map(f => f.name).filter(Boolean);
               const allNames = [...activeNames, ...npcNames];
               return allNames.length > 0 ? (
-                <span className="text-xs text-blue-400/80 font-medium">
-                  {allNames.join(', ')}
-                </span>
+                <span className="text-xs text-blue-400/80 font-medium">{allNames.join(', ')}</span>
               ) : (
                 <span className="text-xs text-muted-foreground/60 italic">vacant</span>
               );
@@ -116,19 +112,13 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             <span className="text-xs text-muted-foreground">· {zones.length} zone{zones.length !== 1 ? "s" : ""}</span>
             <span className="text-xs text-muted-foreground">· {totalImages} img{totalImages !== 1 ? "s" : ""}</span>
             {(location.category === 'home' || location.category === 'generic') && location.rent_or_housing_cost && (
-              <span className="text-xs text-green-400/80 font-medium">
-                ${location.rent_or_housing_cost}/mo rent
-              </span>
+              <span className="text-xs text-green-400/80 font-medium">${location.rent_or_housing_cost}/mo rent</span>
             )}
             {location.category === 'gym' && location.gym_membership_fee && (
-              <span className="text-xs text-blue-400/80 font-medium">
-                ${location.gym_membership_fee}/mo membership
-              </span>
+              <span className="text-xs text-blue-400/80 font-medium">${location.gym_membership_fee}/mo membership</span>
             )}
             {location.category === 'religion' && location.religion_denomination && (
-              <span className="text-xs text-purple-400/80 font-medium">
-                {location.religion_denomination}
-              </span>
+              <span className="text-xs text-purple-400/80 font-medium">{location.religion_denomination}</span>
             )}
             {(location.owner_character_name || (location.owner_is_npc && location.owner_npc_name)) && (
               <span className="text-xs text-muted-foreground/70">
@@ -158,10 +148,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border overflow-hidden"
           >
-            {/* Category-aware detail panel */}
             <LocationDetailPanel location={location} characters={characters} />
-
-            {/* Zones / images section */}
             <div className="px-4 pb-4 space-y-3">
               {location.description && (
                 <p className="text-xs text-muted-foreground border-t border-border pt-3">{location.description}</p>
@@ -224,7 +211,7 @@ const SUBTYPE_OPTIONS = {
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
 };
 
-// ── ZoneEditor — manages images for a single zone ────────────────────────────
+// ── ZoneEditor ────────────────────────────────────────────────────────────────
 function ZoneEditor({ zone, onUpdateImages, onDelete }) {
   const [uploading, setUploading] = useState(false);
 
@@ -257,7 +244,6 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
           <X className="w-3.5 h-3.5" />
         </button>
       </div>
-
       {imgCount > 0 && (
         <div className="grid grid-cols-4 gap-1.5">
           {zone.image_urls.map((url, i) => (
@@ -273,7 +259,6 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
           ))}
         </div>
       )}
-
       {imgCount < 5 ? (
         <label className="block cursor-pointer">
           <input type="file" accept="image/*" multiple onChange={handleUpload} className="hidden" />
@@ -285,7 +270,6 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
       ) : (
         <p className="text-xs text-muted-foreground text-center">Maximum 5 images per zone</p>
       )}
-
       {imgCount === 0 && (
         <p className="text-xs text-amber-500/80">⚠ No images yet — add reference photos for this zone</p>
       )}
@@ -345,7 +329,6 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
 
 // ── LocationForm ─────────────────────────────────────────────────────────────
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
-  // Collect all unique NPCs from fictional_relationships across all characters
   const allNPCs = [];
   const seenNames = new Set();
   characters.forEach(char => {
@@ -420,23 +403,15 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     update("zones", updated);
   };
 
-  // Generic homes don't require zones or images; other locations require at least one zone
   const isGenericHome = form.is_default_generic;
   const canSave = form.name.trim() && (isGenericHome || form.zones.length > 0);
 
   const handleSave = () => {
     if (!canSave) return;
-    // If character_specific but no character selected, treat it as global
-    const effectiveType = (form.location_type === "character_specific" && !form.character_id)
-      ? "global"
-      : form.location_type;
-    const charObj = effectiveType === "character_specific"
-      ? characters.find(c => c.id === form.character_id)
-      : null;
+    const effectiveType = (form.location_type === "character_specific" && !form.character_id) ? "global" : form.location_type;
+    const charObj = effectiveType === "character_specific" ? characters.find(c => c.id === form.character_id) : null;
     const ownerChar = !form.owner_is_npc && form.owner_character_id
-      ? (form.owner_character_id === currentUser?.id
-          ? { name: worldName }
-          : characters.find(c => c.id === form.owner_character_id))
+      ? (form.owner_character_id === currentUser?.id ? { name: worldName } : characters.find(c => c.id === form.owner_character_id))
       : null;
     onSave({
       ...form,
@@ -456,15 +431,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     >
       <h3 className="text-sm font-semibold text-foreground">{editingLocation ? "Edit Location" : "Add Location"}</h3>
 
-      {/* Name */}
-      <Input
-        value={form.name}
-        onChange={e => update("name", e.target.value)}
-        placeholder="e.g. Jayden's Apartment, Downtown Gym"
-        className="h-11 rounded-xl"
-      />
+      <Input value={form.name} onChange={e => update("name", e.target.value)} placeholder="e.g. Jayden's Apartment, Downtown Gym" className="h-11 rounded-xl" />
 
-      {/* Type */}
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Type</label>
         <div className="grid grid-cols-2 gap-2">
@@ -477,15 +445,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       </div>
 
-      {/* Character picker */}
       {form.location_type === "character_specific" && (
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Character</label>
           <div className="space-y-2 max-h-48 overflow-y-auto">
-            <button
-              onClick={() => update("character_id", "")}
-              className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${!form.character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
-            >
+            <button onClick={() => update("character_id", "")}
+              className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${!form.character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
               <span className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs flex-shrink-0">—</span>
               <span className="text-sm">No character</span>
             </button>
@@ -500,7 +465,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* Category */}
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Category</label>
         <div className="grid grid-cols-3 gap-2">
@@ -514,17 +478,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       </div>
 
-      {/* ── SUBTYPE / VENUE TYPE ─ specific location subtype ─────────── */}
       {SUBTYPE_OPTIONS[form.category] && (
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Venue Type</label>
           <div className="grid grid-cols-2 gap-2">
             {SUBTYPE_OPTIONS[form.category].map(subtype => (
-              <button
-                key={subtype}
+              <button key={subtype}
                 onClick={() => update("subtype", form.subtype.includes(subtype) ? form.subtype.filter(s => s !== subtype) : [...form.subtype, subtype])}
-                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype.includes(subtype) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
-              >
+                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left capitalize ${form.subtype.includes(subtype) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
                 {subtype.replace(/_/g, ' ')}
               </button>
             ))}
@@ -532,17 +493,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── RELIGION DENOMINATION — only for religion category ─────────── */}
       {form.category === 'religion' && (
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Religion / Denomination</label>
           <div className="grid grid-cols-2 gap-2">
             {["Christianity", "Catholicism", "Islam", "Judaism", "Hinduism", "Buddhism", "Sikhism", "Jehovah's Witnesses", "Seventh-day Adventist", "Baptist", "Pentecostal", "Non-denominational", "Other"].map(rel => (
-              <button
-                key={rel}
-                onClick={() => update("religion_denomination", form.religion_denomination === rel ? "" : rel)}
-                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left ${form.religion_denomination === rel ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
-              >
+              <button key={rel} onClick={() => update("religion_denomination", form.religion_denomination === rel ? "" : rel)}
+                className={`py-2 px-3 rounded-xl text-xs border transition-colors text-left ${form.religion_denomination === rel ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
                 {rel}
               </button>
             ))}
@@ -550,94 +507,58 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── ZONE SECTION — required ─────────────────────────────────────── */}
+      {/* ── ZONE SECTION ── */}
       <div className="space-y-3">
         <div>
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">
             Rooms / Zones <span className="text-destructive">*</span>
           </label>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Each uploaded set of images must be assigned to a specific room or zone. Select from presets or add a custom one.
-          </p>
+          <p className="text-xs text-muted-foreground mt-0.5">Each uploaded set of images must be assigned to a specific room or zone.</p>
         </div>
-
-        {/* Preset zone chips */}
         <div className="flex flex-wrap gap-2">
           {presets.map(name => {
             const already = existingZoneNames.includes(name.toLowerCase());
             return (
-              <button
-                key={name}
-                onClick={() => addPresetZone(name)}
-                disabled={already}
-                className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${
-                  already
-                    ? "bg-primary/10 border-primary/30 text-primary cursor-default"
-                    : "bg-card border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                }`}
-              >
+              <button key={name} onClick={() => addPresetZone(name)} disabled={already}
+                className={`px-3 py-1.5 rounded-full text-xs border transition-colors ${already ? "bg-primary/10 border-primary/30 text-primary cursor-default" : "bg-card border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"}`}>
                 {already ? "✓ " : "+ "}{name}
               </button>
             );
           })}
-          <button
-            onClick={() => setShowCustomInput(v => !v)}
-            className="px-3 py-1.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
-          >
+          <button onClick={() => setShowCustomInput(v => !v)}
+            className="px-3 py-1.5 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors">
             + Custom zone
           </button>
         </div>
-
-        {/* Custom zone input */}
         {showCustomInput && (
           <div className="flex gap-2">
-            <Input
-              value={newZoneName}
-              onChange={e => setNewZoneName(e.target.value)}
-              placeholder="e.g. Rooftop, Garage, Studio..."
-              className="h-9 rounded-xl text-sm"
-              onKeyDown={e => e.key === "Enter" && addCustomZone()}
-            />
+            <Input value={newZoneName} onChange={e => setNewZoneName(e.target.value)} placeholder="e.g. Rooftop, Garage, Studio..." className="h-9 rounded-xl text-sm" onKeyDown={e => e.key === "Enter" && addCustomZone()} />
             <Button size="sm" onClick={addCustomZone} disabled={!newZoneName.trim()} className="rounded-xl px-4">Add</Button>
           </div>
         )}
-
-        {/* Zone editors */}
         {form.zones.length === 0 && !isGenericHome && (
           <div className="py-4 rounded-xl border border-dashed border-destructive/30 bg-destructive/5 text-center">
             <p className="text-xs text-destructive font-medium">At least one zone is required before uploading images.</p>
-            <p className="text-xs text-muted-foreground mt-1">Select a room or zone from the list above to get started.</p>
           </div>
         )}
-
         <div className="space-y-3">
           {form.zones.map((zone, i) => (
-            <ZoneEditor
-              key={i}
-              zone={zone}
-              onUpdateImages={(urls) => updateZoneImages(i, urls)}
-              onDelete={() => removeZone(i)}
-            />
+            <ZoneEditor key={i} zone={zone} onUpdateImages={(urls) => updateZoneImages(i, urls)} onDelete={() => removeZone(i)} />
           ))}
         </div>
       </div>
 
-      {/* ── RESIDENTS ─────────────────────────────────────────────────── */}
+      {/* ── RESIDENTS ── */}
       {(form.category === 'home' || form.category === 'generic') && (
         <div className="space-y-3">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives here?</label>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
-              Add resident characters. Rent and utilities will be split among them.
-            </p>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">Add resident characters. Rent and utilities will be split among them.</p>
           </div>
-
-          {/* Resident list */}
           <div className="space-y-2">
             {form.resident_character_ids?.length > 0 || form.resident_family_members?.length > 0 ? (
               <>
                 <div className="space-y-2 max-h-44 overflow-y-auto">
-                  {/* Active character residents */}
                   {form.resident_character_ids.map((resId, idx) => {
                     const isUser = resId === currentUser?.id;
                     const resChar = isUser ? null : characters.find(c => c.id === resId);
@@ -648,79 +569,39 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                           <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
                             <span className="text-xs font-bold text-primary">U</span>
                           </div>
-                        ) : resChar ? (
-                          <CharacterAvatar character={resChar} size="sm" />
-                        ) : null}
+                        ) : resChar ? <CharacterAvatar character={resChar} size="sm" /> : null}
                         <span className="text-sm text-foreground flex-1">{displayName}</span>
                         {isUser && <span className="text-xs text-primary/60">Player</span>}
-                        <button
-                          onClick={() => update("resident_character_ids", form.resident_character_ids.filter((_, i) => i !== idx))}
-                          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
-                        >
+                        <button onClick={() => update("resident_character_ids", form.resident_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     );
                   })}
-                  {/* Family member residents */}
                   {form.resident_family_members?.map((fam, idx) => (
                     <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
-                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">
-                        {fam.name?.[0]?.toUpperCase() || "?"}
-                      </div>
+                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{fam.name?.[0]?.toUpperCase() || "?"}</div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-foreground">{fam.name}</p>
                         <p className="text-xs text-muted-foreground/70 capitalize">{fam.relationship_type}</p>
                       </div>
-                      <button
-                        onClick={() => update("resident_family_members", form.resident_family_members.filter((_, i) => i !== idx))}
-                        className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
-                      >
+                      <button onClick={() => update("resident_family_members", form.resident_family_members.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   ))}
                 </div>
-
-                {/* Cost split method — only show if multiple residents */}
                 {(form.resident_character_ids.length + (form.resident_family_members?.length || 0)) > 1 && (
                   <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
                     <label className="text-xs font-semibold text-foreground uppercase">Split costs</label>
                     <div className="flex gap-2">
                       {["even", "custom"].map(method => (
-                        <button
-                          key={method}
-                          onClick={() => update("cost_split_method", method)}
-                          className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors capitalize ${form.cost_split_method === method ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}
-                        >
+                        <button key={method} onClick={() => update("cost_split_method", method)}
+                          className={`flex-1 py-1.5 rounded-lg text-xs border transition-colors capitalize ${form.cost_split_method === method ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
                           {method === "even" ? "Split evenly" : "Custom split"}
                         </button>
                       ))}
                     </div>
-
-                    {/* Custom split inputs */}
-                    {form.cost_split_method === "custom" && (
-                      <div className="space-y-2 mt-2">
-                        {form.resident_character_ids.map((resId, idx) => {
-                          const resChar = characters.find(c => c.id === resId);
-                          return (
-                            <div key={idx} className="flex items-center gap-2">
-                              <label className="text-xs text-muted-foreground w-24 truncate">{resChar?.name || resId}:</label>
-                              <div className="flex items-center gap-1 flex-1">
-                                <span className="text-xs">$</span>
-                                <Input
-                                  type="number"
-                                  value={form.resident_cost_split?.[resId] || 0}
-                                  onChange={e => update("resident_cost_split", { ...form.resident_cost_split, [resId]: parseFloat(e.target.value) || 0 })}
-                                  placeholder="0"
-                                  className="h-8 text-xs flex-1"
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </div>
                 )}
               </>
@@ -728,27 +609,16 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <p className="text-xs text-muted-foreground italic">No residents added yet.</p>
             )}
           </div>
-
-          {/* Add resident: user + active characters + family members + NPCs */}
           <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
-            {/* User (current player) - always first */}
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">The Player</p>
             {(() => {
               const userId = currentUser?.id;
               const alreadyResident = userId && form.resident_character_ids?.includes(userId);
               return (
-                <button
-                  onClick={() => {
-                    if (!alreadyResident && userId) {
-                      update("resident_character_ids", [...(form.resident_character_ids || []), userId]);
-                    }
-                  }}
+                <button onClick={() => { if (!alreadyResident && userId) update("resident_character_ids", [...(form.resident_character_ids || []), userId]); }}
                   disabled={alreadyResident || !userId}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
-                >
-                  {userAvatarUrl ? (
-                    <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
-                  ) : (
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                  {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
                     <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
                       <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
                     </div>
@@ -758,59 +628,25 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 </button>
               );
             })()}
-
-            {/* Active Characters (sorted: primary characters first, NPCs last) */}
-            {characters.length > 0 && (
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Active Characters</p>
-            )}
-            {(() => {
-              // Sort: active characters first, then inactive/NPC-like characters
-              const sorted = [...characters].sort((a, b) => {
-                const aActive = a.is_active_character ? 0 : 1;
-                const bActive = b.is_active_character ? 0 : 1;
-                if (aActive !== bActive) return aActive - bActive;
-                return (a.name || "").localeCompare(b.name || "");
-              });
-              return sorted.map(char => {
-                const alreadyResident = form.resident_character_ids?.includes(char.id);
-                return (
-                  <button
-                    key={char.id}
-                    onClick={() => {
-                      if (!alreadyResident) {
-                        update("resident_character_ids", [...(form.resident_character_ids || []), char.id]);
-                      }
-                    }}
-                    disabled={alreadyResident}
-                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
-                  >
-                    <CharacterAvatar character={char} size="sm" />
-                    <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                    {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                  </button>
-                );
-              });
-            })()}
-
-            {/* Family members from all characters */}
+            {characters.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Active Characters</p>}
+            {characters.map(char => {
+              const alreadyResident = form.resident_character_ids?.includes(char.id);
+              return (
+                <button key={char.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), char.id]); }} disabled={alreadyResident}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                  <CharacterAvatar character={char} size="sm" />
+                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                </button>
+              );
+            })}
             {characters.flatMap(char =>
               (char.family_members || []).map((fam, idx) => {
-                const familyKey = `${char.id}__${fam.name}`;
                 const alreadyResident = form.resident_family_members?.some(f => f.name === fam.name);
                 return (
-                  <button
-                    key={familyKey}
-                    onClick={() => {
-                      if (!alreadyResident) {
-                        update("resident_family_members", [...(form.resident_family_members || []), { name: fam.name, relationship_type: fam.relationship_type, source_character_id: char.id }]);
-                      }
-                    }}
-                    disabled={alreadyResident}
-                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}
-                  >
-                    <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">
-                      {fam.name?.[0]?.toUpperCase() || "?"}
-                    </div>
+                  <button key={`${char.id}__${fam.name}`} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: fam.name, relationship_type: fam.relationship_type, source_character_id: char.id }]); }} disabled={alreadyResident}
+                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                    <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">{fam.name?.[0]?.toUpperCase() || "?"}</div>
                     <div className="min-w-0 flex-1">
                       <p className="text-sm text-foreground font-medium truncate">{fam.name}</p>
                       <p className="text-xs text-muted-foreground/70 capitalize">{fam.relationship_type} of {char.name}</p>
@@ -820,27 +656,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 );
               })
             )}
-
-            {/* NPCs & Fictional Characters */}
-            {allNPCs.length > 0 && (
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>
-            )}
+            {allNPCs.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>}
             {allNPCs.map(npc => {
               const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
               return (
-                <button
-                  key={npc.id}
-                  onClick={() => {
-                    if (!alreadyResident) {
-                      update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]);
-                    }
-                  }}
-                  disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}
-                >
-                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
-                    {npc.name[0]?.toUpperCase()}
-                  </div>
+                <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
+                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm text-foreground font-medium">{npc.name}</p>
                     {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
@@ -853,17 +675,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── WORKERS / EMPLOYEES ───────────────────────────────────────── */}
+      {/* ── WORKERS ── */}
       {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community') && (
         <div className="space-y-3">
-          <div>
-            <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
-              Add characters who work at this location. Set their pay, title, and work schedule.
-            </p>
-          </div>
-
-          {/* Workers list */}
+          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
           <div className="space-y-2">
             {form.worker_character_ids?.length > 0 ? (
               <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
@@ -876,94 +691,60 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                       <div className="flex items-center gap-2 justify-between">
                         <div className="flex items-center gap-2">
                           {worker ? <CharacterAvatar character={worker} size="sm" /> : (
-                            <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center text-xs font-semibold text-muted-foreground flex-shrink-0">
-                              {workerName[0]?.toUpperCase()}
-                            </div>
+                            <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center text-xs font-semibold text-muted-foreground flex-shrink-0">{workerName[0]?.toUpperCase()}</div>
                           )}
                           <span className="text-sm font-medium text-foreground">{workerName}</span>
                           {npcWorker && <span className="text-xs text-muted-foreground/60 bg-secondary px-1.5 py-0.5 rounded">NPC</span>}
                         </div>
-                        <button
-                          onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))}
-                          className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg"
-                        ><X className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => update("worker_character_ids", form.worker_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
                       </div>
-                      <div className="space-y-2">
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="flex flex-col gap-1">
-                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
-                            <select
-                              value={form.worker_pay_type[workerId] || 'hourly'}
-                              onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })}
-                              className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground"
-                            >
-                              <option value="hourly">Hourly</option>
-                              <option value="annual">Annual</option>
-                            </select>
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
-                            <div className="flex items-center gap-1">
-                              <span className="text-xs">$</span>
-                              <Input
-                                type="number"
-                                value={form.worker_pay_rates[workerId] || 0}
-                                onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })}
-                                className="h-8 text-xs flex-1"
-                                placeholder="15"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Position</label>
-                            <PositionInput
-                              category={form.category}
-                              value={form.worker_job_titles[workerId] || ''}
-                              onChange={(val) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: val })}
-                            />
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
+                          <select value={form.worker_pay_type[workerId] || 'hourly'} onChange={(e) => update("worker_pay_type", { ...form.worker_pay_type, [workerId]: e.target.value })} className="text-xs px-2 py-1.5 bg-input border border-border rounded text-foreground">
+                            <option value="hourly">Hourly</option>
+                            <option value="annual">Annual</option>
+                          </select>
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Rate</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs">$</span>
+                            <Input type="number" value={form.worker_pay_rates[workerId] || 0} onChange={(e) => update("worker_pay_rates", { ...form.worker_pay_rates, [workerId]: parseFloat(e.target.value) || 0 })} className="h-8 text-xs flex-1" placeholder="15" />
                           </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
-                          <div className="flex flex-col gap-1">
-                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
-                            <Input
-                              type="time"
-                              value={form.worker_shifts?.[workerId]?.start || '09:00'}
-                              onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })}
-                              className="h-8 text-xs"
-                            />
-                          </div>
-                          <div className="flex flex-col gap-1">
-                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
-                            <Input
-                              type="time"
-                              value={form.worker_shifts?.[workerId]?.end || '17:00'}
-                              onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })}
-                              className="h-8 text-xs"
-                            />
-                          </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Position</label>
+                          <PositionInput category={form.category} value={form.worker_job_titles[workerId] || ''} onChange={(val) => update("worker_job_titles", { ...form.worker_job_titles, [workerId]: val })} />
                         </div>
-                        {/* Recurring days */}
-                        <div className="pt-1 border-t border-border">
-                          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
-                          <div className="flex gap-1 flex-wrap">
-                            {['Su','Mo','Tu','We','Th','Fr','Sa'].map((d, i) => {
-                              const shiftDays = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
-                              const active = shiftDays.includes(i);
-                              return (
-                                <button
-                                  key={i}
-                                  type="button"
-                                  onClick={() => {
-                                    const cur = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
-                                    const newDays = active ? cur.filter(x => x !== i) : [...cur, i].sort();
-                                    update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], days: newDays } });
-                                  }}
-                                  className={`w-7 h-7 rounded-full text-[10px] font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}
-                                >{d}</button>
-                              );
-                            })}
-                          </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-border">
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift Start</label>
+                          <Input type="time" value={form.worker_shifts?.[workerId]?.start || '09:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], start: e.target.value } })} className="h-8 text-xs" />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-xs text-muted-foreground uppercase tracking-wider">Shift End</label>
+                          <Input type="time" value={form.worker_shifts?.[workerId]?.end || '17:00'} onChange={(e) => update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], end: e.target.value } })} className="h-8 text-xs" />
+                        </div>
+                      </div>
+                      <div className="pt-1 border-t border-border">
+                        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-1 block">Work Days</label>
+                        <div className="flex gap-1 flex-wrap">
+                          {['Su','Mo','Tu','We','Th','Fr','Sa'].map((d, i) => {
+                            const shiftDays = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
+                            const active = shiftDays.includes(i);
+                            return (
+                              <button key={i} type="button" onClick={() => {
+                                const cur = form.worker_shifts?.[workerId]?.days || [1,2,3,4,5];
+                                const newDays = active ? cur.filter(x => x !== i) : [...cur, i].sort();
+                                update("worker_shifts", { ...form.worker_shifts, [workerId]: { ...form.worker_shifts?.[workerId], days: newDays } });
+                              }}
+                                className={`w-7 h-7 rounded-full text-[10px] font-medium border transition-colors ${active ? 'bg-primary text-primary-foreground border-primary' : 'bg-card border-border text-muted-foreground hover:border-primary/40'}`}>{d}</button>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
@@ -974,298 +755,128 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <p className="text-xs text-muted-foreground italic">No workers added yet.</p>
             )}
           </div>
-
-          {/* Add worker selector — active characters + NPCs */}
           <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
-            {characters.length > 0 && (
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>
-            )}
+            {characters.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">Active Characters</p>}
             {characters.map(char => {
-               const alreadyWorker = form.worker_character_ids?.includes(char.id);
-               const tooYoung = isWorkerTooYoung(char.id, form.category);
-               const avail = getWorkerAvailability(char.id, allLocations, editingLocation?.id);
-               return (
-               <button
-               key={char.id}
-               onClick={() => {
-                 if (!alreadyWorker && !tooYoung) {
-                   update("worker_character_ids", [...(form.worker_character_ids || []), char.id]);
-                 }
-               }}
-               disabled={alreadyWorker || tooYoung}
-               className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
-               >
-               <CharacterAvatar character={char} size="sm" />
-               <div className="flex-1 min-w-0">
-                 <div className="flex items-center gap-1.5">
-                   <p className="text-sm text-foreground font-medium">{char.name}</p>
-                   {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
-                 </div>
-                 {tooYoung && <p className="text-xs text-destructive">Too young to work here</p>}
-                 {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
-                 {!tooYoung && avail.jobs.map((job, i) => (
-                   <div key={i} className="mt-0.5">
-                     <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                       {avail.status === 'overbooked' ? '⚠ ' : ''}{job.title ? `${job.title} @ ` : ''}{job.name}
-                     </p>
-                     {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
-                     {job.days.length > 0 && !job.shift && <p className="text-[10px] text-muted-foreground">{job.days.join(', ')}</p>}
-                   </div>
-                 ))}
-               </div>
-               {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-               {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0 text-right">Overbooked<br/>{avail.jobs.length} jobs</span>}
-               </button>
-               );
-             })}
-            {/* Family members as hireable workers */}
-            {(() => {
-              const familyWorkers = [];
-              const seenFam = new Set();
-              characters.forEach(char => {
-                (char.family_members || []).filter(fm => !fm._is_user).forEach(fm => {
-                  if (!fm.name || seenFam.has(fm.name.toLowerCase())) return;
-                  if (allNPCs.some(n => n.name.toLowerCase() === fm.name.toLowerCase())) return;
-                  seenFam.add(fm.name.toLowerCase());
-                  familyWorkers.push({ id: `npc__${fm.name}`, name: fm.name, relationship_type: fm.relationship_type, sourceChar: char.name });
-                });
-              });
-              if (familyWorkers.length === 0) return null;
+              const alreadyWorker = form.worker_character_ids?.includes(char.id);
+              const tooYoung = isWorkerTooYoung(char.id, form.category);
+              const avail = getWorkerAvailability(char.id, allLocations, editingLocation?.id);
               return (
-                <>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Family Members</p>
-                  {familyWorkers.map(fm => {
-                    const alreadyWorker = form.worker_character_ids?.includes(fm.id);
-                    const fmAge = getNPCAge(fm.name);
-                    let tooYoung = false;
-                    if (fmAge !== null) {
-                      if (fmAge < 16) tooYoung = true;
-                      if ((form.category === 'social' || form.category === 'food_drink') && fmAge < 21) tooYoung = true;
-                    }
-                    const avail = getWorkerAvailability(fm.id, allLocations, editingLocation?.id);
-                    return (
-                      <button
-                        key={fm.id}
-                        onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), fm.id]); }}
-                        disabled={alreadyWorker || tooYoung}
-                        className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
-                      >
-                        <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
-                          {fm.name[0]?.toUpperCase()}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-sm text-foreground font-medium">{fm.name}</span>
-                            <span className="text-[10px] text-muted-foreground/50 bg-secondary px-1 rounded capitalize">{fm.relationship_type}</span>
-                            {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
-                          </div>
-                          <p className="text-xs text-muted-foreground/60">of {fm.sourceChar}</p>
-                          {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                          {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
-                          {!tooYoung && avail.jobs.map((job, i) => (
-                            <div key={i}>
-                              <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                                {job.title ? `${job.title} @ ` : ''}{job.name}
-                              </p>
-                              {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
-                            </div>
-                          ))}
-                        </div>
-                        {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                      </button>
-                    );
-                  })}
-                </>
+                <button key={char.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), char.id]); }} disabled={alreadyWorker || tooYoung}
+                  className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
+                  <CharacterAvatar character={char} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <p className="text-sm text-foreground font-medium">{char.name}</p>
+                      {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
+                    </div>
+                    {tooYoung && <p className="text-xs text-destructive">Too young to work here</p>}
+                    {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                    {!tooYoung && avail.jobs.map((job, i) => (
+                      <div key={i} className="mt-0.5">
+                        <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
+                          {avail.status === 'overbooked' ? '⚠ ' : ''}{job.title ? `${job.title} @ ` : ''}{job.name}
+                        </p>
+                        {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
+                      </div>
+                    ))}
+                  </div>
+                  {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                </button>
               );
-            })()}
-            {allNPCs.length > 0 && (
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>
-            )}
+            })}
+            {allNPCs.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>}
             {allNPCs.map(npc => {
-               const alreadyWorker = form.worker_character_ids?.includes(npc.id);
-               const npcAge = getNPCAge(npc.name);
-               let tooYoung = false;
-               if (npcAge !== null) {
-                 if (npcAge < 16) tooYoung = true;
-                 if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
-               }
-               const avail = getWorkerAvailability(npc.id, allLocations, editingLocation?.id);
-               return (
-                 <button
-                   key={npc.id}
-                   onClick={() => {
-                     if (!alreadyWorker && !tooYoung) {
-                       update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]);
-                     }
-                   }}
-                   disabled={alreadyWorker || tooYoung}
-                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}
-                 >
-                   <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">
-                     {npc.name[0]?.toUpperCase()}
-                   </div>
-                   <div className="flex-1 min-w-0">
-                     <div className="flex items-center gap-1.5">
-                       <span className="text-sm text-foreground font-medium">{npc.name}</span>
-                       <span className="text-[10px] text-muted-foreground/50 bg-secondary px-1 rounded">NPC</span>
-                       {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
-                     </div>
-                     {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
-                     {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
-                     {!tooYoung && avail.jobs.map((job, i) => (
-                       <div key={i}>
-                         <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                           {avail.status === 'overbooked' ? '⚠ ' : ''}{job.title ? `${job.title} @ ` : ''}{job.name}
-                         </p>
-                         {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
-                       </div>
-                     ))}
-                   </div>
-                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                   {avail.status === 'overbooked' && !alreadyWorker && !tooYoung && <span className="text-xs text-destructive shrink-0 text-right">Overbooked<br/>{avail.jobs.length} jobs</span>}
-                 </button>
-               );
-             })}
-            {characters.length === 0 && allNPCs.length === 0 && (
-              <p className="text-xs text-muted-foreground italic p-3">No characters available.</p>
-            )}
+              const alreadyWorker = form.worker_character_ids?.includes(npc.id);
+              const npcAge = getNPCAge(npc.name);
+              let tooYoung = false;
+              if (npcAge !== null) {
+                if (npcAge < 16) tooYoung = true;
+                if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
+              }
+              const avail = getWorkerAvailability(npc.id, allLocations, editingLocation?.id);
+              return (
+                <button key={npc.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker || tooYoung}
+                  className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
+                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
+                  <div className="flex-1 min-w-0">
+                    <span className="text-sm text-foreground font-medium">{npc.name}</span>
+                    {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                    {tooYoung && <p className="text-xs text-destructive">Too young</p>}
+                    {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                  </div>
+                  {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                </button>
+              );
+            })}
           </div>
         </div>
       )}
 
-      {/* ── OWNER / LANDLORD ───────────────────────────────────────────── */}
+      {/* ── OWNER ── */}
       <div className="space-y-3">
-        <div>
-          <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Owner / Landlord (optional)</label>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {form.location_type === "global"
-              ? "Assign a character or NPC who owns or earns revenue from this space. Can be reassigned if the owner leaves."
-              : "Assign the landlord or owner of this character-specific space."}
-          </p>
-        </div>
-
-        {/* Owner type toggle */}
+        <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Owner / Landlord (optional)</label>
         <div className="grid grid-cols-2 gap-2">
-          <button
-            onClick={() => update("owner_is_npc", false)}
-            className={`py-2 px-3 rounded-xl text-sm border transition-colors ${!form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}
-          >
-            👤 Active Character
-          </button>
-          <button
-            onClick={() => update("owner_is_npc", true)}
-            className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}
-          >
-            🧑‍🤝‍🧑 NPC
-          </button>
+          <button onClick={() => update("owner_is_npc", false)} className={`py-2 px-3 rounded-xl text-sm border transition-colors ${!form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>👤 Active Character</button>
+          <button onClick={() => update("owner_is_npc", true)} className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>🧑‍🤝‍🧑 NPC</button>
         </div>
-
         {!form.owner_is_npc ? (
           <div className="space-y-2 max-h-44 overflow-y-auto">
-            <button
-              onClick={() => update("owner_character_id", "")}
-              className={`w-full flex items-center gap-2 p-2 rounded-xl border text-sm transition-colors ${!form.owner_character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
-            >
+            <button onClick={() => update("owner_character_id", "")} className={`w-full flex items-center gap-2 p-2 rounded-xl border text-sm transition-colors ${!form.owner_character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
               <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs">—</span>
               No owner assigned
             </button>
-            {/* Current user (player) as owner */}
             {currentUser?.id && (
-             <button
-               onClick={() => update("owner_character_id", currentUser.id)}
-               className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}
-             >
-               {userAvatarUrl ? (
-                 <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
-               ) : (
-                 <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                   <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
-                 </div>
-               )}
-               <span className="text-sm text-foreground">{worldName}</span>
-               <span className="text-xs text-primary/60 ml-auto">Player</span>
-             </button>
+              <button onClick={() => update("owner_character_id", currentUser.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+                {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
+                  <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                    <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
+                  </div>
+                )}
+                <span className="text-sm text-foreground">{worldName}</span>
+                <span className="text-xs text-primary/60 ml-auto">Player</span>
+              </button>
             )}
             {characters.map(c => (
-              <button key={c.id} onClick={() => update("owner_character_id", c.id)}
-                className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+              <button key={c.id} onClick={() => update("owner_character_id", c.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
                 <CharacterAvatar character={c} size="sm" />
                 <span className="text-sm text-foreground">{c.name}</span>
               </button>
             ))}
           </div>
         ) : (
-          <Input
-            value={form.owner_npc_name}
-            onChange={e => update("owner_npc_name", e.target.value)}
-            placeholder="NPC name (e.g. Mr. Hassan, The Landlord)"
-            className="h-10 rounded-xl text-sm"
-          />
+          <Input value={form.owner_npc_name} onChange={e => update("owner_npc_name", e.target.value)} placeholder="NPC name (e.g. Mr. Hassan, The Landlord)" className="h-10 rounded-xl text-sm" />
         )}
-
-        {/* Owner role */}
         {(form.owner_character_id || (form.owner_is_npc && form.owner_npc_name.trim())) && (
           <div className="flex flex-wrap gap-2">
             {["owner", "landlord", "manager", "operator"].map(role => (
-              <button
-                key={role}
-                onClick={() => update("owner_role", role)}
-                className={`px-3 py-1.5 rounded-full text-xs border transition-colors capitalize ${form.owner_role === role ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
-              >
-                {role}
-              </button>
+              <button key={role} onClick={() => update("owner_role", role)} className={`px-3 py-1.5 rounded-full text-xs border transition-colors capitalize ${form.owner_role === role ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>{role}</button>
             ))}
           </div>
         )}
       </div>
 
-      {/* Description */}
-      <Textarea
-        value={form.description}
-        onChange={e => update("description", e.target.value)}
-        placeholder="Overall location description: style, atmosphere... (optional)"
-        className="rounded-xl min-h-[60px] text-sm resize-none"
-      />
+      <Textarea value={form.description} onChange={e => update("description", e.target.value)} placeholder="Overall location description: style, atmosphere... (optional)" className="rounded-xl min-h-[60px] text-sm resize-none" />
 
-      {/* ── RESIDENTIAL / GYM / BUSINESS COSTS ─────────────────────── */}
       {(form.category === 'home' || form.category === 'generic') && (
         <div className="space-y-3 bg-primary/5 border border-primary/20 rounded-xl p-4">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Rent</label>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">$</span>
-              <Input
-                type="number"
-                value={form.rent_or_housing_cost}
-                onChange={e => update("rent_or_housing_cost", parseFloat(e.target.value))}
-                placeholder="1200"
-                className="h-10 rounded-xl flex-1"
-              />
+              <Input type="number" value={form.rent_or_housing_cost} onChange={e => update("rent_or_housing_cost", parseFloat(e.target.value))} placeholder="1200" className="h-10 rounded-xl flex-1" />
             </div>
-            <p className="text-xs text-muted-foreground mt-1">Base rent. Updates automatically with bedrooms unless manually adjusted.</p>
           </div>
-
           <div>
             <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Bedrooms</label>
-            <Input
-              type="number"
-              min="1"
-              value={form.bedroom_count}
-              onChange={e => {
-                const count = parseInt(e.target.value) || 1;
-                const newRent = 1200 + ((count - 1) * 300);
-                update("bedroom_count", count);
-                // Auto-update rent if not manually edited
-                if (form.rent_or_housing_cost === 1200 || form.rent_or_housing_cost === 1200 + ((form.bedroom_count - 1) * 300)) {
-                  update("rent_or_housing_cost", newRent);
-                }
-              }}
-              className="h-10 rounded-xl"
-            />
-            <p className="text-xs text-muted-foreground mt-1">Each bedroom adds ~$300 to base rent.</p>
+            <Input type="number" min="1" value={form.bedroom_count} onChange={e => {
+              const count = parseInt(e.target.value) || 1;
+              update("bedroom_count", count);
+              if (form.rent_or_housing_cost === 1200 || form.rent_or_housing_cost === 1200 + ((form.bedroom_count - 1) * 300)) {
+                update("rent_or_housing_cost", 1200 + ((count - 1) * 300));
+              }
+            }} className="h-10 rounded-xl" />
           </div>
-
           <div className="space-y-2">
             <label className="text-xs font-semibold text-foreground uppercase">Monthly Utilities</label>
             {Object.entries(form.utility_costs).map(([key, val]) => (
@@ -1273,12 +884,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 <label className="text-xs text-muted-foreground capitalize w-20">{key}:</label>
                 <div className="flex items-center gap-2 flex-1">
                   <span className="text-sm">$</span>
-                  <Input
-                    type="number"
-                    value={val || 0}
-                    onChange={e => update("utility_costs", { ...form.utility_costs, [key]: parseFloat(e.target.value) || 0 })}
-                    className="h-8 rounded-lg flex-1 text-sm"
-                  />
+                  <Input type="number" value={val || 0} onChange={e => update("utility_costs", { ...form.utility_costs, [key]: parseFloat(e.target.value) || 0 })} className="h-8 rounded-lg flex-1 text-sm" />
                 </div>
               </div>
             ))}
@@ -1291,49 +897,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Membership Fee</label>
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">$</span>
-            <Input
-              type="number"
-              value={form.gym_membership_fee}
-              onChange={e => update("gym_membership_fee", parseFloat(e.target.value))}
-              placeholder="50"
-              className="h-10 rounded-xl flex-1"
-            />
+            <Input type="number" value={form.gym_membership_fee} onChange={e => update("gym_membership_fee", parseFloat(e.target.value))} placeholder="50" className="h-10 rounded-xl flex-1" />
           </div>
         </div>
       )}
 
-      {/* Keywords */}
-      <Input
-        value={form.keywords}
-        onChange={e => update("keywords", e.target.value)}
-        placeholder="Keywords for matching: my place, the gym... (comma-separated)"
-        className="h-11 rounded-xl text-sm"
-      />
+      <Input value={form.keywords} onChange={e => update("keywords", e.target.value)} placeholder="Keywords for matching: my place, the gym... (comma-separated)" className="h-11 rounded-xl text-sm" />
 
-      {/* ── HOURS OF OPERATION ────────────────────────────────────── */}
       <div className="space-y-3">
-        <LocationHoursEditor
-          hours={form.operating_hours}
-          onChange={(hours) => update("operating_hours", hours)}
-        />
+        <LocationHoursEditor hours={form.operating_hours} onChange={(hours) => update("operating_hours", hours)} />
       </div>
 
       {editingLocation && onDuplicate && (
-        <Button
-          variant="outline"
-          onClick={onDuplicate}
-          className="w-full rounded-xl gap-2 border-dashed"
-        >
-          📋 Duplicate This Location
-        </Button>
+        <Button variant="outline" onClick={onDuplicate} className="w-full rounded-xl gap-2 border-dashed">📋 Duplicate This Location</Button>
       )}
       <div className="flex gap-2">
         <Button variant="outline" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
-        <Button onClick={handleSave} disabled={!canSave} className="flex-1 rounded-xl">
-          {editingLocation ? "Save Changes" : "Add Location"}
-        </Button>
+        <Button onClick={handleSave} disabled={!canSave} className="flex-1 rounded-xl">{editingLocation ? "Save Changes" : "Add Location"}</Button>
       </div>
-
       {!canSave && form.name.trim() && form.zones.length === 0 && !isGenericHome && (
         <p className="text-xs text-destructive text-center">Add at least one zone before saving.</p>
       )}
@@ -1345,10 +926,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 export default function Locations() {
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
-  const [inlineEditId, setInlineEditId] = useState(null); // ID of location being edited inline
+  const [inlineEditId, setInlineEditId] = useState(null);
   const [filter, setFilter] = useState("all");
-  const [activeTab, setActiveTab] = useState("locations"); // "locations" | "saved_places"
+  const [activeTab, setActiveTab] = useState("locations");
   const [newlyCreatedLocation, setNewlyCreatedLocation] = useState(null);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const { data: currentUser } = useQuery({
     queryKey: ["user"],
@@ -1376,14 +958,13 @@ export default function Locations() {
     enabled: !!currentUser?.email,
   });
 
-  // Helper: calculate NPC/family member age
   const getNPCAge = (name) => {
     for (const char of characters) {
       const familyMember = (char.family_members || []).find(fm => fm.name?.toLowerCase() === name.toLowerCase());
       if (familyMember && familyMember.age_at_creation != null) {
         const savedDate = familyMember.age_set_date || char.created_date;
         const base = new Date(savedDate);
-        const birthdayMonth = (base.getMonth() + 0) % 12; // simplified: assume index 0
+        const birthdayMonth = (base.getMonth() + 0) % 12;
         const birthdayDay = base.getDate();
         const today = new Date();
         const thisYear = today.getFullYear();
@@ -1397,16 +978,13 @@ export default function Locations() {
     return null;
   };
 
-  // Helper: check if worker is too young (only check if age is defined)
   const isWorkerTooYoung = (workerId, category) => {
     const char = characters.find(c => c.id === workerId);
-    // Only apply age restrictions if the character has a defined birthday
     if (char && char.birthday) {
       const age = new Date().getFullYear() - new Date(char.birthday).getFullYear();
-      if (age < 16) return true; // too young for any work
-      if ((category === 'social' || category === 'food_drink') && age < 21) return true; // bars/nightclubs
+      if (age < 16) return true;
+      if ((category === 'social' || category === 'food_drink') && age < 21) return true;
     }
-    // No birthday = no age restrictions (generic/fictional NPC)
     return false;
   };
 
@@ -1421,48 +999,28 @@ export default function Locations() {
       locationId = created.id;
       setNewlyCreatedLocation({ id: created.id, name: formData.name, category: formData.category });
     }
-
-    // Auto-sync job titles and education links from location → character profiles
     const workerIds = formData.worker_character_ids || [];
     const isEducation = formData.category === 'school' || formData.category === 'education';
     for (const charId of workerIds) {
       if (charId.startsWith('npc__')) continue;
-      base44.functions.invoke('syncLocationJobToCharacter', {
-        locationId,
-        characterId: charId,
-        syncType: isEducation ? 'education' : 'work',
-      }).catch(() => {});
+      base44.functions.invoke('syncLocationJobToCharacter', { locationId, characterId: charId, syncType: isEducation ? 'education' : 'work' }).catch(() => {});
     }
-
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
     setShowAddForm(false);
     setInlineEditId(null);
   };
 
-
-
   const handleDelete = async (id) => {
     const loc = locations.find(l => l.id === id);
     if (!loc) return;
-    
-    // Allow deletion if: user created it OR it's a global location
     const canDelete = loc.created_by === currentUser?.email || loc.location_type === 'global';
-    
-    if (!canDelete) {
-      alert(`You can only delete locations you created.`);
-      return;
-    }
-    
+    if (!canDelete) { alert(`You can only delete locations you created.`); return; }
     if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
-    
     await base44.entities.LocationReference.delete(id);
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
   };
 
-  const handleEdit = (location) => {
-    setInlineEditId(location.id);
-    setShowAddForm(false); // close add form if open
-  };
+  const handleEdit = (location) => { setInlineEditId(location.id); setShowAddForm(false); };
 
   const handleDuplicate = async (location) => {
     const { id, created_date, updated_date, created_by, ...rest } = location;
@@ -1474,40 +1032,59 @@ export default function Locations() {
   };
 
   const characterIds = new Set(characters.map(c => c.id));
-  const isCharacterHome = (l) => 
-    l.location_type === "character_specific" || 
+  const isCharacterHome = (l) =>
+    l.location_type === "character_specific" ||
     characterIds.has(l.character_id) ||
     characterIds.has(l.owner_character_id) ||
     l.owner_character_id === currentUser?.id ||
     (l.resident_character_ids || []).some(id => characterIds.has(id) || id === currentUser?.id);
-  
-  // Group and sort locations
+
   const getFilteredAndGrouped = () => {
-    let allFiltered = locations;
-    
+    let allFiltered = [...locations].sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      allFiltered = allFiltered.filter(l =>
+        l.name?.toLowerCase().includes(q) ||
+        l.category?.toLowerCase().includes(q) ||
+        l.description?.toLowerCase().includes(q)
+      );
+    }
+
     if (filter === "global") {
-      allFiltered = locations.filter(l => l.location_type === "global" && !isCharacterHome(l));
+      return { all: allFiltered.filter(l => l.location_type === "global" && !isCharacterHome(l)) };
     } else if (filter === "character_specific") {
-      allFiltered = locations.filter(isCharacterHome);
+      return { all: allFiltered.filter(isCharacterHome) };
     }
-    // if filter === "all", use all locations
-    
-    // Sort alphabetically by name within filtered set
-    allFiltered = [...allFiltered].sort((a, b) => 
-      (a.name || "").localeCompare(b.name || "")
-    );
-    
-    if (filter === "all") {
-      // For "All" tab: separate into character-specific and global (everything else)
-      const characterSpecific = allFiltered.filter(isCharacterHome);
-      const global = allFiltered.filter(l => !isCharacterHome(l));
-      return { global, characterSpecific };
-    }
-    
-    return { all: allFiltered };
+
+    return {
+      global: allFiltered.filter(l => !isCharacterHome(l)),
+      characterSpecific: allFiltered.filter(isCharacterHome),
+    };
   };
 
   const filtered = getFilteredAndGrouped();
+
+  const renderLocationCard = (loc) => (
+    <React.Fragment key={loc.id}>
+      <LocationCard location={loc} onDelete={handleDelete} onEdit={handleEdit} characters={characters} currentUser={currentUser} />
+      {inlineEditId === loc.id && (
+        <LocationForm
+          key={`edit-${loc.id}`}
+          editingLocation={loc}
+          characters={characters}
+          allLocations={locations}
+          onSave={(data) => handleSave(data, loc.id)}
+          onCancel={() => setInlineEditId(null)}
+          onDuplicate={() => handleDuplicate(loc)}
+          isWorkerTooYoung={isWorkerTooYoung}
+          getNPCAge={getNPCAge}
+          currentUser={currentUser}
+          userSettings={userSettings}
+        />
+      )}
+    </React.Fragment>
+  );
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -1525,183 +1102,99 @@ export default function Locations() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
-         {/* Tab switcher */}
-         <div className="flex gap-2 flex-1 border-b border-border pb-3">
-           <button
-             onClick={() => setActiveTab("locations")}
-             className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "locations" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-           >
-             All Locations
-           </button>
-           <button
-             onClick={() => setActiveTab("saved_places")}
-             className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "saved_places" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}
-           >
-             📍 Saved Places
-           </button>
-         </div>
+        {/* Global search bar */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search by name or category..."
+            className="w-full h-10 pl-9 pr-9 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          {searchQuery && (
+            <button onClick={() => setSearchQuery("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
 
-         {/* Locations filter tabs - only show on locations tab */}
-         {activeTab === "locations" && (
-           <div className="flex gap-2 flex-1">
-             {["all", "global", "character_specific"].map(f => (
-               <button key={f} onClick={() => setFilter(f)}
-                 className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-                 {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
-               </button>
-             ))}
-           </div>
-         )}
+        {/* Tab switcher */}
+        <div className="flex gap-2 border-b border-border pb-3">
+          <button onClick={() => setActiveTab("locations")} className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "locations" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>All Locations</button>
+          <button onClick={() => setActiveTab("saved_places")} className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "saved_places" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>📍 Saved Places</button>
+        </div>
 
-        {/* Show saved places or location management based on active tab */}
-        {activeTab === "saved_places" ? (
-          <div className="space-y-3">
-            <SavedPlaces currentUser={currentUser} onLocationSelect={() => {}} />
-          </div>
-        ) : (
-          <>
-            {/* Empty state */}
-            {locations.length === 0 && !showAddForm && (
-          <div className="text-center py-10 space-y-3">
-            <MapPin className="w-10 h-10 text-muted-foreground/40 mx-auto" />
-            <div>
-              <p className="text-sm font-medium text-foreground">No locations yet</p>
-              <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">
-                Add locations and assign reference images to specific rooms or zones. The AI will use them for visual accuracy in generated images.
-              </p>
-            </div>
-            <Button onClick={() => setShowAddForm(true)} className="rounded-xl gap-2">
-              <Plus className="w-4 h-4" /> Add your first location
-            </Button>
+        {/* Filter tabs (locations only) */}
+        {activeTab === "locations" && (
+          <div className="flex gap-2">
+            {["all", "global", "character_specific"].map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`flex-1 py-2 rounded-xl text-xs font-medium border transition-colors ${filter === f ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
+                {f === "all" ? "All" : f === "global" ? "🌐 Global" : "👤 Character"}
+              </button>
+            ))}
           </div>
         )}
 
-        {/* Add new location form — only shows at top when adding */}
-        <AnimatePresence>
-          {showAddForm && (
-            <LocationForm
-              key="add-form"
-              editingLocation={null}
-              characters={characters}
-              allLocations={locations}
-              onSave={(data) => handleSave(data, null)}
-              onCancel={() => setShowAddForm(false)}
-              isWorkerTooYoung={isWorkerTooYoung}
-              getNPCAge={getNPCAge}
-              currentUser={currentUser}
-              userSettings={userSettings}
-            />
-          )}
-        </AnimatePresence>
+        {/* Content */}
+        {activeTab === "saved_places" ? (
+          <SavedPlaces currentUser={currentUser} onLocationSelect={() => {}} />
+        ) : (
+          <>
+            {locations.length === 0 && !showAddForm && (
+              <div className="text-center py-10 space-y-3">
+                <MapPin className="w-10 h-10 text-muted-foreground/40 mx-auto" />
+                <div>
+                  <p className="text-sm font-medium text-foreground">No locations yet</p>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-xs mx-auto">Add locations and assign reference images to specific rooms or zones.</p>
+                </div>
+                <Button onClick={() => setShowAddForm(true)} className="rounded-xl gap-2">
+                  <Plus className="w-4 h-4" /> Add your first location
+                </Button>
+              </div>
+            )}
 
-        {/* Location list — grouped by type and sorted alphabetically */}
-        <div className="space-y-4">
-          {filter === "all" && filtered.global && filtered.global.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">🌐 Global Locations</h2>
-              <AnimatePresence>
-                {filtered.global.map(loc => (
-                  <React.Fragment key={loc.id}>
-                    <LocationCard
-                      location={loc}
-                      onDelete={handleDelete}
-                      onEdit={handleEdit}
-                      characters={characters}
-                      currentUser={currentUser}
-                    />
-                    {inlineEditId === loc.id && (
-                      <LocationForm
-                        key={`edit-${loc.id}`}
-                        editingLocation={loc}
-                        characters={characters}
-                        allLocations={locations}
-                        onSave={(data) => handleSave(data, loc.id)}
-                        onCancel={() => setInlineEditId(null)}
-                        onDuplicate={() => handleDuplicate(loc)}
-                        isWorkerTooYoung={isWorkerTooYoung}
-                        getNPCAge={getNPCAge}
-                        currentUser={currentUser}
-                        userSettings={userSettings}
-                      />
-                    )}
-                  </React.Fragment>
-                ))}
-              </AnimatePresence>
-            </div>
-          )}
-
-          {filter === "all" && filtered.characterSpecific && filtered.characterSpecific.length > 0 && (
-            <div className="space-y-3">
-              <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">👤 Character Locations</h2>
-              <AnimatePresence>
-                {filtered.characterSpecific.map(loc => (
-                  <React.Fragment key={loc.id}>
-                    <LocationCard
-                      location={loc}
-                      onDelete={handleDelete}
-                      onEdit={handleEdit}
-                      characters={characters}
-                      currentUser={currentUser}
-                    />
-                    {inlineEditId === loc.id && (
-                        <LocationForm
-                           key={`edit-${loc.id}`}
-                           editingLocation={loc}
-                           characters={characters}
-                           allLocations={locations}
-                           onSave={(data) => handleSave(data, loc.id)}
-                           onCancel={() => setInlineEditId(null)}
-                           onDuplicate={() => handleDuplicate(loc)}
-                           isWorkerTooYoung={isWorkerTooYoung}
-                           getNPCAge={getNPCAge}
-                           currentUser={currentUser}
-                           userSettings={userSettings}
-                         />
-                      )}
-                    </React.Fragment>
-                    ))}
-                    </AnimatePresence>
-                    </div>
-                    )}
-
-                    {filter !== "all" && filtered.all && (
             <AnimatePresence>
-              {filtered.all.map(loc => (
-                <React.Fragment key={loc.id}>
-                  <LocationCard
-                    location={loc}
-                    onDelete={handleDelete}
-                    onEdit={handleEdit}
-                    characters={characters}
-                    currentUser={currentUser}
-                  />
-                  {inlineEditId === loc.id && (
-                    <LocationForm
-                      key={`edit-${loc.id}`}
-                      editingLocation={loc}
-                      characters={characters}
-                      allLocations={locations}
-                      onSave={(data) => handleSave(data, loc.id)}
-                      onCancel={() => setInlineEditId(null)}
-                      onDuplicate={() => handleDuplicate(loc)}
-                      isWorkerTooYoung={isWorkerTooYoung}
-                      getNPCAge={getNPCAge}
-                      currentUser={currentUser}
-                      userSettings={userSettings}
-                    />
-                  )}
-                  </React.Fragment>
-                  ))}
-                  </AnimatePresence>
-                  )}
-                  </div>
-                  </>
-                  )}
-                  </div>
+              {showAddForm && (
+                <LocationForm
+                  key="add-form"
+                  editingLocation={null}
+                  characters={characters}
+                  allLocations={locations}
+                  onSave={(data) => handleSave(data, null)}
+                  onCancel={() => setShowAddForm(false)}
+                  isWorkerTooYoung={isWorkerTooYoung}
+                  getNPCAge={getNPCAge}
+                  currentUser={currentUser}
+                  userSettings={userSettings}
+                />
+              )}
+            </AnimatePresence>
 
-                  <BottomNav />
+            <div className="space-y-4">
+              {filter === "all" && filtered.global && filtered.global.length > 0 && (
+                <div className="space-y-3">
+                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">🌐 Global Locations</h2>
+                  <AnimatePresence>{filtered.global.map(renderLocationCard)}</AnimatePresence>
+                </div>
+              )}
+              {filter === "all" && filtered.characterSpecific && filtered.characterSpecific.length > 0 && (
+                <div className="space-y-3">
+                  <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider px-1">👤 Character Locations</h2>
+                  <AnimatePresence>{filtered.characterSpecific.map(renderLocationCard)}</AnimatePresence>
+                </div>
+              )}
+              {filter !== "all" && filtered.all && (
+                <AnimatePresence>{filtered.all.map(renderLocationCard)}</AnimatePresence>
+              )}
+            </div>
+          </>
+        )}
+      </div>
 
-      {/* Location match suggestions after new location creation */}
+      <BottomNav />
+
       {newlyCreatedLocation && (
         <LocationMatchSuggestion
           locationId={newlyCreatedLocation.id}

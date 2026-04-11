@@ -4,11 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key, MapPin, Briefcase, Home } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import BottomNav from "@/components/BottomNav";
-import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
-import UserAliasSection from "@/components/user/UserAliasSection";
-import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
+import VGCRevenueDashboard from "@/components/finance/VGCRevenueDashboard";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
 
 export default function MyProfile() {
@@ -303,6 +299,11 @@ export default function MyProfile() {
               </div>
             ))}
           </div>
+        </div>
+
+        {/* VGC Revenue Dashboard */}
+        <div className="bg-card border border-border rounded-2xl p-4">
+          <VGCRevenueDashboard userSettings={settings} />
         </div>
 
         {/* Residences */}

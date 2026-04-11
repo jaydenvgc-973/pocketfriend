@@ -26,6 +26,7 @@ import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import OwnedLocationsPanel from "@/components/character/OwnedLocationsPanel";
+import LifeJournal from "@/components/character/LifeJournal";
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -108,8 +109,8 @@ export default function CharacterProfile() {
   const [isSavingZodiac, setIsSavingZodiac] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [showEditSettings, setShowEditSettings] = useState(false);
-  const [promotingNPC, setPromotingNPC] = useState(null); // { rel, sourceCharacter }
-  const [editingNPCPhoto, setEditingNPCPhoto] = useState(null); // { npc, sourceCharacter }
+  const [promotingNPC, setPromotingNPC] = useState(null);
+  const [editingNPCPhoto, setEditingNPCPhoto] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   
   const { data: character, isLoading, refetch } = useQuery({
@@ -117,7 +118,6 @@ export default function CharacterProfile() {
     queryFn: async () => {
       const chars = await base44.entities.Character.filter({ id: characterId });
       if (chars[0]) {
-        // Strip legacy system_prompt field to avoid size limit errors
         const { system_prompt, ...char } = chars[0];
         return char;
       }
@@ -137,7 +137,6 @@ export default function CharacterProfile() {
     queryFn: async () => {
       if (!currentUser?.email) return [];
       const chars = await base44.entities.Character.filter({ created_by: currentUser.email });
-      // Strip legacy system_prompt field from all characters
       return chars.map(({ system_prompt, ...char }) => char);
     },
     enabled: !!currentUser?.email,
@@ -190,16 +189,13 @@ export default function CharacterProfile() {
   const age = character?.birthday ? calculateAge(character.birthday) : null;
 
   const handleConvertNPC = useCallback((rel) => {
-    // Step 1: Show avatar selection modal BEFORE entering create flow
     setPromotingNPC({ rel, sourceCharacter: character });
   }, [character]);
 
   const handleNPCPromotionComplete = useCallback((avatarUrl) => {
     if (!promotingNPC) return;
     const { rel } = promotingNPC;
-    // Use photo from the relationship (uploaded/generated via NPCPhotoEditor) OR the passed avatarUrl from NPCPromotionModal
     const finalAvatarUrl = rel.photo_url || avatarUrl || null;
-    // Preload NPC data into Create Character draft — preserve ALL relationship data
     const draft = {
       step: 0,
       avatarUrl: finalAvatarUrl,
@@ -218,11 +214,9 @@ export default function CharacterProfile() {
         job_title: "", workplace_type: "", work_environment: "",
         occupation_description: "", criminal_record: "", zodiac_sign: "",
         frequented_places: [],
-        // Preserve all relationship data from the NPC
         known_character_relationships: character ? [{ character_id: character.id, relationship_type: rel.relationship_type || "Friend" }] : [],
         family_members: [],
         birthday: "",
-        // CRITICAL: preserve all relationship levels and history
         user_respect_level: rel.user_respect_level ?? 50,
         friendship_level: rel.friendship_level ?? 75,
         romantic_level: rel.romantic_level ?? 0,
@@ -230,7 +224,6 @@ export default function CharacterProfile() {
         chosen_family_level: rel.chosen_family_level ?? 0,
         _npc_source_character_id: character?.id,
         _npc_source_rel: rel,
-        // Preserve history summary and context
         _preserved_history: rel.history_summary || "",
         _preserved_last_interaction: rel.last_interaction_summary || "",
         _preserved_current_status: rel.current_status || "",
@@ -388,7 +381,6 @@ export default function CharacterProfile() {
 
         {/* Age, Location, Identity */}
         <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-          {/* Age display — always read-only (ages dynamically) */}
           {(age !== null || character.age_range) && (
             <div className="flex items-center gap-2 pb-2 border-b border-border">
               <User className="w-4 h-4 text-primary" />
@@ -401,7 +393,6 @@ export default function CharacterProfile() {
             </div>
           )}
 
-          {/* City & State: locked for default, editable for custom */}
           <div className="grid grid-cols-2 gap-3">
             {character.is_default ? (
               <>
@@ -416,10 +407,8 @@ export default function CharacterProfile() {
             )}
           </div>
 
-          {/* Gender: always displayed, never user-editable */}
           <NonEditableField label="Gender" value={character.gender} />
 
-          {/* Ethnicity: locked for default, editable for custom */}
           {character.is_default ? (
             <div>
               <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Ethnic Background</p>
@@ -436,7 +425,6 @@ export default function CharacterProfile() {
             <EditableEthnicityField character={character} />
           )}
 
-          {/* Sexual Orientation: always displayed, never user-editable */}
           <NonEditableField label="Orientation" value={character.sexual_orientation} />
         </div>
 
@@ -510,7 +498,6 @@ export default function CharacterProfile() {
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider">Occupation</p>
             <div className="space-y-3">
-              {/* Primary job */}
               {(character.work_details?.job_title || character.occupation_location_name) && (
                 <div className="space-y-1">
                   {character.work_details?.job_title && (
@@ -524,7 +511,6 @@ export default function CharacterProfile() {
                   {character.work_details?.workplace_type && !character.occupation_location_name && (
                     <p className="text-sm text-muted-foreground">{character.work_details.workplace_type}</p>
                   )}
-                  {/* Show primary job shift if it exists in workLocations */}
                   {character.occupation_location_id && getWorkShift(character.occupation_location_id) && (
                     <p className="text-xs text-muted-foreground flex items-center gap-1">
                       <Clock className="w-3 h-3" /> {getWorkShift(character.occupation_location_id)}
@@ -532,7 +518,6 @@ export default function CharacterProfile() {
                   )}
                 </div>
               )}
-              {/* Additional jobs from character field */}
               {(character.additional_occupation_locations || []).map((loc, idx) => {
                 const realName = getWorkLocationName(loc.location_id) || loc.location_name;
                 const shiftDisplay = getWorkShift(loc.location_id);
@@ -550,7 +535,6 @@ export default function CharacterProfile() {
                   </div>
                 );
               })}
-              {/* Jobs only in LocationReference but NOT in additional_occupation_locations */}
               {workLocations
                 .filter(wl => {
                   const isAdditional = (character.additional_occupation_locations || []).some(l => l.location_id === wl.id);
@@ -576,7 +560,6 @@ export default function CharacterProfile() {
                 })
               }
             </div>
-            {/* Editable work schedule — reads from & writes to LocationReference */}
             <CharacterWorkScheduleEditor character={character} />
           </div>
         )}
@@ -591,7 +574,6 @@ export default function CharacterProfile() {
               <GraduationCap className="w-4 h-4 text-primary" />
               <p className="text-xs text-muted-foreground uppercase tracking-wider">Education</p>
             </div>
-            {/* Primary education */}
             {(character.current_education_activity && character.current_education_activity !== "none") && (
               <div className="space-y-0.5">
                 <p className="text-sm text-foreground font-medium">{character.education_details?.course_name || character.current_education_activity}</p>
@@ -602,7 +584,6 @@ export default function CharacterProfile() {
                 )}
               </div>
             )}
-            {/* Additional education locations */}
             {character.additional_education_locations?.map((loc, idx) => (
               <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
                 {loc.program_name && <p className="text-sm text-foreground font-medium">{loc.program_name}</p>}
@@ -622,7 +603,7 @@ export default function CharacterProfile() {
             {(() => {
               const now = new Date();
               const currentItems = (character.completed_education || []).filter(edu => {
-                if (!edu.completion_date) return true; // no date = treat as in-progress
+                if (!edu.completion_date) return true;
                 return new Date(edu.completion_date) > now;
               });
               const completedItems = (character.completed_education || []).filter(edu => {
@@ -686,6 +667,9 @@ export default function CharacterProfile() {
           <p className="text-sm text-foreground">{character.criminal_record || "No criminal record"}</p>
         </div>
 
+        {/* Life Journal */}
+        <LifeJournal characterId={characterId} character={character} />
+
         {/* Live Needs — Active Created Characters only */}
         <CharacterNeedsPanel
           character={character}
@@ -713,10 +697,10 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Family Members — read-only for default, editable for custom */}
+        {/* Family Members */}
         <FamilyEditor character={character} readOnly={character.is_default} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
 
-        {/* Family History — below family list */}
+        {/* Family History */}
         {character.family_history && (
           <div className="bg-card border border-border rounded-2xl p-4">
             <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Family History</p>
@@ -724,7 +708,7 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Active App Characters They Know (with avatar + status bars) */}
+        {/* Characters They Know */}
         {(true) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
             <div className="flex items-center gap-2 mb-2">
@@ -734,7 +718,7 @@ export default function CharacterProfile() {
             {(!character.fictional_relationships?.some(r => {
               if (!r.related_character_id) return false;
               const lc = allCharacters.find(c => c.id === r.related_character_id);
-              if (!lc) return true; // not found — still show
+              if (!lc) return true;
               return lc.character_type !== "npc" && lc.character_type !== "family_npc";
             })) && (
               <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
@@ -744,7 +728,7 @@ export default function CharacterProfile() {
                 .filter(r => {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!lc) return true; // not found in list — keep it
+                  if (!lc) return true;
                   return lc.character_type !== "npc" && lc.character_type !== "family_npc";
                 })
                 .map((rel, idx) => {
@@ -812,14 +796,12 @@ export default function CharacterProfile() {
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
 
-          {/* NPC relationships — exclude family members; include unlinked NPCs AND npc/family_npc typed characters */}
           {(() => {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return true; // unlinked NPC
+              if (!r.related_character_id) return true;
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              // Show here only if explicitly npc or family_npc type
               return linked && (linked.character_type === "npc" || linked.character_type === "family_npc");
             });
             const seen = new Set();
@@ -841,13 +823,12 @@ export default function CharacterProfile() {
                   return linked && (linked.character_type === "npc" || linked.character_type === "family_npc");
                 });
                 const seen = new Set();
-                const deduped = npcRels.filter(r => {
+                return npcRels.filter(r => {
                   const key = r.person_name?.toLowerCase();
                   if (seen.has(key)) return false;
                   seen.add(key);
                   return true;
                 });
-                return deduped;
               })()
                 .map((rel, idx) => (
                   <div key={idx} className="pb-5 border-b border-border last:border-b-0 space-y-2">
@@ -933,13 +914,11 @@ export default function CharacterProfile() {
             )
           )}
 
-          {/* Chance Encounters — filter to exclude group/event references */}
           {(() => {
             const groupKeywords = ['class', 'group', 'people', 'team', 'meeting', 'event', 'program', 'session', 'training', 'workshop'];
             const filtered = (character.transient_encounters || []).filter(enc => {
               const desc = (enc.description || '').toLowerCase();
               const ctx = (enc.context || '').toLowerCase();
-              // Exclude if description mentions groups or events
               return !groupKeywords.some(kw => desc.includes(kw) || ctx.includes(kw));
             });
             return filtered.length > 0;
@@ -995,7 +974,7 @@ export default function CharacterProfile() {
         {/* Appearance Age override for image generation */}
         <AppearanceAgeField character={character} />
 
-        {/* Appearance Lock — persistent identity anchors for image generation */}
+        {/* Appearance Lock */}
         <AppearanceLockEditor character={character} />
 
         {/* Nickname for User */}
@@ -1004,14 +983,12 @@ export default function CharacterProfile() {
       </div>
       <BottomNav />
 
-      {/* NPC Photo Editor */}
       {editingNPCPhoto && character && (
       <NPCPhotoEditor
         npc={editingNPCPhoto.npc}
         sourceCharacter={character}
         onPhotoUpdate={async (photoUrl) => {
           try {
-            // Update the NPC's photo and store as reference image
             const updatedRels = (character.fictional_relationships || []).map(r => {
               if (r.person_name === editingNPCPhoto.npc.person_name) {
                 const existingRefs = r.reference_image_urls || [];
@@ -1023,7 +1000,6 @@ export default function CharacterProfile() {
               }
               return r;
             });
-            // Save, invalidate, refetch, THEN close modal
             await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
             queryClient.invalidateQueries({ queryKey: ["character", character.id] });
             await refetch();
@@ -1036,7 +1012,6 @@ export default function CharacterProfile() {
       />
       )}
 
-      {/* NPC Promotion Modal — avatar step before create flow */}
       {promotingNPC && (
         <NPCPromotionModal
           npcData={promotingNPC.rel}
