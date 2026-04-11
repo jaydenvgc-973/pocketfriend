@@ -1,33 +1,40 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 /**
- * Automation trigger: when a new Character is created.
- * Initializes financials with $6,000 starting balance.
+ * onCharacterCreated
+ * 
+ * Entity automation trigger: fires when a new Character is created.
+ * Immediately charges VGC Mobile bill for the new character.
  */
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const payload = await req.json();
+    const { data: character } = await req.json();
 
-    const character = payload.data;
-    if (!character?.id || !character?.name) {
-      return Response.json({ error: 'Invalid character data' }, { status: 400 });
+    if (!character || !character.id) {
+      return Response.json({ error: 'No character data in payload' }, { status: 400 });
     }
 
-    // Initialize financial record
-    const financialResult = await base44.functions.invoke('initializeCharacterFinancials', {
-      characterId: character.id,
-      characterName: character.name,
-      isNpc: false,
-      homeLocationId: null,
-      homeLocationName: null,
-    });
+    // Skip if not an active created character
+    if (character.character_type !== 'active' || character.status !== 'active') {
+      return Response.json({ success: true, skipped: true, reason: 'Not an active character' });
+    }
 
-    console.log(`[onCharacterCreated] Financial record initialized for ${character.name}:`, financialResult);
+    // Charge VGC Mobile immediately
+    try {
+      await base44.asServiceRole.functions.invoke('chargeVGCMobileBill', {
+        characterId: character.id,
+        billingMonth: new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      });
+    } catch (chargeErr) {
+      console.error('[onCharacterCreated] Failed to charge VGC Mobile:', chargeErr.message);
+      // Don't fail the entire hook if billing fails — character still created
+    }
 
-    return Response.json({ success: true });
+    return Response.json({ success: true, characterId: character.id });
   } catch (error) {
     console.error('[onCharacterCreated]', error);
-    return Response.json({ success: false, error: error.message }, { status: 500 });
+    return Response.json({ error: error.message }, { status: 500 });
   }
 });
