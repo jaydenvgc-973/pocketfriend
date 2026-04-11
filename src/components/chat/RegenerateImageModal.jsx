@@ -51,6 +51,13 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     }
   }, [isOpen]);
 
+  // Re-sync editPrompt if originalPrompt changes while modal is open in dont_like mode
+  useEffect(() => {
+    if (isOpen && promptMode === "dont_like") {
+      setEditPrompt(originalPrompt || "");
+    }
+  }, [originalPrompt, promptMode, isOpen]);
+
   const handleSelect = (id) => {
     if (id === "dont_like") {
       setPromptMode("dont_like");
@@ -64,7 +71,6 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setShowPromptInput(true);
       return;
     }
-    // flawed / no_avatar — regenerate immediately, no input needed
     onSelect(id, null);
   };
 
