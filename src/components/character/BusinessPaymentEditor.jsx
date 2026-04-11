@@ -1,9 +1,10 @@
 import React, { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { X, DollarSign, Check } from "lucide-react";
 
 export default function BusinessPaymentEditor({ business, characterId, onClose, onSaved, type = "revenue" }) {
+  const queryClient = useQueryClient();
   const [amount, setAmount] = useState(business.income || business.monthly_owner_revenue || 0);
   const [selectedWorkers, setSelectedWorkers] = useState(business.worker_character_ids || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -101,6 +102,11 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           }
         }
       }
+      
+      // Invalidate financial and character queries to refresh UI
+      queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+      queryClient.invalidateQueries({ queryKey: ["characterFinancial", characterId] });
+      queryClient.invalidateQueries({ queryKey: ["ownedLocations", characterId] });
       
       onSaved?.();
       onClose();
