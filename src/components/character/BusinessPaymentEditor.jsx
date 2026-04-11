@@ -65,7 +65,7 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           income_generated: parseFloat(amount)
         });
       } else if (type === "worker-pay") {
-        // Update custom business worker pay and workers, trigger immediate payment
+        // Update custom business worker pay and workers
         const char = await base44.entities.Character.get(characterId);
         const businesses = char.businesses || [];
         const idx = businesses.findIndex(b => b.id === business.id);
@@ -74,18 +74,6 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           businesses[idx].monthly_worker_pay = parseFloat(amount);
           businesses[idx].worker_character_ids = selectedWorkers;
           await base44.entities.Character.update(characterId, { businesses });
-          
-          // Process immediate retroactive payment
-          try {
-            await base44.functions.invoke("processBusinessWorkerPayment", {
-              characterId,
-              businessId: business.id,
-              amount: parseFloat(amount),
-              isRetroactive: true
-            });
-          } catch (err) {
-            console.warn("Payment processing queued:", err.message);
-          }
         }
       }
       
@@ -180,13 +168,6 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
               />
             </div>
           </div>
-
-          {type === "worker-pay" && (
-            <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
-              <p className="text-xs font-medium text-primary mb-1">⏱️ Immediate Payment</p>
-              <p className="text-xs text-primary/80">One payment of ${parseFloat(amount || 0).toFixed(2)} will be processed retroactively (as of yesterday), then recurring every Friday.</p>
-            </div>
-          )}
 
           <div className="flex gap-2 pt-2">
             <button
