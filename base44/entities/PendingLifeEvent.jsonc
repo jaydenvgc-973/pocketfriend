@@ -1,0 +1,59 @@
+{
+  "name": "PendingLifeEvent",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this pending change is for"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "event_category": {
+      "type": "string",
+      "enum": [
+        "occupation",
+        "education",
+        "job_training"
+      ],
+      "description": "What category of change is being proposed"
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of the proposed change"
+    },
+    "proposed_data": {
+      "type": "object",
+      "description": "The exact Character field patch that would be applied if approved",
+      "additionalProperties": true
+    },
+    "source_context": {
+      "type": "string",
+      "description": "Brief context about where/why this was proposed (e.g. conversation summary)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "rejected",
+        "linked"
+      ],
+      "default": "pending",
+      "description": "Current approval status"
+    },
+    "resolved_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the user resolved this pending event"
+    }
+  },
+  "required": [
+    "character_id",
+    "character_name",
+    "event_category",
+    "description",
+    "proposed_data"
+  ]
+}

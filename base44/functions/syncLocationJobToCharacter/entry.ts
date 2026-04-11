@@ -41,27 +41,54 @@ Deno.serve(async (req) => {
 
       // If character has no primary occupation location, set it
       if (!char.occupation_location_id) {
-        updates.occupation_location_id = locationId;
-        updates.occupation_location_name = loc.name;
-        if (jobTitle && !char.work_details?.job_title) {
-          updates.work_details = {
-            ...(char.work_details || {}),
-            job_title: jobTitle,
-            workplace_type: loc.category || 'workplace',
+        // Gate: create a PendingLifeEvent for user approval instead of directly setting
+        try {
+          const patch = {
+            occupation_location_id: locationId,
+            occupation_location_name: loc.name,
+            ...(jobTitle && !char.work_details?.job_title && {
+              work_details: { ...(char.work_details || {}), job_title: jobTitle, workplace_type: loc.category || 'workplace' }
+            })
           };
-        }
+          await base44.asServiceRole.entities.PendingLifeEvent.create({
+            character_id: characterId,
+            character_name: char.name,
+            change_type: 'occupation_change',
+            proposed_data: patch,
+            source_description: `Linked to location: ${loc.name}`,
+            human_summary: `Set ${char.name}'s workplace to "${loc.name}"${jobTitle ? ' as ' + jobTitle : ''}`,
+            reasoning: 'Character was added as a worker at this location.',
+            status: 'pending',
+          });
+        } catch (e) { console.warn('PendingLifeEvent create failed:', e.message); }
+        // Do NOT apply updates directly
       } else if (char.occupation_location_id !== locationId) {
-        // Already has a primary job — add as additional
+        // Already has a primary job — add as additional (gate this too)
         const existing = char.additional_occupation_locations || [];
         const alreadyLinked = existing.some(e => e.location_id === locationId);
         if (!alreadyLinked) {
-          updates.additional_occupation_locations = [
-            ...existing,
-            { location_id: locationId, location_name: loc.name, job_title: jobTitle },
-          ];
+          try {
+            const addlPatch = {
+              additional_occupation_locations: [
+                ...existing,
+                { location_id: locationId, location_name: loc.name, job_title: jobTitle },
+              ]
+            };
+            await base44.asServiceRole.entities.PendingLifeEvent.create({
+              character_id: characterId,
+              character_name: char.name,
+              change_type: 'occupation_change',
+              proposed_data: addlPatch,
+              source_description: `Linked as secondary job at: ${loc.name}`,
+              human_summary: `Add secondary job for ${char.name} at "${loc.name}"${jobTitle ? ' as ' + jobTitle : ''}`,
+              reasoning: 'Character was added as a worker at this location (secondary job).',
+              status: 'pending',
+            });
+          } catch (e) { console.warn('PendingLifeEvent create failed:', e.message); }
+          // Do NOT apply updates directly
         }
       } else {
-        // Same location — just update job title if blank
+        // Same location — just update job title if blank (safe, no structural change)
         if (jobTitle && !char.work_details?.job_title) {
           updates.work_details = { ...(char.work_details || {}), job_title: jobTitle };
         }
@@ -100,27 +127,33 @@ Deno.serve(async (req) => {
 
     if (syncType === 'education') {
       const programName = loc.name;
-      const locCategory = loc.category;
+      const alreadyEnrolled = char.education_location_id === locationId ||
+        (char.additional_education_locations || []).some(e => e.location_id === locationId);
 
-      if (!char.education_location_id) {
-        updates.education_location_id = locationId;
-        updates.education_location_name = loc.name;
-        if (!char.current_education_activity || char.current_education_activity === 'none') {
-          updates.current_education_activity = programName;
-          updates.education_details = {
-            ...(char.education_details || {}),
-            institution: loc.name,
-          };
-        }
-      } else if (char.education_location_id !== locationId) {
-        const existing = char.additional_education_locations || [];
-        const alreadyLinked = existing.some(e => e.location_id === locationId);
-        if (!alreadyLinked) {
-          updates.additional_education_locations = [
-            ...existing,
-            { location_id: locationId, location_name: loc.name, program_name: programName },
-          ];
-        }
+      if (!alreadyEnrolled) {
+        const isFirst = !char.education_location_id;
+        const patch = isFirst
+          ? { education_location_id: locationId, education_location_name: loc.name,
+              ...(!char.current_education_activity || char.current_education_activity === 'none'
+                ? { current_education_activity: programName, education_details: { ...(char.education_details || {}), institution: loc.name } }
+                : {}) }
+          : { additional_education_locations: [
+              ...(char.additional_education_locations || []),
+              { location_id: locationId, location_name: loc.name, program_name: programName }
+            ]};
+        try {
+          await base44.asServiceRole.entities.PendingLifeEvent.create({
+            character_id: characterId,
+            character_name: char.name,
+            change_type: 'education_change',
+            proposed_data: patch,
+            source_description: `Linked to school/education location: ${loc.name}`,
+            human_summary: `Enroll ${char.name} at "${loc.name}"`,
+            reasoning: 'Character was linked to this school/education location.',
+            status: 'pending',
+          });
+        } catch (e) { console.warn('PendingLifeEvent create failed:', e.message); }
+        // Do NOT apply updates directly
       }
     }
 

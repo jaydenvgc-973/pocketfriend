@@ -26,6 +26,7 @@ import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import OwnedLocationsPanel from "@/components/character/OwnedLocationsPanel";
+import OccupationEducationApprovalModal from "@/components/approvals/OccupationEducationApprovalModal";
 import LifeJournal from "@/components/character/LifeJournal";
 
 const ZODIAC_SIGNS = {
@@ -493,6 +494,9 @@ export default function CharacterProfile() {
           </div>
         )}
 
+        {/* Pending Occupation/Education Approvals — renders nothing when no pending events */}
+        {character && <OccupationEducationApprovalModal character={character} />}
+
         {/* Work */}
         {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0 || workLocations.length > 0) && (
           <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
@@ -519,14 +523,16 @@ export default function CharacterProfile() {
                 </div>
               )}
               {(character.additional_occupation_locations || []).map((loc, idx) => {
-                const realName = getWorkLocationName(loc.location_id) || loc.location_name;
+                const realLocationName = getWorkLocationName(loc.location_id) || loc.location_name || null;
                 const shiftDisplay = getWorkShift(loc.location_id);
                 return (
                   <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
                     {loc.job_title && <p className="text-sm text-foreground font-medium">{loc.job_title}</p>}
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Briefcase className="w-3 h-3" /> {realName || 'Secondary Job'}
-                    </p>
+                    {realLocationName && (
+                      <p className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Briefcase className="w-3 h-3" /> {realLocationName}
+                      </p>
+                    )}
                     {shiftDisplay && (
                       <p className="text-xs text-muted-foreground flex items-center gap-1">
                         <Clock className="w-3 h-3" /> {shiftDisplay}
