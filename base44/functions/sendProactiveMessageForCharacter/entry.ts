@@ -142,6 +142,10 @@ ${recentContext ? `Recent conversation context: "${recentContext}". Follow up on
 Time context: ${timeContext}
 Personality: ${char.personality_summary || 'friendly and thoughtful'}
 Friendship level: ${relationshipLevel}/100 - adjust tone accordingly (higher = more casual/frequent, lower = more respectful).
+WRITING STYLE — NON-NEGOTIABLE:
+- Write like a real person texting. No theatrical or literary language.
+- NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ). Use commas or periods instead.
+- Keep it short, direct, and human.
 Be authentic, not overly cheerful.`;
 
     const messageContent = await base44.integrations.Core.InvokeLLM({

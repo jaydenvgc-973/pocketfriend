@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward } from "lucide-react";
 import { base44 } from "@/api/base44Client";
+import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
 import VideoPreviewCard from "@/components/chat/VideoPreviewCard";
@@ -245,7 +246,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                   </p>
                 </div>
               ) : (
-                <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
+                <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{isUser ? message.content : filterDashes(message.content)}</p>
               )
             )}
             {message.songs_heard && message.songs_heard.length > 0 && (
