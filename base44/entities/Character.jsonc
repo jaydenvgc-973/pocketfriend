@@ -987,6 +987,10 @@
           "institution": {
             "type": "string"
           },
+          "start_date": {
+            "type": "string",
+            "format": "date-time"
+          },
           "completion_date": {
             "type": "string",
             "format": "date-time"
@@ -1212,22 +1216,19 @@
     "is_jailed": {
       "type": "boolean",
       "default": false,
-      "description": "True if character is currently serving jail time \u2014 blocks all actions, invites, travel, and chat"
+      "description": "True if character is currently serving jail time"
     },
     "jail_release_date": {
       "type": "string",
-      "format": "date-time",
-      "description": "UTC timestamp when jail sentence ends and character is automatically released"
+      "format": "date-time"
     },
     "jail_sentence_days": {
       "type": "number",
-      "default": 7,
-      "description": "Number of days this jail sentence lasts"
+      "default": 7
     },
     "jailed_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "When the character was jailed"
+      "format": "date-time"
     }
   },
   "required": [
