@@ -7,16 +7,13 @@
       "description": "Character display name"
     },
     "primary_name": {
-      "type": "string",
-      "description": "One main canonical name per character (does not change unless user edits directly)"
+      "type": "string"
     },
     "display_name": {
-      "type": "string",
-      "description": "What the UI shows by default (can be preferred name or nickname)"
+      "type": "string"
     },
     "full_name": {
-      "type": "string",
-      "description": "Full legal or formal name if different from primary"
+      "type": "string"
     },
     "aliases": {
       "type": "array",
@@ -68,8 +65,7 @@
           }
         }
       },
-      "default": [],
-      "description": "Direct alias list attached to character (not separate table)"
+      "default": []
     },
     "character_type": {
       "type": "string",
@@ -80,8 +76,7 @@
         "background",
         "promoted_npc"
       ],
-      "default": "active",
-      "description": "Character type classification"
+      "default": "active"
     },
     "status": {
       "type": "string",
@@ -95,31 +90,25 @@
       "default": "active"
     },
     "age": {
-      "type": "number",
-      "description": "Age in years"
+      "type": "number"
     },
     "birth_year": {
-      "type": "number",
-      "description": "Birth year for calculation"
+      "type": "number"
     },
     "zodiac_sign": {
       "type": "string"
     },
     "profile_summary": {
-      "type": "string",
-      "description": "One-paragraph summary of who this person is"
+      "type": "string"
     },
     "backstory": {
-      "type": "string",
-      "description": "Full backstory narrative"
+      "type": "string"
     },
     "occupation": {
-      "type": "string",
-      "description": "Current job or occupation"
+      "type": "string"
     },
     "education": {
-      "type": "string",
-      "description": "Education history"
+      "type": "string"
     },
     "current_home_location_id": {
       "type": "string"
@@ -281,8 +270,7 @@
     },
     "protected_active": {
       "type": "boolean",
-      "default": false,
-      "description": "True if user explicitly marked this character as active \u2014 prevents NPC re-categorization by any system process"
+      "default": false
     },
     "nickname_for_user": {
       "type": "string"
@@ -709,8 +697,7 @@
       "type": "string"
     },
     "system_prompt_url": {
-      "type": "string",
-      "description": "URL to large system prompt stored as a file"
+      "type": "string"
     },
     "work_details": {
       "type": "object",
@@ -1184,53 +1171,63 @@
     },
     "hunger_value": {
       "type": "number",
-      "default": 70,
-      "description": "Active character hunger level 0-100. Only simulated for active character_type."
+      "default": 70
     },
     "energy_value": {
       "type": "number",
-      "default": 75,
-      "description": "Active character energy level 0-100."
+      "default": 75
     },
     "social_value": {
       "type": "number",
-      "default": 65,
-      "description": "Active character social need 0-100."
+      "default": 65
     },
     "health_value": {
       "type": "number",
-      "default": 80,
-      "description": "Active character health level 0-100."
+      "default": 80
     },
     "mental_value": {
       "type": "number",
-      "default": 70,
-      "description": "Active character mental wellbeing 0-100."
+      "default": 70
     },
     "financial_need_value": {
       "type": "number",
-      "default": 60,
-      "description": "Active character financial stress level 0-100."
+      "default": 60
     },
     "hygiene_value": {
       "type": "number",
-      "default": 75,
-      "description": "Active character hygiene level 0-100."
+      "default": 75
     },
     "comfort_value": {
       "type": "number",
-      "default": 70,
-      "description": "Active character comfort level 0-100."
+      "default": 70
     },
     "last_need_simulated_at": {
       "type": "string",
-      "format": "date-time",
-      "description": "Timestamp of last needs simulation run. Used for elapsed-time recovery."
+      "format": "date-time"
     },
     "needs_initialized": {
       "type": "boolean",
+      "default": false
+    },
+    "is_jailed": {
+      "type": "boolean",
       "default": false,
-      "description": "True once needs have been initialized with non-default starting values."
+      "description": "True if character is currently serving jail time \u2014 blocks all actions, invites, travel, and chat"
+    },
+    "jail_release_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp when jail sentence ends and character is automatically released"
+    },
+    "jail_sentence_days": {
+      "type": "number",
+      "default": 7,
+      "description": "Number of days this jail sentence lasts"
+    },
+    "jailed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the character was jailed"
     }
   },
   "required": [
