@@ -1,10 +1,22 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { X, DollarSign } from "lucide-react";
+import { X, DollarSign, Check } from "lucide-react";
 
 export default function BusinessPaymentEditor({ business, characterId, onClose, onSaved, type = "revenue" }) {
   const [amount, setAmount] = useState(business.income || business.monthly_owner_revenue || 0);
+  const [selectedWorkers, setSelectedWorkers] = useState(business.worker_character_ids || []);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const { data: allCharacters = [] } = useQuery({
+    queryKey: ["allCharacters"],
+    queryFn: async () => {
+      const char = await base44.entities.Character.get(characterId);
+      if (!char?.created_by) return [];
+      const chars = await base44.entities.Character.filter({ created_by: char.created_by, status: "active" });
+      return chars.filter(c => c.id !== characterId && c.character_type === "active");
+    },
+  });
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -17,13 +29,14 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
           income_generated: parseFloat(amount)
         });
       } else if (type === "worker-pay") {
-        // Update custom business worker pay and trigger immediate payment
+        // Update custom business worker pay and workers, trigger immediate payment
         const char = await base44.entities.Character.get(characterId);
         const businesses = char.businesses || [];
         const idx = businesses.findIndex(b => b.id === business.id);
         
         if (idx >= 0) {
           businesses[idx].monthly_worker_pay = parseFloat(amount);
+          businesses[idx].worker_character_ids = selectedWorkers;
           await base44.entities.Character.update(characterId, { businesses });
           
           // Process immediate retroactive payment
@@ -52,7 +65,7 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
   const label = type === "revenue" ? "Monthly Revenue" : "Weekly Worker Pay";
   const description = type === "revenue" 
     ? "Income from this business location"
-    : "What workers earn per week (paid Fridays)";
+    : "What each worker earns per week (paid Fridays)";
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 px-4" onClick={onClose}>
@@ -68,6 +81,44 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {type === "worker-pay" && (
+            <div>
+              <label className="text-xs font-medium text-foreground mb-2 block">Workers</label>
+              <p className="text-xs text-muted-foreground mb-2">Who works at this business?</p>
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {allCharacters.length > 0 ? (
+                  allCharacters.map(char => (
+                    <button
+                      key={char.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedWorkers(prev =>
+                          prev.includes(char.id)
+                            ? prev.filter(id => id !== char.id)
+                            : [...prev, char.id]
+                        );
+                      }}
+                      className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg border transition-colors text-left ${
+                        selectedWorkers.includes(char.id)
+                          ? "border-primary bg-primary/10"
+                          : "border-border hover:border-primary/40"
+                      }`}
+                    >
+                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
+                        selectedWorkers.includes(char.id) ? "bg-primary" : "bg-secondary"
+                      }`}>
+                        {selectedWorkers.includes(char.id) && <Check className="w-3 h-3 text-primary-foreground" />}
+                      </div>
+                      <span className="text-xs text-foreground font-medium">{char.name}</span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground italic">No other active characters</p>
+                )}
+              </div>
+            </div>
+          )}
+
           <div>
             <label className="text-xs font-medium text-foreground mb-2 block">{label}</label>
             <p className="text-xs text-muted-foreground mb-3">{description}</p>
