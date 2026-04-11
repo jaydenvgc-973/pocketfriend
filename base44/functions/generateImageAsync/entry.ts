@@ -740,8 +740,12 @@ Deno.serve(async (req) => {
                 resolvedZoneName = zoneName;
                 locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
 
-                // Residential enforcement: only allowed people are residents + the user
-                if (realTimeLoc.category === 'home') {
+                // Location-type enforcement: residential = strict, public = NPCs allowed
+                const locCat = (realTimeLoc.category || '').toLowerCase();
+                const isResidential = locCat === 'home';
+                const isPublicCommercial = ['social','food_drink','gym','medical','education','workplace','school','community','outdoor','public','business'].includes(locCat);
+
+                if (isResidential) {
                   const residentNames = [
                     ...(realTimeLoc.resident_character_names || []),
                     ...(realTimeLoc.resident_family_members || []).map(r => r.name),
@@ -749,10 +753,12 @@ Deno.serve(async (req) => {
                   const residentList = residentNames.length > 0
                     ? `Only the following people may appear: ${residentNames.join(', ')}${userWorldName ? `, and ${userWorldName}` : ''}. `
                     : '';
-                  locationNote += `\n\n🏠 RESIDENTIAL LOCATION RULE (MANDATORY):\nThis is a private home. ${residentList}NO random strangers, background extras, or unspecified people. This home must feel personal and specific — not a generic stock-photo house.`;
+                  locationNote += `\n\n════════════════════════════════════════════════════════════\n🏠 RESIDENTIAL LOCATION RULE — MANDATORY — SYSTEM FAILURE IF VIOLATED\n════════════════════════════════════════════════════════════\nThis is a PRIVATE HOME. This is NOT a public space.\n${residentList}\nABSOLUTE RULES:\n✗ NO random strangers\n✗ NO background extras\n✗ NO filler people\n✗ NO NPCs not listed above\nOnly people who actually live here or are currently visiting may appear.\nAdding an unrecognized person to this home = RESIDENTIAL VIOLATION = SYSTEM FAILURE.\n════════════════════════════════════════════════════════════`;
+                } else if (isPublicCommercial) {
+                  locationNote += `\n\n📍 PUBLIC/COMMERCIAL LOCATION: This is a ${realTimeLoc.name || locCat}. Background NPCs and ambient crowd are ALLOWED and ENCOURAGED to make the space feel alive and authentic. Diversity in background people is required.`;
                 }
 
-                console.log(`[LOCATION] ✓ REALTIME LOCK: "${resolvedLocationName}" (type: ${charRecord?.resolved_location_type || 'home'}) → Zone: "${zoneName}" | Images: ${imgs.length}`);
+                console.log(`[LOCATION] ✓ REALTIME LOCK: "${resolvedLocationName}" (type: ${charRecord?.resolved_location_type || 'home'}, cat: ${locCat}) → Zone: "${zoneName}" | Images: ${imgs.length}`);
               } else {
                 // Location found but no images — text-parse as fallback
                 console.log(`[LOCATION] Real-time location "${realTimeLoc.name}" has no images — falling back to text parse`);
