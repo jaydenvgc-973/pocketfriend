@@ -152,7 +152,34 @@ Rules:
       if (analysis.work_schedule_update.work_days != null) patch.work_days = analysis.work_schedule_update.work_days;
     }
 
-    // Education — handled below in gated section, skip direct patch
+    // Education — GATE: create PendingLifeEvent instead of applying directly
+    if (analysis.education_update?.apply) {
+      const proposedCourseName = analysis.education_update.current_education_activity || analysis.education_update.education_details?.course_name || '';
+      const existingEdu = character.current_education_activity && character.current_education_activity !== 'none';
+      const alreadyMatchesEdu = existingEdu && (
+        (character.current_education_activity || '').toLowerCase().includes((proposedCourseName || '').toLowerCase()) ||
+        (proposedCourseName || '').toLowerCase().includes((character.current_education_activity || '').toLowerCase())
+      );
+      if (!alreadyMatchesEdu && proposedCourseName) {
+        const eduPatch = {};
+        if (analysis.education_update.current_education_activity != null) eduPatch.current_education_activity = analysis.education_update.current_education_activity;
+        if (analysis.education_update.education_details != null) eduPatch.education_details = analysis.education_update.education_details;
+        if (analysis.education_update.education_start_date != null) eduPatch.education_start_date = analysis.education_update.education_start_date;
+        if (analysis.education_update.education_expected_completion_date != null) eduPatch.education_expected_completion_date = analysis.education_update.education_expected_completion_date;
+        try {
+          await base44.asServiceRole.entities.PendingLifeEvent.create({
+            character_id: character_id,
+            character_name: character.name,
+            change_type: 'education_change',
+            proposed_data: eduPatch,
+            source_description: event_description,
+            human_summary: `Enroll ${character.name} in: "${proposedCourseName}"${analysis.education_update.education_details?.institution ? ' at ' + analysis.education_update.education_details.institution : ''}`,
+            reasoning: analysis.reasoning || '',
+            status: 'pending',
+          });
+        } catch (e) { console.warn('Could not create PendingLifeEvent for education:', e.message); }
+      }
+    }
 
     // Job training — GATE: create PendingLifeEvent instead of applying directly
     if (analysis.job_training_update?.apply) {

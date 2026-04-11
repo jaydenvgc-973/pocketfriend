@@ -21,8 +21,9 @@ import { Button } from "@/components/ui/button";
  */
 export default function PendingLifeEventApproval({ characterId, character }) {
   const queryClient = useQueryClient();
-  const [resolving, setResolving] = useState(null); // pendingId being processed
-  const [showLinkOptions, setShowLinkOptions] = useState(null); // pendingId showing link picker
+  const [resolving, setResolving] = useState(null);
+  const [showLinkOptions, setShowLinkOptions] = useState(null);
+  const [editedDates, setEditedDates] = useState({}); // { [pendingId]: { education_start_date, education_expected_completion_date } }
 
   const { data: pendingEvents = [] } = useQuery({
     queryKey: ["pendingLifeEvents", characterId],
@@ -36,8 +37,9 @@ export default function PendingLifeEventApproval({ characterId, character }) {
 
   const handleAction = async (pendingId, action, linkedToLabel = null) => {
     setResolving(pendingId);
+    const overrideDates = editedDates[pendingId] || {};
     try {
-      await base44.functions.invoke("approvePendingLifeEvent", { pendingId, action, linkedToLabel });
+      await base44.functions.invoke("approvePendingLifeEvent", { pendingId, action, linkedToLabel, overrideDates });
       queryClient.invalidateQueries({ queryKey: ["pendingLifeEvents", characterId] });
       queryClient.invalidateQueries({ queryKey: ["character", characterId] });
     } finally {
@@ -116,6 +118,31 @@ export default function PendingLifeEventApproval({ characterId, character }) {
               <p className="text-xs text-foreground mb-1 font-medium">{event.human_summary}</p>
               {event.reasoning && (
                 <p className="text-[10px] text-muted-foreground mb-3 leading-relaxed">{event.reasoning}</p>
+              )}
+
+              {/* Editable dates for education changes */}
+              {(event.change_type === "education_change" || event.change_type === "job_training_change") && (
+                <div className="mb-3 space-y-2 bg-secondary/40 rounded-xl p-3">
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Edit dates before approving</p>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-1">Enrollment / Start Date</label>
+                    <input
+                      type="date"
+                      defaultValue={(event.proposed_data?.education_start_date || event.proposed_data?.job_training_start_date || '').split('T')[0]}
+                      onChange={e => setEditedDates(prev => ({ ...prev, [event.id]: { ...prev[event.id], [event.change_type === 'education_change' ? 'education_start_date' : 'job_training_start_date']: e.target.value ? new Date(e.target.value).toISOString() : undefined } }))}
+                      className="w-full h-8 px-2 rounded-lg bg-input border border-border text-foreground text-xs outline-none focus:ring-1 focus:ring-primary/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground block mb-1">Expected Completion Date</label>
+                    <input
+                      type="date"
+                      defaultValue={(event.proposed_data?.education_expected_completion_date || event.proposed_data?.job_training_expected_completion_date || '').split('T')[0]}
+                      onChange={e => setEditedDates(prev => ({ ...prev, [event.id]: { ...prev[event.id], [event.change_type === 'education_change' ? 'education_expected_completion_date' : 'job_training_expected_completion_date']: e.target.value ? new Date(e.target.value).toISOString() : undefined } }))}
+                      className="w-full h-8 px-2 rounded-lg bg-input border border-border text-foreground text-xs outline-none focus:ring-1 focus:ring-primary/50"
+                    />
+                  </div>
+                </div>
               )}
 
               {/* Link picker */}

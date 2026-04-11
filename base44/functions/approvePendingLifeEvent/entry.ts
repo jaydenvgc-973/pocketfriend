@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { pendingId, action, linkedToLabel } = await req.json();
+    const { pendingId, action, linkedToLabel, overrideDates } = await req.json();
 
     if (!pendingId || !action) {
       return Response.json({ error: 'pendingId and action required' }, { status: 400 });
@@ -31,8 +31,8 @@ Deno.serve(async (req) => {
     }
 
     if (action === 'approve') {
-      // Apply the proposed_data patch to the Character
-      const proposedData = pending.proposed_data || {};
+      // Apply the proposed_data patch to the Character, merging any user-edited dates
+      const proposedData = { ...(pending.proposed_data || {}), ...(overrideDates || {}) };
       if (Object.keys(proposedData).length > 0) {
         await base44.asServiceRole.entities.Character.update(pending.character_id, proposedData);
       }
