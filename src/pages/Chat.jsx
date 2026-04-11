@@ -904,12 +904,28 @@ export default function Chat() {
       if (character.current_education_activity && character.current_education_activity !== "none") {
         const completionDate = new Date(character.education_expected_completion_date);
         const daysLeft = Math.ceil((completionDate - new Date()) / (1000 * 60 * 60 * 24));
-        educationContext = `\n\nCURRENT LEARNING: You are currently studying ${character.current_education_activity}${character.education_details?.institution ? ` at ${character.education_details.institution}` : ""}. You'll be done in about ${daysLeft} days. Naturally mention your studies, classes, or what you're learning when relevant to the conversation.`;
+        const courseName = character.education_details?.course_name || character.current_education_activity;
+        const institution = character.education_details?.institution;
+        educationContext = `\n\nCURRENT EDUCATION ENROLLMENT: You are currently enrolled in "${courseName}"${institution ? ` at ${institution}` : ""}. ${!isNaN(daysLeft) && daysLeft > 0 ? `You'll be done in about ${daysLeft} days.` : ""} You are aware of your coursework, assignments, and what you're learning. Mention it naturally when relevant — e.g. if asked about your schedule, plans, or something related to the subject matter.`;
+      }
+
+      if (character.current_job_training_activity && character.current_job_training_activity !== "none") {
+        const trainingName = character.job_training_details?.training_name || character.current_job_training_activity;
+        const company = character.job_training_details?.company;
+        const position = character.job_training_details?.position_title;
+        const trainingCompletion = new Date(character.job_training_expected_completion_date);
+        const trainingDaysLeft = Math.ceil((trainingCompletion - new Date()) / (1000 * 60 * 60 * 24));
+        educationContext += `\n\nCURRENT JOB TRAINING: You are currently undergoing job training: "${trainingName}"${company ? ` at ${company}` : ""}${position ? ` for the role of ${position}` : ""}. ${!isNaN(trainingDaysLeft) && trainingDaysLeft > 0 ? `Training wraps up in about ${trainingDaysLeft} days.` : ""} You are aware of this training, what it involves, and how it relates to your career. Reference it naturally when relevant.`;
       }
 
       if (character.completed_education && character.completed_education.length > 0) {
         const completedList = character.completed_education.map(edu => `${edu.course_name}${edu.institution ? ` (${edu.institution})` : ""}`).join(", ");
         educationContext += `\n\nCOMPLETED EDUCATION: You have completed: ${completedList}. You have real knowledge and experience from these courses. When relevant, you can discuss what you learned and apply that knowledge naturally to conversations.`;
+      }
+
+      if (character.completed_job_training && character.completed_job_training.length > 0) {
+        const completedTrainingList = character.completed_job_training.map(t => `${t.training_name}${t.company ? ` (${t.company})` : ""}`).join(", ");
+        educationContext += `\n\nCOMPLETED JOB TRAINING: You have completed the following training programs: ${completedTrainingList}. This has shaped your skills and professional background.`;
       }
 
       let songsContext = "";
