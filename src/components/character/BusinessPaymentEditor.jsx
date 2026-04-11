@@ -48,9 +48,10 @@ export default function BusinessPaymentEditor({ business, characterId, onClose, 
     
     try {
       const paymentAmount = parseFloat(amount);
+      const isLocationBased = !!business.linkedLocationId;
       
       if (type === "revenue") {
-        if (business.isLocationBased) {
+        if (isLocationBased) {
           await base44.entities.LocationReference.update(business.linkedLocationId, {
             income_generated: paymentAmount
           });
