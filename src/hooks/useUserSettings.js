@@ -16,10 +16,10 @@ async function fetchAndConsolidate(userEmail) {
 
 export function useUserSettings() {
   const queryClient = useQueryClient();
-  const [user, setUser] = useQuery({
+  const { data: user = {} } = useQuery({
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
-  }).data || {};
+  });
 
   const { data: settings = null, isLoading } = useQuery({
     queryKey: QUERY_KEY,
