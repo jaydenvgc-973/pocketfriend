@@ -6,18 +6,22 @@ import { base44 } from "@/api/base44Client";
 export default function OnboardingGuard({ children }) {
   const navigate = useNavigate();
 
-  const { data: settings, isLoading: isLoadingSettings } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: async () => {
-      const list = await base44.entities.UserSettings.list();
-      return list[0] || null;
-    },
-  });
-
   const { data: currentUser, isLoading: isLoadingUser } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
   });
+
+  const { data: settings, isLoading: isLoadingSettings } = useQuery({
+    queryKey: ["userSettings", currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return null;
+      const list = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      return list[0] || null;
+    },
+    enabled: !!currentUser?.email,
+  });
+
+
 
   const { data: characters, isLoading: isLoadingChars } = useQuery({
     queryKey: ["characters", currentUser?.email],
