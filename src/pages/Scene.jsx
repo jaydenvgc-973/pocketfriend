@@ -693,30 +693,56 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      // Only people physically present in the house right now:
+      // All people physically present in the house right now:
       // - brought characters (user's companions who traveled here)
-      // - residents who are currently home (not away)
-      // The user themselves is NOT included as a character to render (they're the camera POV)
-      const physicallyPresent = [
+      // - active residents who are currently home (not away)
+      // - NPC family members who live here (from familyMemberNpcsPresent)
+      // - NPC residents listed on the location record (resident_family_members)
+      const physicallyPresentChars = [
         ...homeResidentsPresent,
         ...broughtCharacters,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+
+      // Gather NPC family members present (with their photo_url as avatar references)
+      const npcFamilyPresentAvatars = familyMemberNpcsPresent
+        .map(fm => {
+          // Look up photo_url from the source character's family_members array
+          let photoUrl = null;
+          for (const char of homeResidents) {
+            const match = char.family_members?.find(
+              m => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
+            );
+            if (match?.photo_url) { photoUrl = match.photo_url; break; }
+          }
+          return photoUrl;
+        })
+        .filter(Boolean);
+
+      const allPresentNames = [
+        ...physicallyPresentChars.map(c => c.name),
+        ...familyMemberNpcsPresent.map(fm => fm.name),
+      ];
+
+      // Build strict people instruction
+      const strictPeopleRule = allPresentNames.length > 0
+        ? `STRICT RULE: The ONLY people who may appear in this image are: ${allPresentNames.join(", ")}. Their appearance must match their reference photos exactly — do NOT alter body type, weight, age, or ethnicity. Generate NO other people, NO strangers, NO background figures, NO silhouettes of anyone else.`
+        : `STRICT RULE: This space is completely empty. NO people, NO silhouettes, NO background figures — only the room itself.`;
+
+      // Always depict the home as lived-in and furnished when residents exist
+      const atmosphereSuffix = (location.resident_family_members?.length > 0 || homeResidents.length > 0)
+        ? " The home is clearly lived-in: warm, fully furnished, and decorated with personal belongings."
+        : "";
 
       const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
       const zoneImages = currentZone?.image_urls || [];
 
-      // Build strict people instruction — only exact named residents, no one else ever
-      const strictPeopleRule = physicallyPresent.length > 0
-        ? `STRICT RULE: The ONLY people who may appear in this image are: ${physicallyPresent.map(c => c.name).join(", ")}. Their appearance must match their reference photos exactly — do NOT alter body type, weight, age, or ethnicity. Generate NO other people, NO strangers, NO background figures, NO silhouettes of anyone else.`
-        : `STRICT RULE: This space is completely empty. NO people, NO silhouettes, NO background figures — only the room itself.`;
+      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule} Photorealistic, warm, authentic atmosphere.`;
 
-      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting. ${strictPeopleRule} Photorealistic, warm, authentic atmosphere.`;
-
-      // Use character avatar URLs as primary references so the AI matches their appearance
-      const residentAvatars = physicallyPresent.map(c => c.avatar_url).filter(Boolean);
+      // Collect all available avatar/photo references — character avatars + NPC family photos
+      const residentAvatars = physicallyPresentChars.map(c => c.avatar_url).filter(Boolean);
       const zoneRefs = zoneImages.slice(0, 1);
-      const refs = [...residentAvatars, ...zoneRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
+      const refs = [...residentAvatars, ...npcFamilyPresentAvatars, ...zoneRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
@@ -731,6 +757,14 @@ export default function Scene() {
       const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
       const isGlobal = location.location_type === "global";
 
+      // Collect all avatar references for non-home locations (workers, selected NPCs, brought chars)
+      const allSceneAvatars = [
+        ...broughtCharacters.map(c => c.avatar_url),
+        ...workerCharacters.map(c => c.avatar_url),
+        ...vgcDistributedNpcs.map(c => c.avatar_url),
+        ...selectedNpcs.map(n => n.avatar_url),
+      ].filter(Boolean);
+
       if (isGlobal) {
         // Global location: ambient people are fine, just mention who the user is with
         const charNames = sceneCharacters.map(c => c.name).join(", ");
@@ -738,7 +772,14 @@ export default function Scene() {
         prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
       } else {
         // Character-specific location: ONLY the exact people present, no strangers ever
-        const physicallyPresent = sceneCharacters.filter(c => !c.isNpc || selectedNpcIds?.includes(c.id));
+        // Include workers and NPCs with avatars — they are real staff at this venue
+        const physicallyPresent = [
+          ...broughtCharacters,
+          ...workerCharacters,
+          ...vgcDistributedNpcs,
+          ...(selectedNpcIds ? selectedNpcs : []),
+        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+
         let peopleDesc;
         if (physicallyPresent.length > 0) {
           peopleDesc = `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures whatsoever.`;
@@ -747,18 +788,20 @@ export default function Scene() {
         }
         prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
       }
-    }
 
-    try {
-      const result = await base44.integrations.Core.GenerateImage({
-        prompt,
-        existing_image_urls: firstImage ? [firstImage] : undefined,
-      });
-      setSceneImage(result.url);
-    } catch {
-      setSceneImage(firstImage);
-    } finally {
-      setIsGeneratingImage(false);
+      const nonHomeRefs = [...allSceneAvatars, ...(firstImage ? [firstImage] : [])].slice(0, 4);
+
+      try {
+        const result = await base44.integrations.Core.GenerateImage({
+          prompt,
+          existing_image_urls: nonHomeRefs.length > 0 ? nonHomeRefs : undefined,
+        });
+        setSceneImage(result.url);
+      } catch {
+        setSceneImage(firstImage);
+      } finally {
+        setIsGeneratingImage(false);
+      }
     }
   };
 
