@@ -131,6 +131,7 @@ export default function CharacterProfile() {
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
+    staleTime: 60000,
   });
 
   const { data: allCharacters = [] } = useQuery({
@@ -142,6 +143,7 @@ export default function CharacterProfile() {
       return chars.map(({ system_prompt, ...char }) => char);
     },
     enabled: !!currentUser?.email,
+    staleTime: 30000,
   });
 
   const { data: userSettings = [] } = useQuery({
@@ -150,6 +152,7 @@ export default function CharacterProfile() {
       await new Promise(r => setTimeout(r, 200));
       return base44.entities.UserSettings.list();
     },
+    staleTime: 60000,
   });
 
   const { data: workLocations = [] } = useQuery({
