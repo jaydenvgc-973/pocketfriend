@@ -14,7 +14,17 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
   const updateMutation = useMutation({
     mutationFn: async (updates) => {
       if (isLocationBased) {
-        await base44.entities.LocationReference.update(business.linkedLocationId, updates);
+        // Map income -> income_generated for LocationReference
+        const locationUpdates = { ...updates };
+        if ('income' in locationUpdates) {
+          locationUpdates.income_generated = locationUpdates.income;
+          delete locationUpdates.income;
+        }
+        if ('name' in locationUpdates) {
+          delete locationUpdates.name; // name not editable on location-based
+        }
+        await base44.entities.LocationReference.update(business.linkedLocationId, locationUpdates);
+        queryClient.invalidateQueries({ queryKey: ["ownedLocations", characterId] });
       } else {
         const char = await base44.entities.Character.get(characterId);
         const businesses = char.businesses || [];
