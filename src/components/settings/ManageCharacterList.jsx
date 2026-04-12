@@ -42,23 +42,27 @@ export default function ManageCharacterList() {
   const userAvatar = userSettings?.generated_avatar_urls?.[0] || currentUser?.avatar_url;
   const userItem = currentUser ? { type: 'user', data: { ...currentUser, worldName: userWorldName, avatar_url: userAvatar } } : null;
   
-  const activeChars = characters.filter(c => 
-    (c.character_type === 'active' || c.character_type === 'user_created' || !c.character_type) && c.status === 'active'
+  const activeChars = characters.filter(c =>
+    (c.character_type === 'active' || c.character_type === 'promoted_npc') && c.status === 'active'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-  
-  const npcFictitious = characters.filter(c => 
+
+  const npcFictitious = characters.filter(c =>
     c.character_type === 'npc' && c.status === 'active'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-  
+
   const npcFamily = characters.filter(c =>
-    c.character_type === 'family_npc'
+    c.character_type === 'family_npc' && c.status === 'active'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-  
-  const movedAway = characters.filter(c => 
+
+  const untyped = characters.filter(c =>
+    !c.character_type && c.status === 'active'
+  ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
+
+  const movedAway = characters.filter(c =>
     c.status === 'moved_away'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-  
-  const deleted = characters.filter(c => 
+
+  const deleted = characters.filter(c =>
     c.status === 'deleted' || c.status === 'soft_deleted'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
 
@@ -67,6 +71,7 @@ export default function ManageCharacterList() {
     { title: 'Active Characters', items: activeChars.map(c => ({ type: 'character', data: c })), color: 'bg-green-500/10' },
     { title: 'NPC Fictitious', items: npcFictitious.map(c => ({ type: 'character', data: c })), color: 'bg-purple-500/10' },
     { title: 'NPC Family', items: npcFamily.map(c => ({ type: 'character', data: c })), color: 'bg-blue-500/10' },
+    { title: 'Untyped / Test Characters', items: untyped.map(c => ({ type: 'character', data: c })), color: 'bg-zinc-500/10' },
     { title: 'Moved Away', items: movedAway.map(c => ({ type: 'character', data: c })), color: 'bg-amber-500/10' },
     { title: 'Deleted', items: deleted.map(c => ({ type: 'character', data: c })), color: 'bg-red-500/10' },
   ];

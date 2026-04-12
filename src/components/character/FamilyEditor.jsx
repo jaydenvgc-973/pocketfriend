@@ -381,6 +381,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
   const typeOrder = (t) => t === 'active' || t === 'promoted_npc' ? 0 : t === 'npc' ? 1 : t === 'family_npc' ? 2 : 3;
   const availableCharacters = allCharacters
     .filter(c =>
+      c.character_type &&
       c.id !== character.id &&
       c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged' &&
       !members.some(m => m.name?.trim().toLowerCase() === c.name?.trim().toLowerCase())
