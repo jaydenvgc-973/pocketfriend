@@ -307,13 +307,23 @@ export default function Scene() {
         // Skip if already represented by a real Character entity in sceneCharacters
         const alreadyInScene = characters.find(c => c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
         if (alreadyInScene) return;
+        // Look up avatar from the source character's family_members array
+        const sourceChar = fm.source_character_id
+          ? characters.find(c => c.id === fm.source_character_id)
+          : homeResidents.find(c =>
+              c.family_members?.some(m => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase())
+            );
+        const familyMemberRecord = sourceChar?.family_members?.find(
+          m => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
+        );
+        const avatarUrl = familyMemberRecord?.photo_url || null;
         npcs.push({
           id: `npc_${fm.name.replace(/\s+/g, "_")}`,
           name: fm.name,
           role: fm.relationship_type || "Family",
           isNpc: true,
           npcType: "resident",
-          avatar_url: null,
+          avatar_url: avatarUrl,
         });
       });
     }
