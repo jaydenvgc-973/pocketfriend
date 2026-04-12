@@ -900,7 +900,7 @@
           },
           "type": {
             "type": "string",
-            "description": "Business type (inherited from location or custom)"
+            "description": "Business type"
           },
           "visibility": {
             "type": "string",
@@ -927,6 +927,40 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "employees": {
+            "type": "array",
+            "description": "List of employees working for this business",
+            "items": {
+              "type": "object",
+              "properties": {
+                "character_id": {
+                  "type": "string"
+                },
+                "character_name": {
+                  "type": "string"
+                },
+                "avatar_url": {
+                  "type": "string"
+                },
+                "job_title": {
+                  "type": "string"
+                },
+                "pay_rate": {
+                  "type": "number",
+                  "default": 0
+                },
+                "pay_type": {
+                  "type": "string",
+                  "enum": [
+                    "hourly",
+                    "monthly"
+                  ],
+                  "default": "monthly"
+                }
+              }
+            },
+            "default": []
           }
         },
         "required": [
