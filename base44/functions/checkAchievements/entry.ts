@@ -1,9 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
-// ─────────────────────────────────────────────
-// SHARED DETECTION LOGIC
-// ─────────────────────────────────────────────
-
 // Pattern-based checks on message text
 function detectTextPatternAchievements(msg, existingIds) {
   const text = (msg || '').toLowerCase();
@@ -64,7 +60,7 @@ function detectTextPatternAchievements(msg, existingIds) {
     if (patterns.some(p => p.test(text))) toUnlock.push('the_push');
   }
 
-  // that_meant_something — supportive/warm message
+  // that_meant_something
   if (!has('that_meant_something')) {
     const patterns = [
       /i('m|\s+am)\s+(proud|so proud)\s+of\s+you/i,
@@ -80,7 +76,7 @@ function detectTextPatternAchievements(msg, existingIds) {
     if (patterns.some(p => p.test(text))) toUnlock.push('that_meant_something');
   }
 
-  // tension — caused conflict
+  // tension
   if (!has('tension')) {
     const patterns = [
       /you('re|\s+are)\s+(wrong|being\s+(ridiculous|stupid|dramatic|overreacting))/i,
@@ -124,10 +120,8 @@ function detectTextPatternAchievements(msg, existingIds) {
   return toUnlock;
 }
 
-// ─────────────────────────────────────────────
 // DATA-DRIVEN ACHIEVEMENT CHECKS
 // These require querying the database
-// ─────────────────────────────────────────────
 async function detectDataAchievements(base44, userEmail, characterId, characterName, userMessage, existingIds) {
   const toUnlock = [];
   const has = (id) => existingIds.includes(id);
@@ -147,17 +141,17 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
   const userMessages = allMessages.filter(m => m.sender_type === 'user');
   const charMessages = allMessages.filter(m => m.sender_type === 'character');
 
-  // ── first_impression: sent at least 1 message ever
+  // first_impression: sent at least 1 message ever
   if (!has('first_impression') && userMessages.length >= 1) {
     toUnlock.push('first_impression');
   }
 
-  // ── seen_it_all: received a photo from a character
-  if (!has('seen_it_all') && charMessages.some(m => m.image_url)) {
+  // seen_it_all: received a photo from a character (only if we have character messages)
+  if (!has('seen_it_all') && charMessages.length > 0 && charMessages.some(m => m.image_url)) {
     toUnlock.push('seen_it_all');
   }
 
-  // ── multi-character engagement (no formal badge for this yet but maps to inner_circle proximity)
+  // multi-character engagement (no formal badge for this yet but maps to inner_circle proximity)
   // inner_circle: interacted with the same character across 10+ messages
   if (!has('inner_circle')) {
     const msgsWithThisChar = allMessages.filter(m => 
@@ -169,7 +163,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     }
   }
 
-  // ── still_here: sent messages on 3+ distinct calendar days
+  // still_here: sent messages on 3+ distinct calendar days
   if (!has('still_here')) {
     const days = new Set(
       userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString())
@@ -177,7 +171,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     if (days.size >= 3) toUnlock.push('still_here');
   }
 
-  // ── they_came_back: gap of 3+ days then returned
+  // they_came_back: gap of 3+ days then returned
   if (!has('they_came_back') && userMessages.length >= 2) {
     const sorted = [...userMessages].sort((a, b) => new Date(a.created_date) - new Date(b.created_date));
     for (let i = 1; i < sorted.length; i++) {
@@ -189,7 +183,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     }
   }
 
-  // ── emoji badges: character sent ❤️ reaction to user
+  // emoji badges: character sent heart reaction to user
   const emojiMessages = allMessages.filter(m => 
     m.sender_type === 'user' && 
     m.reactions?.some(r => r.reactor_type === 'character' && r.emoji === '❤️')
@@ -198,16 +192,16 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     toUnlock.push('that_meant_something');
   }
 
-  // ── you_were_there: was present when a character had a major life event (narrative message)
+  // you_were_there: was present when a character had a major life event (narrative message + at least 1 user message)
   if (!has('you_were_there')) {
     const narrativeMessages = charMessages.filter(m => m.is_narrative);
-    if (narrativeMessages.length > 0) toUnlock.push('you_were_there');
+    if (narrativeMessages.length > 0 && userMessages.length > 0) toUnlock.push('you_were_there');
   }
 
-  // ── big_moment: character shared a milestone (narrative + user responded)
+  // big_moment: character shared a milestone (narrative + user responded after)
   if (!has('big_moment')) {
     const narratives = charMessages.filter(m => m.is_narrative);
-    if (narratives.length > 0) {
+    if (narratives.length > 0 && userMessages.length > 0) {
       // Check if user sent at least one message after any narrative
       const narrativeTime = Math.min(...narratives.map(m => new Date(m.created_date).getTime()));
       const respondedAfter = userMessages.some(m => new Date(m.created_date).getTime() > narrativeTime);
@@ -215,8 +209,8 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     }
   }
 
-  // ── clutch_timing: replied within 2 minutes of a character message
-  if (!has('clutch_timing') && userMessages.length >= 1) {
+  // clutch_timing: replied within 2 minutes of a character message
+  if (!has('clutch_timing') && userMessages.length >= 1 && charMessages.length >= 1) {
     for (const cm of charMessages.slice(0, 100)) {
       const cmTime = new Date(cm.created_date).getTime();
       const quickReply = userMessages.find(um => {
@@ -230,7 +224,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     }
   }
 
-  // ── left_on_read: character message unread for 24h+
+  // left_on_read: character message unread for 24h+
   if (!has('left_on_read')) {
     const oldUnread = charMessages.find(m => {
       if (m.is_read) return false;
@@ -240,7 +234,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     if (oldUnread) toUnlock.push('left_on_read');
   }
 
-  // ── ride_along: active convo across 7+ days with same character
+  // ride_along: active convo across 7+ days with same character
   if (!has('ride_along')) {
     const msgsThisChar = allMessages.filter(m => m.character_id === characterId || 
       allMessages.some(cm => cm.conversation_id === m.conversation_id && cm.character_id === characterId)
@@ -252,7 +246,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     }
   }
 
-  // ── they_opened_up: character sent 5+ messages with emotional state = reflective/sad/vulnerable
+  // they_opened_up: character sent 5+ messages with emotional state = reflective/sad/vulnerable
   if (!has('they_opened_up')) {
     const openMessages = charMessages.filter(m => 
       m.character_id === characterId &&
@@ -261,7 +255,7 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
     if (openMessages.length >= 2) toUnlock.push('they_opened_up');
   }
 
-  // ── consistent: messaged on 5+ different days
+  // consistent: messaged on 5+ different days
   if (!has('consistent')) {
     const days = new Set(
       userMessages.map(m => new Date(m.created_date || m.timestamp).toDateString())
@@ -272,9 +266,6 @@ async function detectDataAchievements(base44, userEmail, characterId, characterN
   return [...new Set(toUnlock)]; // dedupe
 }
 
-// ─────────────────────────────────────────────
-// MAIN HANDLER
-// ─────────────────────────────────────────────
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -311,7 +302,7 @@ Deno.serve(async (req) => {
         is_seen: false,
       });
       newlyUnlocked.push(record);
-      existingIds.push(achievement_id); // prevent duplicate within same call
+      existingIds.push(achievement_id);
     }
 
     console.log(`[checkAchievements] user=${user.email} charId=${characterId} textHits=${textAchievements.length} dataHits=${dataAchievements.length} unlocked=${newlyUnlocked.length}`);
