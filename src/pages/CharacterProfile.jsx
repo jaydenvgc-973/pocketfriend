@@ -587,6 +587,7 @@ export default function CharacterProfile() {
             </div>
             {(character.current_education_activity && character.current_education_activity !== "none") && (
               <div className="space-y-0.5">
+                <p className="text-[10px] text-primary/70 uppercase tracking-wider font-semibold mb-1">Currently enrolled</p>
                 <p className="text-sm text-foreground font-medium">{character.education_details?.course_name || character.current_education_activity}</p>
                 {character.education_location_name && (
                   <p className="text-sm text-muted-foreground flex items-center gap-1">
