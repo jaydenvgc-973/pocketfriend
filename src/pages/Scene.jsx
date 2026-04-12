@@ -1072,6 +1072,37 @@ Return JSON:
   // Check if location is closed
   const locationClosed = isLocationOpen(location) === false;
 
+  const renderNpc = (npc) => {
+    const isSelected = selectedNpcs.some(s => s.id === npc.id);
+    return (
+      <button
+        key={npc.id}
+        onClick={() => {
+          setSelectedNpcIds(prev => {
+            const current = prev || [];
+            return isSelected ? current.filter(id => id !== npc.id) : [...current, npc.id];
+          });
+          setShowNpcDropdown(false);
+        }}
+        className={`w-full flex items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-secondary ${
+          isSelected ? "bg-primary/10" : ""
+        }`}
+      >
+        <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0 overflow-hidden">
+          {npc.avatar_url
+            ? <img src={npc.avatar_url} alt={npc.name} className="w-full h-full object-cover" />
+            : <span className="text-[9px] font-bold text-foreground">{npc.name?.[0]}</span>
+          }
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className={`text-xs font-medium truncate ${isSelected ? "text-primary" : "text-foreground"}`}>{npc.name}</p>
+          {npc.mood && <p className="text-[10px] text-muted-foreground truncate">{npc.mood}</p>}
+        </div>
+        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />}
+      </button>
+    );
+  };
+
   if (!location) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
