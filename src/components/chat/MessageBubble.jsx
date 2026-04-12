@@ -139,165 +139,169 @@ export default function MessageBubble({ message, isUser, onReact, onDelete, onDe
       exit={{ opacity: 0, y: -8 }}
       className={cn("flex gap-3 items-end", isUser ? "justify-end" : "justify-start")}
     >
-      {/* Main bubble */}
-      <div className={cn("max-w-[85%] flex flex-col gap-1", isUser && "items-end")}>
-        <div
-          className={cn(
-            "rounded-2xl px-4 py-2.5 relative",
-            isNarrative
-              ? "bg-secondary/30 border border-border/40 text-foreground italic text-sm"
-              : isUser
-              ? "bg-primary text-primary-foreground shadow-md"
-              : "bg-white dark:bg-card border border-border shadow-sm text-foreground"
-          )}
-        >
-          {/* Image loading states */}
-          {message.image_url === 'LOADING' && (
-            <div className="w-48 h-32 rounded-lg bg-secondary flex flex-col gap-3 items-center justify-center p-4">
-              <div className="flex gap-1">
-                <div className="w-2 h-2 rounded-full bg-primary typing-dot-1" />
-                <div className="w-2 h-2 rounded-full bg-primary typing-dot-2" />
-                <div className="w-2 h-2 rounded-full bg-primary typing-dot-3" />
+      {/* Narrative messages: no bubble, just italicized text */}
+      {isNarrative ? (
+        <p className="text-sm leading-relaxed whitespace-pre-wrap italic text-muted-foreground max-w-[85%]">
+          {message.content && filterDashes(message.content)}
+        </p>
+      ) : (
+        <div className={cn("max-w-[85%] flex flex-col gap-1", isUser && "items-end")}>
+          <div
+            className={cn(
+              "rounded-2xl px-4 py-2.5 relative",
+              isUser
+                ? "bg-primary text-primary-foreground shadow-md"
+                : "bg-secondary border border-border shadow-sm text-foreground"
+            )}
+          >
+            {/* Image loading states */}
+            {message.image_url === 'LOADING' && (
+              <div className="w-48 h-32 rounded-lg bg-secondary flex flex-col gap-3 items-center justify-center p-4">
+                <div className="flex gap-1">
+                  <div className="w-2 h-2 rounded-full bg-primary typing-dot-1" />
+                  <div className="w-2 h-2 rounded-full bg-primary typing-dot-2" />
+                  <div className="w-2 h-2 rounded-full bg-primary typing-dot-3" />
+                </div>
+                <p className="text-xs text-muted-foreground">Generating photo...</p>
               </div>
-              <p className="text-xs text-muted-foreground">Generating photo...</p>
-            </div>
-          )}
-          {message.image_url === 'ERROR' && (
-            <div className="w-48 h-32 rounded-lg bg-destructive/10 flex flex-col gap-3 items-center justify-center p-4">
-              {message.image_recovery_attempted ? (
-                <>
-                  <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
-                  <p className="text-xs text-muted-foreground text-center font-medium">Image unavailable</p>
-                  <p className="text-[10px] text-muted-foreground/60 text-center">Recovery failed — try regenerating</p>
-                  <div className="flex flex-col gap-1.5 mt-1 w-full">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, true); }}
-                      className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Regenerate Image
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, false); }}
-                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Try Recovery Again
-                    </button>
-                    {onDelete && (
+            )}
+            {message.image_url === 'ERROR' && (
+              <div className="w-48 h-32 rounded-lg bg-destructive/10 flex flex-col gap-3 items-center justify-center p-4">
+                {message.image_recovery_attempted ? (
+                  <>
+                    <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
+                    <p className="text-xs text-muted-foreground text-center font-medium">Image unavailable</p>
+                    <p className="text-[10px] text-muted-foreground/60 text-center">Recovery failed — try regenerating</p>
+                    <div className="flex flex-col gap-1.5 mt-1 w-full">
                       <button
-                        onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors w-full"
+                        onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, true); }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
                       >
-                        <Trash2 className="w-3 h-3" /> Delete
+                        <RefreshCw className="w-3 h-3" /> Regenerate Image
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, false); }}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Try Recovery Again
+                      </button>
+                      {onDelete && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
+                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors w-full"
+                        >
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </button>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <ImageIcon className="w-7 h-7 text-muted-foreground/50" />
+                    <p className="text-xs text-muted-foreground text-center">Photo incoming</p>
+                    <div className="flex flex-col gap-1.5 mt-1 w-full">
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, false); }}
+                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Load Photo
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, true); }}
+                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                      >
+                        <RefreshCw className="w-3 h-3" /> Regenerate
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+            {message.image_url && message.image_url !== 'LOADING' && message.image_url !== 'ERROR' && (
+              <div
+                className="relative group/image"
+                onMouseEnter={() => setShowImageDelete(true)}
+                onMouseLeave={() => setShowImageDelete(false)}
+              >
+                <img
+                  src={message.image_url}
+                  alt="shared photo"
+                  className="w-full max-w-xs rounded-t-2xl object-cover"
+                />
+                {showImageDelete && (
+                  <div className="absolute inset-0 bg-black/40 rounded-t-2xl flex items-center justify-center gap-2">
+                    {!isUser && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
+                        className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
+                        title="Regenerate"
+                      >
+                        {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                      </button>
+                    )}
+                    {onDeleteImage && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteImage(message.id); setShowImageDelete(false); }}
+                        className="p-2 rounded-full bg-destructive/80 text-white hover:bg-destructive transition-colors"
+                        title="Delete image"
+                      >
+                        <X className="w-4 h-4" />
                       </button>
                     )}
                   </div>
-                </>
-              ) : (
-                <>
-                  <ImageIcon className="w-7 h-7 text-muted-foreground/50" />
-                  <p className="text-xs text-muted-foreground text-center">Photo incoming</p>
-                  <div className="flex flex-col gap-1.5 mt-1 w-full">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, false); }}
-                      className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Load Photo
-                    </button>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onReloadImage?.(message.id, true); }}
-                      className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                    >
-                      <RefreshCw className="w-3 h-3" /> Regenerate
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-          {message.image_url && message.image_url !== 'LOADING' && message.image_url !== 'ERROR' && (
-            <div
-              className="relative group/image"
-              onMouseEnter={() => setShowImageDelete(true)}
-              onMouseLeave={() => setShowImageDelete(false)}
-            >
-              <img
-                src={message.image_url}
-                alt="shared photo"
-                className="w-full max-w-xs rounded-t-2xl object-cover"
-              />
-              {showImageDelete && (
-                <div className="absolute inset-0 bg-black/40 rounded-t-2xl flex items-center justify-center gap-2">
-                  {!isUser && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setShowRegenModal(true); }}
-                      className="p-2 rounded-full bg-white/20 text-white hover:bg-white/30 transition-colors"
-                      title="Regenerate"
-                    >
-                      {isRegenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                    </button>
-                  )}
-                  {onDeleteImage && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onDeleteImage(message.id); setShowImageDelete(false); }}
-                      className="p-2 rounded-full bg-destructive/80 text-white hover:bg-destructive transition-colors"
-                      title="Delete image"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          <RegenerateImageModal
-            isOpen={showRegenModal}
-            onClose={() => { setShowRegenModal(false); setRegenError(null); }}
-            onSelect={handleRegenSelect}
-            isRegenerating={isRegenerating}
-            error={regenError}
-            originalPrompt={message.generation_context?.prompt || null}
-          />
-          {message.content && message.content.trim() && (
-            message.is_forwarded ? (
-              <div className="px-4 py-2.5">
-                <div className="flex items-center gap-1 mb-1">
-                  <Forward className="w-3 h-3 text-primary/60" />
-                  <span className="text-[10px] text-primary/60 font-medium">Fwd from {message.forwarded_from || "them"}</span>
-                </div>
-                <p className="text-sm leading-relaxed whitespace-pre-wrap border-l-2 border-primary/30 pl-2">
-                  {message.content.replace(/^Fwd Message from [^:]+:\n?/, "")}
-                </p>
+                )}
               </div>
-            ) : (
-              <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{isUser ? message.content : filterDashes(message.content)}</p>
-            )
-          )}
-          {message.songs_heard && message.songs_heard.length > 0 && (
-            <div className="px-4 py-3 space-y-2">
-              {message.songs_heard.map((song, idx) => (
-                <MusicPreviewPlayer key={idx} song={song} platform={song.platform || 'spotify'} />
-              ))}
-            </div>
-          )}
-          {message.videos_watched && message.videos_watched.length > 0 && (
-            <div className="px-4 py-3 space-y-2">
-              {message.videos_watched.map((video, idx) => (
-                <VideoPreviewCard key={idx} video={video} platform={video.platform || 'generic'} />
-              ))}
+            )}
+            <RegenerateImageModal
+              isOpen={showRegenModal}
+              onClose={() => { setShowRegenModal(false); setRegenError(null); }}
+              onSelect={handleRegenSelect}
+              isRegenerating={isRegenerating}
+              error={regenError}
+              originalPrompt={message.generation_context?.prompt || null}
+            />
+            {message.content && message.content.trim() && (
+              message.is_forwarded ? (
+                <div className="px-4 py-2.5">
+                  <div className="flex items-center gap-1 mb-1">
+                    <Forward className="w-3 h-3 text-primary/60" />
+                    <span className="text-[10px] text-primary/60 font-medium">Fwd from {message.forwarded_from || "them"}</span>
+                  </div>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap border-l-2 border-primary/30 pl-2">
+                    {message.content.replace(/^Fwd Message from [^:]+:\n?/, "")}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{isUser ? message.content : filterDashes(message.content)}</p>
+              )
+            )}
+            {message.songs_heard && message.songs_heard.length > 0 && (
+              <div className="px-4 py-3 space-y-2">
+                {message.songs_heard.map((song, idx) => (
+                  <MusicPreviewPlayer key={idx} song={song} platform={song.platform || 'spotify'} />
+                ))}
+              </div>
+            )}
+            {message.videos_watched && message.videos_watched.length > 0 && (
+              <div className="px-4 py-3 space-y-2">
+                {message.videos_watched.map((video, idx) => (
+                  <VideoPreviewCard key={idx} video={video} platform={video.platform || 'generic'} />
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Reactions + voice + add button */}
+          {!isUser && (
+            <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
+              {hasReactions && (
+                <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
+              )}
+              {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
             </div>
           )}
         </div>
-
-        {/* Reactions + voice + add button */}
-        {!isNarrative && !isUser && (
-          <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
-            {hasReactions && (
-              <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
-            )}
-            {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
-          </div>
-        )}
-      </div>
+      )}
 
       {time && (
         <span className={`text-[10px] text-muted-foreground mt-1 ${isUser ? "mr-2" : "ml-2"}`}>{time}</span>
