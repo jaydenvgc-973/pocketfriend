@@ -484,12 +484,20 @@ function CharacterPickerDropdown({ characters, onSelect }) {
   );
 }
 
+const LEARNING_MODES = [
+  { value: 'on_demand', label: 'Online / On-Demand', desc: 'Anytime, anywhere' },
+  { value: 'remote_scheduled', label: 'Remote Scheduled', desc: 'Fixed schedule, no travel' },
+  { value: 'in_person', label: 'In-Person', desc: 'Must attend location' },
+];
+
+const EDU_STATUSES = ['active', 'at_risk', 'completed', 'dropped'];
+
 // ── Education Editor ─────────────────────────────────────────────────────────
 function EducationEditor({ character }) {
   const queryClient = useQueryClient();
   const [entries, setEntries] = useState(character.completed_education || []);
   const [showAdd, setShowAdd] = useState(false);
-  const [newEntry, setNewEntry] = useState({ course_name: '', institution: '', completion_date: '', start_date: '' });
+  const [newEntry, setNewEntry] = useState({ course_name: '', institution: '', completion_date: '', start_date: '', mode: 'on_demand', status: 'active', progress: 0 });
   const [dateError, setDateError] = useState('');
 
   useEffect(() => { setEntries(character.completed_education || []); }, [character.completed_education]);
@@ -509,7 +517,7 @@ function EducationEditor({ character }) {
     const updated = [...entries, { ...newEntry }];
     setEntries(updated);
     await save(updated);
-    setNewEntry({ course_name: '', institution: '', completion_date: '', start_date: '' });
+    setNewEntry({ course_name: '', institution: '', completion_date: '', start_date: '', mode: 'on_demand', status: 'active', progress: 0 });
     setShowAdd(false);
   };
 
@@ -519,20 +527,17 @@ function EducationEditor({ character }) {
     await save(updated);
   };
 
-  // Single update path — always saves with the freshly computed value to avoid stale closure bugs
   const updateAndSave = async (idx, field, value) => {
     const updated = entries.map((e, i) => i === idx ? { ...e, [field]: value } : e);
     setEntries(updated);
     await save(updated);
   };
 
-  // Active education (current)
   const activeProgramName = character.education_details?.course_name || character.current_education_activity;
   const hasActive = activeProgramName && activeProgramName !== 'none';
 
   return (
     <div className="space-y-3">
-      {/* Active education display + completion date */}
       {hasActive && (
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
           <p className="text-xs font-semibold text-primary">Currently Enrolled</p>
@@ -562,7 +567,6 @@ function EducationEditor({ character }) {
         </div>
       )}
 
-      {/* Completed education list */}
       {entries.map((edu, idx) => (
         <div key={idx} className="rounded-xl border border-border bg-secondary/30 p-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -579,6 +583,33 @@ function EducationEditor({ character }) {
             onChange={e => updateAndSave(idx, 'institution', e.target.value)}
             className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
           />
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase">Learning Mode</p>
+            <select value={edu.mode || 'on_demand'}
+              onChange={e => updateAndSave(idx, 'mode', e.target.value)}
+              className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+            >
+              {LEARNING_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">Status</p>
+              <select value={edu.status || 'active'}
+                onChange={e => updateAndSave(idx, 'status', e.target.value)}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none capitalize"
+              >
+                {EDU_STATUSES.map(s => <option key={s} value={s} className="capitalize">{s}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground">Progress %</p>
+              <input type="number" min="0" max="100" value={edu.progress ?? 0}
+                onChange={e => updateAndSave(idx, 'progress', Math.min(100, Math.max(0, parseInt(e.target.value) || 0)))}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              />
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground">Start Date</p>
@@ -598,17 +629,25 @@ function EducationEditor({ character }) {
         </div>
       ))}
 
-      {/* Add new entry */}
       {showAdd ? (
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-3 space-y-2">
           <input value={newEntry.course_name} placeholder="Program / Course name *"
             onChange={e => setNewEntry(p => ({ ...p, course_name: e.target.value }))}
             className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
           />
-          <input value={newEntry.institution} placeholder="Institution"
+          <input value={newEntry.institution} placeholder="Institution (optional)"
             onChange={e => setNewEntry(p => ({ ...p, institution: e.target.value }))}
             className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
           />
+          <div className="space-y-1">
+            <p className="text-[10px] text-muted-foreground uppercase">Learning Mode</p>
+            <select value={newEntry.mode}
+              onChange={e => setNewEntry(p => ({ ...p, mode: e.target.value }))}
+              className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+            >
+              {LEARNING_MODES.map(m => <option key={m.value} value={m.value}>{m.label} — {m.desc}</option>)}
+            </select>
+          </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground">Start Date</p>

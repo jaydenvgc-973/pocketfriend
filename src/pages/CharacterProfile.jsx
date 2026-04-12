@@ -628,11 +628,28 @@ export default function CharacterProfile() {
                     <div>
                       <p className="text-xs font-medium text-foreground mb-2">Currently Working On</p>
                       <div className="space-y-1">
-                        {currentItems.map((edu, idx) => (
-                          <div key={idx} className="pl-3 border-l-2 border-primary/40">
-                            <p className="text-sm text-foreground">
-                              {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                            </p>
+                        {currentItems.map((edu, idx) => {
+                            const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote Scheduled' : 'On-Demand';
+                            const modeColor = edu.mode === 'in_person' ? 'text-orange-400 border-orange-400/30' : edu.mode === 'remote_scheduled' ? 'text-blue-400 border-blue-400/30' : 'text-emerald-400 border-emerald-400/30';
+                            return (
+                          <div key={idx} className="pl-3 border-l-2 border-primary/40 space-y-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm text-foreground font-medium">
+                                {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                              </p>
+                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full bg-secondary border ${modeColor}`}>{modeLabel}</span>
+                            </div>
+                            {typeof edu.progress === 'number' && edu.progress > 0 && (
+                              <div className="space-y-0.5">
+                                <div className="flex justify-between">
+                                  <span className="text-[10px] text-muted-foreground">Progress</span>
+                                  <span className="text-[10px] text-foreground font-medium">{edu.progress}%</span>
+                                </div>
+                                <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                                  <div className="h-full bg-primary transition-all" style={{ width: `${edu.progress}%` }} />
+                                </div>
+                              </div>
+                            )}
                             {edu.start_date && (
                               <p className="text-xs text-muted-foreground/70">
                                 Started {format(new Date(edu.start_date), "MMM yyyy")}
@@ -644,7 +661,8 @@ export default function CharacterProfile() {
                               </p>
                             )}
                           </div>
-                        ))}
+                            );
+                          })}
                       </div>
                     </div>
                   )}
@@ -652,18 +670,27 @@ export default function CharacterProfile() {
                     <div>
                       <p className="text-xs font-medium text-foreground mb-2">Completed</p>
                       <div className="space-y-1">
-                        {completedItems.map((edu, idx) => (
+                        {completedItems.map((edu, idx) => {
+                            const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
+                            const statusColor = edu.status === 'at_risk' ? 'text-orange-400' : edu.status === 'dropped' ? 'text-destructive' : 'text-muted-foreground/60';
+                            return (
                           <div key={idx}>
-                            <p className="text-sm text-muted-foreground">
-                              {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                            </p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="text-sm text-muted-foreground">
+                                {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                              </p>
+                              {modeLabel && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
+                              )}
+                            </div>
                             {edu.completion_date && (
                               <p className="text-xs text-muted-foreground/60">
                                 Completed {format(new Date(edu.completion_date), "MMM yyyy")}
                               </p>
                             )}
                           </div>
-                        ))}
+                            );
+                          })}
                       </div>
                     </div>
                   )}
