@@ -51,7 +51,7 @@ export default function ManageCharacterList() {
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   const npcFamily = characters.filter(c =>
-    c.character_type === 'family_npc' && c.status === 'active'
+    c.character_type === 'family_npc'
   ).sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
   
   const movedAway = characters.filter(c => 
