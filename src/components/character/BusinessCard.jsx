@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useQueryClient, useMutation } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { ChevronDown, Edit2, Trash2, Users } from "lucide-react";
+import BusinessEmployeePanel from "./BusinessEmployeePanel";
 
 export default function BusinessCard({ business, characterId, isLocationBased, onDelete }) {
   const queryClient = useQueryClient();
@@ -14,15 +15,12 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
   const updateMutation = useMutation({
     mutationFn: async (updates) => {
       if (isLocationBased) {
-        // Map income -> income_generated for LocationReference
         const locationUpdates = { ...updates };
         if ('income' in locationUpdates) {
           locationUpdates.income_generated = locationUpdates.income;
           delete locationUpdates.income;
         }
-        if ('name' in locationUpdates) {
-          delete locationUpdates.name; // name not editable on location-based
-        }
+        if ('name' in locationUpdates) delete locationUpdates.name;
         await base44.entities.LocationReference.update(business.linkedLocationId, locationUpdates);
         queryClient.invalidateQueries({ queryKey: ["ownedLocations", characterId] });
       } else {
@@ -38,23 +36,24 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
     },
   });
 
+  const handleEmployeeUpdate = (updates) => {
+    updateMutation.mutate(updates);
+  };
+
   const handleSaveEdits = async () => {
     const updates = {};
     if (editingName !== business.name) updates.name = editingName;
     if (editingNotes !== (business.notes || "")) updates.notes = editingNotes;
     if (editingRevenue !== (business.income || 0)) updates.income = parseFloat(editingRevenue);
-
-    if (Object.keys(updates).length > 0) {
-      await updateMutation.mutateAsync(updates);
-    }
+    if (Object.keys(updates).length > 0) await updateMutation.mutateAsync(updates);
     setIsEditing(false);
   };
 
-  const workerCount = business.worker_character_ids?.length || 0;
+  const employeeCount = (business.employees || []).length;
 
   return (
     <div className="bg-secondary/30 rounded-xl border border-border overflow-hidden">
-      {/* Header - Always visible */}
+      {/* Header */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between p-3 hover:bg-secondary/50 transition-colors text-left"
@@ -62,19 +61,15 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground truncate">{business.name}</p>
           <div className="flex items-center gap-3 mt-1">
-            <span className="text-xs text-green-400 font-semibold">${(business.income || 0).toFixed(2)}</span>
-            {workerCount > 0 && (
+            <span className="text-xs text-green-400 font-semibold">${(business.income || 0).toFixed(2)}/mo</span>
+            {employeeCount > 0 && (
               <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Users className="w-3 h-3" /> {workerCount}
+                <Users className="w-3 h-3" /> {employeeCount} emp.
               </span>
             )}
           </div>
         </div>
-        <ChevronDown
-          className={`w-4 h-4 text-muted-foreground transition-transform flex-shrink-0 ${
-            expanded ? "rotate-180" : ""
-          }`}
-        />
+        <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform flex-shrink-0 ${expanded ? "rotate-180" : ""}`} />
       </button>
 
       {/* Expanded Content */}
@@ -82,17 +77,10 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
         <div className="border-t border-border px-3 py-3 space-y-3 bg-secondary/20">
           {!isEditing ? (
             <>
-              {/* Display Mode */}
               {business.notes && (
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Notes</p>
                   <p className="text-xs text-foreground leading-relaxed">{business.notes}</p>
-                </div>
-              )}
-              {!isLocationBased && workerCount > 0 && (
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Workers</p>
-                  <p className="text-xs text-foreground">{workerCount} employees assigned</p>
                 </div>
               )}
               <button
@@ -101,10 +89,24 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
               >
                 <Edit2 className="w-3 h-3" /> Edit
               </button>
+              {!isLocationBased && (
+                <div className="pt-2 border-t border-border mt-2">
+                  <BusinessEmployeePanel
+                    business={business}
+                    characterId={characterId}
+                    onBusinessUpdate={handleEmployeeUpdate}
+                  />
+                </div>
+              )}
+              <button
+                onClick={() => onDelete(business.id)}
+                className="w-full text-xs text-destructive hover:bg-destructive/10 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1"
+              >
+                <Trash2 className="w-3 h-3" /> Delete Business
+              </button>
             </>
           ) : (
             <>
-              {/* Edit Mode */}
               <div className="space-y-2">
                 <div>
                   <p className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Business Name</p>
@@ -150,16 +152,6 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
                 </button>
               </div>
             </>
-          )}
-
-          {/* Delete Button */}
-          {!isEditing && (
-            <button
-              onClick={() => onDelete(business.id)}
-              className="w-full text-xs text-destructive hover:bg-destructive/10 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-1"
-            >
-              <Trash2 className="w-3 h-3" /> Delete Business
-            </button>
           )}
         </div>
       )}
