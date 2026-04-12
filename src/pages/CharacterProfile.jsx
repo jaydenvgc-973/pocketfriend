@@ -614,7 +614,7 @@ export default function CharacterProfile() {
             {(() => {
               const now = new Date();
               const currentItems = (character.completed_education || []).filter(edu => {
-                if (!edu.completion_date) return true;
+                if (!edu.completion_date) return false;
                 return new Date(edu.completion_date) > now;
               });
               const completedItems = (character.completed_education || []).filter(edu => {
