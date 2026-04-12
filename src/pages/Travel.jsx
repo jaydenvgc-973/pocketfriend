@@ -557,9 +557,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   }
 
                   const presenceSummary = lines.length > 0 ? (
-                    <div className="space-y-0.5">
+                    <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
                       {lines.map((l, i) => (
-                        <p key={i} className="text-xs">
+                        <p key={i} className="text-xs truncate">
                           <span className="text-foreground font-medium">{l.name}</span>
                           <span className={`ml-1 ${l.color}`}>is {l.status}</span>
                         </p>
