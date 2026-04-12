@@ -6,6 +6,8 @@ import { Trash2, MoreVertical } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
+const ADMIN_EMAIL = 'murqart@gmail.com';
+
 export default function ManageCharacterList() {
   const queryClient = useQueryClient();
   const [expandedMenu, setExpandedMenu] = useState(null);
@@ -20,9 +22,17 @@ export default function ManageCharacterList() {
     queryFn: () => base44.entities.UserSettings.list().then(list => list[0] || {}),
   });
 
+  const isAdmin = currentUser?.email === ADMIN_EMAIL;
+
   const { data: characters = [] } = useQuery({
-    queryKey: ['all-characters'],
-    queryFn: () => base44.entities.Character.list('-created_date', 200),
+    queryKey: ['all-characters', currentUser?.email],
+    queryFn: () => {
+      if (!currentUser?.email) return [];
+      return isAdmin
+        ? base44.entities.Character.list('-created_date', 200)
+        : base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 200);
+    },
+    enabled: !!currentUser?.email,
   });
 
   const deleteMutation = useMutation({
