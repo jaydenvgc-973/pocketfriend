@@ -77,8 +77,6 @@ export default function Chat() {
   const { activeCharacter } = useActiveCharacter();
   const { pendingApproval, checkForApprovalEvents, approveEvent, dismissApproval } = useApprovalEvents();
   const queryClient = useQueryClient();
-  // Unified behaviour engine — all Chat decisions reference this
-  const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
   const isMountedRef = useRef(true);
@@ -96,6 +94,9 @@ export default function Chat() {
     },
     enabled: !!characterId,
   });
+
+  // Unified behaviour engine — placed after character query to avoid 'cannot access before initialization'
+  const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
 
   const { data: settings = [] } = useQuery({
     queryKey: ["userSettings"],
