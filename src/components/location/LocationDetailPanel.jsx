@@ -1,8 +1,7 @@
+import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Users, DollarSign, Clock, ArrowRight } from "lucide-react";
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
-import { Home, User, Users, Briefcase, DollarSign, Clock, GraduationCap, Dumbbell, ShoppingCart, Heart, ArrowRight } from "lucide-react";
-
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -25,11 +24,10 @@ function SectionHeader({ icon: Icon, label }) {
 }
 
 export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null }) {
-  // Hooks must be called unconditionally at top level
+  if (!location) return null;
+
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
-
-  if (!location) return null;
 
   const cat = location.category || 'generic';
   const totalUtilities = location.utility_costs

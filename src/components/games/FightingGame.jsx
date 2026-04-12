@@ -162,7 +162,7 @@ export default function FightingGame({ character, onEnd }) {
       {/* Battle Log */}
       <div className="bg-black/50 rounded-xl p-3 h-20 overflow-y-auto text-xs text-gray-300 space-y-1 border border-purple-500/20">
         {battleLog.slice(-4).map((log, i) => (
-          <p key={i} className="text-purple-300" dangerouslySetInnerHTML={{ __html: `&gt; ${log}` }} />
+          <p key={i} className="text-purple-300">> {log}</p>
         ))}
       </div>
 
