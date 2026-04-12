@@ -3,23 +3,29 @@ import { base44 } from "@/api/base44Client";
 
 const QUERY_KEY = ["userSettings"];
 
-async function fetchAndConsolidate() {
-  const list = await base44.entities.UserSettings.list();
+async function fetchAndConsolidate(userEmail) {
+  if (!userEmail) return null;
+  const list = await base44.entities.UserSettings.filter({ created_by: userEmail });
   if (list.length === 0) return null;
   if (list.length === 1) return list[0];
   // Silently consolidate duplicates
   await base44.functions.invoke("consolidateUserSettings", {});
-  const consolidated = await base44.entities.UserSettings.list();
+  const consolidated = await base44.entities.UserSettings.filter({ created_by: userEmail });
   return consolidated[0] || null;
 }
 
 export function useUserSettings() {
   const queryClient = useQueryClient();
+  const [user, setUser] = useQuery({
+    queryKey: ['user'],
+    queryFn: () => base44.auth.me(),
+  }).data || {};
 
   const { data: settings = null, isLoading } = useQuery({
     queryKey: QUERY_KEY,
-    queryFn: fetchAndConsolidate,
+    queryFn: () => fetchAndConsolidate(user?.email),
     staleTime: 30_000, // 30s — avoids hammering the API on every render
+    enabled: !!user?.email,
   });
 
   const mutation = useMutation({
@@ -32,7 +38,7 @@ export function useUserSettings() {
         return base44.entities.UserSettings.update(settings.id, data);
       }
       // Re-fetch before creating to prevent race-condition duplicates
-      const freshList = await base44.entities.UserSettings.list();
+      const freshList = await base44.entities.UserSettings.filter({ created_by: user?.email });
       if (freshList[0]?.id) {
         return base44.entities.UserSettings.update(freshList[0].id, data);
       }

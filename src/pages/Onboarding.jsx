@@ -14,12 +14,19 @@ export default function Onboarding() {
   const [characterName, setCharacterName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const { data: currentUser } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: userSettings } = useQuery({
-    queryKey: ["userSettings"],
+    queryKey: ['userSettings', currentUser?.email],
     queryFn: async () => {
-      const settings = await base44.entities.UserSettings.list();
-      return settings[0];
+      if (!currentUser?.email) return null;
+      const settings = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      return settings[0] || null;
     },
+    enabled: !!currentUser?.email,
   });
 
   // Redirect away from onboarding if already completed
