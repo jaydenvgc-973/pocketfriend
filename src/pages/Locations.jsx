@@ -953,8 +953,12 @@ export default function Locations() {
   });
 
   const { data: userSettings = null } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: async () => { const s = await base44.entities.UserSettings.list(); return s[0] || null; },
+    queryKey: ["userSettings", currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return null;
+      const s = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      return s[0] || null;
+    },
     enabled: !!currentUser?.email,
   });
 

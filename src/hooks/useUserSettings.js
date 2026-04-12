@@ -1,8 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 
-const QUERY_KEY = ["userSettings"];
-
 async function fetchAndConsolidate(userEmail) {
   if (!userEmail) return null;
   const list = await base44.entities.UserSettings.filter({ created_by: userEmail });
@@ -21,10 +19,12 @@ export function useUserSettings() {
     queryFn: () => base44.auth.me(),
   });
 
+  const queryKey = ["userSettings", user?.email];
+
   const { data: settings = null, isLoading } = useQuery({
-    queryKey: QUERY_KEY,
+    queryKey,
     queryFn: () => fetchAndConsolidate(user?.email),
-    staleTime: 30_000, // 30s — avoids hammering the API on every render
+    staleTime: 30_000,
     enabled: !!user?.email,
   });
 
@@ -32,7 +32,7 @@ export function useUserSettings() {
     mutationFn: async (data) => {
       if (!data) return;
       // Optimistically update cache
-      queryClient.setQueryData(QUERY_KEY, (old) => old ? { ...old, ...data } : data);
+      queryClient.setQueryData(queryKey, (old) => old ? { ...old, ...data } : data);
 
       if (settings?.id) {
         return base44.entities.UserSettings.update(settings.id, data);
@@ -44,7 +44,7 @@ export function useUserSettings() {
       }
       return base44.entities.UserSettings.create(data);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: QUERY_KEY }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
 
   return {

@@ -5,8 +5,8 @@ Deno.serve(async (req) => {
   const user = await base44.auth.me();
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-  // Get all UserSettings records for this user
-  const allSettings = await base44.entities.UserSettings.list();
+  // Get all UserSettings records for THIS USER ONLY
+  const allSettings = await base44.entities.UserSettings.filter({ created_by: user.email });
 
   if (allSettings.length <= 1) {
     return Response.json({ message: 'No duplicates found', count: allSettings.length });

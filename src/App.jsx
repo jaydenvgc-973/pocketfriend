@@ -116,12 +116,13 @@ function App() {
   useEffect(() => {
     const checkHolidaysSetting = async () => {
       try {
-        const settings = await base44.entities.UserSettings.list();
-        if (settings[0]) {
-          setHolidaysEnabled(settings[0].holiday_observation_enabled !== false);
+        const me = await base44.auth.me().catch(() => null);
+        if (!me?.email) return;
+        const settingsList = await base44.entities.UserSettings.filter({ created_by: me.email });
+        if (settingsList[0]) {
+          setHolidaysEnabled(settingsList[0].holiday_observation_enabled !== false);
         }
       } catch (error) {
-        // Silently fail on rate limit or other errors
         console.error('Failed to check holiday setting:', error);
       }
     };

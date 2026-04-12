@@ -23,12 +23,12 @@ export default function Travel() {
   const navigate = useNavigate();
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
-  const [convincedCharacterIds, setConvincedCharacterIds] = useState([]); // chars who agreed despite being busy
-  const [unavailablePopup, setUnavailablePopup] = useState(null); // array of { character, reason, availableAt }
-  const [busyPopup, setBusyPopup] = useState(null); // { character, reason, charId }
+  const [convincedCharacterIds, setConvincedCharacterIds] = useState([]);
+  const [unavailablePopup, setUnavailablePopup] = useState(null);
+  const [busyPopup, setBusyPopup] = useState(null);
   const [isTraveling, setIsTraveling] = useState(false);
   const [isConvincing, setIsConvincing] = useState(false);
-  const [wakeUpModal, setWakeUpModal] = useState(null); // { character, pendingCharacterId }
+  const [wakeUpModal, setWakeUpModal] = useState(null);
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [showRealLocationModal, setShowRealLocationModal] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
@@ -39,8 +39,11 @@ export default function Travel() {
   });
 
   const { data: settingsList = [] } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
+    queryKey: ["userSettings", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserSettings.filter({ created_by: currentUser.email })
+      : [],
+    enabled: !!currentUser?.email,
   });
 
   const { data: characters = [] } = useQuery({
@@ -64,15 +67,11 @@ export default function Travel() {
   const settings = settingsList[0] || {};
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
-  /**
-   * Format operating hours for a location into a human-readable string.
-   */
   const formatOperatingHours = (location) => {
     const hours = location?.operating_hours;
     if (!hours || hours.length === 0) return null;
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const fmt = (t) => toDisplay12h(t);
-    // Group days with same hours
     const unique = hours.map(w => `${fmt(w.open_time)} – ${fmt(w.close_time)}`);
     const first = unique[0];
     const allSame = unique.every(u => u === first);
@@ -80,31 +79,17 @@ export default function Travel() {
     return hours.map(w => `${w.day_of_week != null ? dayNames[w.day_of_week] + " " : ""}${fmt(w.open_time)} – ${fmt(w.close_time)}`).join(", ");
   };
 
-  /**
-   * For a given location, check if we're allowed to visit it.
-   * AUTHORITATIVE: Residency is determined by current_home_location_id only.
-   * Returns: { canVisit, blockedBy, homeResidents, npcResidents }
-   */
   const checkHomeAccess = (location) => {
     if (!location || location.category !== "home") {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
-
-    // Residents are those whose current_home_location_id matches this location
     const homeResidents = characters.filter(c => c.current_home_location_id === location.id);
-
-    // NPC residents listed on the location
     const npcResidents = location.resident_family_members || [];
-
-    // Can visit if any character is home, there are NPC residents, OR user has a key
     const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
     const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || userHasKey;
-
-    // If no one lives here, always allow entry
     if (homeResidents.length === 0 && npcResidents.length === 0) {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
-
     return {
       canVisit,
       blockedBy: !canVisit ? { name: location.name } : null,
@@ -116,25 +101,19 @@ export default function Travel() {
   const toggleCharacter = (charId) => {
     const char = characters.find(c => c.id === charId);
     if (!char) return;
-
-    // Check if character is asleep — offer wake-up option instead of blocking
     if (isCharacterAsleep(char)) {
       setWakeUpModal({ character: char, pendingCharacterId: charId });
       return;
     }
-
     const availability = getCharacterTravelAvailability(char, locationMap);
     if (!availability.available) {
-      // If they're busy (not unavailable due to other reasons), show convince popup
       if (availability.isBusy) {
         setBusyPopup({ character: char, reason: availability.reason, charId });
         return;
       }
-      // Otherwise show unavailable popup
       setUnavailablePopup([{ character: char, reason: availability.reason, availableAt: availability.availableAt }]);
       return;
     }
-
     setSelectedCharacterIds(prev =>
       prev.includes(charId) ? prev.filter(id => id !== charId) : [...prev, charId]
     );
@@ -143,41 +122,25 @@ export default function Travel() {
   const handleConvinceCharacter = async () => {
     if (!busyPopup?.charId) return;
     setIsConvincing(true);
-
     try {
-      // Call LLM to generate convince response
       const char = characters.find(c => c.id === busyPopup.charId);
       if (!char) return;
-
       const convinceRes = await base44.integrations.Core.InvokeLLM({
         prompt: `You are ${char.name}. You are currently busy: ${busyPopup.reason}.
 The user is trying to convince you to come with them anyway. Based on your personality (${char.personality_summary || "friendly"}), would you agree to reschedule or join them?
 
 Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me just...") or politely decline with a reason.`,
       });
-
       const response = convinceRes?.trim() || "Sorry, I really can't leave right now.";
-      
-      // 50/50 chance they agree
       const agreed = Math.random() > 0.5;
-
       if (agreed) {
-        setSelectedCharacterIds(prev =>
-          prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]
-        );
-        setConvincedCharacterIds(prev =>
-          prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]
-        );
+        setSelectedCharacterIds(prev => prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]);
+        setConvincedCharacterIds(prev => prev.includes(busyPopup.charId) ? prev : [...prev, busyPopup.charId]);
         setBusyPopup(null);
       } else {
-        // Show their response
         setUnavailablePopup([{
           character: char,
-          reason: {
-            iconType: "info",
-            message: response,
-            color: "text-muted-foreground",
-          },
+          reason: { iconType: "info", message: response, color: "text-muted-foreground" },
           availableAt: "Maybe ask them later",
         }]);
         setBusyPopup(null);
@@ -193,32 +156,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   const handleWakeUp = async () => {
     if (!wakeUpModal?.pendingCharacterId) return;
     setIsWakingUp(true);
-
     try {
       const char = characters.find(c => c.id === wakeUpModal.pendingCharacterId);
       if (!char) return;
-
-      // Generate personality-based wake response
       const wakeRes = await base44.functions.invoke('generateWakeUpResponse', {
         characterId: char.id,
         characterData: char,
       });
-
-      if (!wakeRes?.data?.success) {
-        throw new Error('Failed to generate wake response');
-      }
-
+      if (!wakeRes?.data?.success) throw new Error('Failed to generate wake response');
       const { outcome, moodModifier, prepTimeMs } = wakeRes.data;
       const wakeResponse = wakeRes.data.wakeResponse;
-
-      // Store wake context temporarily for venue interaction
-      sessionStorage.setItem(`char_wake_${char.id}`, JSON.stringify({
-        woken: true,
-        moodModifier,
-        timestamp: Date.now(),
-      }));
-
-      // Show the wake response
+      sessionStorage.setItem(`char_wake_${char.id}`, JSON.stringify({ woken: true, moodModifier, timestamp: Date.now() }));
       setUnavailablePopup([{
         character: char,
         reason: {
@@ -228,24 +176,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         },
         availableAt: outcome === 'refused' ? 'They declined' : `Getting ready... (${Math.ceil(prepTimeMs / 1000)}s)`,
       }]);
-
-      // If they agreed or are negotiating, add them after prep time
       if (outcome !== 'refused') {
         await new Promise(r => setTimeout(r, prepTimeMs));
-        setSelectedCharacterIds(prev =>
-          prev.includes(char.id) ? prev : [...prev, char.id]
-        );
+        setSelectedCharacterIds(prev => prev.includes(char.id) ? prev : [...prev, char.id]);
         setUnavailablePopup(null);
       }
     } catch (err) {
       console.error('Wake-up failed:', err);
       setUnavailablePopup([{
         character: wakeUpModal.character,
-        reason: {
-          iconType: 'error',
-          message: 'Failed to wake them up',
-          color: 'text-destructive',
-        },
+        reason: { iconType: 'error', message: 'Failed to wake them up', color: 'text-destructive' },
         availableAt: 'Try again',
       }]);
     } finally {
@@ -254,30 +194,19 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     }
   };
 
-  const handleLeaveAsleep = () => {
-    setWakeUpModal(null);
-  };
+  const handleLeaveAsleep = () => setWakeUpModal(null);
 
   const handleRealLocationConfirm = async (locationData) => {
     setIsTraveling(true);
     try {
-      // Create (or retrieve) a LocationReference for this verified place
       const res = await base44.functions.invoke('createLocationFromVerified', {
         verifiedLocationId: locationData.verifiedLocationId,
       });
-
       const locationReferenceId = res?.data?.location_reference_id;
       if (!locationReferenceId) throw new Error('Failed to create location');
-
-      // Short travel delay
       const travelMs = 2000 + Math.random() * 4000;
       await new Promise(r => setTimeout(r, travelMs));
-
-      // Navigate to scene
-      const params = new URLSearchParams({
-        locationId: locationReferenceId,
-        characterIds: selectedCharacterIds.join(","),
-      });
+      const params = new URLSearchParams({ locationId: locationReferenceId, characterIds: selectedCharacterIds.join(",") });
       navigate(`/scene?${params.toString()}`);
     } catch (err) {
       console.error('Real location travel failed:', err);
@@ -293,24 +222,16 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
   const handleTravel = async () => {
     if (!selectedLocation) return;
-
-    // Check if the venue is currently closed (only for locations with defined hours)
     const isOpen = isLocationActiveNow(selectedLocation);
     if (isOpen === false) {
       const hoursStr = formatOperatingHours(selectedLocation);
       setUnavailablePopup([{
         character: { id: "closed", name: selectedLocation.name, avatar_url: null },
-        reason: {
-          iconType: "out",
-          message: `${selectedLocation.name} is closed right now.`,
-          color: "text-amber-400",
-        },
+        reason: { iconType: "out", message: `${selectedLocation.name} is closed right now.`, color: "text-amber-400" },
         availableAt: hoursStr ? `Hours: ${hoursStr}` : "Check back later",
       }]);
       return;
     }
-
-    // Check home access (read-only validation)
     const homeAccess = checkHomeAccess(selectedLocation);
     if (!homeAccess.canVisit) {
       setUnavailablePopup([{
@@ -320,35 +241,20 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       }]);
       return;
     }
-
-    // Validate selected characters (read-only check from resolved state)
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
         const char = characters.find(c => c.id === id);
         if (!char) return null;
-        // Check resolved location state to see if they're available
         const avail = getCharacterTravelAvailability(char, locationMap);
         return avail.available ? null : { character: char, reason: avail.reason, availableAt: avail.availableAt };
       })
       .filter(Boolean);
-
-    if (unavailable.length > 0) {
-      setUnavailablePopup(unavailable);
-      return;
-    }
-
+    if (unavailable.length > 0) { setUnavailablePopup(unavailable); return; }
     setIsTraveling(true);
-
-    // Travel takes realistic time: 2–8 seconds simulated delay
     const travelMs = 2000 + Math.random() * 6000;
     await new Promise(r => setTimeout(r, travelMs));
-
-    // Navigate to scene page with location + characters
-    const params = new URLSearchParams({
-      locationId: selectedLocation.id,
-      characterIds: selectedCharacterIds.join(","),
-    });
+    const params = new URLSearchParams({ locationId: selectedLocation.id, characterIds: selectedCharacterIds.join(",") });
     navigate(`/scene?${params.toString()}`);
   };
 
@@ -356,15 +262,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     ? "Go alone"
     : `Go with ${selectedCharacterIds.length} character${selectedCharacterIds.length > 1 ? "s" : ""}`;
 
-  // Sort locations: those with images first (alphabetically), then those without images (alphabetically)
   const sortedLocations = [...locationsData].sort((a, b) => {
     const aHasImages = (a.zones || []).some(z => z.image_urls?.length > 0);
     const bHasImages = (b.zones || []).some(z => z.image_urls?.length > 0);
-
-    if (aHasImages !== bHasImages) {
-      return bHasImages ? 1 : -1; // images first
-    }
-    return (a.name || "").localeCompare(b.name || ""); // alphabetically within each group
+    if (aHasImages !== bHasImages) return bHasImages ? 1 : -1;
+    return (a.name || "").localeCompare(b.name || "");
   });
 
   return (
@@ -388,69 +290,53 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6">
-         {/* Character selection */}
-                <div>
-                  <div className="flex items-center gap-2 mb-3">
-                    <Users className="w-4 h-4 text-muted-foreground" />
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
-                  </div>
-                  <TravelCharacterSelector
-                    characters={characters}
-                    currentUser={currentUser}
-                    displayName={displayName}
-                    selectedIds={selectedCharacterIds}
-                    locationMap={locationMap}
-                    onToggle={toggleCharacter}
-                  />
-                </div>
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <Users className="w-4 h-4 text-muted-foreground" />
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
+          </div>
+          <TravelCharacterSelector
+            characters={characters}
+            currentUser={currentUser}
+            displayName={displayName}
+            selectedIds={selectedCharacterIds}
+            locationMap={locationMap}
+            onToggle={toggleCharacter}
+          />
+        </div>
 
-                {/* Travel location search textbox - must activate on first tap */}
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Search or select location:</p>
-                  <input
-                    type="text"
-                    placeholder="Type location name..."
-                    className="w-full px-4 py-2 rounded-xl bg-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground text-sm"
-                    onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
-                    onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
-                    onInput={(e) => {
-                      // Filter locations based on search input
-                      const searchTerm = e.target.value.toLowerCase();
-                      if (searchTerm) {
-                        const filtered = sortedLocations.filter(l => 
-                          l.name.toLowerCase().includes(searchTerm)
-                        );
-                        if (filtered.length > 0) {
-                          setSelectedLocation(filtered[0]);
-                        }
-                      }
-                    }}
-                  />
-                </div>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">Search or select location:</p>
+          <input
+            type="text"
+            placeholder="Type location name..."
+            className="w-full px-4 py-2 rounded-xl bg-secondary border border-border focus:outline-none focus:ring-2 focus:ring-primary/50 text-foreground text-sm"
+            onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
+            onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+            onInput={(e) => {
+              const searchTerm = e.target.value.toLowerCase();
+              if (searchTerm) {
+                const filtered = sortedLocations.filter(l => l.name.toLowerCase().includes(searchTerm));
+                if (filtered.length > 0) setSelectedLocation(filtered[0]);
+              }
+            }}
+          />
+        </div>
 
-         {/* Location grid */}
-         <div className="space-y-3">
-           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Where are you going?</p>
-           <TravelLocationGrid
-             locations={sortedLocations}
-             selectedLocation={selectedLocation}
-             onSelect={setSelectedLocation}
-             characters={characters}
-           />
-           
-           {/* Visit a real location button */}
-           <Button
-             onClick={() => setShowRealLocationModal(true)}
-             variant="outline"
-             size="sm"
-             className="w-full rounded-xl gap-2"
-           >
-             <Plus className="w-4 h-4" />
-             Visit a Real Location
-           </Button>
-         </div>
+        <div className="space-y-3">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Where are you going?</p>
+          <TravelLocationGrid
+            locations={sortedLocations}
+            selectedLocation={selectedLocation}
+            onSelect={setSelectedLocation}
+            characters={characters}
+          />
+          <Button onClick={() => setShowRealLocationModal(true)} variant="outline" size="sm" className="w-full rounded-xl gap-2">
+            <Plus className="w-4 h-4" />
+            Visit a Real Location
+          </Button>
+        </div>
 
-        {/* Travel button */}
         <AnimatePresence>
           {selectedLocation && (
             <motion.div
@@ -476,7 +362,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const isHome = selectedLocation.category === "home";
                   const isClosed = isLocationActiveNow(selectedLocation) === false;
 
-                  // If closed, show nothing about who's there — just the closed notice
                   if (isClosed) {
                     return (
                       <div className="text-center py-1">
@@ -485,18 +370,15 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     );
                   }
 
-                  // Build presence summary
                   const lines = [];
 
                   if (isHome) {
-                    // LIVE: compute actual current location from engine
                     const charactersAtHome = characters.filter(c => {
                       const resolved = resolveCharacterLocation(c, locationMap);
                       return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
-                    // Show family_npc Character entities who are residents of this home
                     characters.filter(c =>
                       c.character_type === 'family_npc' &&
                       c.status === 'active' &&
@@ -507,9 +389,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       }
                     });
 
-                    // Show NPC family members who are present at this home.
-                    // Present = no current_location_id set, OR current_location_id === this location.
-                    // We do NOT require fictional_relationships lookup — resident_family_members is authoritative.
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
                       if (!locFamilyMember.name) return;
                       let npcLocationId = null;
@@ -526,14 +405,12 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       }
                     });
                   } else {
-                    // LIVE: compute actual current location from engine
                     const currentlyAtLocation = characters.filter(c => {
                       const resolved = resolveCharacterLocation(c, locationMap);
                       return resolved.resolved_current_location_id === selectedLocation.id;
                     });
                     currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
-                    // Show NPCs currently traveling/working at this location
                     characters.forEach(char => {
                       if (!char.fictional_relationships) return;
                       char.fictional_relationships.forEach(rel => {
@@ -545,7 +422,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       });
                     });
 
-                    // REAL WORKERS: Show if they have resolved location at this workplace AND are on shift
                     const now = new Date();
                     const dayOfWeek = now.getDay();
                     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
@@ -553,11 +429,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     characters.forEach(c => {
                       const resolvedC = resolveCharacterLocation(c, locationMap);
                       if (resolvedC.resolved_current_location_id === selectedLocation.id) {
-                        // Character is here - check if they're on shift
                         const workerShifts = selectedLocation.worker_shifts || {};
                         const shift = workerShifts[c.id];
                         if (shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end) {
-                          // Already added above, just mark as working
                           const idx = lines.findIndex(l => l.name === c.name);
                           if (idx >= 0) lines[idx].status = "working";
                         }
@@ -654,7 +528,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
       <BottomNav />
 
-      {/* Debug Panel */}
       <AnimatePresence>
         {showDebug && (
           <motion.div
@@ -669,29 +542,21 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                 <button
                   onClick={async () => {
                     await base44.functions.invoke('populateNPCLocations', {});
-                    // Refetch to see updates
                     setTimeout(() => window.location.reload(), 500);
                   }}
                   className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
-                  title="Populate missing NPC locations"
                 >
                   Fix NPCs
                 </button>
                 <button onClick={() => setShowDebug(false)} className="text-muted-foreground hover:text-foreground">✕</button>
               </div>
             </div>
-
-            {/* Locations */}
             <div className="space-y-1 text-xs">
               <p className="font-medium text-muted-foreground">Locations: {locationsData.length}</p>
               {locationsData.map(l => (
-                <div key={l.id} className="text-[10px] text-muted-foreground/70 truncate">
-                  • {l.name} (id: {l.id.slice(0, 8)})
-                </div>
+                <div key={l.id} className="text-[10px] text-muted-foreground/70 truncate">• {l.name} (id: {l.id.slice(0, 8)})</div>
               ))}
             </div>
-
-            {/* Characters */}
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Characters: {characters.length}</p>
               {characters.map(c => {
@@ -703,8 +568,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                 );
               })}
             </div>
-
-            {/* All NPCs */}
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">All NPCs:</p>
               {characters.length > 0 ? (
