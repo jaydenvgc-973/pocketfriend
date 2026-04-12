@@ -2,12 +2,11 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 /**
  * Fetch all locations relevant to the user:
- * - User-created locations (created_by: user.email)
- * - Admin-created shared world locations (park, homes, church, gym, etc.)
- * - Generic homes for their characters (even if currently empty/unoccupied)
- * - Named homes linked to their characters via character_id, resident_character_ids, or worker_character_ids
- * - NPC Hub
- * - Default world locations (park, hospital, grocery store)
+ * - User-created locations (created_by: user.email, location_type: 'global')
+ * - Admin-created shared locations (location_type: 'shared')
+ * - Character-specific locations linked to their characters
+ * - For admins: All global locations they created + all shared locations
+ * - For regular users: Their global + all shared + character-linked
  *
  * IMPORTANT: A location existing is enough to show it. Empty/vacant locations must appear.
  * Never filter out a location just because resident_count = 0 or no current occupants.
@@ -33,7 +32,6 @@ Deno.serve(async (req) => {
     const userCharIds = new Set(userCharacters.map(c => c.id));
 
     // Build a set of all location IDs referenced from character profiles
-    // (occupation_location_id, education_location_id, home via resident_character_ids)
     const charLinkedLocationIds = new Set();
     for (const char of userCharacters) {
       if (char.occupation_location_id) charLinkedLocationIds.add(char.occupation_location_id);
@@ -51,12 +49,22 @@ Deno.serve(async (req) => {
     }
 
     const RESIDENTIAL_CATEGORIES = new Set(['home', 'generic']);
-    const ADMIN_EMAIL = 'murqart@gmail.com'; // Admin account for shared world locations
+    const isAdmin = user.role === 'admin';
 
-    // Include user-created locations + admin-created (shared world) locations
-    const relevantLocations = allLocations.filter(loc => 
-      loc.created_by === user.email || loc.created_by === ADMIN_EMAIL
-    );
+    // Filter locations based on user role and location type
+    const relevantLocations = allLocations.filter(loc => {
+      // Shared locations are visible to everyone
+      if (loc.location_type === 'shared') return true;
+      
+      // Admin: see their own global + all shared
+      if (isAdmin) return loc.created_by === user.email;
+      
+      // Regular user: see their own + character-linked locations
+      if (loc.created_by === user.email) return true;
+      if (charLinkedLocationIds.has(loc.id)) return true;
+      
+      return false;
+    });
 
     return Response.json({
       success: true,
@@ -64,10 +72,9 @@ Deno.serve(async (req) => {
       totalCount: relevantLocations.length,
       summary: {
         userCreated: relevantLocations.filter(l => l.created_by === user.email).length,
-        adminShared: relevantLocations.filter(l => l.created_by === ADMIN_EMAIL).length,
-        genericHomes: relevantLocations.filter(l => l.is_default_generic).length,
+        shared: relevantLocations.filter(l => l.location_type === 'shared').length,
+        characterLinked: relevantLocations.filter(l => charLinkedLocationIds.has(l.id)).length,
         residentialTotal: relevantLocations.filter(l => RESIDENTIAL_CATEGORIES.has(l.category)).length,
-        npcHub: relevantLocations.some(l => l.name === 'NPC Hub') ? 1 : 0,
       },
     });
   } catch (error) {

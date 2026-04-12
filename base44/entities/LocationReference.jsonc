@@ -10,10 +10,11 @@
       "type": "string",
       "enum": [
         "global",
-        "character_specific"
+        "character_specific",
+        "shared"
       ],
       "default": "global",
-      "description": "Whether this location is shared across all characters or specific to one"
+      "description": "global = user-specific, character_specific = tied to one character, shared = visible to all users but not editable unless claimed"
     },
     "category": {
       "type": "string",
