@@ -226,28 +226,56 @@ export default function Scene() {
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
 
-  // Family NPCs for home scenes (legacy fictional_relationships approach)
+  // Family NPCs for home scenes.
+  // A family NPC is "present" if their current_location_id is unset (default = home) or === this location.
+  // A family NPC is "away" if their current_location_id is set to a DIFFERENT location.
+  // We do NOT require fictional_relationships lookup — resident_family_members is the source of truth.
+  const getFamilyNpcLocationId = (fm) => {
+    // Check source character's fictional_relationships for current_location_id
+    for (const char of homeResidents) {
+      const rel = char.fictional_relationships?.find(
+        r => r.person_name?.trim().toLowerCase() === fm.name?.trim().toLowerCase() && !r.related_character_id
+      );
+      if (rel) return rel.current_location_id || null;
+    }
+    return null; // no location set = home by default
+  };
+
   const familyMemberNpcsAway = isHomeLocation
     ? (location.resident_family_members || []).filter(fm => {
-        const ownerChar = homeResidents.find(c =>
-          c.fictional_relationships?.some(rel => rel.person_name === fm.name && !rel.related_character_id)
-        );
-        if (!ownerChar) return false;
-        const npcRel = ownerChar.fictional_relationships.find(rel => rel.person_name === fm.name && !rel.related_character_id);
-        return npcRel?.current_location_id && npcRel.current_location_id !== location.id;
+        if (!fm.name) return false;
+        const locId = getFamilyNpcLocationId(fm);
+        return locId && locId !== location.id;
       })
     : [];
 
   const familyMemberNpcsPresent = isHomeLocation
     ? (location.resident_family_members || []).filter(fm => {
-        const ownerChar = homeResidents.find(c =>
-          c.fictional_relationships?.some(rel => rel.person_name === fm.name && !rel.related_character_id)
-        );
-        if (!ownerChar) return false;
-        const npcRel = ownerChar.fictional_relationships.find(rel => rel.person_name === fm.name && !rel.related_character_id);
-        return !npcRel?.current_location_id || npcRel.current_location_id === location.id;
+        if (!fm.name) return false;
+        const locId = getFamilyNpcLocationId(fm);
+        return !locId || locId === location.id;
       })
     : [];
+
+  // Build NPC pseudo-characters for family members present (for sceneCharacters roster)
+  const familyNpcSceneObjects = familyMemberNpcsPresent.map(fm => {
+    // Look up photo_url from source character's family_members array
+    let photoUrl = null;
+    for (const char of homeResidents) {
+      const match = char.family_members?.find(
+        m => m.name?.trim().toLowerCase() === fm.name?.trim().toLowerCase()
+      );
+      if (match?.photo_url) { photoUrl = match.photo_url; break; }
+    }
+    return {
+      id: `npc_family_${fm.name.replace(/\s+/g, '_')}`,
+      name: fm.name,
+      role: fm.relationship_type || 'Family',
+      isNpc: true,
+      character_type: 'family_npc',
+      avatar_url: photoUrl,
+    };
+  });
 
   // Workers: ONLY if they have a valid resolved presence at this location (not just assignment)
   // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
@@ -482,16 +510,22 @@ export default function Scene() {
     : [];
 
   // ── AUTHORITATIVE SCENE ROSTER ───────────────────────────────────────────────
-  // Built fresh per location load. No stale data merging.
-  // Priority order: brought chars → home residents → on-shift workers → VGC distributed NPCs → selected NPC overlays → extras
+  // Priority order: brought chars → home residents → family NPCs present → on-shift workers → VGC distributed NPCs → traveling NPCs → selected NPC overlays → extras
   const sceneCharacters = [
     ...broughtCharacters,
     ...(isHomeLocation ? homeResidentsPresent : []),
+    // Family NPCs who are home — always auto-present, no selection needed
+    ...familyNpcSceneObjects.filter(fn => !broughtCharacters.find(b => b.name === fn.name)),
     ...workerCharacters,
     // VGC Towers NPCs who are authoritatively distributed to this location
     ...vgcDistributedNpcs.filter(n =>
       !broughtCharacters.find(b => b.id === n.id) &&
       !workerCharacters.find(w => w.id === n.id)
+    ),
+    // NPCs traveling to this location via fictional_relationships — auto-present
+    ...npcsTravelingHere.filter(n =>
+      !broughtCharacters.find(b => b.id === n.id) &&
+      !familyNpcSceneObjects.find(fn => fn.name === n.name)
     ),
     ...selectedNpcs,
     ...extraNpcs,
@@ -1429,9 +1463,9 @@ Return JSON:
             You arrive at {location.name}
             {broughtCharacters.length > 0 ? ` with ${broughtCharacters.map(c => c.name).join(", ")}` : ""}
           </span>
-          {homeResidentsPresent.length > 0 && (
+          {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && (
             <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">
-              {[...homeResidentsPresent, ...familyMemberNpcsPresent.map(fm => ({ name: fm.name }))].map(c => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home
+              {[...homeResidentsPresent, ...familyMemberNpcsPresent].map(c => c.name).join(", ")} {homeResidentsPresent.length + familyMemberNpcsPresent.length === 1 ? "is" : "are"} home
             </span></div>
           )}
           {(homeResidentsAway.length > 0 || familyMemberNpcsAway.length > 0) && (
