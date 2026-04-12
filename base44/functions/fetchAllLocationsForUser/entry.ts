@@ -51,28 +51,7 @@ Deno.serve(async (req) => {
 
     const RESIDENTIAL_CATEGORIES = new Set(['home', 'generic']);
 
-    const relevantLocations = allLocations.filter(loc => {
-      // 1. User-created locations — always show
-      if (loc.created_by === user.email) return true;
-
-      // 2. All global locations — show in the list for reference
-      if (loc.location_type === 'global') return true;
-
-      // 3. Residential locations that reference any of the user's characters
-      if (RESIDENTIAL_CATEGORIES.has(loc.category)) {
-        const hasResidentLink = (loc.resident_character_ids || []).some(id => userCharIds.has(id));
-        const hasCharLink = loc.character_id && userCharIds.has(loc.character_id);
-        if (hasResidentLink || hasCharLink) return true;
-      }
-
-      // 4. Any location directly linked from a character's profile fields
-      if (charLinkedLocationIds.has(loc.id)) return true;
-
-      // 5. NPC Hub
-      if (loc.name === 'NPC Hub') return true;
-
-      return false;
-    });
+    const relevantLocations = allLocations.filter(loc => loc.created_by === user.email);
 
     return Response.json({
       success: true,
