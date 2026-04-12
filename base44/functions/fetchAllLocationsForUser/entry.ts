@@ -56,8 +56,8 @@ Deno.serve(async (req) => {
       // Shared locations are visible to everyone
       if (loc.location_type === 'shared') return true;
       
-      // Admin: see their own global + all shared
-      if (isAdmin) return loc.created_by === user.email;
+      // Admin: see all locations
+      if (isAdmin) return true;
       
       // Regular user: see their own + character-linked locations
       if (loc.created_by === user.email) return true;
