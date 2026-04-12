@@ -154,6 +154,7 @@ export default function CreateCharacter() {
   const [isGeneratingSituation, setIsGeneratingSituation] = useState(false);
   const [isExtractingFamily, setIsExtractingFamily] = useState(false);
   const [familyExtracted, setFamilyExtracted] = useState(false);
+  const [pendingFamilyMembers, setPendingFamilyMembers] = useState([]); // proposed — not yet approved
   const [isGeneratingOccupation, setIsGeneratingOccupation] = useState(false);
   const [isGeneratingCriminalRecord, setIsGeneratingCriminalRecord] = useState(false);
 
@@ -295,6 +296,7 @@ export default function CreateCharacter() {
     const text = [data.background, data.personality_override, data.situation_override].filter(Boolean).join("\n\n");
     if (!text.trim()) return;
     setIsExtractingFamily(true);
+    setPendingFamilyMembers([]);
     const result = await base44.integrations.Core.InvokeLLM({
       prompt: `Read the following character description and extract any explicitly named family members mentioned. Only include people who are clearly described as family (e.g. "her mom Sarah", "his brother Darius", "raised by her grandmother Elena"). Do not invent or assume. If no family members are mentioned by name, return an empty array.
 
@@ -321,12 +323,21 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
     setIsExtractingFamily(false);
     setFamilyExtracted(true);
     if (result?.members?.length > 0) {
-      // Merge with any manually added entries, avoid duplicates by name
+      // Show as PENDING — user must approve each one before they are added
       const existing = data.family_members || [];
-      const existingNames = existing.map(m => m.name.toLowerCase());
-      const newOnes = result.members.filter(m => !existingNames.includes(m.name.toLowerCase()));
-      update("family_members", [...existing, ...newOnes]);
+      const existingNames = existing.map(m => (m.name || '').toLowerCase());
+      const newOnes = result.members.filter(m => m.name && !existingNames.includes(m.name.toLowerCase()));
+      setPendingFamilyMembers(newOnes); // do NOT auto-add — wait for user approval
     }
+  };
+
+  const approvePendingFamilyMember = (member) => {
+    update("family_members", [...(data.family_members || []), member]);
+    setPendingFamilyMembers(prev => prev.filter(m => m.name !== member.name));
+  };
+
+  const rejectPendingFamilyMember = (member) => {
+    setPendingFamilyMembers(prev => prev.filter(m => m.name !== member.name));
   };
 
   const toggleVibe = (v) => setData(prev => {
@@ -1038,11 +1049,39 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
           className="w-full flex items-center gap-2 justify-center py-3 rounded-xl bg-primary/10 text-primary text-sm font-medium hover:bg-primary/20 transition-colors disabled:opacity-50"
         >
           <Sparkles className="w-4 h-4" />
-          {isExtractingFamily ? "Reading backstory..." : "Extract family from backstory"}
+          {isExtractingFamily ? "Reading backstory..." : "Scan backstory for family names"}
         </button>
       )}
-      {familyExtracted && (data.family_members || []).length === 0 && (
+      {familyExtracted && pendingFamilyMembers.length === 0 && (data.family_members || []).length === 0 && (
         <p className="text-xs text-primary/70 text-center">No family names found in the backstory. Add them manually below if needed.</p>
+      )}
+
+      {/* Pending approval — user must approve each one individually */}
+      {pendingFamilyMembers.length > 0 && (
+        <div className="border border-amber-500/30 bg-amber-500/5 rounded-xl p-3 space-y-2">
+          <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Found in backstory — approve to add</p>
+          <p className="text-xs text-muted-foreground">These names were detected. You must approve each one before they are added to the family list.</p>
+          {pendingFamilyMembers.map((member, idx) => (
+            <div key={idx} className="flex items-center gap-2 bg-card rounded-lg px-3 py-2">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-foreground">{member.name}</p>
+                <p className="text-xs text-muted-foreground capitalize">{member.relationship_type}</p>
+              </div>
+              <button
+                onClick={() => approvePendingFamilyMember(member)}
+                className="px-3 py-1 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors"
+              >
+                Add
+              </button>
+              <button
+                onClick={() => rejectPendingFamilyMember(member)}
+                className="px-3 py-1 rounded-lg bg-secondary text-muted-foreground text-xs hover:text-destructive transition-colors"
+              >
+                Skip
+              </button>
+            </div>
+          ))}
+        </div>
       )}
 
       <div className="space-y-2">
