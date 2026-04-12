@@ -163,11 +163,16 @@ export default function CreateCharacter() {
     queryFn: () => base44.auth.me(),
   });
 
+  const isAdmin = currentUser?.email === 'murqart@gmail.com';
+
   const { data: existingCharacters = [] } = useQuery({
     queryKey: ["characters"],
     queryFn: () => currentUser?.email ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date") : [],
     enabled: !!currentUser?.email,
   });
+
+  const activeCharCount = existingCharacters.filter(c => (c.character_type === 'active' || c.character_type === 'promoted_npc') && c.status === 'active').length;
+  const canCreateCharacter = isAdmin || activeCharCount < 4;
 
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
@@ -361,6 +366,10 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
   const [isRandomCreating, setIsRandomCreating] = useState(false);
 
   const handleRandomCreate = async () => {
+    if (!canCreateCharacter && !isAdmin) {
+      alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
+      return;
+    }
     setIsRandomCreating(true);
     try {
       // Pick random attributes
@@ -523,6 +532,10 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
   const removeMemory = (title) => update("memories", data.memories.filter(m => m.title !== title));
 
   const handleCreate = async () => {
+    if (!canCreateCharacter && !isAdmin) {
+      alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
+      return;
+    }
     setIsCreating(true);
     try {
       // Auto-generate avatar if none provided
@@ -753,14 +766,14 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
          // Force a fresh refetch before navigating
          await queryClient.refetchQueries({ queryKey: ["characters", currentUser?.email] });
          navigate("/home");
-      } else {
-        throw new Error(res?.data?.error || "Failed to create character");
-      }
-    } catch (error) {
-      setIsCreating(false);
-      alert("Failed to create character. Please check your connection and try again.");
-    }
-  };
+       } else {
+         throw new Error(res?.data?.error || "Failed to create character");
+       }
+     } catch (error) {
+       setIsCreating(false);
+       alert("Failed to create character. Please check your connection and try again.");
+     }
+   };
 
   const chipClass = (selected) =>
     `py-2.5 px-3 rounded-xl text-sm border transition-colors text-left cursor-pointer ${selected ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`;
@@ -1302,8 +1315,8 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
               Next <ArrowRight className="w-4 h-4" />
             </Button>
           ) : (
-            <Button onClick={handleCreate} disabled={isCreating} className="flex-1 h-12 rounded-xl">
-              {isCreating ? "Creating..." : "Create Character"}
+            <Button onClick={handleCreate} disabled={isCreating || (!canCreateCharacter && !isAdmin)} className="flex-1 h-12 rounded-xl">
+              {isCreating ? "Creating..." : !canCreateCharacter && !isAdmin ? "Max 4 characters reached" : "Create Character"}
             </Button>
           )}
         </div>
@@ -1312,8 +1325,8 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
             <Button
               variant="outline"
               onClick={handleRandomCreate}
-              disabled={isRandomCreating}
-              className="w-full h-12 rounded-xl gap-2 border-dashed text-muted-foreground hover:text-foreground hover:border-primary/50"
+              disabled={isRandomCreating || (!canCreateCharacter && !isAdmin)}
+              className="w-full h-12 rounded-xl gap-2 border-dashed text-muted-foreground hover:text-foreground hover:border-primary/50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Sparkles className="w-4 h-4" />
               {isRandomCreating ? "Generating character..." : "Random — create someone automatically"}

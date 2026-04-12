@@ -28,9 +28,7 @@ export default function ManageCharacterList() {
     queryKey: ['all-characters', currentUser?.email],
     queryFn: () => {
       if (!currentUser?.email) return [];
-      return isAdmin
-        ? base44.entities.Character.list('-created_date', 200)
-        : base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 200);
+      return base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 200);
     },
     enabled: !!currentUser?.email,
   });
@@ -124,6 +122,9 @@ export default function ManageCharacterList() {
                           <p className="text-sm font-medium text-foreground truncate">{item.type === 'user' ? itemData.worldName : itemName}</p>
                           {item.type === 'character' && itemData.character_type && (
                             <p className="text-xs text-muted-foreground">{itemData.character_type}</p>
+                          )}
+                          {item.type === 'character' && isAdmin && itemData.created_by && (
+                            <p className="text-xs text-muted-foreground/70">{itemData.created_by}</p>
                           )}
                         </div>
                       </div>
