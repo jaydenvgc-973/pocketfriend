@@ -4,7 +4,7 @@ import { base44 } from "@/api/base44Client";
 import { ChevronDown, Edit2, Trash2, Users } from "lucide-react";
 import BusinessEmployeePanel from "./BusinessEmployeePanel";
 
-export default function BusinessCard({ business, characterId, isLocationBased, onDelete }) {
+export default function BusinessCard({ business, characterId, isLocationBased, onDelete, allCharacters = [] }) {
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
   const [editingName, setEditingName] = useState(business.name);
@@ -96,6 +96,7 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
                     business={business}
                     characterId={characterId}
                     onBusinessUpdate={handleEmployeeUpdate}
+                    allCharacters={allCharacters}
                   />
                 </div>
               )}

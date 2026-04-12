@@ -25,6 +25,12 @@ export default function CharacterBusinessesPanel({ characterId }) {
   const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
 
+  const { data: allCharacters = [] } = useQuery({
+    queryKey: ["characters_for_biz"],
+    queryFn: () => base44.entities.Character.filter({ status: "active" }),
+    staleTime: 60000,
+  });
+
   const { data: character = {} } = useQuery({
     queryKey: ["character", characterId],
     queryFn: () => base44.entities.Character.filter({ id: characterId }).then(r => r[0] || {}),
@@ -53,7 +59,8 @@ export default function CharacterBusinessesPanel({ characterId }) {
 
   const handleDeleteBusiness = async (businessId) => {
     if (!confirm("Delete this business?")) return;
-    const char = await base44.entities.Character.get(characterId);
+    const results = await base44.entities.Character.filter({ id: characterId });
+    const char = results[0];
     const updated = (char.businesses || []).filter(b => b.id !== businessId);
     await base44.entities.Character.update(characterId, { businesses: updated });
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
@@ -111,6 +118,7 @@ export default function CharacterBusinessesPanel({ characterId }) {
             characterId={characterId}
             isLocationBased={false}
             onDelete={handleDeleteBusiness}
+            allCharacters={allCharacters}
           />
         ))}
         {locationBasedBusinesses.map(biz => (
@@ -120,6 +128,7 @@ export default function CharacterBusinessesPanel({ characterId }) {
             characterId={characterId}
             isLocationBased={true}
             onDelete={handleDeleteBusiness}
+            allCharacters={allCharacters}
           />
         ))}
       </div>

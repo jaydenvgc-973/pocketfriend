@@ -86,15 +86,9 @@ function EmployeeRow({ emp, onRemove, onUpdate }) {
   );
 }
 
-export default function BusinessEmployeePanel({ business, characterId, onBusinessUpdate }) {
+export default function BusinessEmployeePanel({ business, characterId, onBusinessUpdate, allCharacters = [] }) {
   const queryClient = useQueryClient();
   const [showPicker, setShowPicker] = useState(false);
-
-  const { data: allCharacters = [] } = useQuery({
-    queryKey: ["characters_for_biz"],
-    queryFn: () => base44.entities.Character.filter({ status: "active" }),
-    staleTime: 30000,
-  });
 
   const employees = business.employees || [];
 
