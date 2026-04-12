@@ -24,7 +24,8 @@ export default function BusinessCard({ business, characterId, isLocationBased, o
         await base44.entities.LocationReference.update(business.linkedLocationId, locationUpdates);
         queryClient.invalidateQueries({ queryKey: ["ownedLocations", characterId] });
       } else {
-        const char = await base44.entities.Character.get(characterId);
+        const results = await base44.entities.Character.filter({ id: characterId });
+        const char = results[0];
         const businesses = char.businesses || [];
         const idx = businesses.findIndex(b => b.id === business.id);
         if (idx >= 0) {
