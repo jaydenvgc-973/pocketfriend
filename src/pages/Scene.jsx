@@ -790,6 +790,7 @@ export default function Scene() {
       const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
       const isGlobal = location.location_type === "global";
+      const activeZoneImages = currentZone?.image_urls || [];
 
       // Collect all avatar references for non-home locations (workers, selected NPCs, brought chars)
       const allSceneAvatars = [
@@ -823,7 +824,9 @@ export default function Scene() {
         prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
       }
 
-      const nonHomeRefs = [...allSceneAvatars, ...(firstImage ? [firstImage] : [])].slice(0, 4);
+      // Prioritize active zone images first, then fall back to firstImage
+      const zoneRefs = activeZoneImages.slice(0, 2);
+      const nonHomeRefs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : []), ...allSceneAvatars].slice(0, 4);
 
       try {
         const result = await base44.integrations.Core.GenerateImage({
