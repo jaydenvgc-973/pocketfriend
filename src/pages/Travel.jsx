@@ -496,24 +496,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     });
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
-                    // Only show NPC family members who are actually present at this home
+                    // Show NPC family members who are present at this home.
+                    // Present = no current_location_id set, OR current_location_id === this location.
+                    // We do NOT require fictional_relationships lookup — resident_family_members is authoritative.
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
-                      const ownerCharacter = characters.find(c =>
-                        (c.fictional_relationships || []).some(rel =>
-                          rel.person_name === locFamilyMember.name && !rel.related_character_id
-                        )
-                      );
-
-                      if (ownerCharacter) {
-                        const fictionalRelationship = ownerCharacter.fictional_relationships.find(rel =>
-                          rel.person_name === locFamilyMember.name && !rel.related_character_id
+                      if (!locFamilyMember.name) return;
+                      // Try to find current_location_id from any character's fictional_relationships
+                      let npcLocationId = null;
+                      for (const char of characters) {
+                        const rel = (char.fictional_relationships || []).find(
+                          r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase() && !r.related_character_id
                         );
-
-                        // Only show if NPC is home (no current_location_id) or at this location
-                        if (
-                          fictionalRelationship &&
-                          (!fictionalRelationship.current_location_id || fictionalRelationship.current_location_id === selectedLocation.id)
-                        ) {
+                        if (rel) { npcLocationId = rel.current_location_id || null; break; }
+                      }
+                      // Present if no location set (home by default) or explicitly at this location
+                      if (!npcLocationId || npcLocationId === selectedLocation.id) {
+                        if (!lines.find(l => l.name === locFamilyMember.name)) {
                           lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
                         }
                       }
