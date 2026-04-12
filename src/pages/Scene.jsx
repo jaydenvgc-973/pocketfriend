@@ -510,26 +510,31 @@ export default function Scene() {
     : [];
 
   // ── AUTHORITATIVE SCENE ROSTER ───────────────────────────────────────────────
-  // Priority order: brought chars → home residents → family NPCs present → on-shift workers → VGC distributed NPCs → traveling NPCs → selected NPC overlays → extras
-  const sceneCharacters = [
+  // Priority order: brought chars → home residents → family NPCs present → on-shift workers → selected NPC overlays → extras
+  // NOTE: For VGC Towers, exclude distributed NPCs from auto-scene to optimize loading and require explicit selection
+  const isVGCTowers = location?.name === 'VGC Towers';
+  const allSceneChars = [
     ...broughtCharacters,
     ...(isHomeLocation ? homeResidentsPresent : []),
-    // Family NPCs who are home — always auto-present, no selection needed
     ...familyNpcSceneObjects.filter(fn => !broughtCharacters.find(b => b.name === fn.name)),
     ...workerCharacters,
-    // VGC Towers NPCs who are authoritatively distributed to this location
-    ...vgcDistributedNpcs.filter(n =>
+    // VGC Towers: exclude vgcDistributedNpcs from auto-scene to prevent all from responding at once
+    ...(isVGCTowers ? [] : vgcDistributedNpcs.filter(n =>
       !broughtCharacters.find(b => b.id === n.id) &&
       !workerCharacters.find(w => w.id === n.id)
-    ),
-    // NPCs traveling to this location via fictional_relationships — auto-present
-    ...npcsTravelingHere.filter(n =>
+    )),
+    // VGC Towers: exclude npcsTravelingHere from auto-scene
+    ...(isVGCTowers ? [] : npcsTravelingHere.filter(n =>
       !broughtCharacters.find(b => b.id === n.id) &&
       !familyNpcSceneObjects.find(fn => fn.name === n.name)
-    ),
+    )),
     ...selectedNpcs,
     ...extraNpcs,
   ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
+
+  // Apply 10-character limit for VGC Towers scene display (data not affected, only display)
+  const displayCharacters = isVGCTowers && allSceneChars.length > 10 ? allSceneChars.slice(0, 10) : allSceneChars;
+  const sceneCharacters = allSceneChars; // Keep full roster available for NPC spawning logic
 
   const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0]
     || location?.image_urls?.[0]
@@ -921,7 +926,7 @@ export default function Scene() {
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
         : sceneCharacters;
 
-      const charSummaries = activeSceneChars.map(c =>
+      const charSummaries = displayCharacters.map(c =>
         `${c.name} (${c.personality_summary?.split(".")[0] || c.archetype || "character"}, mood: ${c.emotional_state || "calm"})`
       ).join("; ");
 
@@ -929,9 +934,9 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
-      const knownChars = activeSceneChars.filter(c => !c.isNpc);
+      const knownChars = displayCharacters.filter(c => !c.isNpc);
       const selectedNpcList = privateTarget
-        ? activeSceneChars.filter(c => c.isNpc).map(n => `${n.name} (${n.role || "NPC"})`).join(", ")
+        ? displayCharacters.filter(c => c.isNpc).map(n => `${n.name} (${n.role || "NPC"})`).join(", ")
         : selectedNpcs.map(n => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
 
       const privateNote = privateTarget
@@ -1436,7 +1441,7 @@ Return JSON:
           </div>
           <span className="text-[9px] text-primary font-medium">{displayName}</span>
         </div>
-        {sceneCharacters.map(char => (
+        {displayCharacters.map(char => (
           <div key={char.id} className="flex flex-col items-center gap-1">
             <div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">
               {char.avatar_url
@@ -1447,14 +1452,8 @@ Return JSON:
             <span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span>
           </div>
         ))}
-        {sceneCharacters.length === 0 && (
+        {displayCharacters.length === 0 && (
           <span className="text-xs text-muted-foreground ml-1">You're here alone</span>
-        )}
-        {settings.user_balance !== undefined && (
-          <div className="ml-auto flex items-center gap-1">
-            <DollarSign className="w-3 h-3 text-green-500" />
-            <span className="text-xs text-green-500 font-medium">${(settings.user_balance ?? 6000).toFixed(0)}</span>
-          </div>
         )}
       </div>
 
@@ -1599,7 +1598,7 @@ Return JSON:
         {showPhotoModal && (
           <ScenePhotoModal
             location={location}
-            characters={sceneCharacters}
+            characters={displayCharacters}
             currentUser={currentUser}
             displayName={displayName}
             onClose={() => setShowPhotoModal(false)}
