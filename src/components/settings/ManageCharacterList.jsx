@@ -23,7 +23,7 @@ export default function ManageCharacterList() {
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date')
+      ? base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 200)
       : [],
     enabled: !!currentUser?.email,
   });
