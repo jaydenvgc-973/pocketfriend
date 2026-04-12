@@ -32,7 +32,7 @@ export function generateEventChain(eventType, context) {
       {
         type: 'RECONCILIATION_OPPORTUNITY',
         delay: 4 * 60 * 60 * 1000, // 4 hours
-        content: 'Maybe it's time to talk',
+        content: "Maybe it's time to talk",
       },
     ],
     EMOTIONAL_VULNERABILITY: [

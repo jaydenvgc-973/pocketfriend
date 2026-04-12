@@ -24,10 +24,10 @@ function SectionHeader({ icon: Icon, label }) {
 }
 
 export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null }) {
-  if (!location) return null;
-
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
+
+  if (!location) return null;
 
   const cat = location.category || 'generic';
   const totalUtilities = location.utility_costs

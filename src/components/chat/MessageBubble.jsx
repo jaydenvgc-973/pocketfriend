@@ -34,6 +34,20 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
 
   const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && message.content === "";
 
+  const handleImageRetry = async (forceRegenerate = false) => {
+    setImageRetrying(true);
+    setImageRetryFailed(false);
+    setImageRetryStatus(forceRegenerate ? 'regenerating' : 'recovering');
+    try {
+      await base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate });
+    } catch {
+      setImageRetryFailed(true);
+    } finally {
+      setImageRetrying(false);
+      setImageRetryStatus('idle');
+    }
+  };
+
   const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
     setIsRegenerating(true);
     setRegenError(null);
