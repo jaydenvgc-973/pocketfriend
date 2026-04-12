@@ -61,11 +61,20 @@ Deno.serve(async (req) => {
     const { day, timeStr, hours } = getCurrentDayAndTime(tz_offset_hours);
     const now = new Date();
 
-    // Get all active education items
+    // Get all currently-enrolled education items using status-first logic
     const activeItems = (character.completed_education || []).filter(item => {
-      if (item.status !== 'active') return false;
-      if (!item.completion_date) return false;
-      return new Date(item.completion_date) > now;
+      // Manually resolved statuses that are NOT active
+      if (['completed', 'dropped', 'paused'].includes(item.status)) return false;
+      // Manually enrolled
+      if (item.status === 'enrolled') return true;
+      // Planned = not started yet
+      if (item.status === 'planned') return false;
+      // Legacy 'active' or unset: use date inference
+      const start = item.start_date ? new Date(item.start_date) : null;
+      const end = item.completion_date ? new Date(item.completion_date) : null;
+      if (start && start > now) return false; // not started
+      if (end && end < now) return false;     // already ended
+      return true;
     });
 
     if (!activeItems.length) {

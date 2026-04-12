@@ -31,8 +31,25 @@ Deno.serve(async (req) => {
 
       for (let i = 0; i < updatedItems.length; i++) {
         const item = updatedItems[i];
-        if (item.status !== 'active') continue;
+
+        // ── STATUS-FIRST LOGIC ──────────────────────────────────────
+        // Manual status always wins. Only auto-complete if status is
+        // 'active' or 'enrolled' (or legacy unset) AND date has passed.
+        const manuallyResolved = ['completed', 'dropped', 'paused', 'planned'].includes(item.status);
+        if (manuallyResolved) continue;
+
+        const isActivelyEnrolled = !item.status || item.status === 'active' || item.status === 'enrolled' || item.status === 'at_risk';
+        if (!isActivelyEnrolled) continue;
         if (!item.completion_date) continue;
+
+        // Date inference: if start_date is in the future → planned, skip
+        if (item.start_date && new Date(item.start_date) > now) {
+          if (item.status !== 'planned') {
+            updatedItems[i] = { ...item, status: 'planned' };
+            changed = true;
+          }
+          continue;
+        }
 
         const completionDate = new Date(item.completion_date);
         if (now < completionDate) continue;

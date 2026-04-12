@@ -490,14 +490,33 @@ const LEARNING_MODES = [
   { value: 'in_person', label: 'In-Person', desc: 'Must attend location' },
 ];
 
-const EDU_STATUSES = ['active', 'at_risk', 'completed', 'dropped'];
+// All possible education statuses (manual override + date-inferred)
+const EDU_STATUSES = [
+  { value: 'enrolled', label: 'Currently Enrolled' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'dropped', label: 'Dropped' },
+  { value: 'paused', label: 'Paused / On Hold' },
+  { value: 'planned', label: 'Planned / Not Started' },
+];
+
+// Infer status from date range when no manual status is set
+function inferEduStatus(item) {
+  if (item.status && item.status !== 'active' && item.status !== 'at_risk') return item.status;
+  const now = new Date();
+  const start = item.start_date ? new Date(item.start_date) : null;
+  const end = item.completion_date ? new Date(item.completion_date) : null;
+  if (start && start > now) return 'planned';
+  if (end && end < now) return 'completed';
+  if (start && start <= now && end && end >= now) return 'enrolled';
+  return item.status === 'active' ? 'enrolled' : (item.status || 'enrolled');
+}
 
 // ── Education Editor ─────────────────────────────────────────────────────────
 function EducationEditor({ character }) {
   const queryClient = useQueryClient();
   const [entries, setEntries] = useState(character.completed_education || []);
   const [showAdd, setShowAdd] = useState(false);
-  const [newEntry, setNewEntry] = useState({ course_name: '', institution: '', completion_date: '', start_date: '', mode: 'on_demand', status: 'active', progress: 0 });
+  const [newEntry, setNewEntry] = useState({ course_name: '', institution: '', completion_date: '', start_date: '', mode: 'on_demand', enrollment_type: 'course', status: 'enrolled', progress: 0 });
   const [dateError, setDateError] = useState('');
 
   useEffect(() => { setEntries(character.completed_education || []); }, [character.completed_education]);
@@ -595,12 +614,21 @@ function EducationEditor({ character }) {
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground">Status</p>
-              <select value={edu.status || 'active'}
-                onChange={e => updateAndSave(idx, 'status', e.target.value)}
-                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none capitalize"
-              >
-                {EDU_STATUSES.map(s => <option key={s} value={s} className="capitalize">{s}</option>)}
-              </select>
+              {(() => {
+                const inferred = inferEduStatus(edu);
+                const isInferred = !edu.status || edu.status === 'active' || edu.status === 'at_risk';
+                return (
+                  <div className="space-y-0.5">
+                    <select value={edu.status && edu.status !== 'active' && edu.status !== 'at_risk' ? edu.status : inferred}
+                      onChange={e => updateAndSave(idx, 'status', e.target.value)}
+                      className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+                    >
+                      {EDU_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                    {isInferred && <p className="text-[9px] text-muted-foreground/60 italic">Auto-inferred from dates</p>}
+                  </div>
+                );
+              })()}
             </div>
             <div className="space-y-1">
               <p className="text-[10px] text-muted-foreground">Progress %</p>
@@ -639,6 +667,28 @@ function EducationEditor({ character }) {
             onChange={e => setNewEntry(p => ({ ...p, institution: e.target.value }))}
             className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
           />
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground uppercase">Type</p>
+              <select value={newEntry.enrollment_type}
+                onChange={e => setNewEntry(p => ({ ...p, enrollment_type: e.target.value }))}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              >
+                <option value="course">Course</option>
+                <option value="certification">Certification</option>
+                <option value="full_school">Full School</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted-foreground uppercase">Status</p>
+              <select value={newEntry.status}
+                onChange={e => setNewEntry(p => ({ ...p, status: e.target.value }))}
+                className="w-full bg-secondary text-foreground text-xs rounded-lg px-2 py-1.5 border border-border outline-none"
+              >
+                {EDU_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+              </select>
+            </div>
+          </div>
           <div className="space-y-1">
             <p className="text-[10px] text-muted-foreground uppercase">Learning Mode</p>
             <select value={newEntry.mode}
