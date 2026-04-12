@@ -303,11 +303,16 @@ export default function Scene() {
     // Home: only show family members explicitly listed as residents of THIS location
     if (isHomeLocation) {
       (location.resident_family_members || []).forEach(fm => {
-        if (fm.name) npcs.push({
+        if (!fm.name) return;
+        // Skip if already represented by a real Character entity in sceneCharacters
+        const alreadyInScene = characters.find(c => c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
+        if (alreadyInScene) return;
+        npcs.push({
           id: `npc_${fm.name.replace(/\s+/g, "_")}`,
           name: fm.name,
           role: fm.relationship_type || "Family",
           isNpc: true,
+          npcType: "resident",
           avatar_url: null,
         });
       });
@@ -1165,51 +1170,24 @@ Return JSON:
                 </div>
                 <div className="max-h-72 overflow-y-auto py-1">
                   {(() => {
-                    const staffNpcs = allPossibleNpcs.filter(n => n.npcType === "staff" || (!n.npcType && n.role));
+                    const residentNpcs = allPossibleNpcs.filter(n => n.npcType === "resident");
+                    const staffNpcs = allPossibleNpcs.filter(n => n.npcType === "staff");
                     const customerNpcs = allPossibleNpcs.filter(n => n.npcType === "customer");
                     const ungrouped = allPossibleNpcs.filter(n => !n.npcType);
 
-                    const renderNpc = (npc) => {
-                      const isSelected = selectedNpcIds?.includes(npc.id) ?? false;
-                      return (
-                        <button
-                          key={npc.id}
-                          onClick={() => {
-                            toggleNpc(npc.id);
-                            // Open conversation type selector when selecting an NPC
-                            setTimeout(() => {
-                              const employees = getLocationEmployees(location, characters);
-                              setConversationModal({
-                                npcId: npc.id,
-                                npcName: npc.name,
-                                hasEmployees: employees.some(e => e.characterId === npc.id || e.name === npc.name),
-                                isGroup: selectedNpcs.length > 0,
-                              });
-                            }, 100);
-                          }}
-                          className="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-secondary transition-colors text-left"
-                        >
-                          <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
-                            isSelected ? "bg-primary border-primary" : "border-border"
-                          }`}>
-                            {isSelected && <Check className="w-3 h-3 text-white" />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-medium text-foreground truncate">{npc.name}</p>
-                            {npc.role && <p className="text-[10px] text-muted-foreground">{npc.role}</p>}
-                          </div>
-                          {npc.npcType === "staff" && (
-                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-500/15 text-blue-400 font-medium flex-shrink-0">Staff</span>
-                          )}
-                        </button>
-                      );
-                    };
-
                     return (
                       <>
-                        {staffNpcs.length > 0 && (
+                        {residentNpcs.length > 0 && (
                           <>
                             <div className="px-3 py-1.5 border-b border-border/50">
+                              <p className="text-[9px] font-semibold text-green-400/80 uppercase tracking-wider">Residents</p>
+                            </div>
+                            {residentNpcs.map(renderNpc)}
+                          </>
+                        )}
+                        {staffNpcs.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                               <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Employees</p>
                             </div>
                             {staffNpcs.map(renderNpc)}
