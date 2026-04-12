@@ -377,16 +377,37 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
   const [showCharacterPicker, setShowCharacterPicker] = useState(false);
   const alreadyAddedSelf = members.some(m => m._is_user);
 
-  // Characters available to add as family members, sorted: active → npc → family_npc
-  const typeOrder = (t) => t === 'active' || t === 'promoted_npc' ? 0 : t === 'npc' ? 1 : t === 'family_npc' ? 2 : 3;
+  // Characters available to add: active characters, NPC fictitious people, and family NPCs (all status=active)
+  const ALLOWED_TYPES = new Set(['active', 'npc', 'family_npc']);
+  const typeOrder = (t) => t === 'active' ? 0 : t === 'npc' ? 1 : t === 'family_npc' ? 2 : 3;
   const availableCharacters = allCharacters
     .filter(c =>
-      c.character_type &&
+      c.status === 'active' &&
+      ALLOWED_TYPES.has(c.character_type) &&
       c.id !== character.id &&
-      c.status !== 'deleted' && c.status !== 'soft_deleted' && c.status !== 'merged' &&
       !members.some(m => m.name?.trim().toLowerCase() === c.name?.trim().toLowerCase())
     )
     .sort((a, b) => typeOrder(a.character_type) - typeOrder(b.character_type));
+
+  // Also collect embedded family members from other active characters' family_members arrays
+  // (people who exist only as entries, not as full Character entities)
+  const characterEntityNames = new Set(allCharacters.map(c => c.name?.trim().toLowerCase()));
+  const embeddedFamilyNpcs = [];
+  const seenEmbedded = new Set();
+  allCharacters
+    .filter(c => c.status === 'active' && c.id !== character.id)
+    .forEach(c => {
+      (c.family_members || []).forEach(fm => {
+        if (!fm.name?.trim()) return;
+        const key = fm.name.trim().toLowerCase();
+        // Skip if already a Character entity, already in the member list, or already seen
+        if (characterEntityNames.has(key)) return;
+        if (members.some(m => m.name?.trim().toLowerCase() === key)) return;
+        if (seenEmbedded.has(key)) return;
+        seenEmbedded.add(key);
+        embeddedFamilyNpcs.push(fm);
+      });
+    });
 
   const addCharacterAsMember = (char) => {
     setShowCharacterPicker(false);
@@ -468,7 +489,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   <Plus className="w-3.5 h-3.5 text-muted-foreground" />
                   Add family member
                 </button>
-                {availableCharacters.length > 0 && (
+                {(availableCharacters.length > 0 || embeddedFamilyNpcs.length > 0) && (
                   <button
                     onClick={() => { setShowCharacterPicker(v => !v); }}
                     className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-foreground hover:bg-secondary transition-colors text-left border-t border-border"
@@ -478,20 +499,72 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
                   </button>
                 )}
                 {showCharacterPicker && (
-                  <div className="border-t border-border max-h-48 overflow-y-auto">
-                    {availableCharacters.map(char => (
-                      <button
-                        key={char.id}
-                        onClick={() => addCharacterAsMember(char)}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left"
-                      >
-                        {char.avatar_url
-                          ? <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
-                          : <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{char.name?.[0]}</span></div>
-                        }
-                        <span className="truncate">{char.name}</span>
-                      </button>
-                    ))}
+                  <div className="border-t border-border max-h-56 overflow-y-auto">
+                    {/* Active characters */}
+                    {availableCharacters.filter(c => c.character_type === 'active').length > 0 && (
+                      <>
+                        <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-primary/70 uppercase tracking-wider">Active Characters</p>
+                        {availableCharacters.filter(c => c.character_type === 'active').map(char => (
+                          <button key={char.id} onClick={() => addCharacterAsMember(char)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
+                            {char.avatar_url
+                              ? <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                              : <div className="w-6 h-6 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-primary">{char.name?.[0]}</span></div>
+                            }
+                            <span className="truncate">{char.name}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {/* NPC fictitious people */}
+                    {availableCharacters.filter(c => c.character_type === 'npc').length > 0 && (
+                      <>
+                        <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-amber-400/70 uppercase tracking-wider">NPC Fictitious People</p>
+                        {availableCharacters.filter(c => c.character_type === 'npc').map(char => (
+                          <button key={char.id} onClick={() => addCharacterAsMember(char)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
+                            {char.avatar_url
+                              ? <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                              : <div className="w-6 h-6 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-amber-400">{char.name?.[0]}</span></div>
+                            }
+                            <span className="truncate">{char.name}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {/* Family NPC characters (Character entities with character_type=family_npc) */}
+                    {availableCharacters.filter(c => c.character_type === 'family_npc').length > 0 && (
+                      <>
+                        <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-blue-400/70 uppercase tracking-wider">Family NPCs</p>
+                        {availableCharacters.filter(c => c.character_type === 'family_npc').map(char => (
+                          <button key={char.id} onClick={() => addCharacterAsMember(char)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
+                            {char.avatar_url
+                              ? <img src={char.avatar_url} alt={char.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                              : <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-blue-400">{char.name?.[0]}</span></div>
+                            }
+                            <span className="truncate">{char.name}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {/* Embedded family members from other characters' family lists */}
+                    {embeddedFamilyNpcs.length > 0 && (
+                      <>
+                        <p className="px-3 pt-2 pb-1 text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">Family Members on File</p>
+                        {embeddedFamilyNpcs.map((fm, i) => (
+                          <button key={`embedded-${i}`} onClick={() => { addCharacterAsMember({ name: fm.name, avatar_url: fm.photo_url || null, id: `embedded_${fm.name}`, age: fm.age_at_creation ?? null }); }}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-secondary transition-colors text-left">
+                            {fm.photo_url
+                              ? <img src={fm.photo_url} alt={fm.name} className="w-6 h-6 rounded-full object-cover flex-shrink-0" />
+                              : <div className="w-6 h-6 rounded-full bg-secondary border border-border flex items-center justify-center flex-shrink-0"><span className="text-[10px] font-bold text-muted-foreground">{fm.name?.[0]}</span></div>
+                            }
+                            <span className="truncate">{fm.name}</span>
+                            {fm.relationship_type && <span className="text-muted-foreground/60 capitalize flex-shrink-0">{fm.relationship_type}</span>}
+                          </button>
+                        ))}
+                      </>
+                    )}
                   </div>
                 )}
                 {!alreadyAddedSelf && (
