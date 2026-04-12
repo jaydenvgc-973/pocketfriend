@@ -3,6 +3,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 /**
  * Fetch all locations relevant to the user:
  * - User-created locations (created_by: user.email)
+ * - Admin-created shared world locations (park, homes, church, gym, etc.)
  * - Generic homes for their characters (even if currently empty/unoccupied)
  * - Named homes linked to their characters via character_id, resident_character_ids, or worker_character_ids
  * - NPC Hub
@@ -50,8 +51,12 @@ Deno.serve(async (req) => {
     }
 
     const RESIDENTIAL_CATEGORIES = new Set(['home', 'generic']);
+    const ADMIN_EMAIL = 'murqart@gmail.com'; // Admin account for shared world locations
 
-    const relevantLocations = allLocations.filter(loc => loc.created_by === user.email);
+    // Include user-created locations + admin-created (shared world) locations
+    const relevantLocations = allLocations.filter(loc => 
+      loc.created_by === user.email || loc.created_by === ADMIN_EMAIL
+    );
 
     return Response.json({
       success: true,
@@ -59,6 +64,7 @@ Deno.serve(async (req) => {
       totalCount: relevantLocations.length,
       summary: {
         userCreated: relevantLocations.filter(l => l.created_by === user.email).length,
+        adminShared: relevantLocations.filter(l => l.created_by === ADMIN_EMAIL).length,
         genericHomes: relevantLocations.filter(l => l.is_default_generic).length,
         residentialTotal: relevantLocations.filter(l => RESIDENTIAL_CATEGORIES.has(l.category)).length,
         npcHub: relevantLocations.some(l => l.name === 'NPC Hub') ? 1 : 0,
