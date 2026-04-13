@@ -21,7 +21,6 @@ import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
 
-// ── Zone presets per category ────────────────────────────────────────────────
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
   gym: ["Workout Floor", "Front Desk", "Locker Room", "Bathroom", "Stretching Area", "Cardio Zone", "Weight Room", "Pool", "Sauna"],
@@ -60,7 +59,6 @@ const CATEGORIES = [
   { value: "generic", label: "Generic", icon: MapPin, emoji: "📍" },
 ];
 
-// ── LocationCard ─────────────────────────────────────────────────────────────
 function LocationCard({ location, onDelete, onEdit, characters = [], currentUser = {} }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = CATEGORIES.find(c => c.value === location.category) || CATEGORIES[CATEGORIES.length - 1];
@@ -192,7 +190,6 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
   );
 }
 
-// ── SUBTYPE OPTIONS MAPPING ───────────────────────────────────────────────────
 const SUBTYPE_OPTIONS = {
   home: ["apartment", "house", "condo", "studio"],
   food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub"],
@@ -211,7 +208,6 @@ const SUBTYPE_OPTIONS = {
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
 };
 
-// ── ZoneEditor ────────────────────────────────────────────────────────────────
 function ZoneEditor({ zone, onUpdateImages, onDelete }) {
   const [uploading, setUploading] = useState(false);
 
@@ -277,7 +273,6 @@ function ZoneEditor({ zone, onUpdateImages, onDelete }) {
   );
 }
 
-// ── Worker Availability Helper ───────────────────────────────────────────────
 const WORK_CATEGORIES = ['workplace', 'business', 'food_drink', 'gym', 'social', 'education', 'medical', 'school', 'grocery', 'religion', 'government', 'community'];
 const DAY_LABELS = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
@@ -327,7 +322,6 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
   };
 }
 
-// ── LocationForm ─────────────────────────────────────────────────────────────
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
   const allNPCs = [];
   const seenNames = new Set();
@@ -507,7 +501,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── ZONE SECTION ── */}
       <div className="space-y-3">
         <div>
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">
@@ -548,7 +541,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       </div>
 
-      {/* ── RESIDENTS ── */}
       {(form.category === 'home' || form.category === 'generic') && (
         <div className="space-y-3">
           <div>
@@ -675,7 +667,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── WORKERS ── */}
       {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
@@ -813,7 +804,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
-      {/* ── OWNER ── */}
       <div className="space-y-3">
         <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Owner / Landlord (optional)</label>
         <div className="grid grid-cols-2 gap-2">
@@ -922,7 +912,6 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
 export default function Locations() {
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
@@ -999,7 +988,14 @@ export default function Locations() {
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
-      const created = await base44.entities.LocationReference.create(formData);
+      const enriched = {
+        ...formData,
+        owner_email: currentUser?.email,
+        owner_user_id: currentUser?.id,
+        created_by_role: currentUser?.role || 'user',
+        scope: formData.location_type === 'shared' ? 'shared' : 'account_global',
+      };
+      const created = await base44.entities.LocationReference.create(enriched);
       locationId = created.id;
       setNewlyCreatedLocation({ id: created.id, name: formData.name, category: formData.category });
     }
@@ -1017,7 +1013,8 @@ export default function Locations() {
   const handleDelete = async (id) => {
     const loc = locations.find(l => l.id === id);
     if (!loc) return;
-    const canDelete = loc.created_by === currentUser?.email || loc.location_type === 'global';
+    const isOwner = loc.owner_email === currentUser?.email || loc.created_by === currentUser?.email;
+    const canDelete = isOwner || loc.location_type === 'global';
     if (!canDelete) { alert(`You can only delete locations you created.`); return; }
     if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
     await base44.entities.LocationReference.delete(id);
@@ -1106,7 +1103,6 @@ export default function Locations() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Global search bar */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
           <input
@@ -1123,13 +1119,11 @@ export default function Locations() {
           )}
         </div>
 
-        {/* Tab switcher */}
         <div className="flex gap-2 border-b border-border pb-3">
           <button onClick={() => setActiveTab("locations")} className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "locations" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>All Locations</button>
           <button onClick={() => setActiveTab("saved_places")} className={`px-4 py-1.5 text-xs font-medium border-b-2 transition-colors ${activeTab === "saved_places" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground"}`}>📍 Saved Places</button>
         </div>
 
-        {/* Filter tabs (locations only) */}
         {activeTab === "locations" && (
           <div className="flex gap-2">
             {["all", "global", "character_specific"].map(f => (
@@ -1141,7 +1135,6 @@ export default function Locations() {
           </div>
         )}
 
-        {/* Content */}
         {activeTab === "saved_places" ? (
           <SavedPlaces currentUser={currentUser} onLocationSelect={() => {}} />
         ) : (
