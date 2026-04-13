@@ -15,6 +15,32 @@
     "full_name": {
       "type": "string"
     },
+    "owner_user_id": {
+      "type": "string",
+      "description": "The ID of the User record who owns this character. All queries must filter by this for non-admin users."
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the owning user \u2014 mirrors created_by for legacy compatibility but is explicitly set on creation"
+    },
+    "created_by_role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user"
+      ],
+      "description": "Role of the account that created this character. Admin-created characters may be shared or NPC pool; user-created are account-private."
+    },
+    "visibility_scope": {
+      "type": "string",
+      "enum": [
+        "account_private",
+        "shared_npc",
+        "admin_global"
+      ],
+      "default": "account_private",
+      "description": "account_private = only visible to owner. shared_npc = visible to all users as NPC. admin_global = admin-managed, visible everywhere."
+    },
     "aliases": {
       "type": "array",
       "items": {
@@ -891,16 +917,13 @@
         "type": "object",
         "properties": {
           "id": {
-            "type": "string",
-            "description": "Unique business ID"
+            "type": "string"
           },
           "name": {
-            "type": "string",
-            "description": "Business name"
+            "type": "string"
           },
           "type": {
-            "type": "string",
-            "description": "Business type"
+            "type": "string"
           },
           "visibility": {
             "type": "string",
@@ -908,21 +931,17 @@
               "public",
               "private",
               "secret"
-            ],
-            "description": "Ownership visibility"
+            ]
           },
           "income": {
             "type": "number",
-            "description": "Monthly income from this business",
             "default": 0
           },
           "notes": {
-            "type": "string",
-            "description": "Additional notes about the business"
+            "type": "string"
           },
           "linked_location_id": {
-            "type": "string",
-            "description": "ID of linked location if this is location-based"
+            "type": "string"
           },
           "created_at": {
             "type": "string",
@@ -930,7 +949,6 @@
           },
           "employees": {
             "type": "array",
-            "description": "List of employees working for this business",
             "items": {
               "type": "object",
               "properties": {
@@ -970,8 +988,7 @@
           "visibility"
         ]
       },
-      "default": [],
-      "description": "List of businesses owned by this character"
+      "default": []
     },
     "current_life_event": {
       "type": "string"
@@ -1303,8 +1320,7 @@
     },
     "is_jailed": {
       "type": "boolean",
-      "default": false,
-      "description": "True if character is currently serving jail time"
+      "default": false
     },
     "jail_release_date": {
       "type": "string",

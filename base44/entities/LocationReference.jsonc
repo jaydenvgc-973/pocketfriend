@@ -14,7 +14,45 @@
         "shared"
       ],
       "default": "global",
-      "description": "global = user-specific, character_specific = tied to one character, shared = visible to all users but not editable unless claimed"
+      "description": "Legacy field \u2014 kept for backwards compatibility. Use scope instead."
+    },
+    "scope": {
+      "type": "string",
+      "enum": [
+        "shared",
+        "account_global",
+        "character_specific"
+      ],
+      "default": "account_global",
+      "description": "shared = admin-created, visible to all users (read-only for regular users). account_global = belongs to one user account, visible only to that account. character_specific = tied to a single character within an account."
+    },
+    "owner_user_id": {
+      "type": "string",
+      "description": "ID of the User record who owns this location. Null/absent for truly shared (admin-created) locations."
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the owning user \u2014 mirrors created_by for legacy compatibility but is explicitly set on creation. Null for shared locations."
+    },
+    "created_by_role": {
+      "type": "string",
+      "enum": [
+        "admin",
+        "user"
+      ],
+      "description": "Role of the account that originally created this location. Admin-created = can be shared; user-created = account_global or character_specific only."
+    },
+    "assigned_character_id": {
+      "type": "string",
+      "description": "If scope=character_specific, the ID of the character this location belongs to."
+    },
+    "assigned_character_name": {
+      "type": "string",
+      "description": "Display name of the assigned character if scope=character_specific."
+    },
+    "source_shared_location_id": {
+      "type": "string",
+      "description": "If this is a user-claimed copy of a shared location, the ID of the original shared record."
     },
     "category": {
       "type": "string",
@@ -36,29 +74,25 @@
         "community",
         "generic"
       ],
-      "default": "generic",
-      "description": "Broad category for grouping"
+      "default": "generic"
     },
     "subtype": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "default": [],
-      "description": "Specific venue subtypes"
+      "default": []
     },
     "features": {
       "type": "array",
       "items": {
         "type": "string"
       },
-      "description": "Location features that affect actions and capabilities",
       "default": []
     },
     "is_real_world": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this is a real-world location created by user travel"
+      "default": false
     },
     "source": {
       "type": "string",
@@ -67,13 +101,11 @@
         "travel_input",
         "import"
       ],
-      "default": "app_created",
-      "description": "How this location was created"
+      "default": "app_created"
     },
     "is_rabbit_hole": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this location uses lightweight interaction mode (no full scene generation)"
+      "default": false
     },
     "school_type": {
       "type": "string",
@@ -87,8 +119,7 @@
         "music_school",
         "online_school",
         "other"
-      ],
-      "description": "Type of school (if category=school or education)"
+      ]
     },
     "community_type": {
       "type": "string",
@@ -100,12 +131,10 @@
         "youth_center",
         "resource_hub",
         "other"
-      ],
-      "description": "Type of community location (if category=community)"
+      ]
     },
     "tuition_cost": {
       "type": "number",
-      "description": "Annual or per-semester tuition cost in USD",
       "default": 0
     },
     "tuition_frequency": {
@@ -116,8 +145,7 @@
         "monthly",
         "per_course"
       ],
-      "default": "annual",
-      "description": "How often tuition is charged"
+      "default": "annual"
     },
     "enrolled_students": {
       "type": "array",
@@ -153,52 +181,43 @@
           }
         }
       },
-      "default": [],
-      "description": "List of enrolled students at this school"
+      "default": []
     },
     "character_id": {
       "type": "string",
-      "description": "If character_specific, the ID of the character this belongs to"
+      "description": "Legacy: If character_specific, the ID of the character this belongs to. Use assigned_character_id instead."
     },
     "character_name": {
       "type": "string",
-      "description": "Display name of the character if character_specific"
+      "description": "Legacy: Display name of the character if character_specific."
     },
     "owner_character_id": {
-      "type": "string",
-      "description": "ID of the active character who owns/operates this location"
+      "type": "string"
     },
     "owner_character_name": {
-      "type": "string",
-      "description": "Display name of the owning character or NPC"
+      "type": "string"
     },
     "owner_is_npc": {
       "type": "boolean",
-      "default": false,
-      "description": "True if the owner is an NPC rather than an active character"
+      "default": false
     },
     "owner_npc_name": {
-      "type": "string",
-      "description": "Free-text name of the NPC owner if owner_is_npc is true"
+      "type": "string"
     },
     "owner_role": {
-      "type": "string",
-      "description": "The owner's role at this location, e.g. 'landlord', 'manager', 'owner', 'operator'"
+      "type": "string"
     },
     "religion_denomination": {
-      "type": "string",
-      "description": "The religion or denomination if applicable"
+      "type": "string"
     },
     "description": {
-      "type": "string",
-      "description": "Optional description of the location's overall style, layout, or atmosphere"
+      "type": "string"
     },
     "keywords": {
       "type": "array",
       "items": {
         "type": "string"
-      },
-      "description": "Keywords used to detect when a character is at this location"
+      }
     },
     "zones": {
       "type": "array",
@@ -228,7 +247,7 @@
       "items": {
         "type": "string"
       },
-      "description": "Legacy flat image list \u2014 kept for backwards compatibility only"
+      "description": "Legacy flat image list"
     },
     "resident_character_ids": {
       "type": "array",
@@ -245,7 +264,6 @@
     "resident_family_members": {
       "type": "array",
       "default": [],
-      "description": "NPC, family member, and fictional character residents who live at this location",
       "items": {
         "type": "object",
         "properties": {
@@ -356,12 +374,10 @@
       }
     },
     "club_theme": {
-      "type": "string",
-      "description": "Music/theme for clubs and bars"
+      "type": "string"
     },
     "venue_identity": {
-      "type": "string",
-      "description": "Social identity/vibe of bar/club venues"
+      "type": "string"
     },
     "utility_costs": {
       "type": "object",
@@ -387,8 +403,7 @@
       "type": "number"
     },
     "monthly_childcare_cost": {
-      "type": "number",
-      "description": "Monthly childcare/babysitter expense if children under 16 reside here"
+      "type": "number"
     },
     "bedroom_count": {
       "type": "integer",
@@ -435,8 +450,7 @@
     },
     "is_default_generic": {
       "type": "boolean",
-      "default": false,
-      "description": "True if this is one of the canonical shared generic locations"
+      "default": false
     },
     "generic_type": {
       "type": "string",
@@ -457,8 +471,7 @@
       ]
     },
     "canonical_location_key": {
-      "type": "string",
-      "description": "Stable canonical identity key for generic locations"
+      "type": "string"
     },
     "is_generic_shared": {
       "type": "boolean",

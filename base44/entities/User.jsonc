@@ -23,6 +23,60 @@
         "type": "string"
       },
       "description": "AI-generated avatar images (up to 4) used as high-priority references in character-generated photos"
+    },
+    "world_name": {
+      "type": "string",
+      "description": "The name the user goes by in their fictional world"
+    },
+    "display_name": {
+      "type": "string",
+      "description": "User's display name override"
+    },
+    "gender": {
+      "type": "string",
+      "enum": [
+        "male",
+        "female",
+        "non-binary",
+        "other"
+      ],
+      "description": "User's gender identity"
+    },
+    "account_balance": {
+      "type": "number",
+      "default": 6000,
+      "description": "User's personal in-world financial balance (USD)"
+    },
+    "vgc_mobile_revenue": {
+      "type": "number",
+      "default": 0,
+      "description": "Total revenue earned from VGC Mobile character phone bills"
+    },
+    "character_limit": {
+      "type": "integer",
+      "default": 4,
+      "description": "Maximum number of active characters allowed for this account (admin can override)"
+    },
+    "owned_character_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "IDs of all characters owned by this user account"
+    },
+    "owned_location_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "IDs of all locations owned/created by this user account"
+    },
+    "account_initialized": {
+      "type": "boolean",
+      "default": false,
+      "description": "True once the account has been fully set up (onboarding complete, defaults seeded)"
     }
   },
   "required": []
