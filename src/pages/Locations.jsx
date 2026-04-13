@@ -429,11 +429,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
       <div>
         <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Type</label>
-        <div className="grid grid-cols-2 gap-2">
-          {["global", "character_specific"].map(t => (
+        <div className="grid grid-cols-3 gap-2">
+          {["global", "character_specific", "shared"].map(t => (
             <button key={t} onClick={() => update("location_type", t)}
               className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.location_type === t ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
-              {t === "global" ? "🌐 Global" : "👤 Character-specific"}
+              {t === "global" ? "🌐 Global" : t === "character_specific" ? "👤 Character-specific" : "🔗 Shared"}
             </button>
           ))}
         </div>
