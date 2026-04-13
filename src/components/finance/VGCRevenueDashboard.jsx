@@ -26,26 +26,35 @@ function StatCard({ icon: Icon, label, value, sub, color = "text-primary" }) {
 export default function VGCRevenueDashboard({ userSettings }) {
   const [months] = useState(6);
 
-  // Fetch all financial transactions
+  // Get current user for account-scoped filtering
+  const { data: currentUser } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
+  // Fetch financial transactions for current user only
   const { data: transactions = [], isLoading: txLoading } = useQuery({
-    queryKey: ["allFinancialTransactions"],
-    queryFn: () => base44.entities.FinancialTransaction.list("-timestamp", 500),
+    queryKey: ["allFinancialTransactions", currentUser?.email],
+    queryFn: () => base44.entities.FinancialTransaction.filter({ created_by: currentUser.email }, "-timestamp", 500),
+    enabled: !!currentUser?.email,
   });
 
-  // Fetch only active, user-created characters
+  // Fetch only active characters owned by current user
   const { data: activeCharacters = [] } = useQuery({
-    queryKey: ["activeCharacters"],
-    queryFn: () => base44.entities.Character.filter({ character_type: "active", created_by_user: true }, null, 100),
+    queryKey: ["activeCharacters", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }, null, 100),
+    enabled: !!currentUser?.email,
   });
 
-  // Fetch all character financials
-  const { data: allCharFinancials = [] } = useQuery({
-    queryKey: ["allCharacterFinancials"],
-    queryFn: () => base44.entities.CharacterFinancial.list(),
-  });
-
-  // Filter financials to only active created characters
+  // Fetch character financials for current user's characters only
   const activeCharIds = new Set(activeCharacters.map(c => c.id));
+  const { data: allCharFinancials = [] } = useQuery({
+    queryKey: ["allCharacterFinancials", currentUser?.email],
+    queryFn: () => base44.entities.CharacterFinancial.filter({ created_by: currentUser.email }),
+    enabled: !!currentUser?.email,
+  });
+
+  // Filter financials to only current user's active characters
   const charFinancials = allCharFinancials.filter(cf => activeCharIds.has(cf.character_id));
 
   if (txLoading) {
