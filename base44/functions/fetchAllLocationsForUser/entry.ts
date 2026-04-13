@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
  * Fetch all locations relevant to the user:
@@ -51,18 +51,26 @@ Deno.serve(async (req) => {
     const RESIDENTIAL_CATEGORIES = new Set(['home', 'generic']);
     const isAdmin = user.role === 'admin';
 
-    // Filter locations based on user role and location type
+    // Filter locations based on multi-tenant ownership rules:
+    // shared scope (or legacy location_type=shared) → visible to all
+    // account_global / character_specific → only visible to owner
+    // Admin sees everything
     const relevantLocations = allLocations.filter(loc => {
-      // Shared locations are visible to everyone
-      if (loc.location_type === 'shared') return true;
-      
+      // Shared locations (admin-created, available to all)
+      if (loc.scope === 'shared' || loc.location_type === 'shared') return true;
+
       // Admin: see all locations
       if (isAdmin) return true;
-      
-      // Regular user: see their own + character-linked locations
-      if (loc.created_by === user.email) return true;
+
+      // Ownership via new field (preferred)
+      if (loc.owner_email && loc.owner_email === user.email) return true;
+
+      // Ownership via legacy created_by
+      if (!loc.owner_email && loc.created_by === user.email) return true;
+
+      // Character-linked locations for this user's characters
       if (charLinkedLocationIds.has(loc.id)) return true;
-      
+
       return false;
     });
 

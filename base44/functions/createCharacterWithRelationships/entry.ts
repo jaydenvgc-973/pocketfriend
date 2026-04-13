@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
   try {
@@ -10,12 +10,16 @@ Deno.serve(async (req) => {
 
     const { characterData, characterRelationships } = await req.json();
 
-    // Create the main character (excluding system_prompt to avoid size limit)
+    // Stamp ownership fields so this character is isolated to the creating user's account
     const { system_prompt_url, ...charDataWithoutPrompt } = characterData;
-    
+
     const newChar = await base44.entities.Character.create({
       ...charDataWithoutPrompt,
       system_prompt_url: system_prompt_url || undefined,
+      owner_user_id: user.id,
+      owner_email: user.email,
+      created_by_role: user.role || 'user',
+      visibility_scope: charDataWithoutPrompt.visibility_scope || 'account_private',
     });
 
     // Handle bidirectional relationships
