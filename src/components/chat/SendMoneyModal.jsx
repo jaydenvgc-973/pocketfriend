@@ -6,13 +6,14 @@ import { Button } from "@/components/ui/button";
 
 export default function SendMoneyModal({ character, userBalance, onSend, onClose, isSending }) {
   const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
 
   const parsed = parseFloat(amount);
   const isValid = !isNaN(parsed) && parsed > 0 && parsed <= userBalance;
 
   const handleSend = () => {
     if (!isValid) return;
-    onSend(parsed);
+    onSend(parsed, reason.trim());
   };
 
   return createPortal(
@@ -61,6 +62,17 @@ export default function SendMoneyModal({ character, userBalance, onSend, onClose
               {parseFloat(amount) > userBalance ? "Insufficient funds" : "Enter a valid amount"}
             </p>
           )}
+        </div>
+
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">What's it for? (optional)</label>
+          <input
+            type="text"
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder="e.g. rent, groceries, just because..."
+            className="w-full px-4 py-3 rounded-xl bg-secondary border border-border text-foreground text-sm outline-none focus:ring-1 focus:ring-primary/50 placeholder:text-muted-foreground"
+          />
         </div>
 
         <Button

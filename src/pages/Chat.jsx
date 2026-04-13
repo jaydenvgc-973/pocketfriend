@@ -1830,13 +1830,14 @@ Reply with ONLY the single emoji or the word "none".`,
           userBalance={userSettings.user_balance ?? 0}
           isSending={isSendingMoney}
           onClose={() => setShowSendMoney(false)}
-          onSend={async (amount, direction) => {
+          onSend={async (amount, reason, direction) => {
             setIsSendingMoney(true);
             try {
               await base44.functions.invoke('sendMoneyToCharacter', {
                 characterId,
                 conversationId,
                 amount,
+                reason,
                 direction,
               });
               setShowSendMoney(false);
