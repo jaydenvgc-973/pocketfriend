@@ -202,6 +202,8 @@ export default function Scene() {
   // This aligns Scene with Home page and Travel page.
 
   const isHomeLocation = location?.category === "home";
+  const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
+  const isAdmin = currentUser?.role === 'admin';
 
   // VALID PRESENCE STATES that indicate real physical presence
   const VALID_PRESENCE_STATES = new Set(['home', 'social_visit', 'work', 'school', 'hospital', 'supervised', null, undefined, '']);
@@ -1244,8 +1246,8 @@ Return JSON:
           </p>
         </div>
 
-        {/* Residence Options — only for home locations */}
-        {isHomeLocation && (
+        {/* Residence Options — only for home locations, not shared */}
+        {isHomeLocation && !isSharedLocation && (
           <ResidenceOptionsDropdown
             location={location}
             sceneCharacters={sceneCharacters}
@@ -1626,7 +1628,7 @@ Return JSON:
 
       {/* Move-In Popup */}
       <AnimatePresence>
-        {showMoveInPopup && (
+        {showMoveInPopup && !isSharedLocation && (
           <MoveInPopup
             isOpen={showMoveInPopup}
             character={broughtCharacters[0]}
