@@ -501,6 +501,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
+      {/* ── ZONE SECTION ── */}
       <div className="space-y-3">
         <div>
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">
@@ -541,6 +542,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       </div>
 
+      {/* ── RESIDENTS ── */}
       {(form.category === 'home' || form.category === 'generic') && (
         <div className="space-y-3">
           <div>
@@ -667,6 +669,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
+      {/* ── WORKERS ── */}
       {(form.category === 'workplace' || form.category === 'business' || form.category === 'food_drink' || form.category === 'gym' || form.category === 'social' || form.category === 'education' || form.category === 'medical' || form.category === 'school' || form.category === 'grocery' || form.category === 'religion' || form.category === 'government' || form.category === 'community') && (
         <div className="space-y-3">
           <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Workers & Employees</label>
@@ -804,6 +807,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
+      {/* ── OWNER ── */}
       <div className="space-y-3">
         <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Owner / Landlord (optional)</label>
         <div className="grid grid-cols-2 gap-2">
