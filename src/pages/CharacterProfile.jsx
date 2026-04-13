@@ -27,6 +27,8 @@ import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import CharacterBusinessesPanel from "@/components/character/CharacterBusinessesPanel";
 import LifeJournal from "@/components/character/LifeJournal";
+import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
+import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 
 
 const ZODIAC_SIGNS = {
@@ -1018,6 +1020,12 @@ export default function CharacterProfile() {
 
         {/* Appearance Lock */}
         <AppearanceLockEditor character={character} />
+
+        {/* Personality Quirks */}
+        <CharacterQuirksPanel character={character} />
+
+        {/* Character Closet */}
+        <CharacterClosetPanel character={character} />
 
         {/* Nickname for User */}
         <NicknameForUserField character={character} />

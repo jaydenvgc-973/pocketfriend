@@ -17,7 +17,7 @@
     },
     "owner_user_id": {
       "type": "string",
-      "description": "The ID of the User record who owns this character. All queries must filter by this for non-admin users."
+      "description": "The ID of the User record who owns this character."
     },
     "owner_email": {
       "type": "string",
@@ -28,8 +28,7 @@
       "enum": [
         "admin",
         "user"
-      ],
-      "description": "Role of the account that created this character. Admin-created characters may be shared or NPC pool; user-created are account-private."
+      ]
     },
     "visibility_scope": {
       "type": "string",
@@ -38,8 +37,7 @@
         "shared_npc",
         "admin_global"
       ],
-      "default": "account_private",
-      "description": "account_private = only visible to owner. shared_npc = visible to all users as NPC. admin_global = admin-managed, visible everywhere."
+      "default": "account_private"
     },
     "aliases": {
       "type": "array",
@@ -135,6 +133,182 @@
     },
     "education": {
       "type": "string"
+    },
+    "quirks": {
+      "type": "array",
+      "description": "Active behavior quirks that influence spending, emotions, health, location, and dialogue.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "quirk_id": {
+            "type": "string",
+            "description": "e.g. shopaholic, smoker, fitness_guru"
+          },
+          "label": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "spending",
+              "addiction",
+              "lifestyle",
+              "emotional",
+              "work"
+            ]
+          },
+          "intensity": {
+            "type": "string",
+            "enum": [
+              "mild",
+              "moderate",
+              "strong"
+            ],
+            "default": "moderate"
+          },
+          "active": {
+            "type": "boolean",
+            "default": true
+          },
+          "last_triggered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "trigger_count": {
+            "type": "integer",
+            "default": 0
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "quirk_id",
+          "label",
+          "category"
+        ]
+      },
+      "default": []
+    },
+    "character_closet": {
+      "type": "array",
+      "description": "Saved outfits for this character, organized by category.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "outfit_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string",
+            "description": "e.g. 'Sunday Fit', 'Work Drip'"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "daily_casual",
+              "work",
+              "gym",
+              "church",
+              "nightlife",
+              "formal",
+              "sleepwear",
+              "lounge",
+              "outdoor",
+              "special"
+            ],
+            "default": "daily_casual"
+          },
+          "top": {
+            "type": "string"
+          },
+          "bottom": {
+            "type": "string"
+          },
+          "shoes": {
+            "type": "string"
+          },
+          "outerwear": {
+            "type": "string"
+          },
+          "accessories": {
+            "type": "string"
+          },
+          "hair_state": {
+            "type": "string"
+          },
+          "full_description": {
+            "type": "string",
+            "description": "Full outfit prompt used for image generation"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "is_favorite": {
+            "type": "boolean",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "outfit_id",
+          "label",
+          "category"
+        ]
+      },
+      "default": []
+    },
+    "current_outfit": {
+      "type": "object",
+      "description": "The character's currently active outfit state. Persists until a valid change occurs.",
+      "properties": {
+        "outfit_id": {
+          "type": "string",
+          "description": "Reference to closet outfit if from closet"
+        },
+        "label": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "top": {
+          "type": "string"
+        },
+        "bottom": {
+          "type": "string"
+        },
+        "shoes": {
+          "type": "string"
+        },
+        "outerwear": {
+          "type": "string"
+        },
+        "accessories": {
+          "type": "string"
+        },
+        "hair_state": {
+          "type": "string"
+        },
+        "full_description": {
+          "type": "string"
+        },
+        "last_changed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "change_reason": {
+          "type": "string",
+          "description": "Why it changed: location_change, explicit_statement, new_day, event"
+        }
+      }
+    },
+    "style_identity": {
+      "type": "string",
+      "description": "e.g. streetwear, luxury, athletic, clean workwear, trendy"
     },
     "current_home_location_id": {
       "type": "string"

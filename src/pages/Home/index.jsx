@@ -37,9 +37,21 @@ export default function Home() {
 
   const { data: characters = [], isLoading } = useQuery({
     queryKey: ["characters", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
-      : [],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      // Fetch by both created_by (legacy) and owner_email (new field) to catch all owned characters
+      const [byCreatedBy, byOwnerEmail] = await Promise.all([
+        base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date"),
+        base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date"),
+      ]);
+      // Merge and deduplicate by id
+      const seen = new Set();
+      return [...byCreatedBy, ...byOwnerEmail].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
+    },
     enabled: !!currentUser?.email,
     staleTime: 0,
     refetchOnMount: true,
