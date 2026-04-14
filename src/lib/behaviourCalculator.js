@@ -69,37 +69,62 @@ export function calculateCharacterBehaviour(character, context = {}) {
     is_self_neglectful: personality.toLowerCase().includes('neglect') || emotional_state === 'burnt out'
   };
 
-  // Build priority-ordered decision
+  // ── UNIFIED NEEDS ENFORCEMENT ENGINE ────────────────────────────────────────
+  // This gate runs BEFORE schedule, personality, or any preference logic.
+  // Critical needs are non-optional. Personality can shape HOW, never WHETHER.
+  // Priority: health → hunger → energy → mental → schedule → everything else
+
   let primaryAction = null;
   let blockedReason = null;
   let actionWeight = {};
+  let forcedByNeed = false;
 
-  // 1. Critical health override
-  if (criticalIssues.critical_health) {
+  // 1. Critical health — overrides absolutely everything
+  if (health < 20) {
     primaryAction = 'go_to_hospital';
     blockedReason = 'critical_health_emergency';
+    forcedByNeed = true;
   }
-  // 2. Extreme energy override
-  else if (criticalIssues.extreme_energy) {
-    primaryAction = 'rest_at_home';
-    blockedReason = 'extreme_energy_depletion';
-  }
-  // 3. Extreme hunger override
-  else if (criticalIssues.extreme_hunger) {
+  // 2. Critical hunger — survival stat, cannot be ignored, overrides schedule
+  else if (hunger < 15) {
     primaryAction = 'seek_food';
     blockedReason = 'critical_hunger';
+    forcedByNeed = true;
   }
-  // 4. Schedule obligation
+  // 3. Critical energy — forced rest, overrides schedule
+  else if (energy < 15) {
+    primaryAction = 'rest_at_home';
+    blockedReason = 'extreme_energy_depletion';
+    forcedByNeed = true;
+  }
+  // 4. Critical mental — forced regulation before any normal activity
+  else if (mental < 15) {
+    primaryAction = personalityFilters.is_introvert ? 'isolate_safely' : 'seek_trusted_support';
+    blockedReason = 'critical_mental_state';
+    forcedByNeed = true;
+  }
+  // 5. Urgent hunger (not yet critical but strong bias — still overrides schedule)
+  else if (hunger < 25) {
+    primaryAction = 'seek_food';
+    blockedReason = 'urgent_hunger';
+    forcedByNeed = true;
+  }
+  // 6. Schedule obligation — only runs if no critical need is forcing action
   else if (isCurrentlyScheduled(character, context)) {
     primaryAction = 'attend_schedule';
     blockedReason = null;
   }
-  // 5. Emotional overload
+  // 7. Emotional overload
   else if (stateModifiers.emotional_overload) {
     primaryAction = personalityFilters.is_introvert ? 'isolate_safely' : 'seek_trusted_support';
     blockedReason = 'high_emotional_strain';
   }
-  // 6-8. Lower priorities
+  // 8. Social critical — slow-burn, but enforced once truly low
+  else if (social < 15) {
+    primaryAction = personalityFilters.is_introvert ? 'seek_trusted_support' : 'socialize';
+    blockedReason = 'critical_social_isolation';
+  }
+  // 9. Lower priorities
   else {
     // Combine all lower needs into weighted pool
     actionWeight = calculateActionWeights({
@@ -155,6 +180,26 @@ export function calculateCharacterBehaviour(character, context = {}) {
     is_weekend: IS_WEEKEND
   });
 
+  // ── FAILSAFE: if critical need detected but primary action is not resolving it ──
+  if (hunger < 15 && primaryAction !== 'seek_food') {
+    console.warn('[BEHAVIOUR_FAILSAFE] HUNGER_NOT_ENFORCED — overriding to seek_food');
+    primaryAction = 'seek_food';
+    blockedReason = 'critical_hunger';
+    forcedByNeed = true;
+  }
+  if (health < 20 && primaryAction !== 'go_to_hospital') {
+    console.warn('[BEHAVIOUR_FAILSAFE] HEALTH_NOT_ENFORCED — overriding to go_to_hospital');
+    primaryAction = 'go_to_hospital';
+    blockedReason = 'critical_health_emergency';
+    forcedByNeed = true;
+  }
+  if (energy < 15 && primaryAction !== 'rest_at_home' && primaryAction !== 'go_to_hospital') {
+    console.warn('[BEHAVIOUR_FAILSAFE] ENERGY_NOT_ENFORCED — overriding to rest_at_home');
+    primaryAction = 'rest_at_home';
+    blockedReason = 'extreme_energy_depletion';
+    forcedByNeed = true;
+  }
+
   return {
     primaryAction,
     fallbackActions,
@@ -163,6 +208,7 @@ export function calculateCharacterBehaviour(character, context = {}) {
     likelyLocations,
     actionWeight,
     blockedReason,
+    forcedByNeed,
     isValid,
     stateSnap: {
       health,
