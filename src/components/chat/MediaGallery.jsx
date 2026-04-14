@@ -263,6 +263,37 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const hasOtherChars = selectedChars.length > 0 || selectedWorldPeople.length > 0;
       const subjectType = userIncluded ? (hasOtherChars ? "joint" : "user") : "character";
 
+      // Build per-character outfit notes for all selected characters
+      const buildOutfitNote = (char) => {
+        const outfit = char.current_outfit;
+        const closetOutfits = (char.character_closet || []).filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+        const activeOutfit = outfit?.label ? outfit : (closetOutfits[closetOutfits.length - 1] || null);
+        if (!activeOutfit) return null;
+        const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
+        const desc = activeOutfit.full_description || parts.join(', ');
+        return desc ? `${char.name} is wearing: ${desc}` : null;
+      };
+
+      // Build outfit instructions for all selected characters
+      const allSelectedChars = selectedCharacterIds.length > 0
+        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
+        : [];
+      const charOutfitLines = [character, ...allSelectedChars.filter(c => c.id !== character.id)]
+        .map(buildOutfitNote).filter(Boolean);
+
+      // User outfit note
+      const userCurrentOutfit = userSettings?.user_current_outfit;
+      if (userIncluded && userCurrentOutfit?.label) {
+        const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
+        const desc = userCurrentOutfit.full_description || parts.join(', ');
+        const uName = userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "the user";
+        if (desc) charOutfitLines.push(`${uName} is wearing: ${desc}`);
+      }
+
+      const multiOutfitSuffix = charOutfitLines.length > 0
+        ? `\n\nOUTFIT REQUIREMENTS — STRICT: Each person MUST wear their assigned outfit below. Do NOT mix or swap outfits between people:\n${charOutfitLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nThese outfits OVERRIDE anything visible in reference photos.`
+        : '';
+
       // Create a placeholder message then call generateImageAsync (which handles location locking)
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
@@ -277,7 +308,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       if (!newMsg?.id) throw new Error('Failed to create message');
 
       // Build the prompt for generateImageAsync
-      const fullPrompt = `[CHARACTER] ${promptText}`;
+      const fullPrompt = `[CHARACTER] ${promptText}${multiOutfitSuffix}`;
 
       // Call generateImageAsync which handles location locking, character refs, etc.
       const genRes = await base44.functions.invoke('generateImageAsync', {

@@ -649,20 +649,20 @@ Deno.serve(async (req) => {
     let resolvedUserAppearanceData = userAppearanceData || null;
 
     try {
-      const message = await base44.entities.Message.get(messageId).catch(() => null);
-      const createdBy = message?.created_by;
+      const msgRecord = await base44.entities.Message.get(messageId).catch(() => null);
+      const createdBy = msgRecord?.created_by;
       const needsUserRefs = resolvedSubjectType === "user" || resolvedSubjectType === "joint" || includesUser === true;
       if (createdBy && needsUserRefs) {
         const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: createdBy }, null, 1).catch(() => []);
         const sett = settingsList?.[0] || {};
-        // Merge: generated avatars first (highest fidelity), then raw uploads
+        // Prefer uploaded reference photos (real face) → generated avatars → fallback
         const settRefs = [
-          ...(sett.generated_avatar_urls || []),
           ...(sett.reference_image_urls || []),
+          ...(sett.generated_avatar_urls || []),
         ].filter(Boolean);
-        if (settRefs.length > resolvedUserRefs.length) {
+        if (settRefs.length > 0) {
           resolvedUserRefs = settRefs;
-          console.log(`[USER-REFS] Server resolved ${settRefs.length} user ref images from settings`);
+          console.log(`[USER-REFS] Server resolved ${settRefs.length} user ref images from settings (uploads first)`);
         }
         // Build appearance data if not provided
         if (!resolvedUserAppearanceData && (sett.user_gender || sett.user_birthday)) {
@@ -882,17 +882,21 @@ Deno.serve(async (req) => {
 
     if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
       referenceImages = [
-        ...locationImages.slice(0, 3),
+        ...locationImages.slice(0, 2),
         ...resolvedCharacterRefs.slice(0, 2),
-        ...resolvedUserRefs.slice(0, 2),
+        ...resolvedUserRefs.slice(0, 3),
       ].filter(Boolean);
 
       const userJointLabel = userWorldName ? userWorldName : "the user";
       const userOutfitNoteJoint = resolvedUserAppearanceData?._outfit_note || '';
+      const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
       const roomNote = hasLocationImages
-         ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = ${userJointLabel} (replicate exactly from reference photos). Both people must be placed inside the locked room.`
-         : `CRITICAL: Features BOTH ${characterName} AND ${userJointLabel}. Replicate both faces and appearances with pristine accuracy.`;
-       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${userOutfitNoteJoint}${AUTO_DIVERSITY_CONSTRAINT}`;
+         ? `REFERENCE IMAGE ORDER: Images 1–${Math.min(2, locationImages.length)} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Next 2 images = ${characterName} identity (replicate face/body exactly). Final images = ${userJointLabel} identity (replicate face/body exactly from their reference photos — their actual face, not a generic person).`
+         : `CRITICAL: Features BOTH ${characterName} AND ${userJointLabel}. Replicate BOTH faces and appearances with maximum fidelity from their reference photos.`;
+
+      const jointUserIdentityLock = `\n\n════════════════════════════════════════════════════════════\nUSER IDENTITY LOCK — ${userJointLabel.toUpperCase()} — MANDATORY\n════════════════════════════════════════════════════════════\nThe last reference images are of ${userJointLabel} — a SPECIFIC real person.\nYou MUST reproduce their EXACT face: bone structure, skin tone, hair texture, hair color, eyes, nose, lips, body proportions.\nDo NOT generate a generic or random person. Do NOT swap their face with a model. Do NOT lighten their skin tone.\nThis person must be INSTANTLY RECOGNIZABLE from the reference photos.\n════════════════════════════════════════════════════════════`;
+
+      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${jointUserIdentityLock}${userLockNoteJoint}${userOutfitNoteJoint}${AUTO_DIVERSITY_CONSTRAINT}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       // User identity-lock mode: prioritize user refs, strong identity preservation
@@ -925,7 +929,7 @@ Deno.serve(async (req) => {
 
       const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
       const userIdentityNote = effectiveUserIncluded
-        ? `\n\nUSER ALSO IN THIS SCENE: A second person (the user) must appear alongside ${characterName}. Replicate the user's exact face, features, and appearance from the final reference images. ${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}${userLockNoteJoint}`
+        ? `\n\n════════════════════════════════════════════════════════════\nUSER IDENTITY LOCK — SECOND PERSON IN SCENE — MANDATORY\n════════════════════════════════════════════════════════════\nThe final reference images show the USER — a SPECIFIC real person who must appear in this scene alongside ${characterName}.\nReproduce their EXACT face: bone structure, skin tone, hair texture, hair color, eyes, nose, lips, and body proportions from their reference photos.\nDo NOT generate a generic person. Do NOT swap their face. Do NOT lighten or alter their skin tone or features.\nThis user must be IMMEDIATELY RECOGNIZABLE as the same person from the reference photos.\n${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}${userLockNoteJoint}`
         : '';
 
       const doNotIncludeOthers = effectiveUserIncluded ? '' : ' Do NOT include any other person.';
