@@ -54,8 +54,12 @@ export default function VGCRevenueDashboard({ userSettings }) {
     enabled: !!currentUser?.email,
   });
 
-  // Filter financials to only current user's active characters
-  const charFinancials = allCharFinancials.filter(cf => activeCharIds.has(cf.character_id));
+  // Filter to ONLY active created characters (character_type === "active") — excludes NPCs, family NPCs, background, etc.
+  const createdActiveCharacters = activeCharacters.filter(c => c.character_type === "active");
+  const createdActiveCharIds = new Set(createdActiveCharacters.map(c => c.id));
+
+  // Filter financials to only current user's active created characters
+  const charFinancials = allCharFinancials.filter(cf => createdActiveCharIds.has(cf.character_id));
 
   if (txLoading) {
     return (
@@ -102,7 +106,7 @@ export default function VGCRevenueDashboard({ userSettings }) {
   const totalVGCRevenue = vgcIncome.reduce((s, t) => s + (t.amount || 0), 0);
   const totalCharExp = charExpenses.reduce((s, t) => s + (t.amount || 0), 0);
   const userBalance = userSettings?.user_balance ?? 0;
-  const activeCharCount = activeCharacters.length;
+  const activeCharCount = createdActiveCharacters.length;
 
   const tooltipStyle = {
     backgroundColor: "hsl(240 5% 10%)",
@@ -159,18 +163,15 @@ export default function VGCRevenueDashboard({ userSettings }) {
       </div>
 
       {/* Per-character balance bars — only active created characters */}
-      {activeCharacters.length > 0 && (
+      {charFinancials.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Character Balances</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart
-              data={activeCharacters.slice(0, 8).map(char => {
-                const cf = charFinancials.find(f => f.character_id === char.id);
-                return {
-                  name: char.name?.split(" ")[0] || "?",
-                  balance: Math.round(cf?.current_balance ?? 6000),
-                };
-              })}
+              data={charFinancials.slice(0, 8).map(cf => ({
+                name: cf.character_name?.split(" ")[0] || "?",
+                balance: Math.round(cf.current_balance || 0),
+              }))}
               margin={{ top: 5, right: 5, bottom: 0, left: -20 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 18%)" />
