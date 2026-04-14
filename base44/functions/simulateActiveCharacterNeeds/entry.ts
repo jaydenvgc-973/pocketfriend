@@ -49,40 +49,65 @@ function isOnShift(character) {
     currentMins < endH * 60 + endM;
 }
 
+function getWorkContextFromLocation(loc) {
+  const cat = (loc.category || '').toLowerCase();
+  const name = (loc.name || '').toLowerCase();
+  if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency')) return 'at_work_medical';
+  if (cat === 'food_drink' || cat === 'social' || name.includes('bar') || name.includes('restaurant') || name.includes('cafe') || name.includes('diner')) return 'at_work_service';
+  return 'at_work_office';
+}
+
 function getLocationContext(character, locationMap) {
   // Proactive activity overrides — character is actively doing something to meet a need
   const activity = (character.current_activity || '').toLowerCase();
   if (activity.includes('eat') || activity.includes('food') || activity.includes('cook') || activity.includes('meal') || activity.includes('lunch') || activity.includes('dinner') || activity.includes('breakfast') || activity.includes('snack')) return 'eating';
   if (activity.includes('rest') || activity.includes('nap') || activity.includes('relax')) return 'resting';
 
+  const presenceStatus = character.resolved_presence_status || character.location_status;
+
+  if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
+  if (character.travel_status && character.travel_status !== 'not_traveling') return 'traveling';
+
+  // ── Work inference: check current_activity text as a strong signal ──────────
+  // If resolved_current_location_id is missing but activity says "at work", use work location
+  if (activity.includes('at work') || activity.includes('working') || activity.includes('on shift')) {
+    const workLocId = character.current_work_location_id || character.occupation_location_id;
+    const workLoc = workLocId ? locationMap[workLocId] : null;
+    if (workLoc) {
+      return isOnShift(character) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
+    }
+    // No location record but clearly at work — use generic work context
+    return isOnShift(character) ? 'at_work' : 'work_off_shift';
+  }
+
+  // ── presence_status inference ────────────────────────────────────────────────
+  if (presenceStatus === 'at_work') {
+    const workLocId = character.current_work_location_id || character.occupation_location_id;
+    const workLoc = workLocId ? locationMap[workLocId] : null;
+    if (workLoc) {
+      return isOnShift(character) ? getWorkContextFromLocation(workLoc) : 'work_off_shift';
+    }
+    return isOnShift(character) ? 'at_work' : 'work_off_shift';
+  }
+
+  if (presenceStatus === 'at_school') return 'at_school';
+
+  // ── Resolved location lookup ─────────────────────────────────────────────────
   const locId = character.resolved_current_location_id;
   if (!locId) {
-    const presenceStatus = character.resolved_presence_status;
-    if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
+    // No resolved location — fall back to presence_status or home
+    if (presenceStatus === 'home' || !presenceStatus) return 'home_resting';
     return 'default';
   }
-  const loc = locationMap[locId];
-  if (!loc) return 'default';
 
-  const presenceStatus = character.resolved_presence_status;
-  if (presenceStatus === 'sleeping' || presenceStatus === 'napping') return 'sleeping';
+  const loc = locationMap[locId];
+  if (!loc) return 'home_resting'; // location record missing — treat as home
 
   // Work context: differentiate by job type AND shift status
   const workLocId = character.current_work_location_id || character.occupation_location_id;
   if (locId === workLocId) {
-    if (!isOnShift(character)) {
-      // Character is lingering at work after shift — location fatigue kicks in
-      return 'work_off_shift';
-    }
-    // On shift — differentiate by job type for realistic work stress
-    const cat = (loc.category || '').toLowerCase();
-    const name = (loc.name || '').toLowerCase();
-    if (cat === 'medical' || name.includes('hospital') || name.includes('clinic') || name.includes('emergency')) return 'at_work_medical';
-    if (cat === 'food_drink' || name.includes('bar') || name.includes('restaurant') || name.includes('cafe') || name.includes('diner')) return 'at_work_service';
-    return 'at_work_office'; // default office/generic work
+    return isOnShift(character) ? getWorkContextFromLocation(loc) : 'work_off_shift';
   }
-
-  if (presenceStatus === 'at_school') return 'at_school';
 
   const cat = (loc.category || '').toLowerCase();
   const name = (loc.name || '').toLowerCase();
@@ -92,11 +117,9 @@ function getLocationContext(character, locationMap) {
   if (cat === 'food_drink' || name.includes('restaurant') || name.includes('cafe') || name.includes('diner') || name.includes('kitchen')) return 'food_drink';
   if (cat === 'social' || name.includes('bar') || name.includes('club') || name.includes('lounge') || name.includes('nightclub')) return 'bar_club';
   if (cat === 'outdoor') return 'social_out';
-  if (cat === 'home') {
-    if (presenceStatus === 'home') return 'home_resting';
-    return 'home_active';
+  if (cat === 'home' || cat === 'generic') {
+    return (presenceStatus === 'home' || !presenceStatus) ? 'home_resting' : 'home_active';
   }
-  if (character.travel_status && character.travel_status !== 'not_traveling') return 'traveling';
   return 'default';
 }
 
