@@ -412,11 +412,16 @@ export default function CharacterClosetPanel({ character }) {
 
   const saveCloset = async (newCloset, currentOutfitUpdate = null) => {
     setSaving(true);
-    const updates = { character_closet: newCloset };
-    if (currentOutfitUpdate !== null) updates.current_outfit = currentOutfitUpdate;
-    await base44.entities.Character.update(character.id, updates);
-    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-    setSaving(false);
+    try {
+      const updates = { character_closet: newCloset };
+      if (currentOutfitUpdate !== null) updates.current_outfit = currentOutfitUpdate;
+      await base44.entities.Character.update(character.id, updates);
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    } catch (error) {
+      console.error("Failed to save closet:", error);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSaveOutfit = async (outfit) => {
