@@ -414,6 +414,86 @@ export function checkScheduleViolation(character, locationMap = {}, currentTime 
 }
 
 /**
+ * SINGLE SOURCE OF TRUTH FOR ALL UI DISPLAYS
+ *
+ * getCharacterLivePresence() — every screen must call this instead of building its own text.
+ * Returns one authoritative display object: status label, location name, transit text, sleep state.
+ *
+ * Priority order:
+ *   1. Active overrides (asleep/collapsed/hunger critical/health critical)
+ *   2. Transit state (left but not arrived)
+ *   3. Confirmed arrival (presence_status = at_location)
+ *   4. Last confirmed location (fallback)
+ *
+ * RULE: Schedule fields NEVER write directly to display state.
+ * Schedule creates intent. Only confirmed state creates presence.
+ */
+export function getCharacterLivePresence(character, locationMap = {}) {
+  if (!character) return { status: 'unknown', label: 'Unknown', sublabel: null, isTransit: false, isSleeping: false };
+
+  const loc = locationMap[character.resolved_current_location_id];
+  const locName = loc?.name || character.resolved_current_location_name || 'Home';
+
+  // ── PRIORITY 1: OVERRIDES ──────────────────────────────────────────────────
+  const presenceStatus = character.resolved_presence_status || character.location_status;
+
+  // Sleep state (sleeping / napping)
+  if (presenceStatus === 'sleeping' || presenceStatus === 'napping') {
+    const label = presenceStatus === 'napping' ? 'Napping' : 'Sleeping';
+    return { status: presenceStatus, label, sublabel: locName, isTransit: false, isSleeping: true };
+  }
+
+  // Sleep interrupted by chat — character is now awake at their location
+  if (character.sleep_interrupted_at) {
+    const minutesSinceInterrupt = (Date.now() - new Date(character.sleep_interrupted_at).getTime()) / 60000;
+    if (minutesSinceInterrupt < 60) {
+      return { status: 'sleep_interrupted', label: 'Awake', sublabel: `Just woke up · ${locName}`, isTransit: false, isSleeping: false };
+    }
+  }
+
+  // Critical needs override — hunger/health emergencies must surface
+  const hungerCritical  = (character.hunger_value ?? 70) < 15;
+  const healthCritical  = (character.health_value ?? 80) < 20;
+  const energyCritical  = (character.energy_value ?? 75) < 10;
+
+  if (healthCritical) {
+    return { status: 'health_critical', label: 'Health Emergency', sublabel: locName, isTransit: false, isSleeping: false };
+  }
+  if (energyCritical && presenceStatus !== 'at_work') {
+    return { status: 'energy_critical', label: 'Exhausted', sublabel: locName, isTransit: false, isSleeping: false };
+  }
+  if (hungerCritical) {
+    return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isTransit: false, isSleeping: false };
+  }
+
+  // ── PRIORITY 2: TRANSIT STATE ──────────────────────────────────────────────
+  if (character.travel_status && character.travel_status !== 'not_traveling') {
+    const destLoc = locationMap[character.travel_destination_location_id];
+    const destName = destLoc?.name || character.traveling_to_location_name || 'destination';
+    return { status: 'in_transit', label: `Traveling to ${destName}`, sublabel: null, isTransit: true, isSleeping: false };
+  }
+
+  // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
+  if (presenceStatus === 'at_work') {
+    const workLoc = locationMap[character.occupation_location_id];
+    return { status: 'at_work', label: `At work`, sublabel: workLoc?.name || 'Work', isTransit: false, isSleeping: false };
+  }
+  if (presenceStatus === 'at_school') {
+    const schoolLoc = locationMap[character.education_location_id];
+    return { status: 'at_school', label: `At school`, sublabel: schoolLoc?.name || 'School', isTransit: false, isSleeping: false };
+  }
+  if (presenceStatus === 'visiting') {
+    return { status: 'visiting', label: `At ${locName}`, sublabel: null, isTransit: false, isSleeping: false };
+  }
+  if (presenceStatus === 'home') {
+    return { status: 'home', label: 'At home', sublabel: locName, isTransit: false, isSleeping: false };
+  }
+
+  // ── PRIORITY 4: FALLBACK — last confirmed location ─────────────────────────
+  return { status: 'at_location', label: locName ? `At ${locName}` : 'Nearby', sublabel: null, isTransit: false, isSleeping: false };
+}
+
+/**
  * AUTO-CORRECT: If character is violating schedule, force correct location
  * Returns corrected character data or null if no correction needed
  */

@@ -136,23 +136,103 @@ function applyElapsedTime(needs, elapsedHours, context) {
   };
 }
 
-// Health and comfort degrade when hunger is critical (< 20)
-// Also degrades when multiple other needs are critically low
-function applyHealthDegradation(needs) {
-  // Hunger critical: directly impacts health and comfort
+// ── CROSS-SYSTEM STAT INFECTION ───────────────────────────────────────────────
+// Critical needs cascade into other stats. No need can be ignored silently.
+// Priority infection chain: Hunger → Energy → Health; Financial → Hunger → Mental
+function applyStatInfection(needs, elapsedHours) {
+  // ── HUNGER CASCADE ──
   if (needs.hunger < 20) {
-    const severity = (20 - needs.hunger) / 20; // 0 to 1, higher = worse
-    needs.health  = clamp(needs.health  - 1.5 * severity);
-    needs.comfort = clamp(needs.comfort - 1.0 * severity);
-    needs.energy  = clamp(needs.energy  - 0.5 * severity);
+    const severity = (20 - needs.hunger) / 20; // 0.0–1.0
+    // Hunger drains energy faster when starving
+    needs.energy  = clamp(needs.energy  - 2.0 * severity * elapsedHours);
+    needs.health  = clamp(needs.health  - 1.5 * severity * elapsedHours);
+    needs.comfort = clamp(needs.comfort - 1.0 * severity * elapsedHours);
+    needs.mental  = clamp(needs.mental  - 0.5 * severity * elapsedHours);
+  } else if (needs.hunger < 35) {
+    // Urgent hunger (not critical yet): mild energy drain
+    needs.energy  = clamp(needs.energy  - 0.5 * elapsedHours);
+    needs.mental  = clamp(needs.mental  - 0.3 * elapsedHours);
   }
-  // Multiple critical needs also hurt health
-  const criticalCount = [needs.hunger, needs.energy, needs.mental, needs.hygiene, needs.comfort]
+
+  // ── ENERGY CASCADE ──
+  if (needs.energy < 15) {
+    const severity = (15 - needs.energy) / 15;
+    needs.health  = clamp(needs.health  - 1.0 * severity * elapsedHours);
+    needs.mental  = clamp(needs.mental  - 0.5 * severity * elapsedHours);
+  }
+
+  // ── HEALTH CASCADE ──
+  if (needs.health < 20) {
+    const severity = (20 - needs.health) / 20;
+    needs.energy  = clamp(needs.energy  - 2.0 * severity * elapsedHours);
+    needs.comfort = clamp(needs.comfort - 1.0 * severity * elapsedHours);
+  }
+
+  // ── SOCIAL → MENTAL slow-burn ──
+  // Social only infects mental after sustained low state (slow-burn, not instant)
+  if (needs.social < 20) {
+    needs.mental = clamp(needs.mental - 0.3 * elapsedHours);
+  }
+
+  // ── MENTAL → IGNORING OTHER NEEDS (collapse acceleration) ──
+  if (needs.mental < 15) {
+    // Mental breakdown accelerates neglect of all needs
+    needs.hunger  = clamp(needs.hunger  - 0.5 * elapsedHours);
+    needs.hygiene = clamp(needs.hygiene - 0.5 * elapsedHours);
+    needs.health  = clamp(needs.health  - 0.3 * elapsedHours);
+  }
+
+  // ── MULTI-CRITICAL COLLAPSE ──
+  const criticalCount = [needs.hunger, needs.energy, needs.mental, needs.hygiene, needs.health]
     .filter(v => v < 20).length;
   if (criticalCount >= 3) {
-    needs.health = clamp(needs.health - 0.5);
+    needs.health = clamp(needs.health - 1.0 * elapsedHours);
   }
+
   return needs;
+}
+
+// ── ESCALATION STAGE DETECTOR ─────────────────────────────────────────────────
+// Returns a list of active critical events that should be logged as memories
+function detectCriticalEscalations(oldNeeds, newNeeds, characterName) {
+  const events = [];
+  const timestamp = new Date().toISOString();
+
+  // Hunger escalation stages
+  if (oldNeeds.hunger >= 20 && newNeeds.hunger < 20) {
+    events.push({ title: 'Reached critical hunger', description: `${characterName} was starving — hunger became critical. Body starting to weaken.`, emotional_impact: 'negative', memory_tag: 'hunger_critical' });
+  }
+  if (oldNeeds.hunger >= 10 && newNeeds.hunger < 10) {
+    events.push({ title: 'Severe hunger — near collapse', description: `${characterName} was extremely hungry, feeling dizzy and unable to focus.`, emotional_impact: 'negative', memory_tag: 'hunger_severe' });
+  }
+  if (newNeeds.hunger === 0 && oldNeeds.hunger > 0) {
+    events.push({ title: 'Hunger at zero — forced survival mode', description: `${characterName} had zero food energy. All activity was interrupted by desperate hunger.`, emotional_impact: 'negative', memory_tag: 'hunger_zero' });
+  }
+
+  // Energy collapse
+  if (oldNeeds.energy >= 15 && newNeeds.energy < 15) {
+    events.push({ title: 'Extreme exhaustion', description: `${characterName} was running on empty and could barely function.`, emotional_impact: 'negative', memory_tag: 'energy_critical' });
+  }
+  if (newNeeds.energy === 0 && oldNeeds.energy > 0) {
+    events.push({ title: 'Passed out from exhaustion', description: `${characterName} collapsed from complete energy depletion.`, emotional_impact: 'negative', memory_tag: 'energy_zero' });
+  }
+
+  // Health crisis
+  if (oldNeeds.health >= 20 && newNeeds.health < 20) {
+    events.push({ title: 'Health reached critical level', description: `${characterName}'s health deteriorated to a critical state — medical attention needed.`, emotional_impact: 'negative', memory_tag: 'health_critical' });
+  }
+
+  // Social isolation breakdown
+  if (oldNeeds.social >= 15 && newNeeds.social < 15) {
+    events.push({ title: 'Deep social isolation', description: `${characterName} felt completely alone and isolated. The loneliness became overwhelming.`, emotional_impact: 'negative', memory_tag: 'social_critical' });
+  }
+
+  // Mental breakdown
+  if (oldNeeds.mental >= 15 && newNeeds.mental < 15) {
+    events.push({ title: 'Mental breakdown threshold reached', description: `${characterName} reached a mental breaking point — stress and pressure had been building for too long.`, emotional_impact: 'negative', memory_tag: 'mental_critical' });
+  }
+
+  return events;
 }
 
 // Financial need reflects actual balance — lower balance = lower financial_need_value
@@ -275,8 +355,31 @@ Deno.serve(async (req) => {
 
       // Apply elapsed-time decay/gain using the correct context
       let newNeeds = applyElapsedTime(currentNeeds, cappedHours, context);
-      newNeeds = applyHealthDegradation(newNeeds);
+      // Apply cross-system stat infection (hunger→energy→health cascade)
+      newNeeds = applyStatInfection(newNeeds, cappedHours);
       const financialNeed = deriveFinancialNeed(char);
+
+      // ── DETECT CRITICAL ESCALATIONS FOR MEMORY CREATION ──────────────────
+      const escalationEvents = detectCriticalEscalations(currentNeeds, newNeeds, char.name);
+      if (escalationEvents.length > 0 && char.character_type === 'active') {
+        // Fire-and-forget memory creation — don't block the update
+        Promise.all(escalationEvents.map(evt =>
+          sdk.entities.Memory.create({
+            character_id: char.id,
+            title: evt.title,
+            description: evt.description,
+            emotional_impact: 'negative',
+            timestamp: now.toISOString(),
+            source_context: `needs_simulation_${evt.memory_tag}`,
+          }).catch(() => {})
+        ));
+        console.warn(`[NEEDS-ESCALATION] ${char.name}: ${escalationEvents.map(e => e.memory_tag).join(', ')}`);
+      }
+
+      // ── FAILSAFE: log any stat that remains at critical but simulation ran ──
+      if (newNeeds.hunger < 10) console.error(`[NEEDS_FAILSAFE] HUNGER_CRITICAL: ${char.name} hunger=${Math.round(newNeeds.hunger)}`);
+      if (newNeeds.health < 10) console.error(`[NEEDS_FAILSAFE] HEALTH_CRITICAL: ${char.name} health=${Math.round(newNeeds.health)}`);
+      if (newNeeds.energy < 5)  console.error(`[NEEDS_FAILSAFE] ENERGY_CRITICAL: ${char.name} energy=${Math.round(newNeeds.energy)}`);
 
       updates.push({
         id: char.id,
