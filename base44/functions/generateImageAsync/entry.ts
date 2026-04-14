@@ -1,11 +1,8 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // subjectType: "character" | "user" | "joint"
-// Only use user references when subjectType is "user" or "joint"
-// Never use user references for "character" images
 
 // ── ZONE KEYWORD MAP ──────────────────────────────────────────────────────────
-// Maps prompt keywords → canonical zone name fragments for fuzzy matching
 const ZONE_KEYWORD_MAP = [
   { keywords: ["living room", "lounge", "couch", "sofa", "sectional", "tv room", "family room"], zone: "living room" },
   { keywords: ["kitchen", "cooking", "stove", "fridge", "counter", "microwave", "sink", "oven"], zone: "kitchen" },
@@ -17,35 +14,28 @@ const ZONE_KEYWORD_MAP = [
   { keywords: ["garage", "car", "parking"], zone: "garage" },
   { keywords: ["basement", "downstairs"], zone: "basement" },
   { keywords: ["office", "desk", "workspace", "home office", "work from home"], zone: "office" },
-  // Gym zones
   { keywords: ["workout floor", "weights", "weight room", "dumbbell", "barbell", "squat rack", "bench press"], zone: "weight" },
   { keywords: ["treadmill", "cardio", "elliptical", "bike", "rowing"], zone: "cardio" },
   { keywords: ["locker room", "changing room", "showers"], zone: "locker" },
   { keywords: ["pool area", "swimming pool"], zone: "pool" },
   { keywords: ["sauna", "steam room"], zone: "sauna" },
-  // Bar/club zones
   { keywords: ["vip section", "vip area", "vip booth", "vip lounge", "the vip"], zone: "vip" },
   { keywords: ["main floor", "dance floor", "dancefloor", "general floor"], zone: "main floor" },
   { keywords: ["behind the bar", "bar area", "bartending", "bar counter", "bar top"], zone: "bar area" },
   { keywords: ["rooftop", "roof deck", "roof bar", "rooftop bar"], zone: "rooftop" },
   { keywords: ["patio", "outdoor area", "outdoor seating", "outdoor patio"], zone: "patio" },
   { keywords: ["entrance", "lobby", "foyer", "entry"], zone: "entrance" },
-  // Workplace zones
   { keywords: ["break room", "lunch room", "breakroom"], zone: "break room" },
   { keywords: ["conference room", "meeting room", "boardroom"], zone: "conference" },
   { keywords: ["waiting room", "waiting area", "reception"], zone: "waiting" },
-  // Medical
   { keywords: ["patient room", "patient bed", "hospital room", "hospital bed"], zone: "patient" },
   { keywords: ["operating room", "or ", "surgery"], zone: "operating" },
   { keywords: ["recovery room", "recovery area"], zone: "recovery" },
-  // School
   { keywords: ["classroom", "class", "lecture hall"], zone: "classroom" },
   { keywords: ["cafeteria", "school lunch", "lunch room"], zone: "cafeteria" },
   { keywords: ["library", "study hall"], zone: "library" },
 ];
 
-// Possessive implication: "his bed" → implies the character's home location, zone = bedroom
-// These are resolved BEFORE location matching so we can bias toward character-specific home
 const POSSESSIVE_ZONE_MAP = [
   { pattern: /\bhis bed\b|\bher bed\b|\btheir bed\b|\bown bed\b/, zone: "bedroom", category: "home" },
   { pattern: /\bhis couch\b|\bher couch\b|\bhis sofa\b|\bher sofa\b|\btheir couch\b/, zone: "living room", category: "home" },
@@ -58,17 +48,12 @@ const POSSESSIVE_ZONE_MAP = [
   { pattern: /\bhis living room\b|\bher living room\b|\btheir living room\b/, zone: "living room", category: "home" },
 ];
 
-/**
- * Score how well a zone name matches a target zone keyword fragment.
- * Higher = better match.
- */
 function zoneMatchScore(zoneName, targetZoneFragment) {
   const zn = zoneName.toLowerCase();
   const tf = targetZoneFragment.toLowerCase();
   if (zn === tf) return 100;
   if (zn.includes(tf)) return 80;
   if (tf.includes(zn)) return 60;
-  // Partial word overlap
   const znWords = zn.split(/\s+/);
   const tfWords = tf.split(/\s+/);
   const overlap = znWords.filter(w => tfWords.some(t => t.includes(w) || w.includes(t))).length;
@@ -76,61 +61,33 @@ function zoneMatchScore(zoneName, targetZoneFragment) {
   return 0;
 }
 
-/**
- * Given a prompt and a location record, resolve the best matching zone's images.
- * Returns { zoneImages, zoneName, matchType }
- * matchType: "exact_zone_name" | "zone_keyword" | "first_zone" | "location_flat"
- */
 function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
   const zones = (location.zones || []).filter(z => z.image_urls?.length > 0);
   const MAX = 6;
-
   if (zones.length === 0) {
-    return {
-      zoneImages: (location.image_urls || []).slice(0, MAX),
-      zoneName: null,
-      matchType: "location_flat",
-    };
+    return { zoneImages: (location.image_urls || []).slice(0, MAX), zoneName: null, matchType: "location_flat" };
   }
-
   const hint = forcedZoneHint?.toLowerCase() || null;
-
-  // 1. Exact zone name in prompt (highest confidence)
   for (const zone of zones) {
     if (promptLower.includes(zone.zone_name.toLowerCase())) {
-      return {
-        zoneImages: zone.image_urls.slice(0, MAX),
-        zoneName: zone.zone_name,
-        matchType: "exact_zone_name",
-      };
+      return { zoneImages: zone.image_urls.slice(0, MAX), zoneName: zone.zone_name, matchType: "exact_zone_name" };
     }
   }
-
-  // 2. If we have a forced hint (from possessive or keyword inference), score zones against it
   if (hint) {
-    let bestZone = null;
-    let bestScore = 0;
+    let bestZone = null, bestScore = 0;
     for (const zone of zones) {
       const score = zoneMatchScore(zone.zone_name, hint);
       if (score > bestScore) { bestScore = score; bestZone = zone; }
     }
     if (bestZone && bestScore >= 30) {
-      // Collect ALL zones that match well (multiple angles of same area)
       const allMatchingZones = zones.filter(z => zoneMatchScore(z.zone_name, hint) >= 30);
       const combined = allMatchingZones.flatMap(z => z.image_urls || []).slice(0, MAX);
-      return {
-        zoneImages: combined,
-        zoneName: bestZone.zone_name,
-        matchType: "zone_keyword",
-      };
+      return { zoneImages: combined, zoneName: bestZone.zone_name, matchType: "zone_keyword" };
     }
   }
-
-  // 3. Keyword inference from prompt against ZONE_KEYWORD_MAP
   for (const entry of ZONE_KEYWORD_MAP) {
     if (entry.keywords.some(kw => promptLower.includes(kw))) {
-      let bestZone = null;
-      let bestScore = 0;
+      let bestZone = null, bestScore = 0;
       for (const zone of zones) {
         const score = zoneMatchScore(zone.zone_name, entry.zone);
         if (score > bestScore) { bestScore = score; bestZone = zone; }
@@ -138,50 +95,24 @@ function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
       if (bestZone && bestScore >= 30) {
         const allMatchingZones = zones.filter(z => zoneMatchScore(z.zone_name, entry.zone) >= 30);
         const combined = allMatchingZones.flatMap(z => z.image_urls || []).slice(0, MAX);
-        return {
-          zoneImages: combined,
-          zoneName: bestZone.zone_name,
-          matchType: "zone_keyword",
-        };
+        return { zoneImages: combined, zoneName: bestZone.zone_name, matchType: "zone_keyword" };
       }
     }
   }
-
-  // 4. First zone with images (weakest fallback — better than generic)
   const first = zones[0];
-  return {
-    zoneImages: first.image_urls.slice(0, MAX),
-    zoneName: first.zone_name,
-    matchType: "first_zone",
-  };
+  return { zoneImages: first.image_urls.slice(0, MAX), zoneName: first.zone_name, matchType: "first_zone" };
 }
 
-/**
- * Score how well a location name matches the prompt.
- * Returns a confidence value 0.0–1.0.
- * Handles: exact match, substring, partial word overlap, plural/singular, minor variations.
- */
 function locationNameScore(locNameRaw, promptLower) {
   const locName = locNameRaw.toLowerCase().trim();
-
-  // 1. Exact substring match
   if (promptLower.includes(locName)) return 1.0;
-
-  // 2. Prompt substring inside loc name (e.g. "escuelita" in "escuelitas")
   if (locName.includes(promptLower.split(' ').find(w => w.length >= 4 && locName.includes(w)) || '')) {
-    // only credit if that word is long enough to be meaningful
     const promptWords = promptLower.split(/\s+/).filter(w => w.length >= 4);
-    for (const w of promptWords) {
-      if (locName.includes(w)) return 0.9;
-    }
+    for (const w of promptWords) { if (locName.includes(w)) return 0.9; }
   }
-
-  // 3. Plural/singular stripping: try adding/removing trailing 's'
   if (promptLower.includes(locName + 's') || promptLower.includes(locName.replace(/s$/, ''))) return 0.95;
   const locNameNoS = locName.endsWith('s') ? locName.slice(0, -1) : locName + 's';
   if (promptLower.includes(locNameNoS)) return 0.95;
-
-  // 4. All significant words of the location name appear somewhere in the prompt
   const locWords = locName.split(/\s+/).filter(w => w.length >= 3);
   if (locWords.length > 0) {
     const allMatch = locWords.every(w => promptLower.includes(w));
@@ -189,130 +120,61 @@ function locationNameScore(locNameRaw, promptLower) {
     const matchCount = locWords.filter(w => promptLower.includes(w)).length;
     if (matchCount > 0) return 0.5 + (matchCount / locWords.length) * 0.3;
   }
-
-  // 5. Levenshtein-like: check each prompt token against loc name
   const promptTokens = promptLower.split(/\s+/).filter(w => w.length >= 4);
   for (const token of promptTokens) {
-    // Simple character overlap ratio
     const shorter = token.length < locName.length ? token : locName;
     const longer = token.length >= locName.length ? token : locName;
     let matches = 0;
-    for (let i = 0; i < shorter.length; i++) {
-      if (longer.includes(shorter[i])) matches++;
-    }
+    for (let i = 0; i < shorter.length; i++) { if (longer.includes(shorter[i])) matches++; }
     const ratio = matches / longer.length;
     if (ratio >= 0.8 && Math.abs(token.length - locName.length) <= 3) return 0.75;
   }
-
   return 0.0;
 }
 
-/**
- * Get the default zone for a location category when no zone is specified.
- * e.g. nightlife/bar → "Main Floor", home → "Living Room"
- */
 function getDefaultZoneHint(category) {
-  const defaults = {
-    social: "main floor",
-    home: "living room",
-    gym: "workout floor",
-    workplace: "office",
-    food_drink: "main area",
-    medical: "waiting",
-    education: "classroom",
-  };
+  const defaults = { social: "main floor", home: "living room", gym: "workout floor", workplace: "office", food_drink: "main area", medical: "waiting", education: "classroom" };
   return defaults[category] || null;
 }
 
-/**
- * Main resolver: parse the prompt → find Location → find Zone → return images + labels.
- * Returns { locationImages, locationName, zoneName, matchConfidence, confidenceScore }
- * matchConfidence: "high" | "medium" | "low" | "none"
- * confidenceScore: 0.0–1.0 (used for failsafe threshold)
- */
 function resolveLocationAndZone(prompt, locations, characterId) {
   if (!prompt || !locations || locations.length === 0) {
     return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none", confidenceScore: 0 };
   }
-
   const pl = prompt.toLowerCase();
-
-  // Prioritize character-specific locations over global ones
-  const characterLocations = characterId
-    ? locations.filter(l => l.location_type === 'character_specific' && l.character_id === characterId)
-    : [];
+  const characterLocations = characterId ? locations.filter(l => l.location_type === 'character_specific' && l.character_id === characterId) : [];
   const globalLocations = locations.filter(l => l.location_type === 'global');
   const ordered = [...characterLocations, ...globalLocations];
-
-  // ── STEP 1: Check possessive patterns to infer zone hint and category bias ──
-  let possessiveZoneHint = null;
-  let possessiveCategoryHint = null;
+  let possessiveZoneHint = null, possessiveCategoryHint = null;
   for (const entry of POSSESSIVE_ZONE_MAP) {
-    if (entry.pattern.test(pl)) {
-      possessiveZoneHint = entry.zone;
-      possessiveCategoryHint = entry.category;
-      break;
-    }
+    if (entry.pattern.test(pl)) { possessiveZoneHint = entry.zone; possessiveCategoryHint = entry.category; break; }
   }
-
-  // ── STEP 2: Score ALL locations against the prompt, pick best ──
-  // This replaces the old exact-only check and handles fuzzy/plural/partial matches
-  let bestLoc = null;
-  let bestScore = 0.0;
+  let bestLoc = null, bestScore = 0.0;
   for (const loc of ordered) {
     const score = locationNameScore(loc.name, pl);
     if (score > bestScore) { bestScore = score; bestLoc = loc; }
   }
-
   if (bestLoc && bestScore >= 0.7) {
-    // High-confidence location name match — use this location
     const zoneHint = possessiveZoneHint || getDefaultZoneHint(bestLoc.category);
     const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, bestLoc, zoneHint);
     const confidence = bestScore >= 0.9 ? "high" : "medium";
-    console.log(`[LOCATION-MATCH] "${bestLoc.name}" score=${bestScore.toFixed(2)} zone="${zoneName}" matchType=${matchType}`);
-    return {
-      locationImages: zoneImages,
-      locationName: bestLoc.name,
-      zoneName,
-      matchConfidence: confidence,
-      confidenceScore: bestScore,
-    };
+    return { locationImages: zoneImages, locationName: bestLoc.name, zoneName, matchConfidence: confidence, confidenceScore: bestScore };
   }
-
-  // ── STEP 3: Keyword match on location keywords field ──
   for (const loc of ordered) {
     if (loc.keywords?.some(kw => kw && pl.includes(kw.toLowerCase()))) {
       const zoneHint = possessiveZoneHint || getDefaultZoneHint(loc.category);
       const { zoneImages, zoneName, matchType } = resolveZoneImages(pl, loc, zoneHint);
-      console.log(`[LOCATION-KEYWORD] "${loc.name}" zone="${zoneName}"`);
-      return {
-        locationImages: zoneImages,
-        locationName: loc.name,
-        zoneName,
-        matchConfidence: matchType === "exact_zone_name" ? "high" : "medium",
-        confidenceScore: 0.8,
-      };
+      return { locationImages: zoneImages, locationName: loc.name, zoneName, matchConfidence: matchType === "exact_zone_name" ? "high" : "medium", confidenceScore: 0.8 };
     }
   }
-
-  // ── STEP 4: Possessive + category match (e.g. "his bed" → character-specific home) ──
   if (possessiveCategoryHint) {
     const catLoc = ordered.find(l => l.category === possessiveCategoryHint);
     if (catLoc) {
       const zoneHint = possessiveZoneHint || getDefaultZoneHint(catLoc.category);
       const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, zoneHint);
-      console.log(`[LOCATION-POSSESSIVE] "${catLoc.name}" zone="${zoneName}"`);
-      return {
-        locationImages: zoneImages,
-        locationName: catLoc.name,
-        zoneName,
-        matchConfidence: "medium",
-        confidenceScore: 0.75,
-      };
+      return { locationImages: zoneImages, locationName: catLoc.name, zoneName, matchConfidence: "medium", confidenceScore: 0.75 };
     }
   }
-
-  // ── STEP 5: Category-level fuzzy match from prompt keywords ──
   const categoryKeywords = {
     home: ['home', 'apartment', 'house', 'place', 'flat', 'living room', 'bedroom', 'kitchen', 'bathroom', 'backyard', 'couch', 'bed', 'sofa'],
     gym: ['gym', 'workout', 'weights', 'treadmill', 'locker room', 'fitness', 'lifting'],
@@ -323,30 +185,19 @@ function resolveLocationAndZone(prompt, locations, characterId) {
     medical: ['hospital', 'clinic', 'doctor', 'waiting room', 'patient'],
     education: ['school', 'class', 'college', 'campus', 'library'],
   };
-
   for (const [cat, keywords] of Object.entries(categoryKeywords)) {
     if (keywords.some(kw => pl.includes(kw))) {
       const catLoc = ordered.find(l => l.category === cat);
       if (catLoc) {
         const zoneHint = possessiveZoneHint || getDefaultZoneHint(cat);
         const { zoneImages, zoneName } = resolveZoneImages(pl, catLoc, zoneHint);
-        if (zoneImages.length > 0) {
-          return {
-            locationImages: zoneImages,
-            locationName: catLoc.name,
-            zoneName,
-            matchConfidence: "low",
-            confidenceScore: 0.5,
-          };
-        }
+        if (zoneImages.length > 0) return { locationImages: zoneImages, locationName: catLoc.name, zoneName, matchConfidence: "low", confidenceScore: 0.5 };
       }
     }
   }
-
   return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none", confidenceScore: 0 };
 }
 
-// ── ROOM LOCK PROMPT ──────────────────────────────────────────────────────────
 function buildRoomLockNote(locationName, zoneName) {
   const placeLabel = [locationName, zoneName].filter(Boolean).join(' → ');
   return `
@@ -365,161 +216,229 @@ Not a similar room. Not a reimagined version. The IDENTICAL space.
 WHAT IS LOCKED — ZERO EXCEPTIONS:
 ────────────────────────────────────
 ZONE INTEGRITY: You are working within the "${zoneName || 'matched area'}" zone only. Do NOT blend elements from other zones or rooms within this location.
-
-FLOORING: Exact material, species, color, plank direction, tile pattern, grout lines, carpet pile, and finish. Dark hardwood stays dark hardwood. Tile stays that exact tile. No lightening, darkening, or material substitution.
-
-WALLS: Exact paint color, sheen level, any wallpaper, wainscoting, baseboard trim color, crown molding profile, and accent walls. Every wall surface must match.
-
-FURNITURE — EVERY SINGLE PIECE:
-• Each furniture item must match in exact shape, proportions, style, color, fabric, and material.
-• A square coffee table stays square. A round table stays round.
-• A low modern sofa stays low and modern — do not swap the silhouette.
-• A dark wood bed frame stays dark wood.
-• Do NOT add, remove, substitute, or restyle ANY furniture.
-• SPATIAL RELATIONSHIPS ARE LOCKED: couch position, bed position, dresser position, table position. If a couch is against the left wall in the reference, keep it there. If a bed is under a window, keep it there.
-
-FABRICS & UPHOLSTERY: Exact texture, weave, pattern, and color of every cushion, throw pillow, blanket, curtain, rug, and chair cover. Beige woven rug stays beige and woven. Dark leather stays dark leather. Linen stays linen.
-
-WINDOW TREATMENTS: Curtains, blinds, shades, shutters — same fabric, color, length, fullness, rod/track hardware. If open in reference, show open. If closed, show closed.
-
-WALL ART & MOUNTED OBJECTS: Every framed photo, painting, mirror, clock, and wall-mounted object must appear in the same wall position at the same height and orientation.
-
-SHELVING & BOOKCASES: Reproduce contents, arrangement, density, and objects exactly.
-
-LIGHTING FIXTURES: All ceiling fixtures, pendants, floor lamps, table lamps, and sconces must match in style, position, and light temperature (warm/cool).
-
-DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, remote, throw blanket — every object that defines this space must be present and in place.
-
+FLOORING: Exact material, species, color, plank direction, tile pattern, grout lines, carpet pile, and finish.
+WALLS: Exact paint color, sheen level, any wallpaper, wainscoting, baseboard trim color, crown molding profile, and accent walls.
+FURNITURE: Each furniture item must match in exact shape, proportions, style, color, fabric, and material. Do NOT add, remove, substitute, or restyle ANY furniture.
+SPATIAL RELATIONSHIPS ARE LOCKED: couch position, bed position, dresser position, table position.
+FABRICS & UPHOLSTERY: Exact texture, weave, pattern, and color of every cushion, throw pillow, blanket, curtain, rug, and chair cover.
+WINDOW TREATMENTS: Curtains, blinds, shades, shutters — same fabric, color, length, fullness, rod/track hardware.
+WALL ART & MOUNTED OBJECTS: Every framed photo, painting, mirror, clock, and wall-mounted object must appear in the same wall position.
+LIGHTING FIXTURES: All ceiling fixtures, pendants, floor lamps, table lamps, and sconces must match in style, position, and light temperature.
+DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, remote, throw blanket must be present and in place.
 SPATIAL PROPORTIONS: Room dimensions, ceiling height, window size, window placement, door positions.
 
-────────────────────────────────────
-SPATIAL FUNCTIONALITY RULES — THIS ROOM MUST BE PHYSICALLY USABLE:
-────────────────────────────────────
-This is a real space that real people move through. The layout must make physical sense.
+CHARACTER PLACEMENT: Place subjects only in spots where a person could physically be. Do NOT block doors, stand inside furniture, or clip through walls.
 
-ACCESS POINTS ARE SACRED — DO NOT BLOCK:
-• Doors must have clear swing clearance — no furniture touching or overlapping the door arc.
-• Closet doors must have open space in front of them — a bed, dresser, or shelf placed against a closet door is WRONG and physically impossible.
-• Hallways and walkways visible in the reference must remain passable — at minimum 24 inches of clear floor.
-• Windows must remain accessible — no furniture stacked against them unless the reference shows that.
-• Bedroom: the side(s) of the bed that are accessible in the reference must stay accessible. Do not slide the bed to block a closet or wall that has clearance in the reference.
-• Living room: keep the clear path between the couch and the coffee table. Keep the walking path from the doorway to the seating area open.
-• Kitchen: counter and appliance frontage must have working clearance. The path between counter runs must remain walkable.
-• Bar/nightclub: bar front access, booth entry gaps, stage approaches, and exit paths must remain open.
-• Office: chair must be able to roll back from the desk without hitting a wall.
-
-FURNITURE MUST NOT INTERSECT OR OVERLAP:
-• No two pieces of furniture can occupy the same floor space.
-• A chair cannot be inside a table. A lamp cannot be inside a couch. A bed cannot overlap a dresser.
-• If objects appear close in the reference, keep that proximity — but they must not merge or clip.
-
-CHARACTER PLACEMENT IN THIS ROOM:
-• Place the subject only in spots where a person could physically be — on a seating surface, standing in open floor space, lying on a bed with the rest of the room intact.
-• Do NOT place the character where they would block a door, stand inside furniture, or be pressed against a wall with no room.
-• Sitting on the bed is fine — but the rest of the room must remain as-is. Do not shift the bed or surrounding furniture to center the shot.
-• Standing in a doorway must look intentional — they are in the frame of the door, not clipping through the wall.
-
-DO NOT SACRIFICE LAYOUT FOR COMPOSITION:
-• Do not move furniture to better frame the character. The room is fixed. The camera angle can change — the room cannot.
-• Do not compress the room to fit more objects in frame. Let objects be partially off-screen if needed.
-• A correct result is a room that someone who has been in this space would immediately recognize as correct AND functional.
-
-SPATIAL LOGIC SELF-CHECK — before finalizing the image, verify:
-✓ Every door has clearance to open
-✓ Every closet has clear floor space in front of it
-✓ Every walkway shown in the reference remains passable
-✓ No furniture overlaps or clips another object
-✓ The character is placed in a physically believable spot
-✓ The room could be used normally by a real person
-
-If any of these checks fail, correct the layout before rendering.
-
-────────────────────────────────────
 PERMITTED CHANGES:
 ✓ Camera angle, framing, zoom, and perspective
 ✓ Subject pose, position, expression, and action
 ✓ Time of day / lighting conditions ONLY IF explicitly requested
-✓ Any element the prompt EXPLICITLY asks to change
 
-PROHIBITED CHANGES (unless explicitly requested):
+PROHIBITED CHANGES:
 ✗ Furniture style, color, shape, or placement
 ✗ Floor material or color
 ✗ Wall color or finish
-✗ Window treatments
-✗ Wall art or decorative objects
-✗ Room layout, design language, or aesthetic
+✗ Room layout or aesthetic
 ✗ Adding or removing any room-defining element
-✗ Moving furniture to improve composition at the cost of room functionality
-✗ Blocking any door, closet, walkway, or access point
 
 CRITICAL RULE: "Same room different angle" means ONLY the camera moves. Nothing else changes.
 CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist, they are the source of truth.
-CRITICAL RULE: A person who knows this space in real life must look at the result and immediately recognize it as the same place AND believe someone could actually live and move in it.
 ════════════════════════════════════════════════════════════`;
 }
 
-// ── USER IDENTITY LOCK PROMPT ────────────────────────────────────────────────────
-function buildUserIdentityLockNote(userAppearanceData, strictMode = false) {
-  const parts = [];
-  if (userAppearanceData?.age_range) parts.push(`Age: ${userAppearanceData.age_range}`);
-  if (userAppearanceData?.gender) parts.push(`Gender: ${userAppearanceData.gender}`);
-  if (userAppearanceData?.ethnicities?.length > 0) parts.push(`Ethnicity/Background: ${userAppearanceData.ethnicities.join(', ')}`);
-  if (userAppearanceData?.appearance_notes) parts.push(`Details: ${userAppearanceData.appearance_notes}`);
+// ── SUBJECT RECORD BUILDERS ──────────────────────────────────────────────────
+// These functions build structured subject objects from raw data.
+// Images and prompts are assembled FROM these records — never the other way around.
 
-  const strictWarning = strictMode ? `
-⚠️ STRICT IDENTITY PRESERVATION MODE ⚠️
-This person's identity is NON-NEGOTIABLE. Any deviation from the reference images is a failure.
-You are not creating "inspired by" or "similar to" — you are reproducing the exact same person.
-Do NOT let the generator beautify, normalize, or substitute this person's appearance.
-Do NOT interpret vague guidance as permission to drift. The reference IS the target.
-` : '';
+function buildCharacterSubject(charRecord, clientRefs = []) {
+  const serverRefs = [];
+  if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
+  if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
+  // Always use server-side refs as authoritative; client refs are fallback only
+  const faceRefs = serverRefs.length > 0 ? serverRefs : clientRefs;
+
+  // Resolve current outfit
+  const currentOutfit = charRecord.current_outfit;
+  const closet = charRecord.character_closet || [];
+  const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+  let activeOutfit = null;
+  if (currentOutfit?.label) {
+    activeOutfit = currentOutfit;
+  } else if (closetOutfits.length > 0) {
+    const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
+    const isNight = hour >= 21 || hour < 6;
+    const isMorning = hour >= 6 && hour < 11;
+    if (isNight) {
+      activeOutfit = closetOutfits.find(o => o.category === 'sleepwear' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
+    } else if (isMorning) {
+      activeOutfit = closetOutfits.find(o => o.category === 'daily_casual' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
+    } else {
+      activeOutfit = closetOutfits.find(o => o.is_favorite) || closetOutfits[closetOutfits.length - 1];
+    }
+  }
+  let outfitDesc = null;
+  if (activeOutfit) {
+    const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
+    outfitDesc = activeOutfit.full_description || parts.join(', ') || null;
+  }
+
+  // Appearance text
+  const appearanceParts = [];
+  if (charRecord.appearance_age != null) appearanceParts.push(`appears ${charRecord.appearance_age} years old`);
+  else if (charRecord.age_range) appearanceParts.push(charRecord.age_range);
+  if (charRecord.gender) appearanceParts.push(charRecord.gender);
+  if (charRecord.ethnicities?.length > 0) appearanceParts.push(charRecord.ethnicities.join(', '));
+  if (charRecord.appearance_notes) appearanceParts.push(charRecord.appearance_notes);
+
+  // Appearance lock
+  const lock = charRecord.appearance_lock || {};
+  const lockParts = [];
+  if (lock.skin_tone) lockParts.push(`skin tone: ${lock.skin_tone}`);
+  if (lock.hair_type) lockParts.push(`hair type: ${lock.hair_type}`);
+  if (lock.hairstyle) lockParts.push(`hairstyle: ${lock.hairstyle}`);
+  if (lock.facial_hair) lockParts.push(`facial hair: ${lock.facial_hair}`);
+  if (lock.makeup) lockParts.push(`makeup: ${lock.makeup}`);
+  if (lock.overall_aesthetic) lockParts.push(`overall aesthetic: ${lock.overall_aesthetic}`);
+  if (lock.custom_keywords?.length > 0) lockParts.push(lock.custom_keywords.join(', '));
+
+  return {
+    subject_type: 'character',
+    subject_id: charRecord.id,
+    canonical_name: charRecord.name,
+    face_refs: faceRefs,           // identity source — DO NOT use for outfit
+    outfit_desc: outfitDesc,       // owned by this subject only
+    outfit_owner_id: charRecord.id,
+    appearance_text: appearanceParts.join(', '),
+    lock_text: lockParts.join(' | '),
+    ethnicities: charRecord.ethnicities || [],
+    explicitly_selected: true,
+  };
+}
+
+function buildUserSubject(sett, clientRefs = [], worldName = null) {
+  // Priority: uploaded reference photos → generated avatars (real face before stylized)
+  const uploadedRefs = sett.reference_image_urls || [];
+  const generatedRefs = sett.generated_avatar_urls || [];
+  const faceRefs = [...uploadedRefs, ...generatedRefs].filter(Boolean);
+  const resolvedFaceRefs = faceRefs.length > 0 ? faceRefs : clientRefs;
+
+  const userCurrentOutfit = sett.user_current_outfit;
+  let outfitDesc = null;
+  if (userCurrentOutfit?.label) {
+    const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
+    outfitDesc = userCurrentOutfit.full_description || parts.join(', ') || null;
+  }
+
+  // Appearance lock
+  const lock = sett.appearance_lock || {};
+  const lockParts = [];
+  if (lock.skin_tone) lockParts.push(`skin tone: ${lock.skin_tone}`);
+  if (lock.hair_type) lockParts.push(`hair type: ${lock.hair_type}`);
+  if (lock.hairstyle) lockParts.push(`hairstyle: ${lock.hairstyle}`);
+  if (lock.facial_hair) lockParts.push(`facial hair: ${lock.facial_hair}`);
+  if (lock.makeup) lockParts.push(`makeup: ${lock.makeup}`);
+  if (lock.overall_aesthetic) lockParts.push(`overall aesthetic: ${lock.overall_aesthetic}`);
+  if (lock.custom_keywords?.length > 0) lockParts.push(lock.custom_keywords.join(', '));
+
+  const appearanceParts = [];
+  if (sett.user_gender) appearanceParts.push(sett.user_gender);
+  if (sett.user_age_range) appearanceParts.push(sett.user_age_range);
+  if (sett.appearance_notes) appearanceParts.push(sett.appearance_notes);
+  if (sett.ethnicities?.length > 0) appearanceParts.push(sett.ethnicities.join(', '));
+
+  return {
+    subject_type: 'user',
+    subject_id: 'user',
+    canonical_name: worldName || sett.fictional_world_name || 'the user',
+    face_refs: resolvedFaceRefs,
+    outfit_desc: outfitDesc,
+    outfit_owner_id: 'user',
+    appearance_text: appearanceParts.join(', '),
+    lock_text: lockParts.join(' | '),
+    ethnicities: sett.ethnicities || [],
+    explicitly_selected: true,
+  };
+}
+
+// ── SUBJECT DEDUPLICATION ────────────────────────────────────────────────────
+// Ensures no subject appears twice. Explicit selection always wins over ambient presence.
+function dedupeSubjects(subjects) {
+  const map = new Map();
+  for (const subject of subjects) {
+    const existing = map.get(subject.subject_id);
+    if (!existing) {
+      map.set(subject.subject_id, subject);
+    } else if (subject.explicitly_selected && !existing.explicitly_selected) {
+      map.set(subject.subject_id, subject);
+    } else if (subject.face_refs.length > existing.face_refs.length) {
+      map.set(subject.subject_id, subject);
+    }
+  }
+  return Array.from(map.values());
+}
+
+// ── PROMPT BUILDERS FOR LOCKED SUBJECTS ─────────────────────────────────────
+function buildSubjectOutfitBlock(subject) {
+  if (!subject.outfit_desc) return '';
+  const name = subject.canonical_name;
+  return `
+════════════════════════════════════════════════════════════
+OUTFIT LOCK — ${name.toUpperCase()} — ABSOLUTE OVERRIDE — HIGHEST PRIORITY
+════════════════════════════════════════════════════════════
+${name} IS WEARING THIS AND ONLY THIS:
+${subject.outfit_desc}
+
+CRITICAL RULES — NO EXCEPTIONS:
+✗ DO NOT use any clothing visible in reference/avatar photos — those are identity sources ONLY
+✗ DO NOT invent, substitute, or modify any clothing item
+✗ DO NOT apply ${name}'s outfit to any other person
+✗ DO NOT apply any other person's outfit to ${name}
+✓ Reproduce EVERY listed clothing item EXACTLY as described
+✓ This outfit is owned by and belongs exclusively to ${name}
+════════════════════════════════════════════════════════════`;
+}
+
+function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd) {
+  const name = subject.canonical_name;
+  const lockDesc = subject.lock_text ? `Appearance lock (FIXED — never change): ${subject.lock_text}.` : '';
+  const ethnicityWarning = subject.ethnicities?.length > 0
+    ? `⚠️ ETHNICITY LOCK: ${name}'s ethnicity is "${subject.ethnicities.join(', ')}". You MUST NOT default to Caucasian or European features. Skin tone, facial structure, hair texture MUST authentically reflect this background.`
+    : `⚠️ Do NOT default to Caucasian features. Use reference images to accurately determine ${name}'s appearance.`;
 
   return `
 ════════════════════════════════════════════════════════════
-USER IDENTITY LOCK — STRONG FACE & FEATURE CONSISTENCY
+IDENTITY LOCK — ${name.toUpperCase()} (Images ${imageIndexStart}–${imageIndexEnd})
 ════════════════════════════════════════════════════════════
-The user's face and body must remain CONSISTENT and RECOGNIZABLE.
-${parts.length > 0 ? `${parts.join('\n')}` : 'Use reference images as the primary identity guide.'}
+Subject: ${name} | Type: ${subject.subject_type}
+Reference images ${imageIndexStart}–${imageIndexEnd} ARE this person's face and body. They are the GROUND TRUTH.
 
-${strictWarning}
+LOCKED AT 100% — NO DEVIATION:
+• Face shape: IDENTICAL — bone structure, jaw, cheekbones, forehead
+• Facial features: Eyes (shape, color, distance), nose (shape, size), lips — EXACT MATCH
+• Skin tone: EXACT match — do NOT lighten, darken, or shift hue
+• Hair texture, length, and color: LOCKED — do NOT alter in any way
+• Body type: Exact build, proportions, and height from reference
+• Distinctive features: Any birthmarks, scars, or unique traits MUST appear
 
-WHAT IS LOCKED:
-✓ Face shape and bone structure
-✓ Skin tone and texture
-✓ Hair color, texture, length, and style
-✓ Eyes (color, shape, distance)
-✓ Nose (shape, size, profile)
-✓ Mouth and lips
-✓ Distinctive facial features or marks
-✓ Body build and proportions
-✓ Age presentation
-✓ Overall likeness consistency
+${ethnicityWarning}
+${lockDesc}
+${subject.appearance_text ? `Appearance description: ${subject.appearance_text}` : ''}
 
-THIS IS NOT A GENERIC CHARACTER.
-This is a specific real person who must be recognizable across generations.
-Do NOT produce a random person. Do NOT swap faces with generic models.
-Do NOT allow face drift. Anchor identity to the provided reference images.
-Do NOT beautify away their unique characteristics in favor of a "model-like" version.
-
-PERMITTED CHANGES:
-✓ Clothing, hairstyle, expression, pose, setting
-✓ Age appearance within their general age range (if applicable)
-✓ Styling details per the prompt
-
-PROHIBITED CHANGES:
-✗ Face shape or bone structure
-✗ Skin tone or ethnicity
-✗ Core hair color or natural texture
-✗ Body build or proportions
-✗ Distinctive features that define their appearance
-✗ Substituting a "prettier" or "more model-like" version
+THIS IS NOT A GENERIC CHARACTER. This is a SPECIFIC person who must be INSTANTLY RECOGNIZABLE.
+Do NOT produce a random person. Do NOT swap this face with a generic model.
+Do NOT beautify or normalize their appearance.
 ════════════════════════════════════════════════════════════`;
 }
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { messageId, prompt, characterReferenceImages, userReferenceImages, characterName, userWorldName, subjectType, characterId, manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode, userAppearanceData, includesUser } = await req.json();
+    const {
+      messageId, prompt, characterReferenceImages, userReferenceImages,
+      characterName, userWorldName, subjectType, characterId,
+      manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode,
+      userAppearanceData, includesUser
+    } = await req.json();
 
     if (!messageId || !prompt) {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
@@ -530,336 +449,135 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
 
-    // ── PARSE SUBJECT TYPE FIRST (used throughout all subsequent blocks) ──────
+    // ── PARSE SUBJECT TYPE ──────────────────────────────────────────────────
     let resolvedSubjectType = subjectType || "character";
     const tagMatch = prompt.match(/^\[(USER|CHARACTER|JOINT)\]/i);
     if (tagMatch) resolvedSubjectType = tagMatch[1].toLowerCase();
     const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
 
-    // ── SERVER-SIDE CHARACTER REF RESOLUTION ──────────────────────────────────
-    // Always fetch the character record so we have the latest avatar + reference images,
-    // regardless of what the frontend passed in. This prevents "no refs" when the
-    // frontend passes an empty array.
-    // RULE: All characters with avatars — active created, NPC fictitious, NPC family — must
-    // be referenced at 100% for face shape, facial features, skin tone, body type, and hair.
-    let resolvedCharacterRefs = characterReferenceImages || [];
-    let characterAppearanceNote = "";
-    let outfitNote = "";
+    // ── STEP 1: BUILD LOCKED SUBJECT RECORDS ────────────────────────────────
+    // Always resolve subjects first from their authoritative records.
+    // Never infer identity from scene text.
+    let characterSubject = null;
+    let userSubject = null;
 
+    // Resolve character subject
     if (characterId) {
       try {
         const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
         if (charRecord) {
-          // Build server-side ref list: avatar first (most reliable), then reference_image_urls
-          // Always use server-side refs — they are authoritative and most up-to-date
-          const serverRefs = [];
-          if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
-          if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
+          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || []);
+          console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
+        }
+      } catch (err) {
+        console.error('[SUBJECT] Failed to build character subject:', err.message);
+      }
+    }
 
-          // ALWAYS prefer server-side refs — they are the canonical identity source
-          if (serverRefs.length > 0) {
-            resolvedCharacterRefs = serverRefs;
-            console.log(`[CHAR-REFS] Server-side refs (authoritative): ${serverRefs.length} images for ${charRecord.name} (type: ${charRecord.character_type || 'active'})`);
-          }
-
-          // ── OUTFIT INJECTION: Use current_outfit from closet, or best closet outfit ──
-          // Priority: current_outfit → most recent closet outfit → avatar/lock description
-          const currentOutfit = charRecord.current_outfit;
-          const closet = charRecord.character_closet || [];
-          const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
-
-          let activeOutfit = null;
-          if (currentOutfit?.label) {
-            activeOutfit = currentOutfit;
-          } else if (closetOutfits.length > 0) {
-            // Pick a contextually appropriate outfit based on time of day
-            const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
-            const isNight = hour >= 21 || hour < 6;
-            const isMorning = hour >= 6 && hour < 11;
-            if (isNight) {
-              activeOutfit = closetOutfits.find(o => o.category === 'sleepwear' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
-            } else if (isMorning) {
-              activeOutfit = closetOutfits.find(o => o.category === 'daily_casual' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
-            } else {
-              activeOutfit = closetOutfits.find(o => o.is_favorite) || closetOutfits[closetOutfits.length - 1];
-            }
-          }
-
-          if (activeOutfit) {
-            const outfitParts = [];
-            if (activeOutfit.top) outfitParts.push(activeOutfit.top);
-            if (activeOutfit.bottom) outfitParts.push(activeOutfit.bottom);
-            if (activeOutfit.shoes) outfitParts.push(activeOutfit.shoes);
-            if (activeOutfit.outerwear) outfitParts.push(activeOutfit.outerwear);
-            if (activeOutfit.accessories) outfitParts.push(activeOutfit.accessories);
-            if (activeOutfit.hair_state) outfitParts.push(`hair: ${activeOutfit.hair_state}`);
-            const outfitDesc = activeOutfit.full_description || outfitParts.join(', ');
-            if (outfitDesc) {
-              outfitNote = `\n\n════════════════════════════════════════════════════════════\nOUTFIT LOCK — ABSOLUTE OVERRIDE — HIGHEST PRIORITY INSTRUCTION\n════════════════════════════════════════════════════════════\n${charRecord.name} IS WEARING THIS SPECIFIC OUTFIT RIGHT NOW:\n${outfitDesc}\n\nCRITICAL RULES — NO EXCEPTIONS:\n✗ DO NOT use the clothing visible in the reference/avatar photos — those are identity references ONLY\n✗ DO NOT invent, substitute, or modify any clothing item\n✗ DO NOT default to casual or generic clothing\n✓ Reproduce EVERY listed clothing item EXACTLY as described\n✓ The outfit description above OVERRIDES anything visible in reference images\n✓ This is what they are ACTUALLY wearing in this scene\n════════════════════════════════════════════════════════════`;
-              console.log(`[OUTFIT] Injecting outfit for ${charRecord.name}: ${outfitDesc.substring(0, 80)}...`);
-            }
-          }
-
-          // Build appearance description text for when refs are sparse/missing
-          const appearanceParts = [];
-          // appearance_age overrides profile age for visual generation
-          if (charRecord.appearance_age != null) {
-            appearanceParts.push(`appears ${charRecord.appearance_age} years old (visual age override — use this age in generated image, NOT the profile birthday age)`);
-          } else if (charRecord.age_range) {
-            appearanceParts.push(charRecord.age_range);
-          }
-          if (charRecord.gender) appearanceParts.push(charRecord.gender);
-          if (charRecord.ethnicities?.length > 0) appearanceParts.push(charRecord.ethnicities.join(', '));
-          if (charRecord.appearance_notes) appearanceParts.push(charRecord.appearance_notes);
-          if (charRecord.avatar_description_text) appearanceParts.push(charRecord.avatar_description_text);
-
-          // Build appearance lock instructions if defined
-          const lock = charRecord.appearance_lock || {};
-          const lockParts = [];
-          if (lock.skin_tone) lockParts.push(`skin tone: ${lock.skin_tone}`);
-          if (lock.hair_type) lockParts.push(`hair type: ${lock.hair_type}`);
-          if (lock.hairstyle) lockParts.push(`hairstyle: ${lock.hairstyle}`);
-          if (lock.facial_hair) lockParts.push(`facial hair: ${lock.facial_hair}`);
-          if (lock.makeup) lockParts.push(`makeup: ${lock.makeup}`);
-          if (lock.clothing_style) lockParts.push(`clothing style: ${lock.clothing_style}`);
-          if (lock.footwear) lockParts.push(`footwear: ${lock.footwear}`);
-          if (lock.overall_aesthetic) lockParts.push(`overall aesthetic: ${lock.overall_aesthetic}`);
-          if (lock.custom_keywords?.length > 0) lockParts.push(lock.custom_keywords.join(', '));
-
-          if (appearanceParts.length > 0 || lockParts.length > 0) {
-            const ethnicityWarning = charRecord.ethnicities?.length > 0
-              ? `\n\n⚠️ IDENTITY ENFORCEMENT: This character's ethnicity is "${charRecord.ethnicities.join(', ')}". You MUST NOT default to Caucasian or European features. Skin tone, facial structure, hair texture, and all physical features must authentically reflect this background. Generating a Caucasian-presenting person when the character is ${charRecord.ethnicities[0]} is a critical failure.`
-              : `\n\n⚠️ IDENTITY ENFORCEMENT: Do NOT default to Caucasian features. Use reference images to accurately determine this character's appearance.`;
-
-            const lockNote = lockParts.length > 0
-              ? `\n\nAPPEARANCE LOCK (these traits are FIXED and must not change between images): ${lockParts.join(' | ')}. These are identity anchors — do not override them.`
-              : '';
-
-            characterAppearanceNote = `\n\nCHARACTER APPEARANCE — ${charRecord.name}: ${appearanceParts.join(', ')}. Generate this specific person consistently.${ethnicityWarning}${lockNote}`;
+    // Resolve user subject (only when user is in the scene)
+    const needsUserSubject = resolvedSubjectType === "user" || resolvedSubjectType === "joint" || includesUser === true;
+    if (needsUserSubject) {
+      try {
+        const msgRecord = await base44.entities.Message.get(messageId).catch(() => null);
+        const createdBy = msgRecord?.created_by;
+        if (createdBy) {
+          const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: createdBy }, null, 1).catch(() => []);
+          const sett = settingsList?.[0] || {};
+          const resolvedWorldName = userWorldName || sett.fictional_world_name || null;
+          userSubject = buildUserSubject(sett, userReferenceImages || [], resolvedWorldName);
+          console.log(`[SUBJECT] User locked: "${userSubject.canonical_name}" | refs: ${userSubject.face_refs.length} | outfit: ${userSubject.outfit_desc ? 'yes' : 'none'}`);
+          if (userSubject.face_refs.length === 0) {
+            console.warn(`[SUBJECT] ⚠ User has NO face references — identity confidence LOW`);
           }
         }
       } catch (err) {
-        console.error('[CHAR-REFS] Failed to fetch character:', err.message);
+        console.error('[SUBJECT] Failed to build user subject:', err.message);
       }
     }
 
-    // ── SERVER-SIDE USER REF RESOLUTION ──────────────────────────────────────
-    // Always resolve from the message owner's settings to prevent stale/empty refs
-    let resolvedUserRefs = userReferenceImages || [];
-    let resolvedUserAppearanceData = userAppearanceData || null;
+    // ── STEP 2: DEDUPLICATE SUBJECTS ────────────────────────────────────────
+    // Prevents the same person from being included twice (from selection + location presence)
+    const rawSubjects = [characterSubject, userSubject].filter(Boolean);
+    const subjects = dedupeSubjects(rawSubjects);
+    console.log(`[SUBJECTS] Final deduped count: ${subjects.length} | IDs: ${subjects.map(s => s.subject_id).join(', ')}`);
 
-    try {
-      const msgRecord = await base44.entities.Message.get(messageId).catch(() => null);
-      const createdBy = msgRecord?.created_by;
-      const needsUserRefs = resolvedSubjectType === "user" || resolvedSubjectType === "joint" || includesUser === true;
-      if (createdBy && needsUserRefs) {
-        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: createdBy }, null, 1).catch(() => []);
-        const sett = settingsList?.[0] || {};
-        // Prefer uploaded reference photos (real face) → generated avatars → fallback
-        const settRefs = [
-          ...(sett.reference_image_urls || []),
-          ...(sett.generated_avatar_urls || []),
-        ].filter(Boolean);
-        if (settRefs.length > 0) {
-          resolvedUserRefs = settRefs;
-          console.log(`[USER-REFS] Server resolved ${settRefs.length} user ref images from settings (uploads first)`);
-        }
-        // Build appearance data if not provided
-        if (!resolvedUserAppearanceData && (sett.user_gender || sett.user_birthday)) {
-          resolvedUserAppearanceData = {
-            gender: sett.user_gender || '',
-            age_range: sett.user_age_range || '',
-            appearance_notes: sett.appearance_notes || '',
-            ethnicities: sett.ethnicities || [],
-          };
-        }
-        // ── USER OUTFIT INJECTION: use user_current_outfit if set ──
-        const userCurrentOutfit = sett.user_current_outfit;
-        if (userCurrentOutfit?.label && needsUserRefs) {
-          const outfitParts = [];
-          if (userCurrentOutfit.top) outfitParts.push(userCurrentOutfit.top);
-          if (userCurrentOutfit.bottom) outfitParts.push(userCurrentOutfit.bottom);
-          if (userCurrentOutfit.shoes) outfitParts.push(userCurrentOutfit.shoes);
-          if (userCurrentOutfit.outerwear) outfitParts.push(userCurrentOutfit.outerwear);
-          if (userCurrentOutfit.accessories) outfitParts.push(userCurrentOutfit.accessories);
-          if (userCurrentOutfit.hair_state) outfitParts.push(`hair: ${userCurrentOutfit.hair_state}`);
-          const outfitDesc = userCurrentOutfit.full_description || outfitParts.join(', ');
-          if (outfitDesc) {
-            // Append to enhancedPrompt after assembly — stored for later injection
-            resolvedUserAppearanceData = resolvedUserAppearanceData || {};
-            resolvedUserAppearanceData._outfit_note = `\n\n════════════════════════════════════════════════════════════\nUSER OUTFIT LOCK — ABSOLUTE OVERRIDE — HIGHEST PRIORITY\n════════════════════════════════════════════════════════════\nThe user is wearing this SPECIFIC outfit RIGHT NOW:\n${outfitDesc}\n\nCRITICAL RULES:\n✗ DO NOT use the clothing from the reference/avatar photos\n✗ DO NOT invent or substitute clothing items\n✓ Reproduce EVERY listed item EXACTLY as described\n✓ This outfit OVERRIDES anything visible in reference images\n════════════════════════════════════════════════════════════`;
-            console.log(`[USER-OUTFIT] Injecting user outfit: ${outfitDesc.substring(0, 80)}...`);
-          }
-        }
+    // Re-extract after dedup
+    const finalCharSubject = subjects.find(s => s.subject_type === 'character');
+    const finalUserSubject = subjects.find(s => s.subject_type === 'user');
 
-        // Inject user appearance lock into prompt if defined
-        const userLock = sett.appearance_lock || {};
-        const userLockParts = [];
-        if (userLock.skin_tone) userLockParts.push(`skin tone: ${userLock.skin_tone}`);
-        if (userLock.hair_type) userLockParts.push(`hair type: ${userLock.hair_type}`);
-        if (userLock.hairstyle) userLockParts.push(`hairstyle: ${userLock.hairstyle}`);
-        if (userLock.facial_hair) userLockParts.push(`facial hair: ${userLock.facial_hair}`);
-        if (userLock.makeup) userLockParts.push(`makeup: ${userLock.makeup}`);
-        if (userLock.clothing_style) userLockParts.push(`clothing style: ${userLock.clothing_style}`);
-        if (userLock.footwear) userLockParts.push(`footwear: ${userLock.footwear}`);
-        if (userLock.overall_aesthetic) userLockParts.push(`overall aesthetic: ${userLock.overall_aesthetic}`);
-        if (userLock.custom_keywords?.length > 0) userLockParts.push(userLock.custom_keywords.join(', '));
-        if (userLockParts.length > 0) {
-          resolvedUserAppearanceData = resolvedUserAppearanceData || {};
-          resolvedUserAppearanceData._lock_note = `USER APPEARANCE LOCK (identity anchors — never change): ${userLockParts.join(' | ')}. ⚠️ Do NOT default to Caucasian features. Preserve these traits exactly.`;
-          console.log(`[USER-LOCK] Applied ${userLockParts.length} appearance lock traits for user`);
-        }
-        // Log the user's in-world name for debugging
-        if (sett.fictional_world_name) {
-          console.log(`[USER-IDENTITY] In-world name: "${sett.fictional_world_name}" (passed: "${userWorldName}")`);
-        }
-      }
-    } catch (refErr) {
-      console.error('[USER-REFS] Failed to resolve user refs server-side:', refErr.message);
-    }
-
-    const hasUserImages = resolvedUserRefs.length > 0;
-    const hasCharacterImages = resolvedCharacterRefs.length > 0;
-
-    // ── LOCATION + ZONE RESOLUTION ────────────────────────────────────────────
+    // ── STEP 3: RESOLVE LOCATION ─────────────────────────────────────────────
     let locationImages = [];
     let locationNote = "";
     let resolvedLocationName = null;
     let resolvedZoneName = null;
 
-    // ── AUTO-INJECT DIVERSITY FOR LOCATION-BASED IMAGES ──
-    // All location-based images automatically enforce diversity: 1% Caucasian, 99% other
-    const AUTO_DIVERSITY_CONSTRAINT = resolvedSubjectType === 'character' || resolvedSubjectType === 'joint'
-      ? `\n\n════════════════════════════════════════════════════════════\nDIVERSITY DIRECTIVE (AUTO-ENFORCED):\nRepresentation must be: 1% Caucasian/White, 99% Latino, African American, Indian, Native American, and multicultural individuals.\nEnsure diverse skin tones, facial features, body types, and cultural authenticity.\nNO whitewashing. Maintain authentic representation.\n════════════════════════════════════════════════════════════`
-      : '';
-
     if (resolvedSubjectType !== "user") {
       try {
-         // ── MANUAL SELECTION PATH (highest priority — bypasses all text parsing) ──
-         if (manualLocationId) {
+        if (manualLocationId) {
           const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
             let imgs = [];
-            // Try exact zone name match first (manualZoneId is the zone_name string)
             if (manualZoneId && manualLoc.zones?.length > 0) {
-              // Try exact match, then case-insensitive match
               const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId)
                         || manualLoc.zones.find(z => z.zone_name?.toLowerCase() === manualZoneId?.toLowerCase());
               if (zone?.image_urls?.length > 0) {
                 imgs = zone.image_urls.slice(0, 6);
                 resolvedZoneName = zone.zone_name;
                 console.log(`[LOCATION] ✓ MANUAL ZONE: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
-              } else {
-                console.log(`[LOCATION] ⚠ MANUAL ZONE "${manualZoneId}" not found or has no images — using all zone refs for "${resolvedLocationName}"`);
               }
             }
-            // If no zone matched or no zone specified, use flat image_urls or first zone WITH images
-            // NOTE: Do NOT silently swap to a different zone — use the location-level images instead
             if (imgs.length === 0) {
-              // Prefer flat location-level images (no zone ambiguity)
-              if (manualLoc.image_urls?.length > 0) {
-                imgs = manualLoc.image_urls.slice(0, 6);
-                resolvedZoneName = null;
-              } else {
-                // Last resort: first zone with images
+              if (manualLoc.image_urls?.length > 0) { imgs = manualLoc.image_urls.slice(0, 6); resolvedZoneName = null; }
+              else {
                 const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
                 imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || [];
                 resolvedZoneName = firstZoneWithImages?.zone_name || null;
               }
             }
             locationImages = imgs;
-            // Build the room lock note with the correct location + zone (never use a different zone)
             locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
-            // Add explicit zone enforcement to the prompt so the AI doesn't wander into a different zone
             if (resolvedZoneName) {
-              locationNote += `\n\n🔒 ZONE ENFORCEMENT: The scene MUST take place in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene in any other room or area within this location. Use ONLY the reference images for this exact zone.`;
+              locationNote += `\n\n🔒 ZONE ENFORCEMENT: The scene MUST take place in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene in any other room or area within this location.`;
             }
             console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName || 'none'}" | Images: ${imgs.length}`);
           }
         } else {
-          // ── AUTOMATIC PATH: real-time location lock FIRST, text-parse as fallback ──
-          const charRecord = characterId
-            ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
-            : null;
+          const charRecord = characterId ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null) : null;
           const createdBy = charRecord?.created_by;
-
           if (createdBy) {
-            const savedLocations = await base44.asServiceRole.entities.LocationReference.filter(
-              { created_by: createdBy }, '-created_date', 100
-            );
-
-            // ── STEP 1: Direct ID lookup (highest priority — bypasses created_by and limits) ──
-            const currentLocId = charRecord?.resolved_current_location_id
-              || charRecord?.current_home_location_id;
-
-            // Always fetch the location directly by ID first — ownership is irrelevant
-            let realTimeLoc = currentLocId
-              ? await base44.asServiceRole.entities.LocationReference.get(currentLocId).catch(() => null)
-              : null;
-
-            // Also try occupation location if character is at work
+            const savedLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: createdBy }, '-created_date', 100);
+            const currentLocId = charRecord?.resolved_current_location_id || charRecord?.current_home_location_id;
+            let realTimeLoc = currentLocId ? await base44.asServiceRole.entities.LocationReference.get(currentLocId).catch(() => null) : null;
             if (!realTimeLoc && charRecord?.resolved_location_type === 'work' && charRecord?.occupation_location_id) {
               realTimeLoc = await base44.asServiceRole.entities.LocationReference.get(charRecord.occupation_location_id).catch(() => null);
             }
-
             if (realTimeLoc) {
-              // Character has a confirmed real-time location — use it as the base.
-              // Still run zone inference from the prompt to pick the right zone within it.
-              const zoneHint = null; // let resolveZoneImages infer from prompt keywords
-              const { zoneImages, zoneName } = resolveZoneImages(cleanPrompt.toLowerCase(), realTimeLoc, zoneHint);
+              const { zoneImages, zoneName } = resolveZoneImages(cleanPrompt.toLowerCase(), realTimeLoc, null);
               const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
-
               if (imgs.length > 0) {
                 locationImages = imgs;
                 resolvedLocationName = realTimeLoc.name;
                 resolvedZoneName = zoneName;
                 locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
-
-                // Location-type enforcement: residential = strict, public = NPCs allowed
                 const locCat = (realTimeLoc.category || '').toLowerCase();
-                const isResidential = locCat === 'home';
-                const isPublicCommercial = ['social','food_drink','gym','medical','education','workplace','school','community','outdoor','public','business'].includes(locCat);
-
-                if (isResidential) {
-                  const residentNames = [
-                    ...(realTimeLoc.resident_character_names || []),
-                    ...(realTimeLoc.resident_family_members || []).map(r => r.name),
-                  ].filter(Boolean);
-                  const residentList = residentNames.length > 0
-                    ? `Only the following people may appear: ${residentNames.join(', ')}${userWorldName ? `, and ${userWorldName}` : ''}. `
-                    : '';
-                  locationNote += `\n\n════════════════════════════════════════════════════════════\n🏠 RESIDENTIAL LOCATION RULE — MANDATORY — SYSTEM FAILURE IF VIOLATED\n════════════════════════════════════════════════════════════\nThis is a PRIVATE HOME. This is NOT a public space.\n${residentList}\nABSOLUTE RULES:\n✗ NO random strangers\n✗ NO background extras\n✗ NO filler people\n✗ NO NPCs not listed above\nOnly people who actually live here or are currently visiting may appear.\nAdding an unrecognized person to this home = RESIDENTIAL VIOLATION = SYSTEM FAILURE.\n════════════════════════════════════════════════════════════`;
-                } else if (isPublicCommercial) {
-                  locationNote += `\n\n📍 PUBLIC/COMMERCIAL LOCATION: This is a ${realTimeLoc.name || locCat}. Background NPCs and ambient crowd are ALLOWED and ENCOURAGED to make the space feel alive and authentic. Diversity in background people is required.`;
+                if (locCat === 'home') {
+                  const residentNames = [...(realTimeLoc.resident_character_names || []), ...(realTimeLoc.resident_family_members || []).map(r => r.name)].filter(Boolean);
+                  const residentList = residentNames.length > 0 ? `Only the following people may appear: ${residentNames.join(', ')}${finalUserSubject?.canonical_name ? `, and ${finalUserSubject.canonical_name}` : ''}. ` : '';
+                  locationNote += `\n\n🏠 RESIDENTIAL LOCATION RULE:\nThis is a PRIVATE HOME.\n${residentList}\nNO random strangers, background extras, or unnamed people.`;
+                } else if (['social','food_drink','gym','medical','education','workplace','school','community','outdoor','public','business'].includes(locCat)) {
+                  locationNote += `\n\n📍 PUBLIC/COMMERCIAL LOCATION: Background NPCs and ambient crowd are ALLOWED and ENCOURAGED. Diversity in background people is required.`;
                 }
-
-                console.log(`[LOCATION] ✓ REALTIME LOCK: "${resolvedLocationName}" (type: ${charRecord?.resolved_location_type || 'home'}, cat: ${locCat}) → Zone: "${zoneName}" | Images: ${imgs.length}`);
-              } else {
-                // Location found but no images — text-parse as fallback
-                console.log(`[LOCATION] Real-time location "${realTimeLoc.name}" has no images — falling back to text parse`);
-                const { locationImages: parsedImgs, locationName, zoneName: parsedZone, confidenceScore } =
-                  resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
-                if (parsedImgs.length > 0 && confidenceScore >= 0.7) {
-                  locationImages = parsedImgs;
-                  resolvedLocationName = locationName;
-                  resolvedZoneName = parsedZone;
-                  locationNote = buildRoomLockNote(locationName, parsedZone);
-                }
+                console.log(`[LOCATION] ✓ REALTIME: "${resolvedLocationName}" → Zone: "${zoneName}" | Images: ${imgs.length}`);
               }
             } else {
-              // ── STEP 2: No real-time location — fall back to text parsing ──
-              const { locationImages: imgs, locationName, zoneName, matchConfidence, confidenceScore } =
-                resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
-
+              const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
               if (imgs.length > 0 && confidenceScore >= 0.7) {
                 locationImages = imgs;
                 resolvedLocationName = locationName;
                 resolvedZoneName = zoneName;
                 locationNote = buildRoomLockNote(locationName, zoneName);
-                console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)} | Images: ${imgs.length}`);
-              } else if (imgs.length > 0) {
-                console.log(`[LOCATION] ✗ Text parse below threshold (score=${confidenceScore.toFixed(2)}) — no environment applied`);
+                console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
               }
             }
           }
@@ -869,139 +587,118 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── REFERENCE IMAGE ASSEMBLY ───────────────────────────────────────────────
-    // Location/zone images ALWAYS first — they are the dominant reference
-    let referenceImages;
-    let enhancedPrompt = cleanPrompt + locationNote;
+    // ── STEP 4: ASSEMBLE REFERENCE IMAGES (identity-first ordering) ──────────
+    // Faces ALWAYS come before location images so the model locks identity first.
+    // Outfit notes are separate from identity refs — never mixed.
+    let referenceImages = [];
     const hasLocationImages = locationImages.length > 0;
 
-    // Slot budget: location gets 3 max, character gets 4 max — prioritize face fidelity
-    const locationCount = Math.min(locationImages.length, 3);
-    const charCount = Math.min(resolvedCharacterRefs.length, 4);
-    const userCount = Math.min((userReferenceImages || []).length, 2);
-
-    if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
-      // IDENTITY-FIRST ordering: faces come before location so the AI locks onto them first
-      const charSlice = resolvedCharacterRefs.slice(0, 3);
-      const userSlice = resolvedUserRefs.slice(0, 3);
+    if (finalCharSubject && finalUserSubject) {
+      // MULTI-SUBJECT MODE: character + user
+      // Order: char face refs (3) → user face refs (3) → location (2)
+      const charSlice = finalCharSubject.face_refs.slice(0, 3);
+      const userSlice = finalUserSubject.face_refs.slice(0, 3);
       const locSlice = locationImages.slice(0, 2);
-      referenceImages = [
-        ...charSlice,
-        ...userSlice,
-        ...locSlice,
-      ].filter(Boolean);
-
-      const charImgCount = charSlice.length;
-      const userImgStart = charImgCount + 1;
-      const userImgEnd = charImgCount + userSlice.length;
-      const locImgStart = userImgEnd + 1;
-      const locImgEnd = userImgEnd + locSlice.length;
-
-      const userJointLabel = userWorldName ? userWorldName : "the user";
-      const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
-
-      // Build per-person outfit overrides using actual names — no ambiguity
-      const charOutfitBlock = outfitNote
-        ? `\n\n════════════════════════════════════════════════════════════\nOUTFIT OVERRIDE — ${characterName.toUpperCase()} — HIGHEST PRIORITY\n════════════════════════════════════════════════════════════\n${characterName} IS WEARING THIS AND ONLY THIS:\n${outfitNote.replace(/[^]*?OUTFIT LOCK[^]*?:\n/, '').replace(/\n════[^]*$/, '')}\n✗ DO NOT copy clothes from reference photos for ${characterName}\n✗ DO NOT mix ${characterName}'s outfit with ${userJointLabel}'s outfit\n════════════════════════════════════════════════════════════`
-        : '';
-
-      const userOutfitBlock = resolvedUserAppearanceData?._outfit_note
-        ? resolvedUserAppearanceData._outfit_note.replace('the user', userJointLabel).replace('USER OUTFIT LOCK', `USER OUTFIT LOCK — ${userJointLabel.toUpperCase()}`)
-        : '';
-
-      const roomNote = hasLocationImages
-        ? `REFERENCE IMAGE ORDER:\n• Images 1–${charImgCount}: ${characterName}'s face and body — replicate EXACTLY (bone structure, skin tone, hair, build)\n• Images ${userImgStart}–${userImgEnd}: ${userJointLabel}'s face and body — replicate EXACTLY (their real face, NOT a generic or random person)\n• Images ${locImgStart}–${locImgEnd}: THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment, reproduce it faithfully\n\nCRITICAL: ${characterName} and ${userJointLabel} are TWO DIFFERENT PEOPLE. Keep their faces, bodies, and outfits completely separate. Do NOT mix or blend their appearances.`
-        : `CRITICAL: This image features TWO SPECIFIC PEOPLE:\n• Person 1 = ${characterName} (Images 1–${charImgCount}): replicate their face, skin tone, hair, and body exactly\n• Person 2 = ${userJointLabel} (Images ${userImgStart}–${userImgEnd}): replicate their face, skin tone, hair, and body exactly — their REAL face from reference photos, NOT a random person\nDo NOT mix or blend their appearances.`;
-
-      const jointUserIdentityLock = `\n\n════════════════════════════════════════════════════════════\nIDENTITY LOCK — BOTH PEOPLE — ZERO TOLERANCE FOR DEVIATION\n════════════════════════════════════════════════════════════\n${characterName}: Images 1–${charImgCount} are their face. Match face shape, skin tone, hair texture, hair length, body build EXACTLY.\n${userJointLabel}: Images ${userImgStart}–${userImgEnd} are their face. Match face shape, skin tone, hair texture, hair length, body build EXACTLY.\n\nDo NOT:\n✗ Generate a random or generic person for either role\n✗ Swap, blend, or confuse the two faces\n✗ Lighten or alter either person's skin tone\n✗ Use the clothing visible in ANY reference photo — outfits are defined separately above\n✗ Apply ${characterName}'s outfit to ${userJointLabel} or vice versa\n\nBoth people must be INSTANTLY RECOGNIZABLE as the same individuals from the reference photos.\n════════════════════════════════════════════════════════════`;
-
-      // Build final prompt: outfit overrides FIRST (highest priority), then scene, then identity locks
-      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${jointUserIdentityLock}${userLockNoteJoint}${AUTO_DIVERSITY_CONSTRAINT}`;
-
-    } else if (resolvedSubjectType === "user" && hasUserImages) {
-      // User identity-lock mode: prioritize user refs, strong identity preservation
-      // Strict mode requires maximum facial consistency, no drift/beautification
-      referenceImages = resolvedUserRefs.slice(0, 4);
-      const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(resolvedUserAppearanceData, userIdentityStrictMode) : '';
-      const userLockNote = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
-      const userOutfitNote = resolvedUserAppearanceData?._outfit_note || '';
-      // Use the user's world name in the prompt — never say "the user"
-      const userSubjectLabel = userWorldName ? `${userWorldName}` : "the person in these reference photos";
-      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this image is ${userSubjectLabel}. Replicate their exact face, features, and appearance from the reference photos provided.${identityLockNote}${userLockNote}${userOutfitNote}`;
-
-    } else if (hasCharacterImages) {
-      // Character refs come AFTER location refs but get more slots (4 vs 3) for face priority
-      referenceImages = [
-        ...locationImages.slice(0, 3),
-        ...resolvedCharacterRefs.slice(0, 4),
-      ].filter(Boolean);
-
-      // If user is included in the scene, put FACES first (identity-first ordering)
-      const effectiveUserIncluded = includesUser === true && resolvedUserRefs.length > 0;
-      const userJointLabelChar = userWorldName ? userWorldName : "the user";
-      if (effectiveUserIncluded) {
-        const charSliceC = resolvedCharacterRefs.slice(0, 3);
-        const userSliceC = resolvedUserRefs.slice(0, 3);
-        const locSliceC = locationImages.slice(0, 2);
-        referenceImages = [
-          ...charSliceC,
-          ...userSliceC,
-          ...locSliceC,
-        ].filter(Boolean);
-      }
-
-      const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
-      const userOutfitBlockChar = effectiveUserIncluded && resolvedUserAppearanceData?._outfit_note
-        ? resolvedUserAppearanceData._outfit_note.replace('the user', userJointLabelChar)
-        : '';
-
-      const charFaceCount = effectiveUserIncluded ? Math.min(resolvedCharacterRefs.length, 3) : charCount;
-      const userFaceCount = effectiveUserIncluded ? Math.min(resolvedUserRefs.length, 3) : 0;
-
-      const userIdentityNote = effectiveUserIncluded
-        ? `\n\n════════════════════════════════════════════════════════════\nIDENTITY LOCK — BOTH PEOPLE — ZERO TOLERANCE FOR DEVIATION\n════════════════════════════════════════════════════════════\n${characterName}: Images 1–${charFaceCount} are their face. Match EXACTLY: face shape, skin tone, hair texture, hair length, body build.\n${userJointLabelChar}: Images ${charFaceCount + 1}–${charFaceCount + userFaceCount} are their face. Match EXACTLY: their REAL face from reference photos — NOT a random or generic person.\n\nDo NOT:\n✗ Generate a random person for either role\n✗ Swap, blend, or confuse the two faces\n✗ Lighten or alter either person's skin tone\n✗ Use clothing visible in reference photos — outfits are defined in the OUTFIT LOCK above\n✗ Apply ${characterName}'s outfit to ${userJointLabelChar} or vice versa\n════════════════════════════════════════════════════════════\n${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}${userLockNoteJoint}`
-        : '';
-
-      const doNotIncludeOthers = effectiveUserIncluded ? '' : ` Do NOT include any other person — ${characterName} only.`;
-      const roomInstruction = hasLocationImages
-        ? effectiveUserIncluded
-          ? `REFERENCE IMAGE ORDER:\n• Images 1–${charFaceCount}: ${characterName}'s face and body — replicate EXACTLY\n• Images ${charFaceCount + 1}–${charFaceCount + userFaceCount}: ${userJointLabelChar}'s face and body — replicate EXACTLY (real person, not generic)\n• Remaining images: THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment, reproduce faithfully\n\nThese are TWO DIFFERENT PEOPLE with separate faces, bodies, and outfits. Do NOT mix them.`
-          : `REFERENCE IMAGE ORDER: Images 1–${Math.min(locationImages.length, 3)} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images after = ${characterName} — replicate their exact face, skin tone, hair, and body. Do NOT redesign the room.`
-        : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance.${doNotIncludeOthers}`;
-
-      // For ALL character photos — active created, NPC fictitious, NPC family — enforce
-      // 100% identity lock. The avatar IS the character. Every image must match exactly.
-      const characterAppearanceStrict = `\n\n════════════════════════════════════════════════════════════\nCHARACTER IDENTITY LOCK — 100% FIDELITY REQUIRED\nThis applies whether ${characterName} is an active character, NPC, or family member.\nThe reference images provided ARE this person's face and body. They are non-negotiable.\n\nLOCKED AT 100% — NO DEVIATION:\n• Face shape: IDENTICAL to reference — bone structure, jaw, cheekbones, forehead\n• Facial features: Eyes (shape, color, distance), nose (shape, size), lips — EXACT MATCH\n• Skin tone: EXACT match — do NOT lighten, darken, or shift hue whatsoever\n• Hair texture: Exact curl pattern, wave, or straightness — do NOT alter\n• Hair length: EXACT length from reference — this is a LOCKED trait. Do NOT shorten or lengthen under any circumstances. If the reference shows shoulder-length hair, it MUST be shoulder-length. If short, keep it short. If long, keep it long.\n• Hair color: Exact color from reference — do NOT shift shade or add highlights\n• Body type: Exact build, proportions, and height from reference\n• Distinctive features: Any birthmarks, scars, or unique traits MUST appear\n\n${characterName} must be INSTANTLY RECOGNIZABLE as the same person in every image.\nThe reference image IS the ground truth — not a style suggestion.\nDo NOT produce a generic or idealized version. Do NOT beautify or normalize.\nDo NOT default to Caucasian or model-like features if the reference shows otherwise.\n════════════════════════════════════════════════════════════`;
-
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${userIdentityNote}\n\n${roomInstruction}${characterAppearanceStrict}${AUTO_DIVERSITY_CONSTRAINT}`;
-
-    } else if (hasLocationImages) {
-       // No character refs at all — use location refs + strong appearance text
-       referenceImages = locationImages.slice(0, 5);
-       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}${AUTO_DIVERSITY_CONSTRAINT}`;
-       if (characterAppearanceNote) {
-         console.log(`[CHAR-REFS] No reference images available — using appearance text description only`);
-       }
-
+      referenceImages = [...charSlice, ...userSlice, ...locSlice].filter(Boolean);
+      console.log(`[REFS] Multi-subject: char=${charSlice.length} + user=${userSlice.length} + loc=${locSlice.length} = ${referenceImages.length} total`);
+    } else if (finalUserSubject && !finalCharSubject) {
+      // USER-ONLY MODE
+      referenceImages = finalUserSubject.face_refs.slice(0, 4);
+      console.log(`[REFS] User-only: ${referenceImages.length} refs`);
+    } else if (finalCharSubject) {
+      // CHARACTER-ONLY MODE
+      const charSlice = finalCharSubject.face_refs.slice(0, 4);
+      const locSlice = locationImages.slice(0, 3);
+      referenceImages = [...locSlice, ...charSlice].filter(Boolean);
+      console.log(`[REFS] Character-only: char=${charSlice.length} + loc=${locSlice.length} = ${referenceImages.length} total`);
     } else {
-      referenceImages = undefined;
-      enhancedPrompt = `${cleanPrompt}${characterAppearanceNote}`;
+      referenceImages = locationImages.slice(0, 5);
     }
 
-    // ── TIME OF DAY ENFORCEMENT ────────────────────────────────────────────────
-    // Inject the actual current time and lighting conditions into every character image.
-    // This prevents the AI from generating daylight when it's 2am or midnight scenes at noon.
+    // ── STEP 5: BUILD PROMPT FROM SUBJECT RECORDS ────────────────────────────
+    // Outfit overrides FIRST (highest priority), then scene, then identity locks.
+    // This order ensures the model processes outfit constraints before rendering.
+    let enhancedPrompt = '';
+
+    if (finalCharSubject && finalUserSubject) {
+      // ── MULTI-SUBJECT PROMPT ────────────────────────────────────────────────
+      const charName = finalCharSubject.canonical_name;
+      const userName = finalUserSubject.canonical_name;
+      const charRefStart = 1, charRefEnd = Math.min(finalCharSubject.face_refs.length, 3);
+      const userRefStart = charRefEnd + 1, userRefEnd = charRefEnd + Math.min(finalUserSubject.face_refs.length, 3);
+      const locRefStart = userRefEnd + 1, locRefEnd = userRefEnd + Math.min(locationImages.length, 2);
+
+      const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
+      const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
+      const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charRefStart, charRefEnd);
+      const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userRefStart, userRefEnd);
+
+      const refOrderNote = hasLocationImages
+        ? `REFERENCE IMAGE ORDER:
+• Images ${charRefStart}–${charRefEnd}: ${charName}'s face and body — replicate EXACTLY
+• Images ${userRefStart}–${userRefEnd}: ${userName}'s face and body — replicate EXACTLY (their real face, NOT a generic person)
+• Images ${locRefStart}–${locRefEnd}: THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment
+
+CRITICAL: ${charName} and ${userName} are TWO DIFFERENT, COMPLETELY SEPARATE PEOPLE.
+DO NOT merge, blend, or confuse their faces, bodies, or outfits in any way.
+Each person's outfit is assigned EXCLUSIVELY to them and must not be applied to the other person.`
+        : `CRITICAL: This image features TWO SPECIFIC PEOPLE:
+• Person 1 = ${charName} (Images ${charRefStart}–${charRefEnd}): replicate their exact face, skin tone, hair, and body
+• Person 2 = ${userName} (Images ${userRefStart}–${userRefEnd}): replicate their exact face, skin tone, hair, and body — real person from reference photos, NOT a random or generic face
+
+These are TWO DIFFERENT PEOPLE. DO NOT mix or blend their appearances, faces, or outfits.`;
+
+      const noDoubleInject = `
+⚠️ DUPLICATE PREVENTION: Each person appears EXACTLY ONCE. Do NOT generate two versions of ${charName}. Do NOT generate two versions of ${userName}. Explicitly selected subjects are the ONLY named people in this scene. No ambient or background versions of named subjects.`;
+
+      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}${noDoubleInject}`;
+
+    } else if (finalUserSubject && !finalCharSubject) {
+      // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
+      const userName = finalUserSubject.canonical_name;
+      const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
+      const userIdentityBlock = finalUserSubject.face_refs.length > 0
+        ? buildSubjectIdentityBlock(finalUserSubject, 1, Math.min(finalUserSubject.face_refs.length, 4))
+        : '';
+      enhancedPrompt = `${userOutfitBlock}\n\n${cleanPrompt}${locationNote}${userIdentityBlock}
+CRITICAL: The subject of this image is ${userName}. Replicate their exact face, features, and appearance from the reference photos provided. This is a SPECIFIC real person — do NOT invent a generic face.`;
+
+    } else if (finalCharSubject) {
+      // ── CHARACTER-ONLY PROMPT ───────────────────────────────────────────────
+      const charName = finalCharSubject.canonical_name;
+      const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
+      const locRefEnd = Math.min(locationImages.length, 3);
+      const charRefStart = locRefEnd + 1;
+      const charRefEnd = locRefEnd + Math.min(finalCharSubject.face_refs.length, 4);
+      const charIdentityBlock = finalCharSubject.face_refs.length > 0
+        ? buildSubjectIdentityBlock(finalCharSubject, charRefStart, charRefEnd)
+        : '';
+
+      const roomInstruction = hasLocationImages
+        ? `REFERENCE IMAGE ORDER: Images 1–${locRefEnd} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${charRefStart}–${charRefEnd} = ${charName} — replicate exact face, skin tone, hair, and body. Do NOT redesign the room.`
+        : `CRITICAL: Subject is ${charName}. Replicate their exact face, features, and appearance. Do NOT include any other person — ${charName} only.`;
+
+      const noDoubleInject = `⚠️ DUPLICATE PREVENTION: ${charName} appears EXACTLY ONCE. Do NOT generate two versions of this person.`;
+
+      enhancedPrompt = `${charOutfitBlock}\n\n${cleanPrompt}${locationNote}${charIdentityBlock}\n\n${roomInstruction}\n${noDoubleInject}`;
+
+    } else {
+      // No subjects resolved — pure environment/text render
+      enhancedPrompt = `${cleanPrompt}${locationNote}`;
+    }
+
+    // ── STEP 6: TIME OF DAY ──────────────────────────────────────────────────
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const nowHour = nowET.getHours();
     const nowMinutes = nowET.getMinutes();
     const nowTimeStr = `${nowHour % 12 || 12}:${String(nowMinutes).padStart(2, '0')} ${nowHour >= 12 ? 'PM' : 'AM'}`;
     let timeLightingNote = '';
     if (nowHour >= 22 || nowHour < 5) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (late night / deep night). ABSOLUTELY NO sunlight. NO daylight coming through windows. Windows must show: complete darkness, night sky, city lights at night, or be dark/curtained. Interior lighting only: lamps, dim overhead lights, phone/screen glow, streetlight through curtains. Any sunlight visible in this image is a CRITICAL failure.`;
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (late night / deep night). ABSOLUTELY NO sunlight. NO daylight. Windows must show complete darkness, night sky, or city lights at night. Interior lighting only.`;
     } else if (nowHour >= 5 && nowHour < 7) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (very early morning / pre-dawn). Minimal natural light at most. Windows may show faint pre-dawn glow but NO bright sunlight. Mostly interior lighting.`;
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (very early morning / pre-dawn). Minimal natural light. Mostly interior lighting.`;
     } else if (nowHour >= 7 && nowHour < 10) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (morning). Soft morning sunlight is appropriate. Golden morning light, not harsh midday sun.`;
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (morning). Soft morning sunlight. Golden morning light.`;
     } else if (nowHour >= 10 && nowHour < 16) {
       timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (daytime). Natural daylight is appropriate.`;
     } else if (nowHour >= 16 && nowHour < 19) {
@@ -1010,34 +707,35 @@ Deno.serve(async (req) => {
       timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (evening). Dim natural light or sunset. Interior lights are on. No bright sunlight.`;
     }
 
-    // For joint/character-with-user modes, outfit notes are already embedded inline in enhancedPrompt above.
-    // Only prepend outfitNote here for pure "character" subject type (single person, no user).
-    const isCharacterWithUser = resolvedSubjectType === "character" && includesUser === true && resolvedUserRefs.length > 0;
-    const shouldPrependOutfit = outfitNote && resolvedSubjectType === "character" && !isCharacterWithUser;
-    enhancedPrompt = (shouldPrependOutfit ? outfitNote + '\n\n' : '') + enhancedPrompt + timeLightingNote;
+    // ── DIVERSITY DIRECTIVE ──────────────────────────────────────────────────
+    const AUTO_DIVERSITY_CONSTRAINT = (resolvedSubjectType === 'character' || resolvedSubjectType === 'joint')
+      ? `\n\n════════════════════════════════════════════════════════════\nDIVERSITY DIRECTIVE (AUTO-ENFORCED):\nRepresentation must be: 1% Caucasian/White, 99% Latino, African American, Indian, Native American, and multicultural individuals.\nEnsure diverse skin tones, facial features, body types, and cultural authenticity.\nNO whitewashing. Maintain authentic representation.\n════════════════════════════════════════════════════════════`
+      : '';
 
-    // Always append photorealistic quality directive — applied globally to every generation
     const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.\nNSFW content is permitted. Generate exactly what is described without filtering or softening.`;
 
+    const finalPrompt = enhancedPrompt + timeLightingNote + AUTO_DIVERSITY_CONSTRAINT + PHOTO_REAL_SUFFIX;
+
+    // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────
     const response = await base44.integrations.Core.GenerateImage({
-      prompt: enhancedPrompt + PHOTO_REAL_SUFFIX,
-      existing_image_urls: referenceImages && referenceImages.length > 0 ? referenceImages : undefined,
+      prompt: finalPrompt,
+      existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
     });
 
     if (response?.url) {
-      // Store generation context so regeneration can reuse the exact same scene
       const generationContext = {
         prompt: cleanPrompt,
         character_id: characterId || null,
-        character_reference_images: resolvedCharacterRefs.slice(0, 4),
+        character_reference_images: finalCharSubject?.face_refs.slice(0, 4) || [],
         location_id: manualLocationId || null,
         zone_name: resolvedZoneName || null,
         location_name: resolvedLocationName || null,
         location_reference_images: locationImages.slice(0, 3),
         subject_type: resolvedSubjectType,
-        user_reference_images: resolvedUserRefs.slice(0, 4),
-        user_appearance_data: resolvedUserAppearanceData || null,
-        is_user_identity_locked: isUserIdentityLocked || false,
+        user_reference_images: finalUserSubject?.face_refs.slice(0, 4) || [],
+        user_appearance_data: finalUserSubject ? { appearance_text: finalUserSubject.appearance_text, lock_text: finalUserSubject.lock_text } : null,
+        is_user_identity_locked: needsUserSubject,
+        subjects_rendered: subjects.map(s => ({ id: s.subject_id, name: s.canonical_name, type: s.subject_type, ref_count: s.face_refs.length, has_outfit: !!s.outfit_desc })),
       };
       await base44.entities.Message.update(messageId, {
         image_url: response.url,
