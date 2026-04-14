@@ -1012,7 +1012,8 @@ Deno.serve(async (req) => {
 
     // For joint/character-with-user modes, outfit notes are already embedded inline in enhancedPrompt above.
     // Only prepend outfitNote here for pure "character" subject type (single person, no user).
-    const shouldPrependOutfit = outfitNote && resolvedSubjectType === "character" && !effectiveUserIncluded;
+    const isCharacterWithUser = resolvedSubjectType === "character" && includesUser === true && resolvedUserRefs.length > 0;
+    const shouldPrependOutfit = outfitNote && resolvedSubjectType === "character" && !isCharacterWithUser;
     enhancedPrompt = (shouldPrependOutfit ? outfitNote + '\n\n' : '') + enhancedPrompt + timeLightingNote;
 
     // Always append photorealistic quality directive — applied globally to every generation

@@ -317,6 +317,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         characterReferenceImages: charReferenceImages,
         userReferenceImages: userReferenceImages,
         characterName: charName,
+        userWorldName: userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || null,
         subjectType,
         characterId: character.id,
         manualLocationId: selectedLocation?.id || null,
