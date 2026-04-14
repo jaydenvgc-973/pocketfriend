@@ -172,14 +172,18 @@ function AddPieceForm({ character, onSave, onCancel }) {
   const handleSave = async () => {
     if (!form.label.trim()) return;
     setSaving(true);
-    const finalImageUrl = imageUrl || previewUrl || "";
-    await onSave({
-      piece_id: generateId("piece"),
-      created_at: new Date().toISOString(),
-      ...form,
-      image_url: finalImageUrl,
-    });
-    setSaving(false);
+    try {
+      const finalImageUrl = imageUrl || previewUrl || "";
+      await onSave({
+        piece_id: generateId("piece"),
+        outfit_id: generateId("piece"),
+        created_at: new Date().toISOString(),
+        ...form,
+        image_url: finalImageUrl,
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -255,8 +259,10 @@ function AddOutfitForm({ character, onSave, onCancel }) {
   });
   const [genPrompt, setGenPrompt] = useState("");
   const [generating, setGenerating] = useState(false);
+  const [generatingImage, setGeneratingImage] = useState(false);
   const [saving, setSaving] = useState(false);
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
+  const [generatedImageUrl, setGeneratedImageUrl] = useState("");
   const [uploading, setUploading] = useState(false);
 
   const update = (f, v) => setForm(p => ({ ...p, [f]: v }));
@@ -311,16 +317,38 @@ Return JSON:
     setUploading(false);
   };
 
+  const handleGenerateOutfitImage = async () => {
+    const description = form.full_description || [form.top, form.bottom, form.shoes, form.outerwear, form.accessories].filter(Boolean).join(", ");
+    if (!description) return;
+    setGeneratingImage(true);
+    try {
+      const appearanceBase = character.appearance_lock
+        ? `${character.appearance_lock.skin_tone || ''} ${character.appearance_lock.hairstyle || ''} ${character.appearance_lock.overall_aesthetic || ''}`.trim()
+        : '';
+      const res = await base44.integrations.Core.GenerateImage({
+        prompt: `Full body fashion photo of ${character.name}, ${character.gender || 'person'}, ${character.age || ''} years old${appearanceBase ? `, ${appearanceBase}` : ''}. Wearing: ${description}. Standing pose, clean background, lifestyle photography style.`,
+        existing_image_urls: character.avatar_url ? [character.avatar_url] : undefined,
+      });
+      if (res?.url) setGeneratedImageUrl(res.url);
+    } catch (e) {
+      console.error("Outfit image generation failed:", e);
+    }
+    setGeneratingImage(false);
+  };
+
   const handleSave = async () => {
     if (!form.label.trim()) return;
     setSaving(true);
-    await onSave({
-      outfit_id: generateId("outfit"),
-      created_at: new Date().toISOString(),
-      ...form,
-      image_url: uploadedImageUrl || "",
-    });
-    setSaving(false);
+    try {
+      await onSave({
+        outfit_id: generateId("outfit"),
+        created_at: new Date().toISOString(),
+        ...form,
+        image_url: uploadedImageUrl || generatedImageUrl || "",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -372,6 +400,26 @@ Return JSON:
         </div>
       </div>
 
+      {/* Generate outfit image */}
+      <div className="space-y-2">
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={handleGenerateOutfitImage}
+          disabled={generatingImage || (!form.full_description && !form.top)}
+          className="w-full rounded-xl gap-1.5"
+        >
+          {generatingImage ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+          {generatingImage ? "Generating outfit preview..." : "Generate Outfit Image"}
+        </Button>
+        {generatedImageUrl && (
+          <div className="relative">
+            <img src={generatedImageUrl} alt="Generated outfit" className="w-full h-48 object-cover rounded-xl" />
+            <p className="text-[10px] text-muted-foreground text-center mt-1">AI-generated preview · will be saved with outfit</p>
+          </div>
+        )}
+      </div>
+
       {/* Optional outfit photo upload */}
       <div>
         <label className="flex items-center gap-2 cursor-pointer px-3 py-2 rounded-xl border border-dashed border-border hover:border-primary/40 transition-colors text-xs text-muted-foreground">
@@ -406,9 +454,9 @@ export default function CharacterClosetPanel({ character }) {
   const closet = character?.character_closet || [];
   const currentOutfit = character?.current_outfit || null;
 
-  // Separate outfits from pieces by checking for outfit_id vs piece_id
-  const outfits = closet.filter(item => item.outfit_id && !item.piece_id);
-  const pieces = closet.filter(item => item.piece_id);
+  // Separate outfits from pieces by checking for piece_id flag
+  const outfits = closet.filter(item => item.outfit_id && !item.piece_id?.startsWith("piece_"));
+  const pieces = closet.filter(item => item.piece_id?.startsWith("piece_"));
 
   const saveCloset = async (newCloset, currentOutfitUpdate = null) => {
     setSaving(true);
