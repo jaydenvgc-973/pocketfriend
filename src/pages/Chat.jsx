@@ -1182,30 +1182,41 @@ ${songsInfo}`;
       const statusContext = !isPhone ? buildStatusPromptContext(character, isPhone, recentMsgs.slice(-10)) : "";
       const sleepContext = charStatus === 'asleep' ? buildSleepInterruptionContext(character) : "";
 
-      // Awareness context: if character was unavailable and is now responding, acknowledge it naturally
+      // ── LIVE PRESENCE: single source of truth for location in AI context ─────
+      // Import the resolver — uses confirmed state, never schedule guesses
+      const { getCharacterLivePresence } = await import('@/lib/locationResolutionEngine.js');
+      const livePresence = getCharacterLivePresence(character, {});
+
+      // Build awareness context from resolved presence — AI must describe this truth, never invent location
       let awarenessContext = '';
-      if (charStatus === 'work') {
-        const workLocId = character.occupation_location_id;
-        const workLoc = workLocId
-          ? await base44.functions.invoke("fetchAllLocationsForUser", {})
-              .then(r => (r?.data?.locations || []).find(l => l.id === workLocId))
-              .catch(() => null)
-          : null;
-        const workplaceName = workLoc?.name || character.occupation_location_name || character.work_details?.workplace_type || "work";
-        // Keep current_location_id in sync so the travel map and character cards reflect their work location
-        if (workLocId && character.current_location_id !== workLocId) {
-          base44.entities.Character.update(characterId, { current_location_id: workLocId }).catch(() => {});
-        }
-        awarenessContext = `\n\nAWARENESS: You are currently at work — specifically at ${workplaceName}. If asked where you are, say you're at ${workplaceName} or at work. If this is the first reply since being at work, you may briefly and naturally acknowledge it (e.g. "I'm at ${workplaceName} rn" or "just got a sec, I'm at work"). Do NOT repeat this every message.`;
-      } else if (charStatus === 'school') {
-        awarenessContext = `\n\nAWARENESS: You are at school right now. If asked where you are, say you're at school or class. If this is the first reply since being at school, you may briefly and naturally acknowledge it. Do NOT repeat this every message.`;
-      } else if (charStatus === 'gym') {
-        awarenessContext = `\n\nAWARENESS: You are at the gym. If asked where you are, say you're at the gym. You can briefly mention it if natural, but don't force it or repeat it.`;
-      } else if (charStatus === 'bar') {
-        awarenessContext = `\n\nAWARENESS: You are at the bar. If asked where you are, say you're at the bar. You can briefly mention it if natural, but don't force it or repeat it.`;
-      } else if (charStatus === 'out') {
-        awarenessContext = `\n\nAWARENESS: You are out right now. If asked where you are, say you're out. You can briefly mention it if natural, but don't force it or repeat it.`;
+      const presStatus = livePresence.status;
+      const locLabel = livePresence.sublabel || livePresence.label || 'home';
+
+      if (presStatus === 'in_transit') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED — DO NOT OVERRIDE): You are currently TRAVELING to ${livePresence.label.replace('Traveling to ', '')}. You have NOT arrived yet. If asked where you are, say you are on your way. Do NOT say you are already there.`;
+      } else if (presStatus === 'at_work') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You are at work — specifically at ${locLabel}. If asked where you are, say you're at ${locLabel}. You may briefly acknowledge it if this is the first message, but do NOT repeat it every turn.`;
+      } else if (presStatus === 'at_school') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You are at school right now (${locLabel}). If asked where you are, say you're at school or class. Do NOT repeat this every message.`;
+      } else if (presStatus === 'sleeping' || presStatus === 'napping') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You were asleep at ${locLabel} and were just woken up by this message. Acknowledge it naturally — groggy, brief, honest.`;
+      } else if (presStatus === 'sleep_interrupted') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You were asleep and just woke up. You're at ${locLabel}. Respond as someone who just woke up.`;
+      } else if (presStatus === 'health_critical') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You are dealing with a health emergency right now at ${locLabel}. Your response must reflect that you are not okay physically.`;
+      } else if (presStatus === 'hunger_critical') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You are extremely hungry right now — this is urgent. Your focus is on getting food. You are at ${locLabel}.`;
+      } else if (presStatus === 'energy_critical') {
+        awarenessContext = `\n\nLOCATION STATE (LOCKED): You are completely exhausted at ${locLabel}. You can barely function. Your responses must reflect extreme fatigue.`;
+      } else if (presStatus === 'home') {
+        awarenessContext = `\n\nLOCATION STATE: You are at home (${locLabel}). If asked, say you're home.`;
+      } else if (presStatus === 'visiting' || presStatus === 'at_location') {
+        awarenessContext = `\n\nLOCATION STATE: You are at ${locLabel}. If asked where you are, you can mention it naturally.`;
       }
+
+      // Hard validation: if AI response contradicts resolved presence, it gets corrected before display
+      // This is applied after LLM call via validateLocationInResponse()
+      const _presenceForValidation = livePresence;
 
       let playAsInstruction = "";
       if (activeCharacter) {
@@ -1344,6 +1355,21 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       // parseCharacterResponse is imported from @/lib/chatResponseParser
 
+      // ── LOCATION VALIDATION: prevent AI from contradicting resolved presence ──
+      const validateLocationInResponse = (text, presence) => {
+        if (!text || !presence) return text;
+        const lower = text.toLowerCase();
+        // If traveling but AI says "I'm at [destination]" — force correction
+        if (presence.status === 'in_transit') {
+          const dest = (presence.label || '').replace('Traveling to ', '').toLowerCase();
+          if (dest && lower.includes(`i'm at ${dest}`) || lower.includes(`im at ${dest}`)) {
+            console.warn('[LOCATION_DRIFT] AI said arrived but still in transit — correcting');
+            return `I'm on my way to ${presence.label.replace('Traveling to ', '')} right now.`;
+          }
+        }
+        return text;
+      };
+
       let responseObj = { message_type: "text_only", text_content: "", image_generation_prompts: [] };
       try {
         response = await callLLMWithRetry(fullPrompt);
@@ -1397,6 +1423,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         responseText = cleanLines.join('\n').trim();
         // If filtering left nothing, keep a minimal fallback so message isn't empty
         if (!responseText && hasText) responseText = '...';
+      }
+
+      // LOCATION VALIDATION: correct any AI response that contradicts resolved presence
+      if (responseText) {
+        responseText = validateLocationInResponse(responseText, _presenceForValidation);
       }
 
       // DASH FILTER: remove AI-generated dashes (— – and spaced -) from visible dialogue
