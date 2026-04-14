@@ -722,22 +722,41 @@ Deno.serve(async (req) => {
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
             let imgs = [];
+            // Try exact zone name match first (manualZoneId is the zone_name string)
             if (manualZoneId && manualLoc.zones?.length > 0) {
-              const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId);
+              // Try exact match, then case-insensitive match
+              const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId)
+                        || manualLoc.zones.find(z => z.zone_name?.toLowerCase() === manualZoneId?.toLowerCase());
               if (zone?.image_urls?.length > 0) {
                 imgs = zone.image_urls.slice(0, 6);
                 resolvedZoneName = zone.zone_name;
+                console.log(`[LOCATION] ✓ MANUAL ZONE: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
+              } else {
+                console.log(`[LOCATION] ⚠ MANUAL ZONE "${manualZoneId}" not found or has no images — using all zone refs for "${resolvedLocationName}"`);
               }
             }
-            // Fallback: if no zone matched, use flat image_urls or first zone
+            // If no zone matched or no zone specified, use flat image_urls or first zone WITH images
+            // NOTE: Do NOT silently swap to a different zone — use the location-level images instead
             if (imgs.length === 0) {
-              const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
-              imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || manualLoc.image_urls?.slice(0, 6) || [];
-              resolvedZoneName = firstZoneWithImages?.zone_name || null;
+              // Prefer flat location-level images (no zone ambiguity)
+              if (manualLoc.image_urls?.length > 0) {
+                imgs = manualLoc.image_urls.slice(0, 6);
+                resolvedZoneName = null;
+              } else {
+                // Last resort: first zone with images
+                const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
+                imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || [];
+                resolvedZoneName = firstZoneWithImages?.zone_name || null;
+              }
             }
             locationImages = imgs;
+            // Build the room lock note with the correct location + zone (never use a different zone)
             locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
-            console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
+            // Add explicit zone enforcement to the prompt so the AI doesn't wander into a different zone
+            if (resolvedZoneName) {
+              locationNote += `\n\n🔒 ZONE ENFORCEMENT: The scene MUST take place in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene in any other room or area within this location. Use ONLY the reference images for this exact zone.`;
+            }
+            console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName || 'none'}" | Images: ${imgs.length}`);
           }
         } else {
           // ── AUTOMATIC PATH: real-time location lock FIRST, text-parse as fallback ──
