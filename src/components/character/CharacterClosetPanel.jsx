@@ -177,6 +177,7 @@ function AddPieceForm({ character, onSave, onCancel }) {
       await onSave({
         piece_id: generateId("piece"),
         outfit_id: generateId("piece"),
+        type: "piece",
         created_at: new Date().toISOString(),
         ...form,
         image_url: finalImageUrl,
@@ -342,6 +343,7 @@ Return JSON:
     try {
       await onSave({
         outfit_id: generateId("outfit"),
+        type: "outfit",
         created_at: new Date().toISOString(),
         ...form,
         image_url: uploadedImageUrl || generatedImageUrl || "",
@@ -454,9 +456,9 @@ export default function CharacterClosetPanel({ character }) {
   const closet = character?.character_closet || [];
   const currentOutfit = character?.current_outfit || null;
 
-  // Separate outfits from pieces by checking for piece_id flag
-  const outfits = closet.filter(item => item.outfit_id && !item.piece_id?.startsWith("piece_"));
-  const pieces = closet.filter(item => item.piece_id?.startsWith("piece_"));
+  // Separate outfits from pieces — prefer explicit type field, fallback to ID-based heuristic for legacy items
+  const outfits = closet.filter(item => item.type === "outfit" || (!item.type && item.outfit_id && !item.piece_id?.startsWith("piece_")));
+  const pieces = closet.filter(item => item.type === "piece" || (!item.type && item.piece_id?.startsWith("piece_")));
 
   const saveCloset = async (newCloset, currentOutfitUpdate = null) => {
     setSaving(true);

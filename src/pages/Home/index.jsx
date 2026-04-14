@@ -66,11 +66,11 @@ export default function Home() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
-    refetchOnWindowFocus: true,
+    staleTime: 30000,
+    gcTime: 60000,
+    refetchOnWindowFocus: false,
     refetchOnReconnect: true,
-    retry: 3,
+    retry: 2,
   });
 
   // Real-time: invalidate locations when any LocationReference changes

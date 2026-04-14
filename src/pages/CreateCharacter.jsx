@@ -437,6 +437,8 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       const charData = {
         name: fullName,
         created_by: currentUser?.email,
+        owner_email: currentUser?.email,
+        character_type: "active",
         gender: randomGender.toLowerCase(),
         archetype: randomArchetype.label,
         social_energy: randomEnergy.value,
@@ -636,6 +638,8 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       const charData = {
         name: fullName,
         created_by: currentUser?.email,
+        owner_email: currentUser?.email,
+        character_type: "active",
         gender: data.gender?.toLowerCase(),
         archetype: data.archetype || undefined,
         social_energy: data.social_energy || undefined,
