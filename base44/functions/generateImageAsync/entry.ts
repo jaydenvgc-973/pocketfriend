@@ -673,6 +673,25 @@ Deno.serve(async (req) => {
             ethnicities: sett.ethnicities || [],
           };
         }
+        // ── USER OUTFIT INJECTION: use user_current_outfit if set ──
+        const userCurrentOutfit = sett.user_current_outfit;
+        if (userCurrentOutfit?.label && needsUserRefs) {
+          const outfitParts = [];
+          if (userCurrentOutfit.top) outfitParts.push(userCurrentOutfit.top);
+          if (userCurrentOutfit.bottom) outfitParts.push(userCurrentOutfit.bottom);
+          if (userCurrentOutfit.shoes) outfitParts.push(userCurrentOutfit.shoes);
+          if (userCurrentOutfit.outerwear) outfitParts.push(userCurrentOutfit.outerwear);
+          if (userCurrentOutfit.accessories) outfitParts.push(userCurrentOutfit.accessories);
+          if (userCurrentOutfit.hair_state) outfitParts.push(`hair: ${userCurrentOutfit.hair_state}`);
+          const outfitDesc = userCurrentOutfit.full_description || outfitParts.join(', ');
+          if (outfitDesc) {
+            // Append to enhancedPrompt after assembly — stored for later injection
+            resolvedUserAppearanceData = resolvedUserAppearanceData || {};
+            resolvedUserAppearanceData._outfit_note = `\n\nUSER OUTFIT LOCK (MANDATORY — override any default clothing): The user is wearing: ${outfitDesc}. Reproduce this exact outfit in the image. Do NOT use generic clothing or default to whatever the reference photo shows.`;
+            console.log(`[USER-OUTFIT] Injecting user outfit: ${outfitDesc.substring(0, 80)}...`);
+          }
+        }
+
         // Inject user appearance lock into prompt if defined
         const userLock = sett.appearance_lock || {};
         const userLockParts = [];
@@ -869,10 +888,11 @@ Deno.serve(async (req) => {
       ].filter(Boolean);
 
       const userJointLabel = userWorldName ? userWorldName : "the user";
+      const userOutfitNoteJoint = resolvedUserAppearanceData?._outfit_note || '';
       const roomNote = hasLocationImages
          ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${locationCount + 1}–${locationCount + 2} = ${characterName} (replicate exactly). Final images = ${userJointLabel} (replicate exactly from reference photos). Both people must be placed inside the locked room.`
          : `CRITICAL: Features BOTH ${characterName} AND ${userJointLabel}. Replicate both faces and appearances with pristine accuracy.`;
-       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${AUTO_DIVERSITY_CONSTRAINT}`;
+       enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${userOutfitNoteJoint}${AUTO_DIVERSITY_CONSTRAINT}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       // User identity-lock mode: prioritize user refs, strong identity preservation
@@ -880,9 +900,10 @@ Deno.serve(async (req) => {
       referenceImages = resolvedUserRefs.slice(0, 4);
       const identityLockNote = isUserIdentityLocked ? buildUserIdentityLockNote(resolvedUserAppearanceData, userIdentityStrictMode) : '';
       const userLockNote = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
+      const userOutfitNote = resolvedUserAppearanceData?._outfit_note || '';
       // Use the user's world name in the prompt — never say "the user"
       const userSubjectLabel = userWorldName ? `${userWorldName}` : "the person in these reference photos";
-      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this image is ${userSubjectLabel}. Replicate their exact face, features, and appearance from the reference photos provided.${identityLockNote}${userLockNote}`;
+      enhancedPrompt = `${cleanPrompt}\n\nCRITICAL: The subject of this image is ${userSubjectLabel}. Replicate their exact face, features, and appearance from the reference photos provided.${identityLockNote}${userLockNote}${userOutfitNote}`;
 
     } else if (hasCharacterImages) {
       // Character refs come AFTER location refs but get more slots (4 vs 3) for face priority

@@ -164,6 +164,114 @@
       },
       "default": [],
       "description": "Characters who have given the user a key to their home, allowing entry even when they are away."
+    },
+    "user_closet": {
+      "type": "array",
+      "description": "User's saved outfits for image generation.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "outfit_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "daily_casual",
+              "work",
+              "gym",
+              "church",
+              "nightlife",
+              "formal",
+              "sleepwear",
+              "lounge",
+              "outdoor",
+              "special"
+            ],
+            "default": "daily_casual"
+          },
+          "top": {
+            "type": "string"
+          },
+          "bottom": {
+            "type": "string"
+          },
+          "shoes": {
+            "type": "string"
+          },
+          "outerwear": {
+            "type": "string"
+          },
+          "accessories": {
+            "type": "string"
+          },
+          "hair_state": {
+            "type": "string"
+          },
+          "full_description": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "is_favorite": {
+            "type": "boolean",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "outfit_id",
+          "label"
+        ]
+      },
+      "default": []
+    },
+    "user_current_outfit": {
+      "type": "object",
+      "description": "The user's currently active outfit for image generation.",
+      "properties": {
+        "outfit_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "top": {
+          "type": "string"
+        },
+        "bottom": {
+          "type": "string"
+        },
+        "shoes": {
+          "type": "string"
+        },
+        "outerwear": {
+          "type": "string"
+        },
+        "accessories": {
+          "type": "string"
+        },
+        "hair_state": {
+          "type": "string"
+        },
+        "full_description": {
+          "type": "string"
+        },
+        "last_changed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
     }
   },
   "required": []

@@ -7,6 +7,7 @@ import { ArrowLeft, Sparkles, RefreshCw, DollarSign, Heart, Key, MapPin, Briefca
 import VGCRevenueDashboard from "@/components/finance/VGCRevenueDashboard";
 import { Button } from "@/components/ui/button";
 import UserAppearanceLockEditor from "@/components/user/UserAppearanceLockEditor";
+import UserClosetPanel from "@/components/user/UserClosetPanel";
 import UserCharacterRelationshipSelector from "@/components/user/UserCharacterRelationshipSelector";
 import BottomNav from "@/components/BottomNav";
 import { getReciprocalRole, getRelationshipLabel, isFamilyRelationship } from "@/lib/relationshipUtils.js";
@@ -366,6 +367,14 @@ export default function MyProfile() {
             </div>
           </div>
         )}
+
+        {/* User Closet */}
+        <UserClosetPanel
+          settings={settings}
+          onUpdate={updateSettings}
+          displayName={displayName}
+          gender={settings.user_gender}
+        />
 
         {/* User Aliases */}
         <UserAppearanceLockEditor settings={settings} user={user} />
