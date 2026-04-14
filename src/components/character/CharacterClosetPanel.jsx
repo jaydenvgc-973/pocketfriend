@@ -154,6 +154,34 @@ function AddPieceForm({ character, onSave, onCancel }) {
     setUploading(false);
   };
 
+  const handleAiFill = async () => {
+    if (!imageUrl) return;
+    setGenerating(true);
+    try {
+      const res = await base44.integrations.Core.InvokeLLM({
+        prompt: `Analyze this clothing item image and extract details. Return JSON:
+{
+  "label": "Short item name (e.g. White Air Force 1s)",
+  "piece_type": "top|bottom|shoes|outerwear|dress|accessories|hat|bag",
+  "description": "Detailed description of the item including color, material, style, brand if visible (50-80 words)"
+}`,
+        file_urls: [imageUrl],
+        response_json_schema: {
+          type: "object",
+          properties: {
+            label: { type: "string" },
+            piece_type: { type: "string" },
+            description: { type: "string" },
+          }
+        }
+      });
+      if (res) setForm(prev => ({ ...prev, ...res }));
+    } catch (e) {
+      console.error("AI fill failed:", e);
+    }
+    setGenerating(false);
+  };
+
   const handleGenerateVisual = async () => {
     if (!form.description.trim()) return;
     setGenerating(true);
@@ -237,7 +265,13 @@ function AddPieceForm({ character, onSave, onCancel }) {
           {imageUrl && imageUrl !== previewUrl ? "Photo uploaded ✓" : "Upload clothing photo"}
         </label>
         {imageUrl && imageUrl !== previewUrl && (
-          <img src={imageUrl} alt="Uploaded" className="w-full h-28 object-cover rounded-xl" />
+          <div className="space-y-2">
+            <img src={imageUrl} alt="Uploaded" className="w-full h-28 object-cover rounded-xl" />
+            <Button size="sm" onClick={handleAiFill} disabled={generating} className="w-full rounded-xl gap-1.5">
+              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+              {generating ? "Analyzing image..." : "AI Fill from Photo"}
+            </Button>
+          </div>
         )}
       </div>
 
@@ -316,6 +350,41 @@ Return JSON:
     const res = await base44.integrations.Core.UploadFile({ file });
     if (res?.file_url) setUploadedImageUrl(res.file_url);
     setUploading(false);
+  };
+
+  const handleAiFillOutfit = async () => {
+    if (!uploadedImageUrl) return;
+    setGenerating(true);
+    try {
+      const res = await base44.integrations.Core.InvokeLLM({
+        prompt: `Analyze this outfit image and extract all clothing details. Return JSON:
+{
+  "label": "Short outfit name (2-4 words)",
+  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|special",
+  "top": "Describe the top/shirt/sweater visible",
+  "bottom": "Describe the pants/shorts/skirt visible",
+  "shoes": "Describe the shoes/sneakers visible",
+  "outerwear": "Describe any jacket/coat/hoodie, or empty string if none",
+  "accessories": "Describe any accessories (hat, bag, jewelry, etc.), or empty string if none",
+  "hair_state": "Describe the hair style/state if visible, or empty string",
+  "full_description": "Full vivid outfit description for image generation (50-80 words)"
+}`,
+        file_urls: [uploadedImageUrl],
+        response_json_schema: {
+          type: "object",
+          properties: {
+            label: { type: "string" }, category: { type: "string" },
+            top: { type: "string" }, bottom: { type: "string" }, shoes: { type: "string" },
+            outerwear: { type: "string" }, accessories: { type: "string" },
+            hair_state: { type: "string" }, full_description: { type: "string" },
+          }
+        }
+      });
+      if (res) setForm(prev => ({ ...prev, ...res }));
+    } catch (e) {
+      console.error("AI fill failed:", e);
+    }
+    setGenerating(false);
   };
 
   const handleGenerateOutfitImage = async () => {
@@ -430,7 +499,13 @@ Return JSON:
           {uploadedImageUrl ? "Photo uploaded ✓" : "Upload outfit reference photo (optional)"}
         </label>
         {uploadedImageUrl && (
-          <img src={uploadedImageUrl} alt="Outfit reference" className="mt-2 w-full h-28 object-cover rounded-xl" />
+          <div className="mt-2 space-y-2">
+            <img src={uploadedImageUrl} alt="Outfit reference" className="w-full h-28 object-cover rounded-xl" />
+            <Button size="sm" onClick={handleAiFillOutfit} disabled={generating} className="w-full rounded-xl gap-1.5">
+              {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+              {generating ? "Analyzing outfit..." : "AI Fill from Photo"}
+            </Button>
+          </div>
         )}
       </div>
 

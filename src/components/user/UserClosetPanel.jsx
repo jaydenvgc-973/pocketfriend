@@ -146,6 +146,41 @@ Return JSON:
     setUploading(false);
   };
 
+  const handleAiFill = async () => {
+    if (!uploadedImageUrl) return;
+    setGenerating(true);
+    try {
+      const res = await base44.integrations.Core.InvokeLLM({
+        prompt: `Analyze this outfit image and extract all clothing details. Return JSON:
+{
+  "label": "Short outfit name (2-4 words)",
+  "category": "daily_casual|work|gym|church|nightlife|formal|sleepwear|lounge|outdoor|special",
+  "top": "Describe the top/shirt/sweater visible",
+  "bottom": "Describe the pants/shorts/skirt visible",
+  "shoes": "Describe the shoes/sneakers visible",
+  "outerwear": "Describe any jacket/coat/hoodie, or empty string if none",
+  "accessories": "Describe any accessories (hat, bag, jewelry, etc.), or empty string if none",
+  "hair_state": "Describe the hair style/state if visible, or empty string",
+  "full_description": "Full vivid outfit description for image generation (50-80 words)"
+}`,
+        file_urls: [uploadedImageUrl],
+        response_json_schema: {
+          type: "object",
+          properties: {
+            label: { type: "string" }, category: { type: "string" },
+            top: { type: "string" }, bottom: { type: "string" }, shoes: { type: "string" },
+            outerwear: { type: "string" }, accessories: { type: "string" },
+            hair_state: { type: "string" }, full_description: { type: "string" },
+          }
+        }
+      });
+      if (res) setForm(prev => ({ ...prev, ...res }));
+    } catch (e) {
+      console.error("AI fill failed:", e);
+    }
+    setGenerating(false);
+  };
+
   const handleGenerateOutfitImage = async () => {
     const description = form.full_description || [form.top, form.bottom, form.shoes, form.outerwear, form.accessories].filter(Boolean).join(", ");
     if (!description) return;
@@ -237,7 +272,15 @@ Return JSON:
         {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
         {uploadedImageUrl ? "Photo uploaded ✓" : "Upload outfit photo (optional)"}
       </label>
-      {uploadedImageUrl && <img src={uploadedImageUrl} alt="Outfit" className="w-full h-28 object-cover rounded-xl" />}
+      {uploadedImageUrl && (
+        <div className="space-y-2">
+          <img src={uploadedImageUrl} alt="Outfit" className="w-full h-28 object-cover rounded-xl" />
+          <Button size="sm" onClick={handleAiFill} disabled={generating} className="w-full rounded-xl gap-1.5">
+            {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+            {generating ? "Analyzing outfit..." : "AI Fill from Photo"}
+          </Button>
+        </div>
+      )}
 
       <div className="flex gap-2">
         <Button variant="outline" size="sm" onClick={onCancel} className="flex-1 rounded-xl">Cancel</Button>
