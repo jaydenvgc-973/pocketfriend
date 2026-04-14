@@ -50,15 +50,22 @@ export default function VGCRevenueDashboard({ userSettings }) {
   const createdActiveCharacters = activeCharacters.filter(c => c.character_type === "active");
   const createdActiveCharIds = new Set(createdActiveCharacters.map(c => c.id));
 
-  // Fetch ALL character financials (no created_by filter — records may be created by backend functions)
+  // Fetch ALL character financials — records are created by backend service, not the user
   const { data: allCharFinancials = [] } = useQuery({
     queryKey: ["allCharacterFinancials", currentUser?.email],
-    queryFn: () => base44.entities.CharacterFinancial.list(),
+    queryFn: () => base44.entities.CharacterFinancial.list("-updated_date", 200),
     enabled: !!currentUser?.email,
   });
 
-  // Filter financials to only active created characters for this user
-  const charFinancials = allCharFinancials.filter(cf => createdActiveCharIds.has(cf.character_id));
+  // For each active created character, find their most recently updated financial record
+  // (some characters may have duplicate records — always use the latest)
+  const charFinancialMap = {};
+  for (const cf of allCharFinancials) {
+    if (!createdActiveCharIds.has(cf.character_id)) continue;
+    if (!charFinancialMap[cf.character_id] || cf.updated_date > charFinancialMap[cf.character_id].updated_date) {
+      charFinancialMap[cf.character_id] = cf;
+    }
+  }
 
   if (txLoading) {
     return (
@@ -167,13 +174,10 @@ export default function VGCRevenueDashboard({ userSettings }) {
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Character Balances</p>
           <ResponsiveContainer width="100%" height={220}>
             <BarChart
-              data={createdActiveCharacters.map(char => {
-                const cf = charFinancials.find(f => f.character_id === char.id);
-                return {
-                  name: char.name?.split(" ")[0] || "?",
-                  balance: Math.round(cf?.current_balance ?? 0),
-                };
-              })}
+              data={createdActiveCharacters.map(char => ({
+                name: char.name?.split(" ")[0] || "?",
+                balance: Math.round(charFinancialMap[char.id]?.current_balance ?? 0),
+              }))}
               margin={{ top: 5, right: 5, bottom: 0, left: -20 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 18%)" />
