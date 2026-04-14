@@ -701,8 +701,29 @@ export default function Scene() {
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
     setIsGeneratingImage(true);
-    const hour = new Date().getHours();
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = nowET.getHours();
     const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
+
+    // Build outfit descriptions for brought characters from their closet
+    const getCharacterOutfitDesc = (char) => {
+      const outfit = char.current_outfit;
+      const closet = char.character_closet || [];
+      const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+      let activeOutfit = outfit?.label ? outfit : (closetOutfits[closetOutfits.length - 1] || null);
+      if (!activeOutfit) return null;
+      const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
+      return activeOutfit.full_description || parts.join(', ') || null;
+    };
+
+    const outfitDescriptions = broughtCharacters
+      .map(c => {
+        const desc = getCharacterOutfitDesc(c);
+        return desc ? `${c.name} is wearing: ${desc}` : null;
+      })
+      .filter(Boolean)
+      .join('. ');
+    const outfitSuffix = outfitDescriptions ? ` OUTFIT REQUIREMENT: ${outfitDescriptions}. Reproduce these exact outfits — do NOT use their avatar/reference photo clothing.` : '';
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
@@ -778,7 +799,7 @@ export default function Scene() {
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
       const zoneImages = currentZone?.image_urls || [];
 
-      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule} Photorealistic, warm, authentic atmosphere.`;
+      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic, warm, authentic atmosphere.`;
 
       // Collect all available avatar/photo references — character avatars + NPC family photos
       const residentAvatars = physicallyPresentChars.map(c => c.avatar_url).filter(Boolean);
@@ -811,7 +832,7 @@ export default function Scene() {
         // Global location: ambient people are fine, just mention who the user is with
         const charNames = sceneCharacters.map(c => c.name).join(", ");
         const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames} among other patrons` : "with other people around";
-        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}. Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
+        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${outfitSuffix} Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
       } else {
         // Character-specific location: ONLY the exact people present, no strangers ever
         // Include workers and NPCs with avatars — they are real staff at this venue
@@ -828,7 +849,7 @@ export default function Scene() {
         } else {
           peopleDesc = `The space is completely empty. No people at all — no silhouettes, no background figures, nobody visible anywhere in the image.`;
         }
-        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
+        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
       }
 
       // Prioritize active zone images first, then fall back to firstImage

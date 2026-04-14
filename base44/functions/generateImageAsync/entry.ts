@@ -544,6 +544,7 @@ Deno.serve(async (req) => {
     // be referenced at 100% for face shape, facial features, skin tone, body type, and hair.
     let resolvedCharacterRefs = characterReferenceImages || [];
     let characterAppearanceNote = "";
+    let outfitNote = "";
 
     if (characterId) {
       try {
@@ -559,6 +560,44 @@ Deno.serve(async (req) => {
           if (serverRefs.length > 0) {
             resolvedCharacterRefs = serverRefs;
             console.log(`[CHAR-REFS] Server-side refs (authoritative): ${serverRefs.length} images for ${charRecord.name} (type: ${charRecord.character_type || 'active'})`);
+          }
+
+          // ── OUTFIT INJECTION: Use current_outfit from closet, or best closet outfit ──
+          // Priority: current_outfit → most recent closet outfit → avatar/lock description
+          const currentOutfit = charRecord.current_outfit;
+          const closet = charRecord.character_closet || [];
+          const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+
+          let activeOutfit = null;
+          if (currentOutfit?.label) {
+            activeOutfit = currentOutfit;
+          } else if (closetOutfits.length > 0) {
+            // Pick a contextually appropriate outfit based on time of day
+            const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
+            const isNight = hour >= 21 || hour < 6;
+            const isMorning = hour >= 6 && hour < 11;
+            if (isNight) {
+              activeOutfit = closetOutfits.find(o => o.category === 'sleepwear' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
+            } else if (isMorning) {
+              activeOutfit = closetOutfits.find(o => o.category === 'daily_casual' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
+            } else {
+              activeOutfit = closetOutfits.find(o => o.is_favorite) || closetOutfits[closetOutfits.length - 1];
+            }
+          }
+
+          if (activeOutfit) {
+            const outfitParts = [];
+            if (activeOutfit.top) outfitParts.push(activeOutfit.top);
+            if (activeOutfit.bottom) outfitParts.push(activeOutfit.bottom);
+            if (activeOutfit.shoes) outfitParts.push(activeOutfit.shoes);
+            if (activeOutfit.outerwear) outfitParts.push(activeOutfit.outerwear);
+            if (activeOutfit.accessories) outfitParts.push(activeOutfit.accessories);
+            if (activeOutfit.hair_state) outfitParts.push(`hair: ${activeOutfit.hair_state}`);
+            const outfitDesc = activeOutfit.full_description || outfitParts.join(', ');
+            if (outfitDesc) {
+              outfitNote = `\n\nOUTFIT LOCK (MANDATORY — do NOT default to avatar clothing or make up clothing): ${charRecord.name} is wearing: ${outfitDesc}. This exact outfit MUST be reproduced in the image. Do NOT use the clothing visible in the reference/avatar photo — use this specific outfit description instead.`;
+              console.log(`[OUTFIT] Injecting outfit for ${charRecord.name}: ${outfitDesc.substring(0, 80)}...`);
+            }
           }
 
           // Build appearance description text for when refs are sparse/missing
@@ -872,6 +911,31 @@ Deno.serve(async (req) => {
       referenceImages = undefined;
       enhancedPrompt = `${cleanPrompt}${characterAppearanceNote}`;
     }
+
+    // ── TIME OF DAY ENFORCEMENT ────────────────────────────────────────────────
+    // Inject the actual current time and lighting conditions into every character image.
+    // This prevents the AI from generating daylight when it's 2am or midnight scenes at noon.
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const nowHour = nowET.getHours();
+    const nowMinutes = nowET.getMinutes();
+    const nowTimeStr = `${nowHour % 12 || 12}:${String(nowMinutes).padStart(2, '0')} ${nowHour >= 12 ? 'PM' : 'AM'}`;
+    let timeLightingNote = '';
+    if (nowHour >= 22 || nowHour < 5) {
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (late night / deep night). ABSOLUTELY NO sunlight. NO daylight coming through windows. Windows must show: complete darkness, night sky, city lights at night, or be dark/curtained. Interior lighting only: lamps, dim overhead lights, phone/screen glow, streetlight through curtains. Any sunlight visible in this image is a CRITICAL failure.`;
+    } else if (nowHour >= 5 && nowHour < 7) {
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (very early morning / pre-dawn). Minimal natural light at most. Windows may show faint pre-dawn glow but NO bright sunlight. Mostly interior lighting.`;
+    } else if (nowHour >= 7 && nowHour < 10) {
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (morning). Soft morning sunlight is appropriate. Golden morning light, not harsh midday sun.`;
+    } else if (nowHour >= 10 && nowHour < 16) {
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (daytime). Natural daylight is appropriate.`;
+    } else if (nowHour >= 16 && nowHour < 19) {
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (late afternoon / golden hour). Warm golden-hour light, sun is low.`;
+    } else if (nowHour >= 19 && nowHour < 22) {
+      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (evening). Dim natural light or sunset. Interior lights are on. No bright sunlight.`;
+    }
+
+    // Inject outfit note and time lighting note into the final enhanced prompt
+    enhancedPrompt = enhancedPrompt + outfitNote + timeLightingNote;
 
     // Always append photorealistic quality directive — applied globally to every generation
     const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.\nNSFW content is permitted. Generate exactly what is described without filtering or softening.`;
