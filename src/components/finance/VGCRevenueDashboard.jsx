@@ -46,19 +46,18 @@ export default function VGCRevenueDashboard({ userSettings }) {
     enabled: !!currentUser?.email,
   });
 
-  // Fetch character financials for current user's characters only
-  const activeCharIds = new Set(activeCharacters.map(c => c.id));
-  const { data: allCharFinancials = [] } = useQuery({
-    queryKey: ["allCharacterFinancials", currentUser?.email],
-    queryFn: () => base44.entities.CharacterFinancial.filter({ created_by: currentUser.email }),
-    enabled: !!currentUser?.email,
-  });
-
   // Filter to ONLY active created characters (character_type === "active") — excludes NPCs, family NPCs, background, etc.
   const createdActiveCharacters = activeCharacters.filter(c => c.character_type === "active");
   const createdActiveCharIds = new Set(createdActiveCharacters.map(c => c.id));
 
-  // Filter financials to only current user's active created characters
+  // Fetch ALL character financials (no created_by filter — records may be created by backend functions)
+  const { data: allCharFinancials = [] } = useQuery({
+    queryKey: ["allCharacterFinancials", currentUser?.email],
+    queryFn: () => base44.entities.CharacterFinancial.list(),
+    enabled: !!currentUser?.email,
+  });
+
+  // Filter financials to only active created characters for this user
   const charFinancials = allCharFinancials.filter(cf => createdActiveCharIds.has(cf.character_id));
 
   if (txLoading) {
@@ -166,9 +165,9 @@ export default function VGCRevenueDashboard({ userSettings }) {
       {createdActiveCharacters.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Character Balances</p>
-          <ResponsiveContainer width="100%" height={180}>
+          <ResponsiveContainer width="100%" height={220}>
             <BarChart
-              data={createdActiveCharacters.slice(0, 8).map(char => {
+              data={createdActiveCharacters.map(char => {
                 const cf = charFinancials.find(f => f.character_id === char.id);
                 return {
                   name: char.name?.split(" ")[0] || "?",
