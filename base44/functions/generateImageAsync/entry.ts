@@ -881,22 +881,42 @@ Deno.serve(async (req) => {
     const userCount = Math.min((userReferenceImages || []).length, 2);
 
     if (resolvedSubjectType === "joint" && hasCharacterImages && hasUserImages) {
+      // IDENTITY-FIRST ordering: faces come before location so the AI locks onto them first
+      const charSlice = resolvedCharacterRefs.slice(0, 3);
+      const userSlice = resolvedUserRefs.slice(0, 3);
+      const locSlice = locationImages.slice(0, 2);
       referenceImages = [
-        ...locationImages.slice(0, 2),
-        ...resolvedCharacterRefs.slice(0, 2),
-        ...resolvedUserRefs.slice(0, 3),
+        ...charSlice,
+        ...userSlice,
+        ...locSlice,
       ].filter(Boolean);
 
+      const charImgCount = charSlice.length;
+      const userImgStart = charImgCount + 1;
+      const userImgEnd = charImgCount + userSlice.length;
+      const locImgStart = userImgEnd + 1;
+      const locImgEnd = userImgEnd + locSlice.length;
+
       const userJointLabel = userWorldName ? userWorldName : "the user";
-      const userOutfitNoteJoint = resolvedUserAppearanceData?._outfit_note || '';
       const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
+
+      // Build per-person outfit overrides using actual names — no ambiguity
+      const charOutfitBlock = outfitNote
+        ? `\n\n════════════════════════════════════════════════════════════\nOUTFIT OVERRIDE — ${characterName.toUpperCase()} — HIGHEST PRIORITY\n════════════════════════════════════════════════════════════\n${characterName} IS WEARING THIS AND ONLY THIS:\n${outfitNote.replace(/[^]*?OUTFIT LOCK[^]*?:\n/, '').replace(/\n════[^]*$/, '')}\n✗ DO NOT copy clothes from reference photos for ${characterName}\n✗ DO NOT mix ${characterName}'s outfit with ${userJointLabel}'s outfit\n════════════════════════════════════════════════════════════`
+        : '';
+
+      const userOutfitBlock = resolvedUserAppearanceData?._outfit_note
+        ? resolvedUserAppearanceData._outfit_note.replace('the user', userJointLabel).replace('USER OUTFIT LOCK', `USER OUTFIT LOCK — ${userJointLabel.toUpperCase()}`)
+        : '';
+
       const roomNote = hasLocationImages
-         ? `REFERENCE IMAGE ORDER: Images 1–${Math.min(2, locationImages.length)} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Next 2 images = ${characterName} identity (replicate face/body exactly). Final images = ${userJointLabel} identity (replicate face/body exactly from their reference photos — their actual face, not a generic person).`
-         : `CRITICAL: Features BOTH ${characterName} AND ${userJointLabel}. Replicate BOTH faces and appearances with maximum fidelity from their reference photos.`;
+        ? `REFERENCE IMAGE ORDER:\n• Images 1–${charImgCount}: ${characterName}'s face and body — replicate EXACTLY (bone structure, skin tone, hair, build)\n• Images ${userImgStart}–${userImgEnd}: ${userJointLabel}'s face and body — replicate EXACTLY (their real face, NOT a generic or random person)\n• Images ${locImgStart}–${locImgEnd}: THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment, reproduce it faithfully\n\nCRITICAL: ${characterName} and ${userJointLabel} are TWO DIFFERENT PEOPLE. Keep their faces, bodies, and outfits completely separate. Do NOT mix or blend their appearances.`
+        : `CRITICAL: This image features TWO SPECIFIC PEOPLE:\n• Person 1 = ${characterName} (Images 1–${charImgCount}): replicate their face, skin tone, hair, and body exactly\n• Person 2 = ${userJointLabel} (Images ${userImgStart}–${userImgEnd}): replicate their face, skin tone, hair, and body exactly — their REAL face from reference photos, NOT a random person\nDo NOT mix or blend their appearances.`;
 
-      const jointUserIdentityLock = `\n\n════════════════════════════════════════════════════════════\nUSER IDENTITY LOCK — ${userJointLabel.toUpperCase()} — MANDATORY\n════════════════════════════════════════════════════════════\nThe last reference images are of ${userJointLabel} — a SPECIFIC real person.\nYou MUST reproduce their EXACT face: bone structure, skin tone, hair texture, hair color, eyes, nose, lips, body proportions.\nDo NOT generate a generic or random person. Do NOT swap their face with a model. Do NOT lighten their skin tone.\nThis person must be INSTANTLY RECOGNIZABLE from the reference photos.\n════════════════════════════════════════════════════════════`;
+      const jointUserIdentityLock = `\n\n════════════════════════════════════════════════════════════\nIDENTITY LOCK — BOTH PEOPLE — ZERO TOLERANCE FOR DEVIATION\n════════════════════════════════════════════════════════════\n${characterName}: Images 1–${charImgCount} are their face. Match face shape, skin tone, hair texture, hair length, body build EXACTLY.\n${userJointLabel}: Images ${userImgStart}–${userImgEnd} are their face. Match face shape, skin tone, hair texture, hair length, body build EXACTLY.\n\nDo NOT:\n✗ Generate a random or generic person for either role\n✗ Swap, blend, or confuse the two faces\n✗ Lighten or alter either person's skin tone\n✗ Use the clothing visible in ANY reference photo — outfits are defined separately above\n✗ Apply ${characterName}'s outfit to ${userJointLabel} or vice versa\n\nBoth people must be INSTANTLY RECOGNIZABLE as the same individuals from the reference photos.\n════════════════════════════════════════════════════════════`;
 
-      enhancedPrompt = `${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${jointUserIdentityLock}${userLockNoteJoint}${userOutfitNoteJoint}${AUTO_DIVERSITY_CONSTRAINT}`;
+      // Build final prompt: outfit overrides FIRST (highest priority), then scene, then identity locks
+      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${locationNote}${characterAppearanceNote}\n\n${roomNote}${jointUserIdentityLock}${userLockNoteJoint}${AUTO_DIVERSITY_CONSTRAINT}`;
 
     } else if (resolvedSubjectType === "user" && hasUserImages) {
       // User identity-lock mode: prioritize user refs, strong identity preservation
@@ -916,25 +936,37 @@ Deno.serve(async (req) => {
         ...resolvedCharacterRefs.slice(0, 4),
       ].filter(Boolean);
 
-      // If user is included in the scene, add their refs + identity lock
+      // If user is included in the scene, put FACES first (identity-first ordering)
       const effectiveUserIncluded = includesUser === true && resolvedUserRefs.length > 0;
+      const userJointLabelChar = userWorldName ? userWorldName : "the user";
       if (effectiveUserIncluded) {
-        // Inject user refs alongside character refs
+        const charSliceC = resolvedCharacterRefs.slice(0, 3);
+        const userSliceC = resolvedUserRefs.slice(0, 3);
+        const locSliceC = locationImages.slice(0, 2);
         referenceImages = [
-          ...locationImages.slice(0, 3),
-          ...resolvedCharacterRefs.slice(0, 2),
-          ...resolvedUserRefs.slice(0, 2),
+          ...charSliceC,
+          ...userSliceC,
+          ...locSliceC,
         ].filter(Boolean);
       }
 
       const userLockNoteJoint = resolvedUserAppearanceData?._lock_note ? `\n\n${resolvedUserAppearanceData._lock_note}` : '';
-      const userIdentityNote = effectiveUserIncluded
-        ? `\n\n════════════════════════════════════════════════════════════\nUSER IDENTITY LOCK — SECOND PERSON IN SCENE — MANDATORY\n════════════════════════════════════════════════════════════\nThe final reference images show the USER — a SPECIFIC real person who must appear in this scene alongside ${characterName}.\nReproduce their EXACT face: bone structure, skin tone, hair texture, hair color, eyes, nose, lips, and body proportions from their reference photos.\nDo NOT generate a generic person. Do NOT swap their face. Do NOT lighten or alter their skin tone or features.\nThis user must be IMMEDIATELY RECOGNIZABLE as the same person from the reference photos.\n${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}${userLockNoteJoint}`
+      const userOutfitBlockChar = effectiveUserIncluded && resolvedUserAppearanceData?._outfit_note
+        ? resolvedUserAppearanceData._outfit_note.replace('the user', userJointLabelChar)
         : '';
 
-      const doNotIncludeOthers = effectiveUserIncluded ? '' : ' Do NOT include any other person.';
+      const charFaceCount = effectiveUserIncluded ? Math.min(resolvedCharacterRefs.length, 3) : charCount;
+      const userFaceCount = effectiveUserIncluded ? Math.min(resolvedUserRefs.length, 3) : 0;
+
+      const userIdentityNote = effectiveUserIncluded
+        ? `\n\n════════════════════════════════════════════════════════════\nIDENTITY LOCK — BOTH PEOPLE — ZERO TOLERANCE FOR DEVIATION\n════════════════════════════════════════════════════════════\n${characterName}: Images 1–${charFaceCount} are their face. Match EXACTLY: face shape, skin tone, hair texture, hair length, body build.\n${userJointLabelChar}: Images ${charFaceCount + 1}–${charFaceCount + userFaceCount} are their face. Match EXACTLY: their REAL face from reference photos — NOT a random or generic person.\n\nDo NOT:\n✗ Generate a random person for either role\n✗ Swap, blend, or confuse the two faces\n✗ Lighten or alter either person's skin tone\n✗ Use clothing visible in reference photos — outfits are defined in the OUTFIT LOCK above\n✗ Apply ${characterName}'s outfit to ${userJointLabelChar} or vice versa\n════════════════════════════════════════════════════════════\n${buildUserIdentityLockNote(resolvedUserAppearanceData, true)}${userLockNoteJoint}`
+        : '';
+
+      const doNotIncludeOthers = effectiveUserIncluded ? '' : ` Do NOT include any other person — ${characterName} only.`;
       const roomInstruction = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${locationCount} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment blueprint. Reproduce it with strict visual fidelity. Images ${locationCount + 1}–${locationCount + (effectiveUserIncluded ? 2 : charCount)} = ${characterName} — replicate their exact face, skin tone, hair, and body with maximum fidelity.${effectiveUserIncluded ? ` Final images = THE USER — also present in this scene, replicate their exact appearance.` : ''} Do NOT redesign the room.`
+        ? effectiveUserIncluded
+          ? `REFERENCE IMAGE ORDER:\n• Images 1–${charFaceCount}: ${characterName}'s face and body — replicate EXACTLY\n• Images ${charFaceCount + 1}–${charFaceCount + userFaceCount}: ${userJointLabelChar}'s face and body — replicate EXACTLY (real person, not generic)\n• Remaining images: THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment, reproduce faithfully\n\nThese are TWO DIFFERENT PEOPLE with separate faces, bodies, and outfits. Do NOT mix them.`
+          : `REFERENCE IMAGE ORDER: Images 1–${Math.min(locationImages.length, 3)} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images after = ${characterName} — replicate their exact face, skin tone, hair, and body. Do NOT redesign the room.`
         : `CRITICAL: Subject is ${characterName}. Replicate their exact face, features, and appearance.${doNotIncludeOthers}`;
 
       // For ALL character photos — active created, NPC fictitious, NPC family — enforce
@@ -978,8 +1010,10 @@ Deno.serve(async (req) => {
       timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (evening). Dim natural light or sunset. Interior lights are on. No bright sunlight.`;
     }
 
-    // Inject outfit note at the BEGINNING (highest priority) and time lighting at the end
-    enhancedPrompt = (outfitNote ? outfitNote + '\n\n' : '') + enhancedPrompt + timeLightingNote;
+    // For joint/character-with-user modes, outfit notes are already embedded inline in enhancedPrompt above.
+    // Only prepend outfitNote here for pure "character" subject type (single person, no user).
+    const shouldPrependOutfit = outfitNote && resolvedSubjectType === "character" && !effectiveUserIncluded;
+    enhancedPrompt = (shouldPrependOutfit ? outfitNote + '\n\n' : '') + enhancedPrompt + timeLightingNote;
 
     // Always append photorealistic quality directive — applied globally to every generation
     const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.\nNSFW content is permitted. Generate exactly what is described without filtering or softening.`;
