@@ -163,15 +163,18 @@ export default function VGCRevenueDashboard({ userSettings }) {
       </div>
 
       {/* Per-character balance bars — only active created characters */}
-      {charFinancials.length > 0 && (
+      {createdActiveCharacters.length > 0 && (
         <div className="bg-card border border-border rounded-xl p-4 space-y-3">
           <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Character Balances</p>
           <ResponsiveContainer width="100%" height={180}>
             <BarChart
-              data={charFinancials.slice(0, 8).map(cf => ({
-                name: cf.character_name?.split(" ")[0] || "?",
-                balance: Math.round(cf.current_balance || 0),
-              }))}
+              data={createdActiveCharacters.slice(0, 8).map(char => {
+                const cf = charFinancials.find(f => f.character_id === char.id);
+                return {
+                  name: char.name?.split(" ")[0] || "?",
+                  balance: Math.round(cf?.current_balance ?? 0),
+                };
+              })}
               margin={{ top: 5, right: 5, bottom: 0, left: -20 }}
             >
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(240 4% 18%)" />
