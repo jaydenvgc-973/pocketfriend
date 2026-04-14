@@ -242,8 +242,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
       const rawPromptText = prompt.trim() || "candid natural moment, everyday life";
 
+      // Inject character's current outfit into the prompt
+      const charOutfit = character.current_outfit;
+      const charClosetOutfits = (character.character_closet || []).filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+      const activeCharOutfit = charOutfit?.label ? charOutfit : (charClosetOutfits[charClosetOutfits.length - 1] || null);
+      let charOutfitSuffix = '';
+      if (activeCharOutfit) {
+        const parts = [activeCharOutfit.top, activeCharOutfit.bottom, activeCharOutfit.shoes, activeCharOutfit.outerwear, activeCharOutfit.accessories].filter(Boolean);
+        const desc = activeCharOutfit.full_description || parts.join(', ');
+        if (desc) charOutfitSuffix = ` OUTFIT LOCK: ${character.name} is wearing: ${desc}. Reproduce this exact outfit — do NOT use the clothing visible in the avatar/reference photo.`;
+      }
+
       // Enforce photorealistic quality on all prompts. NSFW allowed.
-      const promptText = `${rawPromptText}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
+      const promptText = `${rawPromptText}${charOutfitSuffix}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
 
       // Determine subject type based on who's selected:
       // - user alone (no other chars) → "user"
@@ -330,8 +341,18 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const userCharForGen = allCharacters.find(c => c.is_user);
       const userName = userSettings?.fictional_world_name || userCharForGen?.world_name || userCharForGen?.name || "the user";
       const rawPromptText = prompt.trim() || "candid natural moment, everyday life";
+
+      // Inject user's current outfit from their closet
+      const userCurrentOutfit = userSettings?.user_current_outfit;
+      let userOutfitSuffix = '';
+      if (userCurrentOutfit?.label) {
+        const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
+        const desc = userCurrentOutfit.full_description || parts.join(', ');
+        if (desc) userOutfitSuffix = ` OUTFIT LOCK: ${userName} is wearing: ${desc}. Reproduce this exact outfit — do NOT default to the clothing in the reference photo.`;
+      }
+
       // Enforce photorealistic quality on all prompts. NSFW allowed.
-      const promptText = `${rawPromptText}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
+      const promptText = `${rawPromptText}${userOutfitSuffix}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
 
       // Use selected entities from dropdown (excluding user and world people for user generation)
       const selectedChars = selectedCharacterIds.length > 0

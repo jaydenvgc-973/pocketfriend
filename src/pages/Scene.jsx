@@ -716,14 +716,22 @@ export default function Scene() {
       return activeOutfit.full_description || parts.join(', ') || null;
     };
 
-    const outfitDescriptions = broughtCharacters
+    const outfitLines = broughtCharacters
       .map(c => {
         const desc = getCharacterOutfitDesc(c);
         return desc ? `${c.name} is wearing: ${desc}` : null;
       })
-      .filter(Boolean)
-      .join('. ');
-    const outfitSuffix = outfitDescriptions ? ` OUTFIT REQUIREMENT: ${outfitDescriptions}. Reproduce these exact outfits — do NOT use their avatar/reference photo clothing.` : '';
+      .filter(Boolean);
+
+    // Also inject user's current outfit if set
+    const userCurrentOutfit = settings?.user_current_outfit;
+    if (userCurrentOutfit?.label) {
+      const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
+      const desc = userCurrentOutfit.full_description || parts.join(', ');
+      if (desc) outfitLines.push(`${displayName} is wearing: ${desc}`);
+    }
+
+    const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
