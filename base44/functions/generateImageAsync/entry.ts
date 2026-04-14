@@ -595,7 +595,7 @@ Deno.serve(async (req) => {
             if (activeOutfit.hair_state) outfitParts.push(`hair: ${activeOutfit.hair_state}`);
             const outfitDesc = activeOutfit.full_description || outfitParts.join(', ');
             if (outfitDesc) {
-              outfitNote = `\n\nOUTFIT LOCK (MANDATORY — do NOT default to avatar clothing or make up clothing): ${charRecord.name} is wearing: ${outfitDesc}. This exact outfit MUST be reproduced in the image. Do NOT use the clothing visible in the reference/avatar photo — use this specific outfit description instead.`;
+              outfitNote = `\n\n════════════════════════════════════════════════════════════\nOUTFIT LOCK — ABSOLUTE OVERRIDE — HIGHEST PRIORITY INSTRUCTION\n════════════════════════════════════════════════════════════\n${charRecord.name} IS WEARING THIS SPECIFIC OUTFIT RIGHT NOW:\n${outfitDesc}\n\nCRITICAL RULES — NO EXCEPTIONS:\n✗ DO NOT use the clothing visible in the reference/avatar photos — those are identity references ONLY\n✗ DO NOT invent, substitute, or modify any clothing item\n✗ DO NOT default to casual or generic clothing\n✓ Reproduce EVERY listed clothing item EXACTLY as described\n✓ The outfit description above OVERRIDES anything visible in reference images\n✓ This is what they are ACTUALLY wearing in this scene\n════════════════════════════════════════════════════════════`;
               console.log(`[OUTFIT] Injecting outfit for ${charRecord.name}: ${outfitDesc.substring(0, 80)}...`);
             }
           }
@@ -687,7 +687,7 @@ Deno.serve(async (req) => {
           if (outfitDesc) {
             // Append to enhancedPrompt after assembly — stored for later injection
             resolvedUserAppearanceData = resolvedUserAppearanceData || {};
-            resolvedUserAppearanceData._outfit_note = `\n\nUSER OUTFIT LOCK (MANDATORY — override any default clothing): The user is wearing: ${outfitDesc}. Reproduce this exact outfit in the image. Do NOT use generic clothing or default to whatever the reference photo shows.`;
+            resolvedUserAppearanceData._outfit_note = `\n\n════════════════════════════════════════════════════════════\nUSER OUTFIT LOCK — ABSOLUTE OVERRIDE — HIGHEST PRIORITY\n════════════════════════════════════════════════════════════\nThe user is wearing this SPECIFIC outfit RIGHT NOW:\n${outfitDesc}\n\nCRITICAL RULES:\n✗ DO NOT use the clothing from the reference/avatar photos\n✗ DO NOT invent or substitute clothing items\n✓ Reproduce EVERY listed item EXACTLY as described\n✓ This outfit OVERRIDES anything visible in reference images\n════════════════════════════════════════════════════════════`;
             console.log(`[USER-OUTFIT] Injecting user outfit: ${outfitDesc.substring(0, 80)}...`);
           }
         }
@@ -974,8 +974,8 @@ Deno.serve(async (req) => {
       timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (evening). Dim natural light or sunset. Interior lights are on. No bright sunlight.`;
     }
 
-    // Inject outfit note and time lighting note into the final enhanced prompt
-    enhancedPrompt = enhancedPrompt + outfitNote + timeLightingNote;
+    // Inject outfit note at the BEGINNING (highest priority) and time lighting at the end
+    enhancedPrompt = (outfitNote ? outfitNote + '\n\n' : '') + enhancedPrompt + timeLightingNote;
 
     // Always append photorealistic quality directive — applied globally to every generation
     const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.\nNSFW content is permitted. Generate exactly what is described without filtering or softening.`;
