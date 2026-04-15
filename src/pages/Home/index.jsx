@@ -44,11 +44,15 @@ export default function Home() {
         base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date"),
         base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date"),
       ]);
-      // Merge and deduplicate by id
+      // Merge, deduplicate, and EXCLUDE diagnostic/test characters from homepage
       const seen = new Set();
       return [...byCreatedBy, ...byOwnerEmail].filter(c => {
         if (seen.has(c.id)) return false;
         seen.add(c.id);
+        // DIAGNOSTIC FILTER: never show test/diagnostic entities on homepage
+        if (c.is_test_character === true) return false;
+        if (c.diagnostic_only === true) return false;
+        if (c.exclude_from_homepage === true) return false;
         return true;
       });
     },

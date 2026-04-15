@@ -186,7 +186,15 @@ export default function Scene() {
 
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }),
+    queryFn: async () => {
+      const all = await base44.entities.Character.filter({ created_by: currentUser.email, status: "active" });
+      // DIAGNOSTIC FILTER: exclude test/diagnostic entities from all scene queries
+      return all.filter(c =>
+        c.is_test_character !== true &&
+        c.diagnostic_only !== true &&
+        c.exclude_from_default_scene_queries !== true
+      );
+    },
     enabled: !!currentUser?.email,
     // Refetch on scene load to ensure fresh authoritative presence data
     staleTime: 0,
@@ -358,13 +366,19 @@ export default function Scene() {
       });
     }
 
-    // Any venue: NPC owner/operator
+    // Any venue: NPC owner/operator — ONLY add if live presence confirms they are on-site.
+    // RULE: Ownership is NOT presence. owner_is_npc alone never adds them to the scene.
+    // They appear here only as a selectable "Who's here" option if the user explicitly engages them.
+    // (We keep them in the picker so the user can choose to interact if owner happens to be present,
+    //  but they are NOT auto-added to the scene roster or traveled-with.)
     if (!isHomeLocation && location?.owner_is_npc && location?.owner_npc_name) {
       npcs.push({ id: `npc_owner_${location?.id}`, name: location.owner_npc_name, role: location.owner_role || "Owner", isNpc: true, npcType: "staff", avatar_url: null });
     }
 
     // Real named workers from the location record (worker_character_ids + worker_job_titles)
-    // These are actual characters linked on the Locations page as employees
+    // RULE: A worker assigned to a location is NOT automatically present.
+    // They must have live presence confirmed (resolved_current_location_id === locationId).
+    // Only add to the selectable "Who's here" list if live presence is confirmed.
     const locationWorkerIds = location?.worker_character_ids || [];
     locationWorkerIds.forEach(wid => {
       // Skip characters already auto-shown as "on shift" workers
@@ -372,21 +386,21 @@ export default function Scene() {
       // Skip characters brought by user
       if (characterIds.includes(wid)) return;
       const workerChar = characters.find(c => c.id === wid);
-      if (workerChar) {
-        const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
-        npcs.push({
-          id: workerChar.id,
-          name: workerChar.name,
-          role: jobTitle,
-          isNpc: false, // real character
-          npcType: "staff",
-          avatar_url: workerChar.avatar_url,
-          // carry full character data so LLM gets personality context
-          personality_summary: workerChar.personality_summary,
-          archetype: workerChar.archetype,
-          emotional_state: workerChar.emotional_state,
-        });
-      }
+      if (!workerChar) return;
+      // OWNERSHIP/ASSIGNMENT ≠ PRESENCE: only show if live presence confirmed at this location
+      if (workerChar.resolved_current_location_id !== locationId) return;
+      const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
+      npcs.push({
+        id: workerChar.id,
+        name: workerChar.name,
+        role: jobTitle,
+        isNpc: false, // real character
+        npcType: "staff",
+        avatar_url: workerChar.avatar_url,
+        personality_summary: workerChar.personality_summary,
+        archetype: workerChar.archetype,
+        emotional_state: workerChar.emotional_state,
+      });
     });
 
     // For home locations, stop here — no generic venue NPCs, no strangers, no locals.
@@ -512,26 +526,49 @@ export default function Scene() {
     : [];
 
   // ── AUTHORITATIVE SCENE ROSTER ───────────────────────────────────────────────
-  // Priority order: brought chars → home residents → family NPCs present → on-shift workers → selected NPC overlays → extras
-  // NOTE: For VGC Towers, exclude distributed NPCs from auto-scene to optimize loading and require explicit selection
+  // STRICT DATA SEPARATION — three distinct lists:
+  //
+  // 1. traveledWithChars — ONLY characters explicitly in the URL characterIds (user selected on Travel page)
+  //    or added via a valid invite/join flow (extraNpcs). NEVER includes residents, owners, or employees.
+  //
+  // 2. presentResidents — Characters physically home at this location (residents only, not companions)
+  //
+  // 3. presentWorkers — Characters confirmed on-shift AND live-presence at this location
+  //
+  // 4. selectedNpcs — Explicitly chosen by user from "Who's here" picker
+  //
+  // RULE: Ownership / residence linkage / employment assignment alone do NOT add anyone to any list.
+  // RULE: Diagnostic/test characters are already filtered from the characters array above.
+
+  // traveled-with = only URL-param companions + invite-joined extras
+  const traveledWithChars = broughtCharacters; // strictly from characterIds URL param
+
+  // Build the full scene roster maintaining semantic separation
   const isVGCTowers = location?.name === 'VGC Towers';
+
   const allSceneChars = [
-    ...broughtCharacters,
-    ...(isHomeLocation ? homeResidentsPresent : []),
-    ...familyNpcSceneObjects.filter(fn => !broughtCharacters.find(b => b.name === fn.name)),
-    ...workerCharacters,
-    // VGC Towers: exclude vgcDistributedNpcs from auto-scene to prevent all from responding at once
+    // Section 1: Traveled-with companions (explicit selection only)
+    ...traveledWithChars,
+    // Section 2: Home residents physically present (home scenes only) — NOT traveled-with
+    ...(isHomeLocation ? homeResidentsPresent.filter(r => !traveledWithChars.find(t => t.id === r.id)) : []),
+    // Section 3: Family NPCs physically present (home scenes only) — NOT traveled-with
+    ...familyNpcSceneObjects.filter(fn => !traveledWithChars.find(b => b.name === fn.name)),
+    // Section 4: Workers on-shift with confirmed live presence — NOT traveled-with
+    // VGC Towers: never auto-inject distributed NPCs — require explicit selection
+    ...workerCharacters.filter(w => !traveledWithChars.find(t => t.id === w.id)),
+    // Section 5: VGC Towers / traveling NPCs — excluded from auto-scene, require explicit pick
     ...(isVGCTowers ? [] : vgcDistributedNpcs.filter(n =>
-      !broughtCharacters.find(b => b.id === n.id) &&
+      !traveledWithChars.find(b => b.id === n.id) &&
       !workerCharacters.find(w => w.id === n.id)
     )),
-    // VGC Towers: exclude npcsTravelingHere from auto-scene
     ...(isVGCTowers ? [] : npcsTravelingHere.filter(n =>
-      !broughtCharacters.find(b => b.id === n.id) &&
+      !traveledWithChars.find(b => b.id === n.id) &&
       !familyNpcSceneObjects.find(fn => fn.name === n.name)
     )),
+    // Section 6: Explicitly selected NPCs from "Who's here" picker
     ...selectedNpcs,
-    ...extraNpcs,
+    // Section 7: Invite-joined extras (these ARE valid traveled-with equivalents)
+    ...extraNpcs.filter(e => !traveledWithChars.find(t => t.id === e.id)),
   ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
 
   // Apply 10-character limit for VGC Towers scene display (data not affected, only display)
@@ -965,20 +1002,48 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
+      // knownChars / selectedNpcList kept for LLM scene context (who is physically present),
+      // but dialogue eligibility is separately enforced by dialogueEligible below.
       const knownChars = displayCharacters.filter(c => !c.isNpc);
-      const selectedNpcList = privateTarget
-        ? displayCharacters.filter(c => c.isNpc).map(n => `${n.name} (${n.role || "NPC"})`).join(", ")
-        : selectedNpcs.map(n => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`).join(", ");
+      const selectedNpcList = selectedNpcs.map(n => `${n.name} (${n.role || "NPC"})`).join(", ");
 
       const privateNote = privateTarget
         ? `\nNOTE: ${displayName} has pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond — absolutely no one else, not even other characters who are present.`
         : "";
 
+      // DIALOGUE TARGETING RULE:
+      // Only these categories are eligible to respond:
+      //   1. Characters the user explicitly traveled with (traveledWithChars / broughtCharacters)
+      //   2. Characters explicitly selected by the user in the "Who's here" picker (selectedNpcs)
+      //   3. Characters added via invite/join flow (extraNpcs)
+      //   4. The private conversation target (if in private mode)
+      //
+      // NEVER eligible to auto-respond just because they are present:
+      //   - Residents already home (they are NOT travel companions)
+      //   - Workers on shift (unless explicitly selected via picker)
+      //   - Location owners (ownership ≠ presence ≠ permission to answer)
+      //   - VGC Towers distributed NPCs (must be explicitly engaged)
+      //   - Diagnostic/test characters (already filtered from characters array)
+
+      const dialogueEligible = privateTarget
+        ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
+        : [
+            ...traveledWithChars,
+            ...selectedNpcs,
+            ...extraNpcs,
+          ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+
+      const eligibleKnownChars = dialogueEligible.filter(c => !c.isNpc);
+      const eligibleNpcList = dialogueEligible
+        .filter(c => c.isNpc)
+        .map(n => `${n.name} (${n.role || "NPC"}${n.personality_summary ? ", " + n.personality_summary.split(".")[0] : ""})`)
+        .join(", ");
+
       const npcInstruction = `IMPORTANT: Only these people may respond — no one else, ever:
-- Known characters present: ${knownChars.map(c => c.name).join(", ") || "none"}
-- Selected NPCs the user is talking to: ${selectedNpcList || "none"}
-Workers on shift (${workerCharacters.map(c => c.name).join(", ") || "none"}) respond only if they are also listed above.
-If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers or unselected staff.${privateNote}`;
+- Companions who traveled here with the user: ${eligibleKnownChars.map(c => c.name).join(", ") || "none"}
+- NPCs explicitly selected by the user to talk to: ${eligibleNpcList || "none"}
+Residents, location owners, and employees who are merely present but NOT in the above lists must NOT respond.
+If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers, unselected residents, or unselected staff.${privateNote}`;
 
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
@@ -1494,7 +1559,7 @@ Return JSON:
         <div className="text-center space-y-2">
           <span className="text-xs text-muted-foreground bg-secondary px-3 py-1 rounded-full">
             You arrive at {location.name}
-            {broughtCharacters.length > 0 ? ` with ${broughtCharacters.map(c => c.name).join(", ")}` : ""}
+            {traveledWithChars.length > 0 ? ` with ${traveledWithChars.map(c => c.name).join(", ")}` : ""}
           </span>
           {(homeResidentsPresent.length > 0 || familyMemberNpcsPresent.length > 0) && (
             <div><span className="text-xs text-green-400/80 bg-secondary/50 px-3 py-1 rounded-full">
