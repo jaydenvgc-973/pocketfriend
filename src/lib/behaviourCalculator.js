@@ -109,6 +109,19 @@ export function calculateCharacterBehaviour(character, context = {}) {
     blockedReason = 'urgent_hunger';
     forcedByNeed = true;
   }
+  // 5b. Very hungry — proactive food planning before it becomes critical
+  else if (hunger < 35) {
+    // Don't override schedule if just starting, but bias strongly toward eating soon
+    primaryAction = isCurrentlyScheduled(character, context) ? 'attend_schedule_then_eat' : 'seek_food';
+    blockedReason = 'very_hungry_proactive';
+    forcedByNeed = !isCurrentlyScheduled(character, context);
+  }
+  // 5c. Hungry — begin steering toward food (30–49 range)
+  else if (hunger < 50) {
+    // Eating is preferred but not forced. Schedule can still run, food is flagged.
+    primaryAction = isCurrentlyScheduled(character, context) ? 'attend_schedule' : 'plan_to_eat_soon';
+    blockedReason = hunger < 40 ? 'hunger_building_plan_food' : null;
+  }
   // 6. Schedule obligation — only runs if no critical need is forcing action
   else if (isCurrentlyScheduled(character, context)) {
     primaryAction = 'attend_schedule';

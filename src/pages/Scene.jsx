@@ -1201,6 +1201,23 @@ Return JSON:
     setActionCooldown(true);
     setTimeout(() => setActionCooldown(false), 3000);
 
+    // ── EATING ACTIONS: immediately sync hunger state ────────────────────────
+    const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round'];
+    if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
+      const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack'
+        : action.id === 'check' || action.id === 'order' ? 'meal'
+        : 'meal';
+      broughtCharacters.forEach(char => {
+        base44.functions.invoke('recordEatingEvent', {
+          characterId: char.id,
+          mealSize,
+          foodDescription: action.label,
+          locationName: location?.name,
+        }).catch(() => {});
+      });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+    }
+
     const payer = action.payer || "user"; // "user" | "character"
     const cost = action.cost || 0;
 
