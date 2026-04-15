@@ -1087,7 +1087,7 @@ ${songsInfo}`;
       }
 
       // ── PARALLEL context fetching — run all async lookups simultaneously ──
-      const [memoryResult, lifeEventsResult, pastLookupsResult, spatialResult] = await Promise.all([
+      const [memoryResult, progressionResult, pastLookupsResult, spatialResult] = await Promise.all([
         // Memory retrieval
         base44.functions.invoke('retrieveActiveMemory', {
           characterId,
@@ -1099,8 +1099,9 @@ ${songsInfo}`;
           const mems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12).catch(() => []);
           return { data: { memories: mems, total: mems.length, _fallback: true } };
         }),
-        // Life events
-        base44.entities.LifeEvent.filter({ character_id: characterId }, "-timestamp", 8).catch(() => []),
+        // Progression-filtered life context — replaces raw LifeEvent injection
+        // Newer domain-changing events lock forward truth; older states are invalidated
+        base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }).catch(() => null),
         // Web lookups
         base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
         // Spatial awareness
@@ -1131,19 +1132,14 @@ ${songsInfo}`;
         }
       }
 
-      // Build life event context
+      // Build life event context — progression-filtered
+      // Raw LifeEvent dump is replaced by a structured, domain-locked context.
+      // Newer progression events (moved out, new job, breakup) lock present-day truth.
+      // Older states for the same domain are marked as historical — not usable as current reality.
       let lifeEventContext = "";
-      const recentLifeEvents = Array.isArray(lifeEventsResult) ? lifeEventsResult : [];
-      if (recentLifeEvents.length > 0) {
-        const negEvents = recentLifeEvents.filter(e => e.valence === "negative");
-        const posEvents = recentLifeEvents.filter(e => e.valence === "positive");
-        const eventLines = recentLifeEvents.map(e => `- [${e.valence}] ${e.title}`).join("\n");
-        let behaviorNote = "";
-        if (negEvents.filter(e => e.event_type === "substance_use_event").length >= 2) behaviorNote += " You've been drinking more than usual lately.";
-        if (negEvents.filter(e => e.event_type === "grief_event").length >= 1) behaviorNote += " You're carrying grief right now.";
-        if (negEvents.filter(e => ["conflict_event","fight_event"].includes(e.event_type)).length >= 2) behaviorNote += " You've had repeated conflict recently.";
-        if (posEvents.filter(e => ["growth_event","healthy_choice_event","recovery_event"].includes(e.event_type)).length >= 2) behaviorNote += " You've been in a good place lately.";
-        lifeEventContext = `\n\nRECENT LIFE EVENTS:\n${eventLines}${behaviorNote ? "\n\nBEHAVIORAL NOTE:" + behaviorNote : ""}`;
+      const progressionData = progressionResult?.data;
+      if (progressionData?.progressionContext) {
+        lifeEventContext = `\n\n${progressionData.progressionContext}`;
       }
 
       // Build research context
