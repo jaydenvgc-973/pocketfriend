@@ -472,7 +472,7 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       // Upload system prompt as a file instead of storing directly
       const systemPromptText = buildSystemPrompt(charData, []);
       const uploadedPrompt = await base44.integrations.Core.UploadFile({
-        file: btoa(systemPromptText) // Base64 encode the text
+        file: new File([systemPromptText], "system_prompt.txt", { type: "text/plain" })
       });
       charData.system_prompt_url = uploadedPrompt.file_url;
 
@@ -705,7 +705,7 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
       // Upload system prompt as a file instead of storing directly
       const systemPromptText = buildSystemPrompt(charData, knownChars);
       const uploadedPrompt = await base44.integrations.Core.UploadFile({
-        file: btoa(systemPromptText) // Base64 encode the text
+        file: new File([systemPromptText], "system_prompt.txt", { type: "text/plain" })
       });
       charData.system_prompt_url = uploadedPrompt.file_url;
 
