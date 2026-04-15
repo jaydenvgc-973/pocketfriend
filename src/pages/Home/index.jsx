@@ -87,9 +87,11 @@ export default function Home() {
     return () => unsubscribe();
   }, [currentUser?.email, queryClient]);
 
-  // Build location map only when fully loaded
-  const isLocationMapReady = !isLocationsLoading && locationsData?.length > 0;
-  const locationMap = isLocationMapReady ? Object.fromEntries(locationsData.map(l => [l.id, l])) : {};
+  // Build location map — ready when loading completes, regardless of whether result is empty.
+  // CRITICAL FIX: never gate on locationsData.length > 0 — an account with zero locations
+  // is a valid state and must still render the homepage. Gating on length causes infinite spinner.
+  const isLocationMapReady = !isLocationsLoading;
+  const locationMap = isLocationMapReady ? Object.fromEntries((locationsData || []).map(l => [l.id, l])) : {};
 
 
 
