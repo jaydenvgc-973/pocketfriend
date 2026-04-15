@@ -660,6 +660,17 @@ export default function Settings() {
               </div>
             </button>
           </Link>
+          <Link to="/edit-character-needs" className="mt-2 block">
+            <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
+              <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+                <BarChart2 className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-foreground">Edit Character Needs</p>
+                <p className="text-xs text-muted-foreground">Hunger, energy, health, mental, social & more</p>
+              </div>
+            </button>
+          </Link>
           <Link to="/edit-character-profile" className="mt-2 block">
             <button className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left">
               <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">

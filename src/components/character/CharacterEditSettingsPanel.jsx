@@ -6,6 +6,88 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
 
+const NEEDS_DEF = [
+  { label: "Hunger",    key: "hunger_value",        dbKey: "hunger",    emoji: "🍽️" },
+  { label: "Energy",    key: "energy_value",         dbKey: "energy",    emoji: "⚡" },
+  { label: "Social",    key: "social_value",         dbKey: "social",    emoji: "👥" },
+  { label: "Health",    key: "health_value",         dbKey: "health",    emoji: "❤️" },
+  { label: "Mental",    key: "mental_value",         dbKey: "mental",    emoji: "🧠" },
+  { label: "Financial", key: "financial_need_value", dbKey: "financial", emoji: "💰" },
+  { label: "Hygiene",   key: "hygiene_value",        dbKey: "hygiene",   emoji: "🚿" },
+  { label: "Comfort",   key: "comfort_value",        dbKey: "comfort",   emoji: "🛋️" },
+];
+
+function getBarColor(value) {
+  if (value >= 76) return { bar: "bg-green-600",  text: "text-green-500",  label: "Strong"   };
+  if (value >= 51) return { bar: "bg-blue-500",   text: "text-blue-400",   label: "Stable"   };
+  if (value >= 26) return { bar: "bg-amber-500",  text: "text-amber-500",  label: "Low"      };
+  return               { bar: "bg-destructive",   text: "text-destructive",label: "Critical" };
+}
+
+function NeedsEditor({ character }) {
+  const queryClient = useQueryClient();
+  const [values, setValues] = useState(() => {
+    const init = {};
+    for (const n of NEEDS_DEF) init[n.dbKey] = Math.round(character[n.key] ?? 70);
+    return init;
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await base44.functions.invoke("manualOverrideNeeds", {
+        characterId: character.id,
+        action: "custom",
+        needs: values,
+      });
+      await base44.functions.invoke("simulateActiveCharacterNeeds", { characterId: character.id });
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {NEEDS_DEF.map(({ label, dbKey, emoji }) => {
+        const val = values[dbKey];
+        const { bar, text, label: statusLabel } = getBarColor(val);
+        return (
+          <div key={dbKey}>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-xs font-medium text-foreground">{emoji} {label}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-mono text-muted-foreground">{val}</span>
+                <span className={`text-[10px] font-semibold ${text}`}>{statusLabel}</span>
+              </div>
+            </div>
+            <div className="h-2 bg-secondary rounded-full overflow-hidden mb-1.5">
+              <div className={`h-full ${bar} transition-all duration-150`} style={{ width: `${val}%` }} />
+            </div>
+            <input
+              type="range" min={0} max={100} value={val}
+              onChange={e => setValues(prev => ({ ...prev, [dbKey]: Number(e.target.value) }))}
+              className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+              style={{ accentColor: val >= 51 ? '#22c55e' : val >= 26 ? '#f59e0b' : '#ef4444' }}
+            />
+          </div>
+        );
+      })}
+      <button
+        onClick={handleSave}
+        disabled={isSaving}
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50 mt-2"
+      >
+        {saved ? <><Check className="w-3.5 h-3.5" /> Saved!</> : isSaving ? "Saving…" : "Save Needs"}
+      </button>
+    </div>
+  );
+}
+
 const RELATIONSHIP_TYPES = [
   "friend", "best friend", "close friend", "acquaintance",
   "coworker", "colleague", "boss", "employee",
@@ -834,6 +916,17 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                 <TextareaField character={character} field="family_history" label="Family History" placeholder="Family background..." />
                 <TextareaField character={character} field="criminal_record" label="Criminal Record" placeholder="None" />
               </section>
+
+              {/* Needs */}
+              {character.character_type === 'active' && (
+                <section className="space-y-4">
+                  <div>
+                    <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Needs Status</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">Drag sliders then hit Save Needs to apply.</p>
+                  </div>
+                  <NeedsEditor character={character} />
+                </section>
+              )}
 
               {/* Education */}
               <section className="space-y-4">

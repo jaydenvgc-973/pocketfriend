@@ -27,6 +27,7 @@ import EditCharacterPhotos from './pages/EditCharacterPhotos';
 import EditCharacterEmotions from './pages/EditCharacterEmotions';
 import EditCharacterRelationships from './pages/EditCharacterRelationships';
 import EditCharacterProfile from './pages/EditCharacterProfile';
+import EditCharacterNeeds from './pages/EditCharacterNeeds';
 import MyProfile from './pages/MyProfile';
 import Travel from './pages/Travel';
 import Scene from './pages/Scene';
@@ -100,6 +101,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
       <Route path="/edit-character-religion" element={<EditCharacterReligion />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
+      <Route path="/edit-character-needs" element={<EditCharacterNeeds />} />
       <Route path="/my-profile" element={<MyProfile />} />
       <Route path="/finance" element={<Finance />} />
       <Route path="/travel" element={<Travel />} />
