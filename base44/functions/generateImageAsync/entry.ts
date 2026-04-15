@@ -548,30 +548,88 @@ Deno.serve(async (req) => {
           const createdBy = charRecord?.created_by;
           if (createdBy) {
             const savedLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: createdBy }, '-created_date', 100);
-            const currentLocId = charRecord?.resolved_current_location_id || charRecord?.current_home_location_id;
-            let realTimeLoc = currentLocId ? await base44.asServiceRole.entities.LocationReference.get(currentLocId).catch(() => null) : null;
-            if (!realTimeLoc && charRecord?.resolved_location_type === 'work' && charRecord?.occupation_location_id) {
-              realTimeLoc = await base44.asServiceRole.entities.LocationReference.get(charRecord.occupation_location_id).catch(() => null);
+
+            // ── AUTHORITATIVE PRESENCE GATE ───────────────────────────────────────
+            // Determine the character's TRUE live presence state BEFORE resolving any location.
+            // This prevents stale work/venue context from bleeding into home/sleep images.
+            const livePresence = charRecord?.resolved_presence_status || 'home';
+            const isHome = ['home', 'sleeping', 'napping'].includes(livePresence);
+            const isAtWork = livePresence === 'at_work';
+            const isTraveling = livePresence === 'traveling';
+
+            // RULE: If character is home/sleeping, ALWAYS use home location.
+            //       NEVER fall back to occupation_location_id or any work venue.
+            let authorizedLocId = null;
+            if (isHome || (!isAtWork && !isTraveling)) {
+              // Home / free time / sleeping → must use home location only
+              authorizedLocId = charRecord?.current_home_location_id || charRecord?.resolved_current_location_id;
+              if (isHome) {
+                console.log(`[LOCATION] 🏠 PRESENCE GATE: Character is "${livePresence}" — forcing home location, blocking all work/venue context`);
+              }
+            } else if (isAtWork) {
+              // Confirmed at work → use resolved work location
+              authorizedLocId = charRecord?.resolved_current_location_id || charRecord?.occupation_location_id;
+              console.log(`[LOCATION] 💼 PRESENCE GATE: Character is at_work — using work location`);
+            } else if (isTraveling) {
+              authorizedLocId = charRecord?.travel_destination_location_id || charRecord?.resolved_current_location_id;
+              console.log(`[LOCATION] 🚗 PRESENCE GATE: Character is traveling`);
             }
+
+            // Determine the zone hint from live presence
+            // If sleeping → bedroom zone. If home → living room. If at work → use prompt.
+            let liveZoneHint = null;
+            if (livePresence === 'sleeping' || livePresence === 'napping') {
+              liveZoneHint = 'bedroom';
+            } else if (isHome) {
+              liveZoneHint = 'living room';
+            }
+
+            let realTimeLoc = authorizedLocId
+              ? await base44.asServiceRole.entities.LocationReference.get(authorizedLocId).catch(() => null)
+              : null;
+
+            // SAFETY: If authorized loc resolved to a non-home category while character is home, reject it
+            if (realTimeLoc && isHome) {
+              const cat = (realTimeLoc.category || '').toLowerCase();
+              const isVenueCategory = ['social', 'food_drink', 'workplace', 'gym', 'medical', 'education', 'school', 'community', 'business', 'public'].includes(cat);
+              if (isVenueCategory) {
+                console.warn(`[LOCATION] ⛔ ENVIRONMENT MISMATCH: Character is "${livePresence}" but resolved location "${realTimeLoc.name}" is category "${cat}". BLOCKING — falling back to home lookup.`);
+                // Force a true home location lookup
+                const homeLoc = savedLocations.find(l => l.category === 'home' && (l.resident_character_ids || []).includes(characterId));
+                realTimeLoc = homeLoc || null;
+              }
+            }
+
             if (realTimeLoc) {
-              const { zoneImages, zoneName } = resolveZoneImages(cleanPrompt.toLowerCase(), realTimeLoc, null);
+              // Use live zone hint (bedroom for sleeping) or derive from prompt
+              const zoneHint = liveZoneHint || null;
+              const { zoneImages, zoneName } = resolveZoneImages(cleanPrompt.toLowerCase(), realTimeLoc, zoneHint);
               const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
               if (imgs.length > 0) {
                 locationImages = imgs;
                 resolvedLocationName = realTimeLoc.name;
-                resolvedZoneName = zoneName;
+                resolvedZoneName = zoneName || liveZoneHint;
                 locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
                 const locCat = (realTimeLoc.category || '').toLowerCase();
                 if (locCat === 'home') {
                   const residentNames = [...(realTimeLoc.resident_character_names || []), ...(realTimeLoc.resident_family_members || []).map(r => r.name)].filter(Boolean);
                   const residentList = residentNames.length > 0 ? `Only the following people may appear: ${residentNames.join(', ')}${finalUserSubject?.canonical_name ? `, and ${finalUserSubject.canonical_name}` : ''}. ` : '';
                   locationNote += `\n\n🏠 RESIDENTIAL LOCATION RULE:\nThis is a PRIVATE HOME.\n${residentList}\nNO random strangers, background extras, or unnamed people.`;
+                  // Extra hard block for sleeping — ensure absolutely no commercial elements
+                  if (livePresence === 'sleeping' || livePresence === 'napping') {
+                    locationNote += `\n\n🔒 SLEEP STATE LOCK:\nThe character is currently SLEEPING at home. The environment MUST be a RESIDENTIAL BEDROOM.\nABSOLUTELY NO commercial, bar, workplace, club, restaurant, gym, or hospital elements.\nNo liquor bottles. No bar stools. No commercial lighting. No venue signage. No bar counters.\nOnly: bed, bedroom furniture, residential walls, home lighting.`;
+                  }
                 } else if (['social','food_drink','gym','medical','education','workplace','school','community','outdoor','public','business'].includes(locCat)) {
                   locationNote += `\n\n📍 PUBLIC/COMMERCIAL LOCATION: Background NPCs and ambient crowd are ALLOWED and ENCOURAGED. Diversity in background people is required.`;
                 }
-                console.log(`[LOCATION] ✓ REALTIME: "${resolvedLocationName}" → Zone: "${zoneName}" | Images: ${imgs.length}`);
+                console.log(`[LOCATION] ✓ REALTIME: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Presence: "${livePresence}" | Images: ${imgs.length}`);
+              } else if (isHome) {
+                // Home location has no images — generate purely from text with strong residential lock
+                console.log(`[LOCATION] 🏠 HOME (no images): generating residential environment from text`);
+                locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
               }
-            } else {
+            } else if (!isHome) {
+              // Only attempt text-based location parse when character is NOT forced home
               const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
               if (imgs.length > 0 && confidenceScore >= 0.7) {
                 locationImages = imgs;
@@ -580,6 +638,10 @@ Deno.serve(async (req) => {
                 locationNote = buildRoomLockNote(locationName, zoneName);
                 console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
               }
+            } else {
+              // Home with no location record at all
+              console.log(`[LOCATION] 🏠 HOME (no location record): applying generic residential lock`);
+              locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT:\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. Character is sleeping. Bedroom environment ONLY. NO commercial elements whatsoever.' : ''}\nABSOLUTELY NO bar, club, workplace, restaurant, gym, or any commercial environment.`;
             }
           }
         }
@@ -689,22 +751,11 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
     }
 
     // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
-    // If the caller passed a liveLocationContext (from buildLiveLocationContext), prepend it
-    // so the image model cannot accidentally use a stale work/venue background when the
-    // character is confirmed home, or a home background when they are at work.
-    // This is the image-side enforcement of the state sync rule.
+    // Always inject the live location context into the final prompt as a hard override.
+    // This is the last line of defense against stale context leaking into image generation.
     if (liveLocationContext && liveLocationContext.trim()) {
-      // Only inject if it adds new information not already covered by the locked location note
-      const liveIsHome = liveLocationContext.toLowerCase().includes('at home') || liveLocationContext.toLowerCase().includes('residential');
-      const liveIsWork = liveLocationContext.toLowerCase().includes('at work');
-      const currentPromptImpliesHome = cleanPrompt.toLowerCase().includes('home') || cleanPrompt.toLowerCase().includes('apartment') || cleanPrompt.toLowerCase().includes('house');
-      const currentPromptImpliesWork = cleanPrompt.toLowerCase().includes('work') || cleanPrompt.toLowerCase().includes('bar') || cleanPrompt.toLowerCase().includes('club');
-
-      // Inject correction only when there is a conflict between prompt and live location
-      if ((liveIsHome && currentPromptImpliesWork) || (liveIsWork && currentPromptImpliesHome)) {
-        console.warn(`[LOCATION_SYNC] Live location context conflicts with prompt. Injecting authoritative override.`);
-        locationNote = `\n\n${liveLocationContext}\n${locationNote}`;
-      }
+      enhancedPrompt = `${liveLocationContext}\n\n${enhancedPrompt}`;
+      console.log(`[LOCATION_SYNC] Live location context injected into prompt.`);
     }
 
     // ── STEP 6: TIME OF DAY ──────────────────────────────────────────────────
