@@ -539,6 +539,10 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       return;
     }
     setIsCreating(true);
+    // BACKWARD COMPATIBILITY: merge any missing fields with safe defaults so older
+    // draft data never blocks creation after a schema update
+    const safeData = { ...defaultData, ...data };
+    Object.assign(data, safeData);
     try {
       // Auto-generate avatar if none provided
       let finalAvatarUrl = avatarUrl;
@@ -774,10 +778,17 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
          throw new Error(res?.data?.error || "Failed to create character");
        }
      } catch (error) {
-       setIsCreating(false);
-       alert("Failed to create character. Please check your connection and try again.");
+      setIsCreating(false);
+      // CREATION_VERSION_MISMATCH / CREATION_BLOCKED_ERROR:
+      // Surface a clear error with a retry option rather than a dead state.
+      const msg = error?.message || "";
+      if (msg.includes("validation") || msg.includes("required") || msg.includes("field")) {
+        alert("Some fields couldn't be validated. Retrying with safe defaults — please tap Create again.");
+      } else {
+        alert("Failed to create character. Please check your connection and try again.");
+      }
      }
-   };
+     };
 
   const chipClass = (selected) =>
     `py-2.5 px-3 rounded-xl text-sm border transition-colors text-left cursor-pointer ${selected ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`;
