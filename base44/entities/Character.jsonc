@@ -1,6 +1,54 @@
 {
   "name": "Character",
   "type": "object",
+  "rls": {
+    "create": true,
+    "read": {
+      "$or": [
+        {
+          "owner_email": "{{user.email}}"
+        },
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "owner_email": "{{user.email}}"
+        },
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "owner_email": "{{user.email}}"
+        },
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  },
   "properties": {
     "name": {
       "type": "string",
@@ -16,10 +64,12 @@
       "type": "string"
     },
     "owner_user_id": {
-      "type": "string"
+      "type": "string",
+      "description": "The ID of the User record who owns this character."
     },
     "owner_email": {
-      "type": "string"
+      "type": "string",
+      "description": "Email of the owning user \u2014 mirrors created_by for legacy compatibility but is explicitly set on creation"
     },
     "created_by_role": {
       "type": "string",
@@ -36,6 +86,31 @@
         "admin_global"
       ],
       "default": "account_private"
+    },
+    "is_test_character": {
+      "type": "boolean",
+      "default": false,
+      "description": "Marks a character as a test/diagnostic entity. Excluded from all normal user-facing queries."
+    },
+    "diagnostic_only": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, this character must be excluded from homepage, scene, roster, and all normal simulation queries."
+    },
+    "exclude_from_homepage": {
+      "type": "boolean",
+      "default": false,
+      "description": "Explicitly excluded from homepage character cards."
+    },
+    "exclude_from_default_scene_queries": {
+      "type": "boolean",
+      "default": false,
+      "description": "Excluded from scene page auto-roster and presence queries."
+    },
+    "exclude_from_roster": {
+      "type": "boolean",
+      "default": false,
+      "description": "Excluded from unified character roster queries."
     },
     "aliases": {
       "type": "array",
@@ -139,7 +214,8 @@
         "type": "object",
         "properties": {
           "quirk_id": {
-            "type": "string"
+            "type": "string",
+            "description": "e.g. shopaholic, smoker, fitness_guru"
           },
           "label": {
             "type": "string"
@@ -189,7 +265,7 @@
     },
     "character_closet": {
       "type": "array",
-      "description": "Saved full outfits for this character.",
+      "description": "Saved outfits for this character, organized by category.",
       "items": {
         "type": "object",
         "properties": {
@@ -197,7 +273,8 @@
             "type": "string"
           },
           "label": {
-            "type": "string"
+            "type": "string",
+            "description": "e.g. 'Sunday Fit', 'Work Drip'"
           },
           "category": {
             "type": "string",
@@ -211,8 +288,7 @@
               "sleepwear",
               "lounge",
               "outdoor",
-              "special",
-              "seasonal"
+              "special"
             ],
             "default": "daily_casual"
           },
@@ -236,7 +312,7 @@
           },
           "full_description": {
             "type": "string",
-            "description": "Full outfit prompt for image generation"
+            "description": "Full outfit prompt used for image generation"
           },
           "image_url": {
             "type": "string"
@@ -258,70 +334,13 @@
       },
       "default": []
     },
-    "closet_pieces": {
-      "type": "array",
-      "description": "Individual clothing items and accessories \u2014 uploaded or generated.",
-      "items": {
-        "type": "object",
-        "properties": {
-          "piece_id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string",
-            "description": "e.g. White Air Force 1s, Black Leather Jacket"
-          },
-          "piece_type": {
-            "type": "string",
-            "enum": [
-              "top",
-              "bottom",
-              "shoes",
-              "outerwear",
-              "dress",
-              "hat",
-              "jewelry",
-              "bag",
-              "accessory"
-            ],
-            "default": "top"
-          },
-          "description": {
-            "type": "string",
-            "description": "Used in image generation prompts"
-          },
-          "image_url": {
-            "type": "string",
-            "description": "Uploaded or AI-generated reference image"
-          },
-          "source": {
-            "type": "string",
-            "enum": [
-              "uploaded",
-              "generated",
-              "manual"
-            ],
-            "default": "manual"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "piece_id",
-          "label",
-          "piece_type"
-        ]
-      },
-      "default": []
-    },
     "current_outfit": {
       "type": "object",
-      "description": "The character's active outfit state. Persists until a valid change occurs.",
+      "description": "The character's currently active outfit state. Persists until a valid change occurs.",
       "properties": {
         "outfit_id": {
-          "type": "string"
+          "type": "string",
+          "description": "Reference to closet outfit if from closet"
         },
         "label": {
           "type": "string"
@@ -356,7 +375,7 @@
         },
         "change_reason": {
           "type": "string",
-          "description": "manual_selection | location_change | new_day | explicit_statement | event"
+          "description": "Why it changed: location_change, explicit_statement, new_day, event"
         }
       }
     },
