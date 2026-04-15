@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Plus, Trash2, Check, Link, AlertTriangle } from "lucide-react";
+import { X, Plus, Trash2, Check, Link, AlertTriangle, RefreshCw, Zap, RotateCcw } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { EditableTextField, EditableSelectField, EditableEthnicityField } from "@/components/character/ProfileFieldEditor";
@@ -729,6 +729,135 @@ function EducationEditor({ character }) {
   );
 }
 
+// ── Needs Editor (inline in side panel) ──────────────────────────────────────
+const NEEDS_LIST = [
+  { label: "Hunger",    key: "hunger",    dbKey: "hunger_value",         emoji: "🍽️" },
+  { label: "Energy",    key: "energy",    dbKey: "energy_value",          emoji: "⚡" },
+  { label: "Social",    key: "social",    dbKey: "social_value",          emoji: "👥" },
+  { label: "Health",    key: "health",    dbKey: "health_value",          emoji: "❤️" },
+  { label: "Mental",    key: "mental",    dbKey: "mental_value",          emoji: "🧠" },
+  { label: "Financial", key: "financial", dbKey: "financial_need_value",  emoji: "💰" },
+  { label: "Hygiene",   key: "hygiene",   dbKey: "hygiene_value",         emoji: "🚿" },
+  { label: "Comfort",   key: "comfort",   dbKey: "comfort_value",         emoji: "🛋️" },
+];
+
+function NeedsEditor({ character }) {
+  const queryClient = useQueryClient();
+  const isActive = character?.character_type === "active" && character?.status === "active";
+  const [values, setValues] = useState(() => {
+    const init = {};
+    for (const n of NEEDS_LIST) init[n.key] = Math.round(character[n.dbKey] ?? 70);
+    return init;
+  });
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(null);
+
+  if (!isActive) {
+    return <p className="text-xs text-muted-foreground italic">Only available for active created characters.</p>;
+  }
+
+  const applyQuick = async (action) => {
+    setIsSaving(true);
+    setSavedMsg(null);
+    try {
+      await base44.functions.invoke("manualOverrideNeeds", { characterId: character.id, action });
+      await base44.functions.invoke("simulateActiveCharacterNeeds", { characterId: character.id });
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      const preset = action === "stabilize" ? 65 : action === "refill" ? 90 : 70;
+      const next = {};
+      for (const n of NEEDS_LIST) next[n.key] = preset;
+      setValues(next);
+      setSavedMsg("Applied ✓");
+    } catch {
+      setSavedMsg("Error applying");
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setSavedMsg(null), 3000);
+    }
+  };
+
+  const saveCustom = async () => {
+    setIsSaving(true);
+    setSavedMsg(null);
+    try {
+      await base44.functions.invoke("manualOverrideNeeds", { characterId: character.id, action: "custom", needs: values });
+      await base44.functions.invoke("simulateActiveCharacterNeeds", { characterId: character.id });
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+      setSavedMsg("Saved ✓");
+    } catch {
+      setSavedMsg("Error saving");
+    } finally {
+      setIsSaving(false);
+      setTimeout(() => setSavedMsg(null), 3000);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      {/* Quick actions */}
+      <div className="flex flex-wrap gap-1.5">
+        {[
+          { action: "stabilize", label: "Stabilize (65)", Icon: RefreshCw },
+          { action: "refill",    label: "Refill (90)",    Icon: Zap },
+          { action: "reset_baseline", label: "Reset (70)", Icon: RotateCcw },
+        ].map(({ action, label, Icon }) => (
+          <button
+            key={action}
+            disabled={isSaving}
+            onClick={() => applyQuick(action)}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-secondary border border-border text-[11px] text-foreground hover:border-primary/40 transition-colors disabled:opacity-50"
+          >
+            <Icon className="w-3 h-3" /> {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Sliders */}
+      <div className="space-y-3">
+        {NEEDS_LIST.map(({ label, key, emoji }) => {
+          const val = values[key];
+          const barColor = val >= 60 ? "bg-green-500" : val >= 35 ? "bg-amber-500" : "bg-destructive";
+          return (
+            <div key={key}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-foreground">{emoji} {label}</span>
+                <input
+                  type="number" min="0" max="100"
+                  value={val}
+                  onChange={e => setValues(p => ({ ...p, [key]: Math.max(0, Math.min(100, parseInt(e.target.value) || 0)) }))}
+                  className="w-11 text-center text-[11px] bg-secondary border border-border rounded-lg px-1 py-0.5 text-foreground"
+                />
+              </div>
+              <input
+                type="range" min="0" max="100" value={val}
+                onChange={e => setValues(p => ({ ...p, [key]: Number(e.target.value) }))}
+                className="w-full h-1.5 rounded-full appearance-none cursor-pointer mb-0.5"
+                style={{ accentColor: val >= 60 ? '#22c55e' : val >= 35 ? '#f59e0b' : '#ef4444' }}
+              />
+              <div className="h-1 bg-secondary rounded-full overflow-hidden">
+                <div className={`h-full ${barColor} transition-all`} style={{ width: `${val}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-between pt-1">
+        <span className={`text-[11px] ${savedMsg?.startsWith("Error") ? "text-destructive" : "text-green-400"}`}>
+          {savedMsg || ""}
+        </span>
+        <button
+          disabled={isSaving}
+          onClick={saveCustom}
+          className="px-3 py-1.5 rounded-xl bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 disabled:opacity-50"
+        >
+          {isSaving ? "Saving…" : "Apply"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Panel ────────────────────────────────────────────────────────────────
 export default function CharacterEditSettingsPanel({ isOpen, onClose, character, allCharacters }) {
   const queryClient = useQueryClient();
@@ -857,6 +986,15 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                   <p className="text-[10px] text-muted-foreground mt-0.5">Active characters with a direct link. Use "→ World" to move someone to People In Their World.</p>
                 </div>
                 <KnownCharactersEditor character={character} allCharacters={allCharacters} onMoveToWorld={handleMoveToWorld} />
+              </section>
+
+              {/* Needs */}
+              <section className="space-y-3">
+                <div>
+                  <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Needs Status Bars</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Manually adjust hunger, energy, health, mental and other needs.</p>
+                </div>
+                <NeedsEditor character={character} />
               </section>
 
             </div>

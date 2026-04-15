@@ -34,6 +34,7 @@ import Moments from './pages/Moments';
 import Locations from './pages/Locations';
 import Finance from './pages/Finance';
 import EditCharacterTraits from './pages/EditCharacterTraits';
+import EditCharacterNeeds from './pages/EditCharacterNeeds';
 import EditCharacterReligion from './pages/EditCharacterReligion';
 import AchievementUnlockModal from './components/achievements/AchievementUnlockModal';
 import { LocationEditProvider } from '@/components/location/LocationEditConflictManager';
@@ -98,6 +99,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/locations" element={<Locations />} />
       <Route path="/edit-character-relationships" element={<EditCharacterRelationships />} />
       <Route path="/edit-character-traits" element={<EditCharacterTraits />} />
+      <Route path="/edit-character-needs" element={<EditCharacterNeeds />} />
       <Route path="/edit-character-religion" element={<EditCharacterReligion />} />
       <Route path="/edit-character-profile" element={<EditCharacterProfile />} />
       <Route path="/my-profile" element={<MyProfile />} />
