@@ -24,6 +24,7 @@ import CharacterEditSettingsPanel from "@/components/character/CharacterEditSett
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
+import ManualNeedsEditor from "@/components/character/ManualNeedsEditor";
 import CharacterWorkScheduleEditor from "@/components/character/CharacterWorkScheduleEditor";
 import CharacterBusinessesPanel from "@/components/character/CharacterBusinessesPanel";
 import LifeJournal from "@/components/character/LifeJournal";
@@ -719,6 +720,9 @@ export default function CharacterProfile() {
           character={character}
           onRefresh={() => refetch()}
         />
+
+        {/* Manual Needs Override — for debugging/repair */}
+        <ManualNeedsEditor character={character} />
 
         {/* Key Life Events & Memories */}
         {character.memories?.length > 0 && (
