@@ -494,6 +494,78 @@ export function getCharacterLivePresence(character, locationMap = {}) {
 }
 
 /**
+ * SINGLE AUTHORITATIVE LOCATION CONTEXT FOR LLM PROMPTS
+ *
+ * Call this before generating chat replies, narratives, or image prompts.
+ * Returns a hard-locked location truth string that MUST override any stale context.
+ *
+ * Rules:
+ * - If character is home (any home presence): returns home context, blocks work/venue framing
+ * - If character is at work/school: returns venue context with operating status
+ * - If traveling: returns transit context
+ * - If sleeping: returns sleep context
+ *
+ * imageMode = true returns a shorter string suitable for image prompt injection
+ */
+export function buildLiveLocationContext(character, locationMap = {}, imageMode = false) {
+  if (!character) return '';
+
+  const presence = character.resolved_presence_status;
+  const locId = character.resolved_current_location_id;
+  const locName = (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  // ── SLEEPING ──────────────────────────────────────────────────────────────
+  if (presence === 'sleeping' || presence === 'napping') {
+    if (imageMode) return `[LOCATION LOCKED: character is at home sleeping — use residential bedroom/bed context]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently ASLEEP at home${locName ? ` (${locName})` : ''}. Do NOT speak as if you are at any venue, work, or public place.`;
+  }
+
+  // ── HOME ──────────────────────────────────────────────────────────────────
+  if (presence === 'home') {
+    if (imageMode) return `[LOCATION LOCKED: character is at home — use residential interior context${locName ? ` matching ${locName}` : ''}]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT HOME${locName ? ` (${locName})` : ''}. You are NOT at work, a bar, club, or any other venue. Any work or outing context is PAST TENSE only.`;
+  }
+
+  // ── AT WORK ───────────────────────────────────────────────────────────────
+  if (presence === 'at_work') {
+    const workLoc = locId ? locationMap[locId] : null;
+    const isOpen = workLoc ? (isLocationOpen(workLoc, now) !== false) : true;
+    if (!isOpen) {
+      // Venue closed — character should have left. Treat as home.
+      console.warn(`[LOCATION_HOURS] ${character.name} is marked at_work but ${locName} is closed at ${timeStr}. Correcting to home.`);
+      const homeName = locationMap[character.current_home_location_id]?.name || 'Home';
+      if (imageMode) return `[LOCATION LOCKED: venue closed — character is heading home or at home, use residential/transit context]`;
+      return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): The venue ${locName ? `"${locName}"` : 'you work at'} is now CLOSED. You are no longer on-site — you have finished your shift and are either heading home or already home. Speak in past tense about work. Do NOT describe yourself as still at the venue.`;
+    }
+    if (imageMode) return `[LOCATION LOCKED: character is at work at ${locName || 'their workplace'} — use that work environment as background]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT WORK at ${locName || 'your workplace'}. All location references must match this environment.`;
+  }
+
+  // ── AT SCHOOL ─────────────────────────────────────────────────────────────
+  if (presence === 'at_school') {
+    if (imageMode) return `[LOCATION LOCKED: character is at school/class — use school/campus environment]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently AT SCHOOL${locName ? ` (${locName})` : ''}. All location references must match this.`;
+  }
+
+  // ── TRAVELING ─────────────────────────────────────────────────────────────
+  if (presence === 'traveling') {
+    const destName = character.traveling_to_location_name || locName || 'your destination';
+    if (imageMode) return `[LOCATION LOCKED: character is in transit to ${destName} — use travel/vehicle/street context]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently IN TRANSIT to ${destName}. You have NOT arrived yet. Do NOT say you are already there.`;
+  }
+
+  // ── VISITING / UNKNOWN ────────────────────────────────────────────────────
+  if (locName) {
+    if (imageMode) return `[LOCATION LOCKED: character is at ${locName}]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at ${locName}.`;
+  }
+
+  return '';
+}
+
+/**
  * AUTO-CORRECT: If character is violating schedule, force correct location
  * Returns corrected character data or null if no correction needed
  */

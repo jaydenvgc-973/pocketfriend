@@ -4,6 +4,8 @@ import { isCharacterInPrayer } from './religionUtils';
 
 /**
  * Derives the current status category for a character.
+ * AUTHORITATIVE: Prefers resolved_presence_status (live truth) over current_activity string matching.
+ * Enforces operating-hours invalidation — a character cannot be 'at_work' or 'bar' after shift/hours end.
  * Returns one of: 'asleep' | 'work' | 'school' | 'gym' | 'bar' | 'out' | 'available'
  */
 export function getCharacterStatus(character) {
@@ -11,18 +13,35 @@ export function getCharacterStatus(character) {
 
   if (isCharacterAsleep(character)) return 'asleep';
 
-  // Prayer check: devout/moderate characters may be in a blocking prayer window
+  // Prayer check
   const prayer = isCharacterInPrayer(character);
   if (prayer.active && prayer.blocks_response) return 'prayer';
 
-  const activity = character.current_activity?.toLowerCase().trim() || '';
+  // ── AUTHORITATIVE: Use resolved_presence_status first ──────────────────────
+  const presence = character.resolved_presence_status;
+  if (presence === 'at_work')   return 'work';
+  if (presence === 'at_school') return 'school';
+  if (presence === 'traveling') return 'out';
 
-  if (activity.includes('hospital') || activity.includes('sick') || activity.includes('patient')) return 'available';
-  if (isCharacterAtWork(character)) return 'work';
+  // ── SCHEDULE-BASED FALLBACK (only if resolved_presence_status is absent) ───
+  // Guard: only trust isCharacterAtWork if we don't have an authoritative resolved status
+  // that says otherwise (e.g. 'home' means they've already left work)
+  if (!presence || presence === 'unknown') {
+    if (isCharacterAtWork(character)) return 'work';
+  }
+
   if (character.current_education_activity && character.current_education_activity !== 'none') return 'school';
   if (character.current_job_training_activity && character.current_job_training_activity !== 'none') return 'school';
+
+  // ── ACTIVITY STRING FALLBACK — only for non-work statuses ──────────────────
+  // Do NOT use activity string to infer 'work' — that's how stale "at bar" context lingers
+  const activity = character.current_activity?.toLowerCase().trim() || '';
   if (activity.includes('gym') || activity.includes('workout') || activity.includes('exercis')) return 'gym';
-  if (activity.includes('bar') || activity.includes('club') || activity.includes('nightclub')) return 'bar';
+  if (activity.includes('bar') || activity.includes('club') || activity.includes('nightclub')) {
+    // Only trust bar/club context if character is NOT confirmed home/sleeping by resolved state
+    const resolvedHome = presence === 'home' || presence === 'sleeping' || presence === 'napping';
+    if (!resolvedHome) return 'bar';
+  }
   if (activity.includes('out') || activity.includes('outside') || activity.includes('mall') || activity.includes('shopping')) return 'out';
 
   return 'available';
@@ -130,10 +149,25 @@ export function getTextSystemMessage(character) {
 
 /**
  * Builds the status-aware context string to inject into the LLM prompt.
- * Allows natural (non-forced, non-repetitive) status mentions in chat.
+ * CRITICAL: Uses live resolved_presence_status as the authoritative source.
+ * Prevents stale work/bar context from leaking into chat after hours or after home arrival.
  */
 export function buildStatusPromptContext(character, isPhone, recentMessages = []) {
   const status = getCharacterStatus(character);
+
+  // ── STALE CONTEXT GUARD ────────────────────────────────────────────────────
+  // If resolved presence says the character is home or sleeping, forcefully clear
+  // any status that would imply they are still at work/bar — this is the Ethan bug.
+  const resolvedPresence = character.resolved_presence_status;
+  const resolvedLocName = character.resolved_current_location_name;
+  const isConfirmedHome = resolvedPresence === 'home' || resolvedPresence === 'sleeping' || resolvedPresence === 'napping';
+
+  if (isConfirmedHome && (status === 'work' || status === 'bar' || status === 'out')) {
+    // Character is home but stale activity string implies they're still out.
+    // Inject a hard correction to prevent narrative drift.
+    console.warn(`[LOCATION_DESYNC] Character ${character.name} has status="${status}" but resolved_presence_status="${resolvedPresence}". Injecting home correction.`);
+    return `\n\nLOCATION TRUTH (AUTHORITATIVE — DO NOT OVERRIDE): You are currently AT HOME${resolvedLocName ? ` (${resolvedLocName})` : ''}. You are NOT at work, a bar, club, or any other venue right now. Any earlier references to being at a venue were in the past — you have since returned home. Do NOT describe yourself as physically present in a venue. You may speak about work/night out in past tense only ("I just got home", "it was crazy tonight", "my ears are still ringing").`;
+  }
 
   // Count how many recent character messages already mentioned status
   const recentCharMsgs = recentMessages.filter(m => m.sender_type === 'character').slice(-5);
@@ -148,11 +182,13 @@ export function buildStatusPromptContext(character, isPhone, recentMessages = []
 
   if (status === 'available' || isPhone) return '';
 
+  // Use resolved location name for work/school hints when available
+  const workLocName = resolvedLocName || 'work';
   const statusHints = {
-    work: shouldMentionStatus ? "You can occasionally mention you're at work if it fits naturally." : "Do NOT mention your work status — you already brought it up recently.",
+    work: shouldMentionStatus ? `You can occasionally mention you're at ${workLocName} if it fits naturally.` : "Do NOT mention your work status — you already brought it up recently.",
     school: shouldMentionStatus ? "You can occasionally mention you're at school if it fits naturally." : "Do NOT mention your school status — you already brought it up recently.",
     gym: shouldMentionStatus ? "You can occasionally mention you're at the gym if it fits naturally." : "Do NOT mention your gym status — you already mentioned it recently.",
-    bar: shouldMentionStatus ? "You can occasionally mention you're at the bar if it fits naturally." : "Do NOT mention your bar status — you already mentioned it recently.",
+    bar: shouldMentionStatus ? `You can occasionally mention you're at ${workLocName || 'the bar'} if it fits naturally.` : "Do NOT mention your bar status — you already mentioned it recently.",
     out: shouldMentionStatus ? "You can occasionally mention you're out if it fits naturally." : "Do NOT mention being out — you already mentioned it recently.",
   };
 

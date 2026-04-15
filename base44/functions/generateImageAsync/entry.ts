@@ -437,7 +437,8 @@ Deno.serve(async (req) => {
       messageId, prompt, characterReferenceImages, userReferenceImages,
       characterName, userWorldName, subjectType, characterId,
       manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode,
-      userAppearanceData, includesUser
+      userAppearanceData, includesUser,
+      liveLocationContext // authoritative location truth string from buildLiveLocationContext()
     } = await req.json();
 
     if (!messageId || !prompt) {
@@ -685,6 +686,25 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
     } else {
       // No subjects resolved — pure environment/text render
       enhancedPrompt = `${cleanPrompt}${locationNote}`;
+    }
+
+    // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
+    // If the caller passed a liveLocationContext (from buildLiveLocationContext), prepend it
+    // so the image model cannot accidentally use a stale work/venue background when the
+    // character is confirmed home, or a home background when they are at work.
+    // This is the image-side enforcement of the state sync rule.
+    if (liveLocationContext && liveLocationContext.trim()) {
+      // Only inject if it adds new information not already covered by the locked location note
+      const liveIsHome = liveLocationContext.toLowerCase().includes('at home') || liveLocationContext.toLowerCase().includes('residential');
+      const liveIsWork = liveLocationContext.toLowerCase().includes('at work');
+      const currentPromptImpliesHome = cleanPrompt.toLowerCase().includes('home') || cleanPrompt.toLowerCase().includes('apartment') || cleanPrompt.toLowerCase().includes('house');
+      const currentPromptImpliesWork = cleanPrompt.toLowerCase().includes('work') || cleanPrompt.toLowerCase().includes('bar') || cleanPrompt.toLowerCase().includes('club');
+
+      // Inject correction only when there is a conflict between prompt and live location
+      if ((liveIsHome && currentPromptImpliesWork) || (liveIsWork && currentPromptImpliesHome)) {
+        console.warn(`[LOCATION_SYNC] Live location context conflicts with prompt. Injecting authoritative override.`);
+        locationNote = `\n\n${liveLocationContext}\n${locationNote}`;
+      }
     }
 
     // ── STEP 6: TIME OF DAY ──────────────────────────────────────────────────
