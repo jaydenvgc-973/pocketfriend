@@ -62,6 +62,10 @@ Deno.serve(async (req) => {
     // ── STRICT ACCOUNT ISOLATION FILTER ─────────────────────────────────────────────
     // Each account sees only: their own locations + admin-created shared/global locations.
     // Admin role grants NO special visibility into other users' private locations.
+
+    // Build a set of all character IDs that belong to this user
+    const userCharacterIds = new Set(userCharacters.map(c => c.id));
+
     const relevantLocations = allLocations.filter(loc => {
       // ── LAYER 1: OWNED BY THIS ACCOUNT (private) ──────────────────────────────────
       // Primary ownership field
@@ -69,29 +73,41 @@ Deno.serve(async (req) => {
       // Legacy ownership via created_by (only when owner_email is absent)
       if (!loc.owner_email && loc.created_by === user.email) return true;
 
-      // ── LAYER 2: SHARED — only admin-promoted locations cross account boundaries ──
+      // ── LAYER 2: CHARACTER-SPECIFIC — created for one of this user's characters ──
+      // Covers service-created homes/workplaces where created_by is a service account
+      // but the location is tied to a character owned by this user.
+      if (loc.location_type === 'character_specific' || loc.scope === 'character_specific') {
+        if (loc.owner_character_id && userCharacterIds.has(loc.owner_character_id)) return true;
+        if (loc.assigned_character_id && userCharacterIds.has(loc.assigned_character_id)) return true;
+        if (loc.character_id && userCharacterIds.has(loc.character_id)) return true;
+      }
+
+      // ── LAYER 3: CHARACTER-LINKED — referenced by one of this user's characters ──
+      // Includes any location explicitly linked from character profile fields
+      // (home, work, school, etc.) provided it has no owner from another account.
+      if (charLinkedLocationIds.has(loc.id)) {
+        const locOwner = loc.owner_email || null;
+        if (!locOwner || locOwner === user.email) return true;
+        return false; // Linked but owned by another account — exclude
+      }
+
+      // ── LAYER 4: SHARED — only admin-promoted locations cross account boundaries ──
       // A location must have been explicitly created/promoted by an admin to be shared.
       // User-created locations with scope='shared' do NOT bleed to other accounts.
       const isAdminCreated = loc.created_by_role === 'admin' || loc.is_generic_shared === true;
       const isSharedScope = loc.scope === 'shared' || loc.location_type === 'shared';
       if (isAdminCreated && isSharedScope) return true;
 
-      // ── LAYER 3: GLOBAL — system locations with no owner ─────────────────────────
+      // ── LAYER 5: GLOBAL — system locations with no owner ─────────────────────────
       // True global locations have no owner_email and no created_by, and are not private.
       const hasNoOwner = !loc.owner_email && !loc.created_by;
       if (hasNoOwner && loc.scope !== 'account_global' && loc.location_type !== 'character_specific') return true;
 
-      // ── CHARACTER-LINKED: only include if owned by THIS account ───────────────────
-      // A character profile may reference a work/school location. Only include it if
-      // the location itself also belongs to this account — prevents cross-account leakage.
-      if (charLinkedLocationIds.has(loc.id)) {
-        const locOwner = loc.owner_email || loc.created_by || null;
-        if (!locOwner || locOwner === user.email) return true;
-        return false; // Linked but owned by another account — exclude
-      }
-
       return false;
     });
+
+    // Sort alphabetically by name
+    relevantLocations.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
     return Response.json({
       success: true,
