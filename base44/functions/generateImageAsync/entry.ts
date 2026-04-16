@@ -514,7 +514,118 @@ Deno.serve(async (req) => {
 
     if (resolvedSubjectType !== "user") {
       try {
-        if (manualLocationId) {
+        // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
+        // If the character is in a rabbit hole, we MUST use the rabbit hole context.
+        // Saved location imagery is FORBIDDEN. Home fallback is BANNED.
+        // Activity from the message narrows the environment type.
+        const charForRabbitCheck = characterId
+          ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
+          : null;
+
+        const isRabbitHole = charForRabbitCheck?.resolved_presence_status === 'rabbit_hole'
+          || charForRabbitCheck?.is_rabbit_hole === true;
+
+        if (isRabbitHole && !manualLocationId) {
+          const rhLabel = charForRabbitCheck.rabbit_hole_label
+            || charForRabbitCheck.resolved_current_location_name
+            || 'off-screen location';
+
+          // Infer rabbit hole type from label + activity in prompt
+          const RABBIT_HOLE_TYPE_MAP = [
+            {
+              type: 'dance_studio',
+              labelKeywords: ['studio', 'set', 'rehearsal', 'dance'],
+              activityKeywords: ['choreo', 'choreography', 'rehearse', 'rehearsing', 'run-through', 'run through', 'moves', 'dance', 'practice'],
+              environmentDesc: 'professional dance rehearsal studio, open practice floor with sprung hardwood, mirrored walls, rehearsal lighting, speaker system, water bottles and bags on the side, movement-ready space',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'not an apartment', 'no bed', 'no nightstands', 'no domestic furniture', 'no living room', 'no home decor'],
+            },
+            {
+              type: 'music_studio',
+              labelKeywords: ['studio', 'booth', 'recording', 'session'],
+              activityKeywords: ['recording', 'vocals', 'laying down', 'track', 'mixing', 'in the booth', 'session'],
+              environmentDesc: 'professional music recording studio, mixing console, acoustic foam panels, studio monitors, recording booth glass, dimmed mood lighting',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed', 'no domestic furniture'],
+            },
+            {
+              type: 'production_set',
+              labelKeywords: ['set', 'shoot', 'film', 'stage', 'production'],
+              activityKeywords: ['filming', 'shooting', 'camera blocking', 'on set', 'scene', 'director'],
+              environmentDesc: 'professional film or TV production set, camera equipment, c-stands and lighting rigs, reflectors, crew atmosphere',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed', 'no domestic furniture'],
+            },
+            {
+              type: 'backstage',
+              labelKeywords: ['backstage', 'green room', 'dressing room', 'wings'],
+              activityKeywords: ['before show', 'pre-show', 'getting ready', 'warming up', 'waiting'],
+              environmentDesc: 'backstage dressing room or green room, vanity mirrors with bulb lighting, costume racks, theatrical atmosphere',
+              exclusions: ['not residential', 'not a bedroom at home', 'no home decor'],
+            },
+            {
+              type: 'gym_studio',
+              labelKeywords: ['gym', 'fitness', 'training'],
+              activityKeywords: ['workout', 'training', 'lifting', 'exercise', 'conditioning', 'cardio', 'sweat'],
+              environmentDesc: 'commercial gym or fitness training facility, weight racks, training equipment, athletic environment',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed'],
+            },
+            {
+              type: 'office',
+              labelKeywords: ['office', 'meeting', 'conference', 'boardroom'],
+              activityKeywords: ['meeting', 'conference', 'presentation', 'call', 'zoom', 'work'],
+              environmentDesc: 'professional office or conference room, desk environment, business atmosphere',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed'],
+            },
+          ];
+
+          const labelLower = rhLabel.toLowerCase();
+          const activityLower = cleanPrompt.toLowerCase();
+          let matchedType = null;
+
+          for (const entry of RABBIT_HOLE_TYPE_MAP) {
+            const labelHit = entry.labelKeywords.some(k => labelLower.includes(k));
+            const activityHit = entry.activityKeywords.some(k => activityLower.includes(k));
+            if (labelHit && activityHit) { matchedType = entry; break; }
+            if (activityHit && labelLower.length < 20) { matchedType = entry; break; }
+            if (labelHit) { matchedType = entry; break; }
+          }
+
+          const envDesc = matchedType?.environmentDesc || `${rhLabel} — functional non-residential off-screen location`;
+          const exclusions = (matchedType?.exclusions || ['not residential', 'not a bedroom', 'not home interior', 'no bed', 'no domestic furniture']).join(', ');
+
+          locationNote = `
+
+════════════════════════════════════════════════════════════
+RABBIT HOLE LOCATION LOCK — CRITICAL — HIGHEST PRIORITY
+════════════════════════════════════════════════════════════
+The character's current location is: "${rhLabel}"
+This is an OFF-SCREEN location that is NOT a saved location in the app.
+It is the character's ACTIVE REAL CURRENT LOCATION.
+
+MANDATORY ENVIRONMENT: ${envDesc}
+
+ABSOLUTE BANS — ZERO EXCEPTIONS:
+${exclusions}
+
+⛔ DO NOT use any saved location imagery (especially home/residential).
+⛔ DO NOT fall back to bedroom, apartment, or home interior under any circumstances.
+⛔ The character is NOT home. They are at "${rhLabel}".
+
+Generate a GENERIC but ACCURATE environment for this space type.
+If this is a dance studio: open floor, mirrors, speakers, rehearsal lighting.
+If this is a music studio: console, acoustic panels, booth glass, monitors.
+If this is a production set: cameras, lighting rigs, crew equipment.
+The environment must feel real, functional, and consistent with the activity.
+════════════════════════════════════════════════════════════`;
+
+          locationImages = []; // No saved location images for rabbit holes
+          resolvedLocationName = rhLabel;
+          resolvedZoneName = matchedType?.type || null;
+
+          console.log(`[RABBIT_HOLE] 🐇 Locked environment: "${rhLabel}" → type: "${matchedType?.type || 'generic'}" | Activity: "${activityLower.substring(0, 60)}"`);
+        }
+
+        if (isRabbitHole && !manualLocationId) {
+          // Already handled above — skip all other location resolution
+        } else if (manualLocationId) {
           const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
