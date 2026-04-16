@@ -122,12 +122,15 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // (Placeholder for future visit/event system)
   // For now, skip
 
+  // Resolve the authoritative home ID — check both field names
+  const resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
+
   // LAYER 5: Check sleep/nap state (valid resting location)
   if (isCharacterSleeping(character)) {
-    const homeLocation = locationMap[character.current_home_location_id];
+    const homeLocation = resolvedHomeId ? locationMap[resolvedHomeId] : null;
     if (homeLocation) {
       return {
-        resolved_current_location_id: character.current_home_location_id,
+        resolved_current_location_id: resolvedHomeId,
         resolved_current_location_name: homeLocation.name || 'Home',
         resolved_location_type: 'home',
         resolved_presence_status: 'sleeping',
@@ -139,10 +142,10 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
 
   // LAYER 6: Check if in recovery nap
   if (hasUnpaidSleepDebt(character) && isNapTime(character, currentTime)) {
-    const homeLocation = locationMap[character.current_home_location_id];
+    const homeLocation = resolvedHomeId ? locationMap[resolvedHomeId] : null;
     if (homeLocation) {
       return {
-        resolved_current_location_id: character.current_home_location_id,
+        resolved_current_location_id: resolvedHomeId,
         resolved_current_location_name: homeLocation.name || 'Home',
         resolved_location_type: 'recovery_nap',
         resolved_presence_status: 'napping',
@@ -152,12 +155,12 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 7: Home fallback (only if truly home)
-  if (character.current_home_location_id) {
-    const homeLocation = locationMap[character.current_home_location_id];
+  // LAYER 7: Home fallback — check both current_home_location_id and home_location_id
+  if (resolvedHomeId) {
+    const homeLocation = locationMap[resolvedHomeId];
     if (homeLocation) {
       return {
-        resolved_current_location_id: character.current_home_location_id,
+        resolved_current_location_id: resolvedHomeId,
         resolved_current_location_name: homeLocation.name || 'Home',
         resolved_location_type: 'home',
         resolved_presence_status: 'home',

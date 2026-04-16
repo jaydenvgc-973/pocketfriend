@@ -26,9 +26,9 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         let isVacant = false;
 
         if (loc.category === 'home') {
-          // Get residents by current_home_location_id
+          // Get residents by current_home_location_id OR home_location_id (both field names used)
           const residents = characters
-            .filter(c => c.current_home_location_id === loc.id)
+            .filter(c => c.current_home_location_id === loc.id || c.home_location_id === loc.id)
             .map(c => c.name);
           const npcResidents = (loc.resident_family_members || []).map(m => m.name);
           allOccupants = [...new Set([...residents, ...npcResidents])];

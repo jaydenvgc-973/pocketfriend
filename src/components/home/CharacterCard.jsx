@@ -290,8 +290,8 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   iconType = 'out';
                   label = `headed to ${resolved.resolved_current_location_name}`;
                   color = 'text-orange-400';
-                } else if (!resolved.resolved_current_location_id && character.home_location_id) {
-                  // No resolved location but home is assigned — show as home (truth from home_location_id)
+                } else if (!resolved.resolved_current_location_id && (character.home_location_id || character.current_home_location_id)) {
+                  // No resolved location but home is assigned — show as home
                   iconType = 'home';
                   label = 'at home';
                   color = 'text-pink-400';
