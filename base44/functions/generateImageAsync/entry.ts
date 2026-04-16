@@ -250,32 +250,89 @@ CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist
 // These functions build structured subject objects from raw data.
 // Images and prompts are assembled FROM these records — never the other way around.
 
-function buildCharacterSubject(charRecord, clientRefs = []) {
+function resolveOutfitForCharacter(charRecord, activityText = '') {
+  const closet = charRecord.character_closet || [];
+  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
+  if (outfits.length === 0) return charRecord.current_outfit || null;
+
+  const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || 'home';
+  const combined = `${activityText} ${charRecord.current_activity || ''}`.toLowerCase();
+  const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
+
+  // Determine target category
+  let targetCategory = 'daily_casual';
+
+  // Bath/shower
+  if (/bath|shower|grooming|getting ready/.test(combined)) targetCategory = 'bath';
+  // Sleep
+  else if (presenceStatus === 'sleeping' || presenceStatus === 'napping' || /sleeping|asleep|napping/.test(combined)) targetCategory = 'sleepwear';
+  // Pre-sleep window (~60 min before sleep time)
+  else if (charRecord.sleep_start_time) {
+    const [sh, sm] = charRecord.sleep_start_time.split(':').map(Number);
+    const sleepMinutes = sh * 60 + sm;
+    const nowMinutes = hour * 60 + new Date().getMinutes();
+    const diff = sleepMinutes > nowMinutes ? sleepMinutes - nowMinutes : (sleepMinutes + 1440) - nowMinutes;
+    if (diff <= 60) targetCategory = 'sleepwear';
+  }
+  // Swimwear
+  else if (/swim|pool|beach|water park|sunbath|snorkel|surf/.test(combined)) targetCategory = 'swimwear';
+  // Gym
+  else if (/gym|workout|exercise|lifting|cardio|yoga|jogging|rehearsing.dance|dance.rehearsal/.test(combined) || presenceStatus === 'at_gym') targetCategory = 'gym';
+  // Work
+  else if (presenceStatus === 'at_work' || /\bat work\b|working|on the clock|shift/.test(combined)) targetCategory = 'work';
+  // Church
+  else if (/church|worship|service|mass|prayer/.test(combined)) targetCategory = 'church';
+  // Formal
+  else if (/wedding|funeral|gala|graduation|black tie|formal event/.test(combined)) targetCategory = 'formal';
+  // Nightlife
+  else if (/club|nightclub|party|going out|night out/.test(combined)) targetCategory = 'nightlife';
+  // Lounge at home
+  else if (presenceStatus === 'home' || /relax|lounge|chill|watching tv|at home/.test(combined)) {
+    targetCategory = hour >= 19 || hour < 7 ? 'lounge' : 'daily_casual';
+  }
+
+  // Fallback chain
+  const fallbacks = {
+    bath:        ['bath', 'sleepwear', 'lounge'],
+    sleepwear:   ['sleepwear', 'lounge', 'daily_casual'],
+    swimwear:    ['swimwear', 'gym', 'daily_casual'],
+    gym:         ['gym', 'outdoor', 'daily_casual'],
+    work:        ['work', 'formal', 'daily_casual'],
+    formal:      ['formal', 'work', 'daily_casual'],
+    church:      ['church', 'formal', 'daily_casual'],
+    nightlife:   ['nightlife', 'date_night', 'special', 'daily_casual'],
+    lounge:      ['lounge', 'daily_casual'],
+    daily_casual:['daily_casual', 'outdoor', 'lounge'],
+  };
+
+  const chain = fallbacks[targetCategory] || ['daily_casual'];
+  const currentOutfitId = charRecord.current_outfit?.outfit_id || null;
+
+  for (const cat of chain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length === 0) continue;
+    if (pool.length === 1) return pool[0];
+    // Daily rotation: avoid repeating the same outfit
+    const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
+    const idHash = (charRecord.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    const idx = (dayOfYear + idHash) % pool.length;
+    const picked = pool[idx];
+    // If we picked the current outfit and there's an alternative, shift to next
+    if (picked?.outfit_id === currentOutfitId && pool.length > 1) return pool[(idx + 1) % pool.length];
+    return picked;
+  }
+
+  return charRecord.current_outfit || outfits[outfits.length - 1] || null;
+}
+
+function buildCharacterSubject(charRecord, clientRefs = [], activityText = '') {
   const serverRefs = [];
   if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
   if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
-  // Always use server-side refs as authoritative; client refs are fallback only
   const faceRefs = serverRefs.length > 0 ? serverRefs : clientRefs;
 
-  // Resolve current outfit
-  const currentOutfit = charRecord.current_outfit;
-  const closet = charRecord.character_closet || [];
-  const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
-  let activeOutfit = null;
-  if (currentOutfit?.label) {
-    activeOutfit = currentOutfit;
-  } else if (closetOutfits.length > 0) {
-    const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
-    const isNight = hour >= 21 || hour < 6;
-    const isMorning = hour >= 6 && hour < 11;
-    if (isNight) {
-      activeOutfit = closetOutfits.find(o => o.category === 'sleepwear' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
-    } else if (isMorning) {
-      activeOutfit = closetOutfits.find(o => o.category === 'daily_casual' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
-    } else {
-      activeOutfit = closetOutfits.find(o => o.is_favorite) || closetOutfits[closetOutfits.length - 1];
-    }
-  }
+  // Use contextual outfit rotation engine
+  const activeOutfit = resolveOutfitForCharacter(charRecord, activityText);
   let outfitDesc = null;
   if (activeOutfit) {
     const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
@@ -467,7 +524,7 @@ Deno.serve(async (req) => {
       try {
         const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
         if (charRecord) {
-          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || []);
+          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], cleanPrompt || '');
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         }
       } catch (err) {
