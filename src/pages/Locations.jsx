@@ -1003,17 +1003,22 @@ export default function Locations() {
 
   const handleSave = async (formData, editingLocationId = null) => {
     let locationId;
+    const isAdmin = currentUser?.role === 'admin';
+    const scopeValue = formData.location_type === 'shared' ? 'shared' : 'account_global';
+    const enrichedFields = {
+      scope: scopeValue,
+      created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
+    };
     if (editingLocationId) {
-      await base44.entities.LocationReference.update(editingLocationId, formData);
+      await base44.entities.LocationReference.update(editingLocationId, { ...formData, ...enrichedFields });
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
       const enriched = {
         ...formData,
+        ...enrichedFields,
         owner_email: currentUser?.email,
         owner_user_id: currentUser?.id,
-        created_by_role: currentUser?.role || 'user',
-        scope: formData.location_type === 'shared' ? 'shared' : 'account_global',
       };
       const created = await base44.entities.LocationReference.create(enriched);
       locationId = created.id;
