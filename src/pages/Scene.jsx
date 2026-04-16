@@ -231,17 +231,12 @@ export default function Scene() {
   };
 
   // Active characters home at a home location
-  // VGC Towers: residents live here but did NOT travel with the user — treat as "who's here" only
   const homeResidents = isHomeLocation
     ? characters.filter(c => c.current_home_location_id === location.id)
     : [];
-  // For VGC Towers, suppress auto-presence — residents are selectable but not auto-shown
-  const homeResidentsPresent = isVGCTowers
-    ? []
-    : homeResidents.filter(c => isCharacterHome(c, locationMap));
-  const homeResidentsAway = isVGCTowers
-    ? []
-    : homeResidents.filter(c => !isCharacterHome(c, locationMap));
+  // VGC Towers: residents are selectable but not auto-shown in the presence strip
+  const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
+  const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
 
   // Family NPCs for home scenes.
   // A family NPC is "present" if their current_location_id is unset (default = home) or === this location.
@@ -345,14 +340,13 @@ export default function Scene() {
   const allPossibleNpcs = (() => {
     const npcs = [];
 
-    // Home: only show family members explicitly listed as residents of THIS location
+    // Home: show family members explicitly listed as residents of THIS location
     if (isHomeLocation) {
       (location.resident_family_members || []).forEach(fm => {
         if (!fm.name) return;
-        // Skip if already represented by a real Character entity in sceneCharacters
+        // Skip if already represented by a real Character entity
         const alreadyInScene = characters.find(c => c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
         if (alreadyInScene) return;
-        // Look up avatar from the source character's family_members array
         const sourceChar = fm.source_character_id
           ? characters.find(c => c.id === fm.source_character_id)
           : homeResidents.find(c =>
@@ -370,6 +364,38 @@ export default function Scene() {
           npcType: "resident",
           avatar_url: avatarUrl,
         });
+      });
+
+      // Add fictional NPC Character records that live at this home (e.g. VGC Towers distributed NPCs)
+      vgcDistributedNpcs.forEach(n => {
+        if (!npcs.find(x => x.id === n.id)) {
+          npcs.push({
+            id: n.id,
+            name: n.name,
+            role: n.character_type === 'family_npc' ? 'Family' : 'Resident',
+            isNpc: true,
+            npcType: 'resident',
+            avatar_url: n.avatar_url || null,
+            personality_summary: n.personality_summary,
+            emotional_state: n.emotional_state,
+          });
+        }
+      });
+
+      // Also add homeResidents (real Character entities living here) as selectable
+      homeResidents.forEach(c => {
+        if (!npcs.find(x => x.id === c.id) && !characterIds.includes(c.id)) {
+          npcs.push({
+            id: c.id,
+            name: c.name,
+            role: 'Resident',
+            isNpc: false,
+            npcType: 'resident',
+            avatar_url: c.avatar_url || null,
+            personality_summary: c.personality_summary,
+            emotional_state: c.emotional_state,
+          });
+        }
       });
     }
 
