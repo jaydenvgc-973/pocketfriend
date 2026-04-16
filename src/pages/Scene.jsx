@@ -885,10 +885,10 @@ export default function Scene() {
 
       prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic, warm, authentic atmosphere. IMPORTANT: Use the reference images provided to accurately reproduce the interior design, architecture, and decor of this specific location.`;
 
-      // Prioritize zone images first, then avatars
-      const zoneRefs = allZoneFirstHome.slice(0, 3);
-      const residentAvatars = physicallyPresentChars.map(c => c.avatar_url).filter(Boolean);
-      const refs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : []), ...residentAvatars, ...npcFamilyPresentAvatars].slice(0, 4);
+      // Zone images ONLY for scenery — character avatars are NOT used as scene references
+      const refs = allZoneFirstHome.length > 0
+        ? allZoneFirstHome.slice(0, 4)
+        : (firstImage ? [firstImage] : []);
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
@@ -936,11 +936,12 @@ export default function Scene() {
         prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
       }
 
-      // Collect ALL zone images across all zones for this location, prioritizing active zone first
+      // Zone images ONLY for scenery — never mix character avatars into scene references
       const allZoneImages = locationZones.flatMap(z => z.image_urls || []);
       const activeZoneFirst = [...activeZoneImages, ...allZoneImages.filter(u => !activeZoneImages.includes(u))];
-      const zoneRefs = activeZoneFirst.slice(0, 3);
-      const nonHomeRefs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : [])].slice(0, 4);
+      const nonHomeRefs = activeZoneFirst.length > 0
+        ? activeZoneFirst.slice(0, 4)
+        : (firstImage ? [firstImage] : []);
 
       try {
         const result = await base44.integrations.Core.GenerateImage({
