@@ -250,89 +250,160 @@ CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist
 // These functions build structured subject objects from raw data.
 // Images and prompts are assembled FROM these records — never the other way around.
 
-function resolveOutfitForCharacter(charRecord, activityText = '') {
-  const closet = charRecord.character_closet || [];
-  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
-  if (outfits.length === 0) return charRecord.current_outfit || null;
-
-  const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || 'home';
-  const combined = `${activityText} ${charRecord.current_activity || ''}`.toLowerCase();
-  const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
-
-  // Determine target category
-  let targetCategory = 'daily_casual';
-
-  // Bath/shower
-  if (/bath|shower|grooming|getting ready/.test(combined)) targetCategory = 'bath';
-  // Sleep
-  else if (presenceStatus === 'sleeping' || presenceStatus === 'napping' || /sleeping|asleep|napping/.test(combined)) targetCategory = 'sleepwear';
-  // Pre-sleep window (~60 min before sleep time)
-  else if (charRecord.sleep_start_time) {
-    const [sh, sm] = charRecord.sleep_start_time.split(':').map(Number);
-    const sleepMinutes = sh * 60 + sm;
-    const nowMinutes = hour * 60 + new Date().getMinutes();
-    const diff = sleepMinutes > nowMinutes ? sleepMinutes - nowMinutes : (sleepMinutes + 1440) - nowMinutes;
-    if (diff <= 60) targetCategory = 'sleepwear';
-  }
-  // Swimwear
-  else if (/swim|pool|beach|water park|sunbath|snorkel|surf/.test(combined)) targetCategory = 'swimwear';
-  // Gym
-  else if (/gym|workout|exercise|lifting|cardio|yoga|jogging|rehearsing.dance|dance.rehearsal/.test(combined) || presenceStatus === 'at_gym') targetCategory = 'gym';
-  // Work
-  else if (presenceStatus === 'at_work' || /\bat work\b|working|on the clock|shift/.test(combined)) targetCategory = 'work';
-  // Church
-  else if (/church|worship|service|mass|prayer/.test(combined)) targetCategory = 'church';
-  // Formal
-  else if (/wedding|funeral|gala|graduation|black tie|formal event/.test(combined)) targetCategory = 'formal';
-  // Nightlife
-  else if (/club|nightclub|party|going out|night out/.test(combined)) targetCategory = 'nightlife';
-  // Lounge at home
-  else if (presenceStatus === 'home' || /relax|lounge|chill|watching tv|at home/.test(combined)) {
-    targetCategory = hour >= 19 || hour < 7 ? 'lounge' : 'daily_casual';
-  }
-
-  // Fallback chain
-  const fallbacks = {
-    bath:        ['bath', 'sleepwear', 'lounge'],
-    sleepwear:   ['sleepwear', 'lounge', 'daily_casual'],
-    swimwear:    ['swimwear', 'gym', 'daily_casual'],
-    gym:         ['gym', 'outdoor', 'daily_casual'],
-    work:        ['work', 'formal', 'daily_casual'],
-    formal:      ['formal', 'work', 'daily_casual'],
-    church:      ['church', 'formal', 'daily_casual'],
-    nightlife:   ['nightlife', 'date_night', 'special', 'daily_casual'],
-    lounge:      ['lounge', 'daily_casual'],
-    daily_casual:['daily_casual', 'outdoor', 'lounge'],
-  };
-
-  const chain = fallbacks[targetCategory] || ['daily_casual'];
-  const currentOutfitId = charRecord.current_outfit?.outfit_id || null;
-
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length === 0) continue;
-    if (pool.length === 1) return pool[0];
-    // Daily rotation: avoid repeating the same outfit
-    const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0)) / 86400000);
-    const idHash = (charRecord.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
-    const idx = (dayOfYear + idHash) % pool.length;
-    const picked = pool[idx];
-    // If we picked the current outfit and there's an alternative, shift to next
-    if (picked?.outfit_id === currentOutfitId && pool.length > 1) return pool[(idx + 1) % pool.length];
-    return picked;
-  }
-
-  return charRecord.current_outfit || outfits[outfits.length - 1] || null;
-}
-
-function buildCharacterSubject(charRecord, clientRefs = [], activityText = '') {
+function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext = '') {
   const serverRefs = [];
   if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
   if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
+  // Always use server-side refs as authoritative; client refs are fallback only
   const faceRefs = serverRefs.length > 0 ? serverRefs : clientRefs;
 
-  // Use contextual outfit rotation engine
-  const activeOutfit = resolveOutfitForCharacter(charRecord, activityText);
+  // ── OUTFIT ROTATION ENGINE ───────────────────────────────────────────────
+  // Resolves the contextually correct outfit using presence, activity, location,
+  // time of day, and daily rotation logic — NOT just the static current_outfit field.
+  const currentOutfit = charRecord.current_outfit;
+  const closet = charRecord.character_closet || [];
+  const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+
+  // ── PRIORITY RESOLUTION ─────────────────────────────────────────────────────
+  // 1. Manual selection made today (same calendar day) → respect it
+  // 2. Otherwise → resolve contextually using presence/activity/time
+  const currentOutfitId = currentOutfit?.outfit_id || null;
+  const manualToday = currentOutfit?.change_reason === 'manual_selection' && currentOutfit?.last_changed_at
+    ? new Date(currentOutfit.last_changed_at).toDateString() === new Date().toDateString()
+    : false;
+
+  let activeOutfit = null;
+
+  if (manualToday && currentOutfit?.label) {
+    // User manually picked today — respect it exactly
+    activeOutfit = currentOutfit;
+    console.log(`[OUTFIT] Manual selection today: "${activeOutfit.label}" (${activeOutfit.category})`);
+  } else if (closetOutfits.length > 0) {
+    // ── Full contextual resolution ───────────────────────────────────────────
+    const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || 'home';
+    const currentActivity = (charRecord.current_activity || '').toLowerCase();
+    // Use the image prompt as the activity/context text
+    const activityText = (clientPromptContext || currentActivity).toLowerCase();
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = nowET.getHours();
+    const minute = nowET.getMinutes();
+
+    // ── Step 1: Determine target category ────────────────────────────────────
+    let targetCategory = 'daily_casual'; // fallback default
+
+    const combined = `${activityText} ${currentActivity}`;
+
+    // Priority 1: Bath/grooming state
+    if (/\b(bath|shower|bathing|showering|tub|robe|towel|grooming)\b/.test(combined)) {
+      targetCategory = 'bath';
+    }
+    // Priority 2: Sleep state or approaching bedtime
+    else if (presenceStatus === 'sleeping' || presenceStatus === 'napping' || /\b(sleep|asleep|nap|napping|bedtime|bed time)\b/.test(combined)) {
+      targetCategory = 'sleepwear';
+    }
+    else if (charRecord.sleep_start_time) {
+      const [sh, sm] = charRecord.sleep_start_time.split(':').map(Number);
+      const sleepMin = sh * 60 + sm;
+      const nowMin = hour * 60 + minute;
+      const diff = sleepMin > nowMin ? sleepMin - nowMin : (sleepMin + 1440) - nowMin;
+      if (diff <= 60) targetCategory = 'sleepwear';
+    }
+    // Priority 3: Swimwear — pool, beach, water
+    else if (/\b(swim|swimming|pool|beach|ocean|lake|water park|sunbath|snorkel|surf)\b/.test(combined)) {
+      targetCategory = 'swimwear';
+    }
+    // Priority 4: Gym/workout
+    else if (/\b(gym|workout|working out|lifting|cardio|yoga|jogging|running|training|exercise|rehearsal|dance rehearsal|choreography)\b/.test(combined) || presenceStatus === 'at_gym') {
+      targetCategory = 'gym';
+    }
+    // Priority 5: Work
+    else if (presenceStatus === 'at_work' || /\b(working|at work|on shift|office|clocked in)\b/.test(combined)) {
+      targetCategory = 'work';
+    }
+    // Priority 6: Formal/event
+    else if (/\b(wedding|funeral|gala|graduation|ceremony|black tie|formal event)\b/.test(combined)) {
+      targetCategory = 'formal';
+    }
+    // Priority 7: Church
+    else if (/\b(church|service|worship|mass|prayer|praying)\b/.test(combined)) {
+      targetCategory = 'church';
+    }
+    // Priority 8: Nightlife
+    else if (/\b(club|nightclub|party|night out|going out|bar hop)\b/.test(combined)) {
+      targetCategory = 'nightlife';
+    }
+    // Priority 9: Date night
+    else if (/\b(date|date night|romantic dinner|anniversary)\b/.test(combined)) {
+      targetCategory = 'date_night';
+    }
+    // Priority 10: Lounge (home relaxing)
+    else if (presenceStatus === 'home' && (hour >= 19 || hour < 7 || /\b(relax|relaxing|chilling|lounge|lounging|home|couch|tv)\b/.test(combined))) {
+      targetCategory = 'lounge';
+    }
+    // Default: daily casual
+    else {
+      targetCategory = 'daily_casual';
+    }
+
+    // ── Step 2: Fallback chain ────────────────────────────────────────────────
+    const fallbackChains = {
+      bath:         ['bath', 'sleepwear', 'lounge'],
+      sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
+      swimwear:     ['swimwear', 'gym', 'daily_casual'],
+      gym:          ['gym', 'outdoor', 'daily_casual'],
+      work:         ['work', 'formal', 'daily_casual'],
+      formal:       ['formal', 'work', 'daily_casual'],
+      church:       ['church', 'formal', 'work', 'daily_casual'],
+      nightlife:    ['nightlife', 'date_night', 'special', 'daily_casual'],
+      date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
+      lounge:       ['lounge', 'daily_casual', 'sleepwear'],
+      daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+    };
+    const chain = fallbackChains[targetCategory] || ['daily_casual', 'lounge'];
+
+    // ── Step 3: Pick from pool with daily rotation ───────────────────────────
+    const getDailyRotationIndex = (pool) => {
+      if (pool.length <= 1) return 0;
+      const now = new Date();
+      const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+      const idHash = (charRecord.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+      return (dayOfYear + idHash) % pool.length;
+    };
+
+    const pickFromPool = (pool) => {
+      if (pool.length === 0) return null;
+      if (pool.length === 1) return pool[0];
+      const favorites = pool.filter(o => o.is_favorite);
+      const candidates = favorites.length > 0 ? favorites : pool;
+      if (candidates.length === 1) return candidates[0];
+      const idx = getDailyRotationIndex(candidates);
+      const picked = candidates[idx];
+      // Avoid same as current if alternatives exist
+      if (picked?.outfit_id === currentOutfitId && candidates.length > 1) {
+        return candidates[(idx + 1) % candidates.length];
+      }
+      return picked;
+    };
+
+    for (const cat of chain) {
+      const pool = closetOutfits.filter(o => o.category === cat);
+      if (pool.length > 0) {
+        activeOutfit = pickFromPool(pool);
+        console.log(`[OUTFIT] Resolved category="${cat}" (target="${targetCategory}") | pool=${pool.length} | picked="${activeOutfit?.label}" | presence="${presenceStatus}"`);
+        break;
+      }
+    }
+
+    // Last resort — any outfit
+    if (!activeOutfit) {
+      activeOutfit = pickFromPool(closetOutfits);
+      if (activeOutfit) console.log(`[OUTFIT] Last-resort pick: "${activeOutfit.label}"`);
+    }
+  } else if (currentOutfit?.label) {
+    // No closet but a current_outfit exists — use it
+    activeOutfit = currentOutfit;
+  }
+
   let outfitDesc = null;
   if (activeOutfit) {
     const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
@@ -524,7 +595,7 @@ Deno.serve(async (req) => {
       try {
         const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
         if (charRecord) {
-          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], cleanPrompt || '');
+          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], cleanPrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         }
       } catch (err) {
