@@ -43,6 +43,7 @@ import {
 import { filterDashes } from "@/lib/dashFilter";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
+import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 
 // Voice playback cache and active audio tracking
@@ -74,6 +75,7 @@ export default function Chat() {
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showGameLauncher, setShowGameLauncher] = useState(false);
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
+  const [pendingAliasResolution, setPendingAliasResolution] = useState(null); // { phrase, characterId, characterName }
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1734,11 +1736,23 @@ Reply with ONLY the single emoji or the word "none".`,
       messageContent: text,
     }).catch(() => {});
 
-    // Update character location if character response mentions being somewhere (fire-and-forget)
+    // Update character location if character response mentions being somewhere
+    // If location is unresolved, show alias resolution popup
     if (responseText) {
       base44.functions.invoke("updateCharacterLocationFromMessage", {
         characterId,
         messageContent: responseText,
+      }).then(res => {
+        if (res?.data?.unresolved && res.data.phrase) {
+          setPendingAliasResolution({
+            phrase: res.data.phrase,
+            characterId: res.data.characterId || characterId,
+            characterName: res.data.characterName || character?.name,
+          });
+        } else if (res?.data?.updated) {
+          // Location updated — refresh character data so card reflects it
+          queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        }
       }).catch(() => {});
     }
 
@@ -1968,6 +1982,15 @@ Reply with ONLY the single emoji or the word "none".`,
 
       {/* Life event approval pop-up (education/occupation/job training) */}
       {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
+      {pendingAliasResolution && (
+        <LocationAliasResolutionPopup
+          phrase={pendingAliasResolution.phrase}
+          characterId={pendingAliasResolution.characterId}
+          characterName={pendingAliasResolution.characterName}
+          onResolved={() => { setPendingAliasResolution(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
+          onDismiss={() => setPendingAliasResolution(null)}
+        />
+      )}
     </div>
   );
 }

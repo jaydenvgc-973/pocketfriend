@@ -103,6 +103,20 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
+  // LAYER 2.5: Rabbit hole — character is at an off-screen/unbuilt destination confirmed by user
+  // This must come BEFORE home fallback. A rabbit hole is a valid current presence.
+  if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
+    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
+    return {
+      resolved_current_location_id: null,
+      resolved_current_location_name: label,
+      resolved_location_type: 'rabbit_hole',
+      resolved_presence_status: 'rabbit_hole',
+      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
+      resolved_zone: null,
+    };
+  }
+
   // LAYER 3: Check active travel state
   if (character.travel_status && character.travel_status !== 'not_traveling' && character.travel_destination_location_id) {
     const destLocation = locationMap[character.travel_destination_location_id];
@@ -469,6 +483,12 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isTransit: false, isSleeping: false };
   }
 
+  // ── PRIORITY 1.5: RABBIT HOLE ─────────────────────────────────────────────
+  if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
+    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
+    return { status: 'rabbit_hole', label, sublabel: character.rabbit_hole_subtype || null, isTransit: false, isSleeping: false };
+  }
+
   // ── PRIORITY 2: TRANSIT STATE ──────────────────────────────────────────────
   if (character.travel_status && character.travel_status !== 'not_traveling') {
     const destLoc = locationMap[character.travel_destination_location_id];
@@ -518,6 +538,13 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   const locName = (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  // ── RABBIT HOLE ───────────────────────────────────────────────────────────
+  if (presence === 'rabbit_hole' || character.is_rabbit_hole === true) {
+    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
+    if (imageMode) return `[LOCATION LOCKED: character is at an off-screen location: "${label}" — do not place them at home or any built venue]`;
+    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at "${label}" — an off-screen destination not in the built location list. You are NOT at home. Do NOT describe yourself as being at home or any other built location. This is your current presence.`;
+  }
 
   // ── SLEEPING ──────────────────────────────────────────────────────────────
   if (presence === 'sleeping' || presence === 'napping') {
