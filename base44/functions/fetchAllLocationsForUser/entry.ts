@@ -57,7 +57,20 @@ Deno.serve(async (req) => {
     // Admin sees everything
     const relevantLocations = allLocations.filter(loc => {
       // Shared locations (admin-created, available to all)
-      if (loc.scope === 'shared' || loc.location_type === 'shared') return true;
+      // STRICT: only pass through if creator_account_type is admin OR created_by_role is admin.
+      // A user-created location with scope='shared' should NOT bleed to other users — only admin
+      // can promote a location to truly shared/global visibility.
+      if (loc.scope === 'shared' || loc.location_type === 'shared') {
+        // Only allow if it was admin-created (not user-created with shared scope accidentally set)
+        if (loc.created_by_role === 'admin' || loc.is_generic_shared === true) return true;
+        // If owner_email is set and matches this user, it's fine (they created it)
+        if (loc.owner_email && loc.owner_email === user.email) return true;
+        // Otherwise, 'shared' from a user account must not bleed to other users
+        if (loc.owner_email && loc.owner_email !== user.email) return false;
+        // No owner_email + shared scope + admin creator = global
+        if (!loc.owner_email && !loc.created_by) return true;
+        return false;
+      }
 
       // Admin: see all locations
       if (isAdmin) return true;
@@ -65,11 +78,18 @@ Deno.serve(async (req) => {
       // Ownership via new field (preferred)
       if (loc.owner_email && loc.owner_email === user.email) return true;
 
-      // Ownership via legacy created_by
+      // Ownership via legacy created_by (only when owner_email is not set)
       if (!loc.owner_email && loc.created_by === user.email) return true;
 
-      // Character-linked locations for this user's characters
-      if (charLinkedLocationIds.has(loc.id)) return true;
+      // Character-linked locations for this user's characters.
+      // STRICT: only include if the location is also owned by this user OR has no owner
+      // (preventing cross-account location leakage via character work/school links).
+      if (charLinkedLocationIds.has(loc.id)) {
+        const locOwner = loc.owner_email || loc.created_by || null;
+        if (!locOwner || locOwner === user.email) return true;
+        // Location is linked from a character profile BUT owned by a different user — exclude it
+        return false;
+      }
 
       return false;
     });

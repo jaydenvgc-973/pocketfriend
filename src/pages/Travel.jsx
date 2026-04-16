@@ -86,8 +86,11 @@ export default function Travel() {
     const homeResidents = characters.filter(c => c.current_home_location_id === location.id);
     const npcResidents = location.resident_family_members || [];
     const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
-    const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || userHasKey;
-    if (homeResidents.length === 0 && npcResidents.length === 0) {
+    // Also consider resident_character_ids on the location itself (covers NPC/external characters
+    // assigned as residents that are not in the current user's characters list)
+    const hasAssignedResidents = (location.resident_character_ids || []).length > 0;
+    const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || hasAssignedResidents || userHasKey;
+    if (homeResidents.length === 0 && npcResidents.length === 0 && !hasAssignedResidents) {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
     return {
