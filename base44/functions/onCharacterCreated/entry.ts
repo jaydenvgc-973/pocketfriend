@@ -16,6 +16,37 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, skipped: true, reason: 'Not an active character' });
     }
 
+    // ── AUTO-LINK HOME LOCATION ───────────────────────────────────────────────
+    // If the character has a current_home_location_id set, ensure the LocationReference
+    // lists them as a resident AND the character fields are fully populated.
+    try {
+      const homeId = character.current_home_location_id;
+      if (homeId) {
+        const home = await base44.asServiceRole.entities.LocationReference.get(homeId);
+        if (home) {
+          // Ensure character is in resident lists
+          const residentIds = Array.from(new Set([...(home.resident_character_ids || []), character.id]));
+          const residentNames = Array.from(new Set([...(home.resident_character_names || []), character.name]));
+          await base44.asServiceRole.entities.LocationReference.update(homeId, {
+            resident_character_ids: residentIds,
+            resident_character_names: residentNames,
+          });
+          // Ensure character's resolved presence fields are set
+          await base44.asServiceRole.entities.Character.update(character.id, {
+            location_status: 'home',
+            resolved_current_location_id: homeId,
+            resolved_current_location_name: home.name,
+            resolved_location_type: 'home',
+            resolved_presence_status: 'home',
+          });
+          console.log(`[onCharacterCreated] Auto-linked ${character.name} to home: ${home.name}`);
+        }
+      }
+    } catch (homeLinkErr) {
+      console.error('[onCharacterCreated] Failed to auto-link home location:', homeLinkErr.message);
+      // Non-fatal — character still created
+    }
+
     // Charge VGC Mobile immediately
     try {
       // Fetch or create CharacterFinancial
