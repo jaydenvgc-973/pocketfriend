@@ -40,6 +40,11 @@ Deno.serve(async (req) => {
     for (const char of userCharacters) {
       if (char.occupation_location_id) charLinkedLocationIds.add(char.occupation_location_id);
       if (char.education_location_id) charLinkedLocationIds.add(char.education_location_id);
+      // Include home and current resolved locations
+      if (char.current_home_location_id) charLinkedLocationIds.add(char.current_home_location_id);
+      if (char.resolved_current_location_id) charLinkedLocationIds.add(char.resolved_current_location_id);
+      if (char.current_work_location_id) charLinkedLocationIds.add(char.current_work_location_id);
+      if (char.current_school_location_id) charLinkedLocationIds.add(char.current_school_location_id);
       if (char.additional_occupation_locations) {
         for (const loc of char.additional_occupation_locations) {
           if (loc.location_id) charLinkedLocationIds.add(loc.location_id);
