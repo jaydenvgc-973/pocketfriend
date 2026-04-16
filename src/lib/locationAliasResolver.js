@@ -9,7 +9,50 @@
  *   4. → UNRESOLVED → trigger popup
  *
  * This is the single source of truth for "did this phrase mean a real place?"
+ *
+ * STRICT GATE: A phrase must be spatially meaningful — not just grammatically extractable —
+ * before it can enter any location logic. Time phrases, idioms, comparison phrases, and
+ * abstract expressions are forbidden from location resolution unless the user explicitly named a place.
  */
+
+// ── TEMPORAL PHRASES — must never enter location resolution ────────────────
+// These may contain "at", "in", "on", "time", but refer to timing, not places.
+const TEMPORAL_PHRASES = new Set([
+  "same time", "this time", "next time", "last time", "that time", "any time",
+  "all the time", "at the same time", "at that time", "at this time", "at once",
+  "on time", "in time", "right on time", "one more time", "every time",
+  "for now", "right now", "just now", "by now", "until now", "from now",
+  "at this point", "at that point", "at some point", "by this point",
+  "in a moment", "in the moment", "at the moment", "for a moment", "just a moment",
+  "in a second", "one second", "give me a sec", "in a bit", "in a while",
+  "after a while", "for a while", "in a minute", "just a minute",
+]);
+
+// ── NON-SPATIAL IDIOMS AND ABSTRACT PHRASES — never locations ──────────────
+const NON_SPATIAL_PHRASES = new Set([
+  "in my head", "in my mind", "on my mind", "out of my mind", "in my heart",
+  "in sync", "in tune", "on beat", "off beat", "in rhythm", "in motion",
+  "in line", "out of line", "in order", "out of order", "in place", "out of place",
+  "in general", "in theory", "in practice", "in reality", "in fact", "in truth",
+  "in the way", "out of the way", "in the mix", "in the zone", "out of pocket",
+  "on the same page", "on point", "off track", "on track", "in check",
+  "at once", "all at once", "at will", "at best", "at worst", "at least",
+  "on my own", "on their own", "by myself", "by themselves",
+  "out loud", "out of nowhere", "out of context", "in context",
+  "in a row", "in sequence", "in order", "in turn", "in kind",
+  "this part", "that part", "the part", "this section", "that section",
+  "this move", "that move", "the move", "this step", "that step",
+  "for real", "for sure", "for good", "for free", "for once",
+  "no way", "in no way", "either way", "any way", "that way", "this way",
+]);
+
+// ── TIMING / CHOREOGRAPHY / ACTIVITY CONTEXT WORDS ─────────────────────────
+// If the extracted "phrase" is one of these standalone, it's not a place.
+const TIMING_CONTEXT_WORDS = new Set([
+  "time", "beat", "count", "moment", "second", "minute", "hour",
+  "motion", "move", "step", "turn", "part", "section", "sequence",
+  "pace", "tempo", "rhythm", "timing", "sync", "cue",
+]);
 
 // Phrases that are too vague to imply a specific place — skip resolution
 const VAGUE_PHRASES = [
@@ -28,6 +71,87 @@ const PLACE_REFERENCE_PATTERNS = [
   /\buncle['']?s\b/i,
   /\baunt['']?s\b/i,
 ];
+
+/**
+ * STRICT PLACE-LIKELIHOOD GATE
+ *
+ * Returns { isPlace: bool, reason: string, score: number }
+ * 
+ * A phrase must pass this gate before entering ANY location resolution logic.
+ * Score: 0.0 (definitely not a place) → 1.0 (definitely a place).
+ * Threshold to proceed: score >= 0.6
+ */
+export function assessPlaceLikelihood(phrase, sentenceContext = '') {
+  const lower = phrase.toLowerCase().trim();
+  const contextLower = (sentenceContext || '').toLowerCase();
+
+  // ── Hard rejections ────────────────────────────────────────────────────────
+
+  // 1. Exact temporal phrase match
+  if (TEMPORAL_PHRASES.has(lower)) {
+    return { isPlace: false, score: 0.0, reason: `temporal phrase, not a spatial location reference` };
+  }
+
+  // 2. Exact non-spatial idiom match
+  if (NON_SPATIAL_PHRASES.has(lower)) {
+    return { isPlace: false, score: 0.0, reason: `idiomatic/abstract phrase, not a location` };
+  }
+
+  // 3. Single word that is a timing/activity word, not a place noun
+  const words = lower.split(/\s+/);
+  if (words.length === 1 && TIMING_CONTEXT_WORDS.has(words[0])) {
+    return { isPlace: false, score: 0.0, reason: `timing or activity word, not a place noun` };
+  }
+
+  // 4. Phrase contains "time" and is 2 words or fewer — almost never a place
+  if (lower.includes('time') && words.length <= 3) {
+    return { isPlace: false, score: 0.05, reason: `short phrase containing "time" — classified as temporal` };
+  }
+
+  // 5. Phrase ends in "time", "beat", "move", "step", "sync", "motion", "moment"
+  const lastWord = words[words.length - 1];
+  if (['time', 'beat', 'move', 'step', 'sync', 'motion', 'moment', 'pace', 'tempo', 'count', 'cue'].includes(lastWord)) {
+    return { isPlace: false, score: 0.05, reason: `phrase ends with temporal/activity word "${lastWord}"` };
+  }
+
+  // 6. Context suggests choreography, dance, music, or timing language
+  const timingContextPattern = /\b(choreograph|timing|rhythm|count|sync|beat|tempo|dance|move|sequence|step|cue|rehearse|practice|run.through|blocking)\b/i;
+  if (timingContextPattern.test(contextLower) && lower.split(/\s+/).length <= 3) {
+    return { isPlace: false, score: 0.1, reason: `short phrase in timing/choreography context — not spatial` };
+  }
+
+  // ── Positive signals ───────────────────────────────────────────────────────
+
+  // 7. Contains a strong place-category keyword
+  const placeKeywords = /\b(studio|studio|gym|bar|club|church|office|hospital|clinic|school|campus|court|venue|stage|backstage|mall|salon|shop|warehouse|lab|rooftop|gallery|dressing room|green room|rehearsal space|lounge|store|restaurant|cafe|diner|arena|stadium)\b/i;
+  if (placeKeywords.test(lower)) {
+    return { isPlace: true, score: 0.9, reason: `contains place-category keyword` };
+  }
+
+  // 8. Possessive place references ("grandma's house", "Chris's place", "Anderson's Bar")
+  if (/\b\w+'s\s+(house|place|home|apartment|spot|bar|studio|office|gym)\b/i.test(lower)) {
+    return { isPlace: true, score: 0.95, reason: `possessive place reference` };
+  }
+
+  // 9. "home" as destination (not "at home" in general)
+  if (/\b(heading home|going home|on my way home|back home|head home)\b/i.test(contextLower)) {
+    return { isPlace: true, score: 0.9, reason: `home destination phrase in context` };
+  }
+
+  // 10. Preceded by strong spatial verbs in the full sentence
+  const spatialVerbPattern = /\b(i'm at|i am at|i'm in|i am in|i'm heading to|headed to|going to|just arrived at|just got to|pulled up to|leaving for|at the|in the|inside the)\s+/i;
+  if (spatialVerbPattern.test(contextLower) && contextLower.includes(lower)) {
+    return { isPlace: true, score: 0.85, reason: `preceded by spatial verb in sentence context` };
+  }
+
+  // 11. Multi-word phrase with no timing words — moderate confidence
+  if (words.length >= 2 && !TIMING_CONTEXT_WORDS.has(lastWord) && !lower.includes('time')) {
+    return { isPlace: true, score: 0.55, reason: `multi-word phrase, no temporal signals` };
+  }
+
+  // Default — single generic word, low confidence
+  return { isPlace: false, score: 0.3, reason: `insufficient spatial signals to classify as a location` };
+}
 
 // Category keywords → likely location categories for soft matching
 const CATEGORY_HINTS = {
@@ -67,6 +191,9 @@ export function normalizePhrase(phrase) {
 /**
  * Detect if a message contains a specific place reference.
  * Returns { detected: bool, phrase: string, normalized: string } or null
+ *
+ * All candidates are run through assessPlaceLikelihood() before being returned.
+ * Only phrases scoring >= 0.6 are treated as locations.
  */
 export function detectPlaceReference(messageContent) {
   if (!messageContent) return null;
@@ -86,6 +213,15 @@ export function detectPlaceReference(messageContent) {
       raw = raw.replace(/^(i'm at|i am at|heading to|going to|at the|at my|currently at|just got to|at)\s+/i, '').trim();
       const normalized = normalizePhrase(raw);
       if (normalized.length < 2) continue;
+
+      // ── STRICT PLACE-LIKELIHOOD GATE ──────────────────────────────────────
+      // Pass the full sentence as context so temporal/choreography signals can be detected.
+      const gate = assessPlaceLikelihood(normalized, messageContent);
+      if (process?.env?.DEBUG_LOCATION || typeof console !== 'undefined') {
+        console.log(`[LOCATION_GATE] phrase="${normalized}" | score=${gate.score.toFixed(2)} | isPlace=${gate.isPlace} | reason="${gate.reason}"`);
+      }
+      if (!gate.isPlace || gate.score < 0.6) continue; // rejected — not a location
+
       return { detected: true, phrase: raw, normalized };
     }
   }
