@@ -217,9 +217,7 @@ export function detectPlaceReference(messageContent) {
       // ── STRICT PLACE-LIKELIHOOD GATE ──────────────────────────────────────
       // Pass the full sentence as context so temporal/choreography signals can be detected.
       const gate = assessPlaceLikelihood(normalized, messageContent);
-      if (process?.env?.DEBUG_LOCATION || typeof console !== 'undefined') {
-        console.log(`[LOCATION_GATE] phrase="${normalized}" | score=${gate.score.toFixed(2)} | isPlace=${gate.isPlace} | reason="${gate.reason}"`);
-      }
+      console.log(`[LOCATION_GATE] phrase="${normalized}" | score=${gate.score.toFixed(2)} | isPlace=${gate.isPlace} | reason="${gate.reason}"`);
       if (!gate.isPlace || gate.score < 0.6) continue; // rejected — not a location
 
       return { detected: true, phrase: raw, normalized };
