@@ -1709,6 +1709,7 @@ Reply with ONLY the single emoji or the word "none".`,
         health_status: character.health_status,
         current_activity: character.current_activity,
         personality_summary: character.personality_summary,
+        fictional_relationships: (character.fictional_relationships || []).map(r => ({ person_name: r.person_name, related_character_id: r.related_character_id, relationship_type: r.relationship_type })),
       },
     }).catch(() => {});
 

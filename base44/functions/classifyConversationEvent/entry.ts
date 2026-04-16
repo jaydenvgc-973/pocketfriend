@@ -106,6 +106,13 @@ Deno.serve(async (req) => {
       .map(m => `${m.sender_type === 'user' ? 'User' : characterName}: ${m.content || '(image)'}`)
       .join('\n');
 
+    // Build a brief relationship context from the character's known people
+    const knownPeople = (characterState.fictional_relationships || [])
+      .map(r => r.person_name)
+      .filter(Boolean)
+      .slice(0, 20);
+    const knownPeopleStr = knownPeople.length > 0 ? knownPeople.join(', ') : 'none listed';
+
     const prompt = `You are analyzing a conversation turn between a user and a fictional character named ${characterName}. Detect if any meaningful life events occurred — positive OR negative.
 
 CHARACTER STATE:
@@ -113,6 +120,7 @@ CHARACTER STATE:
 - Health status: ${characterState.health_status || 'healthy'}
 - Current activity: ${characterState.current_activity || 'none'}
 - Personality: ${characterState.personality_summary || 'not specified'}
+- People ${characterName} personally knows: ${knownPeopleStr}
 
 RECENT HISTORY:
 ${historyContext || '(start of conversation)'}
@@ -129,6 +137,15 @@ RULES:
 2. A single turn can have multiple events
 3. Most turns are normal chat — return empty array if nothing meaningful happened
 4. Negative events need clear evidence, not just vague mentions
+
+STRICT GRIEF RULE — READ CAREFULLY:
+grief_event must ONLY be assigned if ALL of the following are true:
+  a) The deceased person is listed in ${characterName}'s known people above, OR there is clear prior story context establishing a meaningful personal relationship
+  b) ${characterName} directly expressed sadness, shock, mourning, or loss in their reply
+  c) The death has direct personal significance to ${characterName} — not just awareness of it
+If a death is mentioned but ${characterName} did not personally know the deceased, do NOT assign grief_event.
+Instead use: emotional_exchange (if ${characterName} offered support), supportive_event (if they comforted the user), or no event at all.
+Hearing about a stranger's death, death discussed in passing, or another person grieving nearby does NOT qualify as ${characterName}'s grief_event.
 
 Return JSON:
 {
@@ -173,7 +190,26 @@ If nothing meaningful happened, return: { "events": [] }`;
       },
     });
 
-    const events = result?.events || [];
+    let events = result?.events || [];
+
+    // Post-filter: enforce grief gate — remove grief_event if the character has no known
+    // relationship to the deceased mentioned in the conversation
+    events = events.filter(event => {
+      if (event.event_type !== 'grief_event') return true;
+      // Allow grief only if characterState has fictional_relationships that could link to the deceased
+      // We check: does the character have any known people that might be deceased based on description keywords?
+      const desc = (event.description + ' ' + event.title + ' ' + (event.emotional_impact || '')).toLowerCase();
+      const known = (characterState.fictional_relationships || []).map(r => (r.person_name || '').toLowerCase());
+      const deathKeywords = ['died', 'death', 'passed away', 'passed on', 'funeral', 'deceased', 'lost their', 'lost his', 'lost her'];
+      // Extract what name might be referenced
+      const hasPersonalConnection = known.some(name => name.length > 2 && desc.includes(name));
+      if (!hasPersonalConnection) {
+        console.log(`[classifyConversationEvent] GRIEF BLOCKED for ${characterName}: no known relationship to deceased. Event: "${event.title}"`);
+        return false;
+      }
+      return true;
+    });
+
     const audit_log = [];
 
     // Pre-fetch data needed for all events
