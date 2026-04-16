@@ -212,6 +212,7 @@ export default function Scene() {
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   const isAdmin = currentUser?.role === 'admin';
+  const isVGCTowers = location?.name === 'VGC Towers';
 
   // VALID PRESENCE STATES that indicate real physical presence
   const VALID_PRESENCE_STATES = new Set(['home', 'social_visit', 'work', 'school', 'hospital', 'supervised', null, undefined, '']);
@@ -230,11 +231,17 @@ export default function Scene() {
   };
 
   // Active characters home at a home location
+  // VGC Towers: residents live here but did NOT travel with the user — treat as "who's here" only
   const homeResidents = isHomeLocation
     ? characters.filter(c => c.current_home_location_id === location.id)
     : [];
-  const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
-  const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
+  // For VGC Towers, suppress auto-presence — residents are selectable but not auto-shown
+  const homeResidentsPresent = isVGCTowers
+    ? []
+    : homeResidents.filter(c => isCharacterHome(c, locationMap));
+  const homeResidentsAway = isVGCTowers
+    ? []
+    : homeResidents.filter(c => !isCharacterHome(c, locationMap));
 
   // Family NPCs for home scenes.
   // A family NPC is "present" if their current_location_id is unset (default = home) or === this location.
@@ -544,8 +551,6 @@ export default function Scene() {
   const traveledWithChars = broughtCharacters; // strictly from characterIds URL param
 
   // Build the full scene roster maintaining semantic separation
-  const isVGCTowers = location?.name === 'VGC Towers';
-
   const allSceneChars = [
     // Section 1: Traveled-with companions (explicit selection only)
     ...traveledWithChars,
