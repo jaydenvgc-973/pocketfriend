@@ -340,13 +340,49 @@ export default function Scene() {
   const allPossibleNpcs = (() => {
     const npcs = [];
 
-    // Home: show family members explicitly listed as residents of THIS location
+    // Home: build resident NPC list with correct hierarchy:
+    // 1. Fictitious NPC Character entities (highest priority)
+    // 2. Real Character residents
+    // 3. NPC family members (resident_family_members)
     if (isHomeLocation) {
+      // FIRST: fictional NPC Character records (vgcDistributedNpcs / Character entities)
+      vgcDistributedNpcs.forEach(n => {
+        if (!npcs.find(x => x.id === n.id)) {
+          npcs.push({
+            id: n.id,
+            name: n.name,
+            role: n.character_type === 'family_npc' ? 'Family' : 'Resident',
+            isNpc: true,
+            npcType: 'resident',
+            avatar_url: n.avatar_url || null,
+            personality_summary: n.personality_summary,
+            emotional_state: n.emotional_state,
+          });
+        }
+      });
+
+      // SECOND: real Character entities living here
+      homeResidents.forEach(c => {
+        if (!npcs.find(x => x.id === c.id) && !characterIds.includes(c.id)) {
+          npcs.push({
+            id: c.id,
+            name: c.name,
+            role: 'Resident',
+            isNpc: false,
+            npcType: 'resident',
+            avatar_url: c.avatar_url || null,
+            personality_summary: c.personality_summary,
+            emotional_state: c.emotional_state,
+          });
+        }
+      });
+
+      // THIRD: NPC family members from resident_family_members (lowest priority)
       (location.resident_family_members || []).forEach(fm => {
         if (!fm.name) return;
-        // Skip if already represented by a real Character entity
-        const alreadyInScene = characters.find(c => c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
-        if (alreadyInScene) return;
+        // Skip if already represented by a real Character entity above
+        const alreadyAdded = npcs.find(x => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
+        if (alreadyAdded) return;
         const sourceChar = fm.source_character_id
           ? characters.find(c => c.id === fm.source_character_id)
           : homeResidents.find(c =>
@@ -364,38 +400,6 @@ export default function Scene() {
           npcType: "resident",
           avatar_url: avatarUrl,
         });
-      });
-
-      // Add fictional NPC Character records that live at this home (e.g. VGC Towers distributed NPCs)
-      vgcDistributedNpcs.forEach(n => {
-        if (!npcs.find(x => x.id === n.id)) {
-          npcs.push({
-            id: n.id,
-            name: n.name,
-            role: n.character_type === 'family_npc' ? 'Family' : 'Resident',
-            isNpc: true,
-            npcType: 'resident',
-            avatar_url: n.avatar_url || null,
-            personality_summary: n.personality_summary,
-            emotional_state: n.emotional_state,
-          });
-        }
-      });
-
-      // Also add homeResidents (real Character entities living here) as selectable
-      homeResidents.forEach(c => {
-        if (!npcs.find(x => x.id === c.id) && !characterIds.includes(c.id)) {
-          npcs.push({
-            id: c.id,
-            name: c.name,
-            role: 'Resident',
-            isNpc: false,
-            npcType: 'resident',
-            avatar_url: c.avatar_url || null,
-            personality_summary: c.personality_summary,
-            emotional_state: c.emotional_state,
-          });
-        }
       });
     }
 
@@ -873,14 +877,18 @@ export default function Scene() {
 
       const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
       const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
-      const zoneImages = currentZone?.image_urls || [];
 
-      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic, warm, authentic atmosphere.`;
+      // Collect ALL zone images across all zones, active zone first
+      const allZoneImagesHome = locationZones.flatMap(z => z.image_urls || []);
+      const activeZoneImagesHome = currentZone?.image_urls || [];
+      const allZoneFirstHome = [...activeZoneImagesHome, ...allZoneImagesHome.filter(u => !activeZoneImagesHome.includes(u))];
 
-      // Collect all available avatar/photo references — character avatars + NPC family photos
+      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic, warm, authentic atmosphere. IMPORTANT: Use the reference images provided to accurately reproduce the interior design, architecture, and decor of this specific location.`;
+
+      // Prioritize zone images first, then avatars
+      const zoneRefs = allZoneFirstHome.slice(0, 3);
       const residentAvatars = physicallyPresentChars.map(c => c.avatar_url).filter(Boolean);
-      const zoneRefs = zoneImages.slice(0, 1);
-      const refs = [...residentAvatars, ...npcFamilyPresentAvatars, ...zoneRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
+      const refs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : []), ...residentAvatars, ...npcFamilyPresentAvatars].slice(0, 4);
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
@@ -928,9 +936,11 @@ export default function Scene() {
         prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
       }
 
-      // Prioritize active zone images first, then fall back to firstImage
-      const zoneRefs = activeZoneImages.slice(0, 2);
-      const nonHomeRefs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : []), ...allSceneAvatars].slice(0, 4);
+      // Collect ALL zone images across all zones for this location, prioritizing active zone first
+      const allZoneImages = locationZones.flatMap(z => z.image_urls || []);
+      const activeZoneFirst = [...activeZoneImages, ...allZoneImages.filter(u => !activeZoneImages.includes(u))];
+      const zoneRefs = activeZoneFirst.slice(0, 3);
+      const nonHomeRefs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : [])].slice(0, 4);
 
       try {
         const result = await base44.integrations.Core.GenerateImage({
