@@ -323,6 +323,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         manualLocationId: selectedLocation?.id || null,
         manualZoneId: selectedZone || null,
         includesUser: userIncluded,
+        isCreativeGeneration: true, // media grid = user-directed creative, not presence-based scene
         userAppearanceData: userIncluded ? {
           appearance_notes: userChar?.appearance_notes || '',
           age_range: userChar?.age_range || '',

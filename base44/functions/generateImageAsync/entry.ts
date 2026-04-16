@@ -566,7 +566,8 @@ Deno.serve(async (req) => {
       characterName, userWorldName, subjectType, characterId,
       manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode,
       userAppearanceData, includesUser,
-      liveLocationContext // authoritative location truth string from buildLiveLocationContext()
+      liveLocationContext, // authoritative location truth string from buildLiveLocationContext()
+      isCreativeGeneration // true = media grid / user-directed creative; false/absent = presence-based scene
     } = await req.json();
 
     if (!messageId || !prompt) {
@@ -577,6 +578,25 @@ Deno.serve(async (req) => {
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // IMAGE MODE BRANCHING — master decision tree
+    // Every image request is classified BEFORE any location logic runs.
+    //
+    // MODES:
+    //   presence_scene   — represents where the character currently is
+    //                      → must obey live location truth (built / real-world / rabbit hole)
+    //                      → home fallback BANNED unless character is actually home
+    //
+    //   creative         — user-directed from media grid, prompt, or concept
+    //                      → must NOT be blocked by unresolved location
+    //                      → location used only if user explicitly selected one
+    //
+    // The flag `isCreativeGeneration` is passed by the media grid caller.
+    // Chat-based scene images (no flag) default to presence_scene.
+    // ══════════════════════════════════════════════════════════════════════════
+    const imageMode = isCreativeGeneration === true ? 'creative' : 'presence_scene';
+    console.log(`[IMAGE_MODE] mode="${imageMode}" | manualLocationId=${manualLocationId || 'none'} | isCreativeGeneration=${isCreativeGeneration}`);
 
     // ── PARSE SUBJECT TYPE ──────────────────────────────────────────────────
     let resolvedSubjectType = subjectType || "character";
@@ -642,10 +662,34 @@ Deno.serve(async (req) => {
 
     if (resolvedSubjectType !== "user") {
       try {
+        // ══════════════════════════════════════════════════════════════════════
+        // LOCATION RESOLUTION BRANCHING
+        //
+        // CREATIVE MODE: only resolve if the user explicitly passed a manualLocationId.
+        //   → skip all presence-based logic
+        //   → skip rabbit hole detection
+        //   → skip home enforcement
+        //   → generate from prompt alone if no location selected
+        //
+        // PRESENCE SCENE MODE: full truth chain
+        //   1. rabbit hole → context-true AI-generated scene, NO home fallback
+        //   2. manual location override → built or real-world reference imagery
+        //   3. live presence gate → authoritative location from character state
+        //   4. unresolved → text-based parse against saved locations
+        //   5. home with no images → residential text lock (never a venue fallback)
+        // ══════════════════════════════════════════════════════════════════════
+
+        if (imageMode === 'creative' && !manualLocationId) {
+          // Creative generation with no explicit location selected — skip all location logic.
+          // The prompt is the entire source of truth. No presence enforcement. No home fallback.
+          console.log(`[LOCATION] 🎨 CREATIVE MODE — no location selected. Generating from prompt only.`);
+          // locationImages, locationNote, resolvedLocationName, resolvedZoneName remain empty — intentional.
+        } else {
+
         // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
         // If the character is in a rabbit hole, we MUST use the rabbit hole context.
         // Saved location imagery is FORBIDDEN. Home fallback is BANNED.
-        // Activity from the message narrows the environment type.
+        // Rabbit hole images are context-true but creatively synthesized (original AI scene, not retrieval).
         const charForRabbitCheck = characterId
           ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
           : null;
@@ -722,13 +766,22 @@ Deno.serve(async (req) => {
           locationNote = `
 
 ════════════════════════════════════════════════════════════
-RABBIT HOLE LOCATION LOCK — CRITICAL — HIGHEST PRIORITY
+RABBIT HOLE LOCATION — CONTEXT-TRUE, CREATIVELY GENERATED
 ════════════════════════════════════════════════════════════
 The character's current location is: "${rhLabel}"
-This is an OFF-SCREEN location that is NOT a saved location in the app.
-It is the character's ACTIVE REAL CURRENT LOCATION.
+This is an OFF-SCREEN location (rabbit hole) — not a saved location with reference images.
+Generate an ORIGINAL, CINEMATIC, context-accurate scene for this environment type.
 
 MANDATORY ENVIRONMENT: ${envDesc}
+
+GENERATION APPROACH — GUIDED WORLDBUILDING:
+This is NOT a photo retrieval. This is NOT a room-lock render.
+You have creative freedom to synthesize a believable, visually rich environment that:
+  • Matches the place type (${matchedType?.type || 'general off-screen location'})
+  • Reflects the character's current activity
+  • Feels like an original photograph of a real place of this type
+  • Has authentic props, layout, lighting, and atmosphere consistent with this environment
+  • Reads clearly as: "this is clearly where the character is right now"
 
 ABSOLUTE BANS — ZERO EXCEPTIONS:
 ${exclusions}
@@ -736,12 +789,18 @@ ${exclusions}
 ⛔ DO NOT use any saved location imagery (especially home/residential).
 ⛔ DO NOT fall back to bedroom, apartment, or home interior under any circumstances.
 ⛔ The character is NOT home. They are at "${rhLabel}".
+⛔ DO NOT reuse unrelated saved residential imagery.
+⛔ DO NOT generate a generic room with no connection to the place type.
 
-Generate a GENERIC but ACCURATE environment for this space type.
-If this is a dance studio: open floor, mirrors, speakers, rehearsal lighting.
-If this is a music studio: console, acoustic panels, booth glass, monitors.
-If this is a production set: cameras, lighting rigs, crew equipment.
-The environment must feel real, functional, and consistent with the activity.
+ENVIRONMENT EXAMPLES FOR THIS TYPE:
+dance studio → sprung hardwood, full-length mirrors, rehearsal lighting, speaker stands
+music studio → mixing console, acoustic foam, booth glass, studio monitors, dim ambient light
+production set → camera rigs, c-stands, lighting gels, crew equipment, set dressing
+backstage → vanity mirrors with bulbs, costume racks, green room sofa, show atmosphere
+gym/training → weight racks, rubber floors, athletic equipment, high-ceiling training space
+office/meeting → desk environment, whiteboards, conference table, professional atmosphere
+
+The environment must feel real, functional, and original.
 ════════════════════════════════════════════════════════════`;
 
           locationImages = []; // No saved location images for rabbit holes
@@ -884,6 +943,7 @@ The environment must feel real, functional, and consistent with the activity.
             }
           }
         }
+        } // end else (non-creative / presence-scene branch)
       } catch (err) {
         console.error('[LOCATION] Resolution failed:', err.message);
       }
@@ -990,9 +1050,9 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
     }
 
     // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
-    // Always inject the live location context into the final prompt as a hard override.
-    // This is the last line of defense against stale context leaking into image generation.
-    if (liveLocationContext && liveLocationContext.trim()) {
+    // Inject authoritative live location context for presence-based scenes ONLY.
+    // Creative generations skip this — the user's prompt is the source of truth there.
+    if (imageMode === 'presence_scene' && liveLocationContext && liveLocationContext.trim()) {
       enhancedPrompt = `${liveLocationContext}\n\n${enhancedPrompt}`;
       console.log(`[LOCATION_SYNC] Live location context injected into prompt.`);
     }
