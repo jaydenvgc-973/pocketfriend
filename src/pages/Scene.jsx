@@ -1542,7 +1542,7 @@ Return JSON:
         </button>
       </div>
 
-      {/* Character presence strip */}
+      {/* Character presence strip — only shows characters the user explicitly traveled with or selected */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0">
         {/* User */}
         <div className="flex flex-col items-center gap-1">
@@ -1554,7 +1554,9 @@ Return JSON:
           </div>
           <span className="text-[9px] text-primary font-medium">{displayName}</span>
         </div>
-        {displayCharacters.map(char => (
+        {[...traveledWithChars, ...selectedNpcs, ...extraNpcs]
+          .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
+          .map(char => (
           <div key={char.id} className="flex flex-col items-center gap-1">
             <div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">
               {char.avatar_url
@@ -1565,7 +1567,7 @@ Return JSON:
             <span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span>
           </div>
         ))}
-        {displayCharacters.length === 0 && (
+        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && (
           <span className="text-xs text-muted-foreground ml-1">You're here alone</span>
         )}
       </div>
