@@ -805,13 +805,22 @@ export default function Scene() {
 
     const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
 
+    // Resolve zone images — these are ALWAYS the authoritative environment reference
+    const currentZoneForAction = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
+    const allZoneImagesFlat = locationZones.flatMap(z => z.image_urls || []);
+    const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
+    const authoratativeEnvRefs = activeZoneImagesForAction.length > 0
+      ? [...activeZoneImagesForAction, ...allZoneImagesFlat.filter(u => !activeZoneImagesForAction.includes(u))].slice(0, 4)
+      : allZoneImagesFlat.length > 0
+        ? allZoneImagesFlat.slice(0, 4)
+        : (firstImage ? [firstImage] : []);
+
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
       const isGlobal = location.location_type === "global";
 
       if (!isGlobal) {
-        // Character-specific or residential: enforce strict no-strangers rule
         const physicallyPresent = [
           ...homeResidentsPresent,
           ...broughtCharacters,
@@ -822,10 +831,13 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
         }
       }
+      if (authoratativeEnvRefs.length > 0) {
+        finalPrompt += ` ENVIRONMENT AUTHORITY: The reference images define this location's exact room — reproduce the same layout, furniture, colors, and architecture. Do not invent a new environment.`;
+      }
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
-          existing_image_urls: firstImage ? [firstImage] : undefined,
+          existing_image_urls: authoratativeEnvRefs.length > 0 ? authoratativeEnvRefs : undefined,
         });
         setSceneImage(result.url);
       } catch { setSceneImage(firstImage); }
@@ -833,122 +845,66 @@ export default function Scene() {
       return;
     }
 
+    // authoratativeEnvRefs already computed above — zone images are the ONLY environment source
+    const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
+    const isGlobal = location.location_type === "global";
+    const envNote = authoratativeEnvRefs.length > 0
+      ? `CRITICAL ENVIRONMENT RULE: The reference images are the AUTHORITATIVE source for this location's environment. Reproduce the EXACT room shown — same layout, furniture, wall colors, lighting, and architecture. Do NOT invent a new room. Characters exist INSIDE this environment; they do NOT define it.`
+      : "";
+
     let prompt;
     if (isHomeLocation) {
-      // All people physically present in the house right now:
-      // - brought characters (user's companions who traveled here)
-      // - active residents who are currently home (not away)
-      // - NPC family members who live here (from familyMemberNpcsPresent)
-      // - NPC residents listed on the location record (resident_family_members)
       const physicallyPresentChars = [
         ...homeResidentsPresent,
         ...broughtCharacters,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-
-      // Gather NPC family members present (with their photo_url as avatar references)
-      const npcFamilyPresentAvatars = familyMemberNpcsPresent
-        .map(fm => {
-          // Look up photo_url from the source character's family_members array
-          let photoUrl = null;
-          for (const char of homeResidents) {
-            const match = char.family_members?.find(
-              m => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
-            );
-            if (match?.photo_url) { photoUrl = match.photo_url; break; }
-          }
-          return photoUrl;
-        })
-        .filter(Boolean);
 
       const allPresentNames = [
         ...physicallyPresentChars.map(c => c.name),
         ...familyMemberNpcsPresent.map(fm => fm.name),
       ];
 
-      // Build strict people instruction
-      const strictPeopleRule = allPresentNames.length > 0
-        ? `STRICT RULE: The ONLY people who may appear in this image are: ${allPresentNames.join(", ")}. Their appearance must match their reference photos exactly — do NOT alter body type, weight, age, or ethnicity. Generate NO other people, NO strangers, NO background figures, NO silhouettes of anyone else.`
-        : `STRICT RULE: This space is completely empty. NO people, NO silhouettes, NO background figures — only the room itself.`;
+      // Cap at 3 visible characters to preserve environment fidelity
+      const visibleNames = allPresentNames.slice(0, 3);
 
-      // Always depict the home as lived-in and furnished when residents exist
+      const strictPeopleRule = visibleNames.length > 0
+        ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
+        : `STRICT RULE: This space is completely empty — no people, no silhouettes, only the room.`;
+
       const atmosphereSuffix = (location.resident_family_members?.length > 0 || homeResidents.length > 0)
-        ? " The home is clearly lived-in: warm, fully furnished, and decorated with personal belongings."
+        ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
-      const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
-      const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
-
-      // Collect ALL zone images across all zones, active zone first
-      const allZoneImagesHome = locationZones.flatMap(z => z.image_urls || []);
-      const activeZoneImagesHome = currentZone?.image_urls || [];
-      const allZoneFirstHome = [...activeZoneImagesHome, ...allZoneImagesHome.filter(u => !activeZoneImagesHome.includes(u))];
-
-      // LOCATION IMAGE AUTHORITY: zone photos define the environment exclusively
-      const envRefs = allZoneFirstHome.length > 0
-        ? allZoneFirstHome.slice(0, 4)
-        : (firstImage ? [firstImage] : []);
-
-      const envNote = envRefs.length > 0
-        ? `CRITICAL ENVIRONMENT RULE: The reference images provided are the AUTHORITATIVE source for this room's environment. You MUST reproduce the exact room shown — same layout, same furniture, same wall colors, same lighting, same architectural structure. Do NOT invent a new room. Do NOT use character appearance to influence the environment. The room must look like the reference images from a believable angle.`
-        : `Generate a realistic interior for ${location.name}.`;
-
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting. ${strictPeopleRule}${outfitSuffix} Photorealistic. Characters exist INSIDE this environment — they do not define it.`;
-
-      const refs = envRefs;
-      try {
-        const result = await base44.integrations.Core.GenerateImage({
-          prompt,
-          existing_image_urls: refs.length > 0 ? refs : undefined,
-        });
-        setSceneImage(result.url);
-      } catch { setSceneImage(firstImage); }
-      finally { setIsGeneratingImage(false); }
-      return;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic.`;
     } else {
-      const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
-      const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
-      const isGlobal = location.location_type === "global";
-      const activeZoneImages = currentZone?.image_urls || [];
-
-      // LOCATION IMAGE AUTHORITY: zone photos are the ONLY environment source — no avatars
-      const allZoneImages = locationZones.flatMap(z => z.image_urls || []);
-      const activeZoneFirst = [...activeZoneImages, ...allZoneImages.filter(u => !activeZoneImages.includes(u))];
-      const nonHomeRefs = activeZoneFirst.length > 0
-        ? activeZoneFirst.slice(0, 4)
-        : (firstImage ? [firstImage] : []);
-
-      const envLock = nonHomeRefs.length > 0
-        ? `CRITICAL ENVIRONMENT RULE: The reference images provided define the AUTHORITATIVE environment for this scene. You MUST reproduce the exact space shown — same layout, furniture, lighting, colors, and architecture. Do NOT invent a new space. Do NOT use any character data to influence the environment. Characters are placed INSIDE this space; they do not define it.`
-        : '';
-
-      // Cap to 3 characters max to prevent environment distortion
-      const cappedPresent = [...broughtCharacters, ...(selectedNpcIds ? selectedNpcs : [])].slice(0, 3);
-
       if (isGlobal) {
-        const charNames = cappedPresent.map(c => c.name).join(", ");
-        const peopleDesc = cappedPresent.length > 0 ? `with ${charNames} among other patrons` : "with other people around";
-        prompt = `${envLock} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${outfitSuffix} Photorealistic.`;
+        const charNames = sceneCharacters.slice(0, 3).map(c => c.name).join(", ");
+        const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${outfitSuffix} Photorealistic.`;
       } else {
-        let peopleDesc;
-        if (cappedPresent.length > 0) {
-          peopleDesc = `Only these specific people are present: ${cappedPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`;
-        } else {
-          peopleDesc = `The space is completely empty. No people at all.`;
-        }
-        prompt = `${envLock} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic. CRITICAL: Do NOT generate random people.`;
-      }
+        const physicallyPresent = [
+          ...broughtCharacters,
+          ...(selectedNpcIds ? selectedNpcs : []),
+        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i).slice(0, 3); // cap at 3
 
-      try {
-        const result = await base44.integrations.Core.GenerateImage({
-          prompt,
-          existing_image_urls: nonHomeRefs.length > 0 ? nonHomeRefs : undefined,
-        });
-        setSceneImage(result.url);
-      } catch {
-        setSceneImage(firstImage);
-      } finally {
-        setIsGeneratingImage(false);
+        const peopleDesc = physicallyPresent.length > 0
+          ? `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`
+          : `The space is completely empty — no silhouettes, no background figures, nobody.`;
+
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic.`;
       }
+    }
+
+    try {
+      const result = await base44.integrations.Core.GenerateImage({
+        prompt,
+        existing_image_urls: authoratativeEnvRefs.length > 0 ? authoratativeEnvRefs : undefined,
+      });
+      setSceneImage(result.url);
+    } catch {
+      setSceneImage(firstImage);
+    } finally {
+      setIsGeneratingImage(false);
     }
   };
 
