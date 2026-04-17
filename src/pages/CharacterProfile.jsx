@@ -766,7 +766,7 @@ export default function CharacterProfile() {
             {(!character.fictional_relationships?.some(r => {
               if (!r.related_character_id) return false;
               const lc = allCharacters.find(c => c.id === r.related_character_id);
-              if (!lc) return true;
+              if (!lc) return false;
               return lc.character_type === "active";
             })) && (
               <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
@@ -776,7 +776,7 @@ export default function CharacterProfile() {
                 .filter(r => {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!lc) return true;
+                  if (!lc) return false;
                   return lc.character_type === "active";
                 })
                 .map((rel, idx) => {
@@ -848,7 +848,7 @@ export default function CharacterProfile() {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return true;
+              if (!r.related_character_id) return false;
               const linked = allCharacters.find(c => c.id === r.related_character_id);
               return linked && (linked.character_type === "npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
             });
