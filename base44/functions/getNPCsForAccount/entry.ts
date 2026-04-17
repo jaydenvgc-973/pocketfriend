@@ -23,10 +23,12 @@ Deno.serve(async (req) => {
     }
 
     // Use asServiceRole to bypass RLS — filter strictly by owner_email
+    // Include all NPC-like types (npc, family_npc, background, promoted_npc)
+    // to catch NPCs regardless of how they were created or tagged
     const npcs = await base44.asServiceRole.entities.Character.filter(
       {
         owner_email: user.email,
-        character_type: { $in: ['npc', 'family_npc'] },
+        character_type: { $in: ['npc', 'family_npc', 'background', 'promoted_npc'] },
         status: { $in: ['active', null] },
       },
       '-created_date',
