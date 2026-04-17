@@ -171,8 +171,14 @@ export default function Scene() {
   const sendNarrationRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
-  const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
+  const { data: settingsList = [] } = useQuery({
+    queryKey: ["userSettings", currentUser?.email],
+    queryFn: () => base44.entities.UserSettings.filter({ created_by: currentUser.email }),
+    enabled: !!currentUser?.email,
+  });
   const settings = settingsList[0] || {};
+  // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
+  // Never derive it from shared/cached settings that may belong to another account.
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const { data: locationsData = [] } = useQuery({
