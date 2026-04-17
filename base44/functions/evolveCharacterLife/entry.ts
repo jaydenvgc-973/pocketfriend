@@ -685,16 +685,23 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         // Silent fail — orchestrator is optional
       }
 
+      // ── PROTECTED FIELDS: These must NEVER be overwritten by simulation.
+      // owner_email, owner_user_id, created_by_role are set manually by the user
+      // and are the authoritative source of record ownership. Any update payload
+      // that omits them is safe — partial updates do not clear existing field values.
+      // We explicitly DO NOT include them here to prevent any accidental overwrite.
       await base44.asServiceRole.entities.Character.update(character.id, {
         // fictional_relationships: intentionally omitted — user-controlled only
         // transient_encounters: intentionally omitted — user-controlled only
+        // owner_email: intentionally omitted — NEVER overwrite
+        // owner_user_id: intentionally omitted — NEVER overwrite
+        // created_by_role: intentionally omitted — NEVER overwrite
         current_life_event: lifeEvent || '',
         daily_micro_narration: update.daily_micro_narration || '',
         emotional_state: update.emotional_state || character.emotional_state || 'calm',
         health_status: update.health_status || character.health_status || 'healthy',
         health_habits: update.health_habits || character.health_habits || '',
         life_last_updated: new Date().toISOString(),
-        departed_characters: [],
         ...postShiftUpdate,
       });
 
