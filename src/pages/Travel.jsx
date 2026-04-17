@@ -376,70 +376,75 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // STRICT: Only show characters whose actual home IS this specific location
+                    // Show characters whose home IS this location AND who are actually home
                     characters.forEach(c => {
                       if (c.current_home_location_id !== selectedLocation.id) return;
                       const presence = getCharacterLivePresence(c, locationMap);
                       const isActuallyHome = presence.status === 'home' || 
                         presence.status === 'sleeping' || 
                         presence.status === 'napping';
+                      const status = presence.status === 'sleeping' ? 'sleeping' : 
+                                    presence.status === 'napping' ? 'napping' :
+                                    isActuallyHome ? 'home' : 'away';
+                      const color = isActuallyHome ? 'text-green-400' : presence.status === 'at_work' ? 'text-blue-400' : 'text-muted-foreground/50';
                       lines.push({ 
                         name: c.name, 
-                        status: isActuallyHome ? "home" : "away", 
-                        color: isActuallyHome ? "text-green-400" : "text-muted-foreground/50" 
+                        status, 
+                        color
                       });
                     });
 
-                    // Show family NPCs who are listed as residents of THIS location
-                    // BUT: only if they are not currently at work (work takes priority)
+                    // Family NPCs: only show if they're at this home
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
-                      if (lines.find(l => l.name === locFamilyMember.name)) return; // already listed as character
-                      
-                      // Check if any character source has this NPC and if they're at work
-                      let npcIsAtWork = false;
+                      if (lines.find(l => l.name === locFamilyMember.name)) return;
+                      let isAtWork = false;
                       for (const char of characters) {
-                        const rel = char.fictional_relationships?.find(
-                          r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase()
-                        );
-                        if (rel && rel.current_location_id && rel.current_location_id !== selectedLocation.id) {
-                          npcIsAtWork = true; // NPC is at a different location (work location)
+                        const rel = char.fictional_relationships?.find(r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase());
+                        if (rel?.current_location_id && rel.current_location_id !== selectedLocation.id) {
+                          isAtWork = true;
                           break;
                         }
                       }
-                      
-                      // Only show as home if they are not at work
-                      if (!npcIsAtWork) {
+                      if (!isAtWork) {
                         lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
                       }
                     });
                   } else {
+                    // Non-home venues: show characters who are ACTUALLY at this location
                     characters.forEach(c => {
                       const presence = getCharacterLivePresence(c, locationMap);
-                      if (c.resolved_current_location_id === selectedLocation.id) {
-                        const statusLabel = presence.status === 'at_work' ? 'working' : 'here';
+                      // Only show if they're CURRENTLY at this venue
+                      if (presence.status === 'in_transit' && c.traveling_to_location_id === selectedLocation.id) {
+                        // Character is traveling TO this location
+                        lines.push({ name: c.name, status: 'traveling here', color: 'text-amber-400' });
+                      } else if (c.resolved_current_location_id === selectedLocation.id) {
+                        // Character is AT this location
+                        const status = presence.status === 'at_work' ? 'working' :
+                                      presence.status === 'at_school' ? 'at school' :
+                                      presence.status === 'sleeping' ? 'sleeping' :
+                                      presence.status === 'napping' ? 'napping' :
+                                      'here';
+                        const color = presence.status === 'at_work' ? 'text-blue-500' :
+                                     presence.status === 'sleeping' ? 'text-slate-400' :
+                                     presence.status === 'napping' ? 'text-slate-400' :
+                                     'text-blue-400';
                         if (!lines.find(l => l.name === c.name)) {
-                          lines.push({ name: c.name, status: statusLabel, color: statusLabel === 'working' ? 'text-blue-500' : 'text-blue-400' });
+                          lines.push({ name: c.name, status, color });
                         }
                       }
                     });
 
+                    // NPCs traveling to this venue
                     characters.forEach(char => {
-                       if (!char.fictional_relationships) return;
-                       char.fictional_relationships.forEach(rel => {
-                         if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
-                           // STRICT RULE: Block NPCs from appearing at homes they don't live in
-                           if (isHome) {
-                             const livesHere = selectedLocation.resident_family_members?.some(
-                               fm => fm.name?.trim().toLowerCase() === rel.person_name.trim().toLowerCase()
-                             );
-                             if (!livesHere) return; // Don't show—they don't live here
-                           }
-                           if (!lines.find(l => l.name === rel.person_name)) {
-                             lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
-                           }
-                         }
-                       });
-                     });
+                      if (!char.fictional_relationships) return;
+                      char.fictional_relationships.forEach(rel => {
+                        if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
+                          if (!lines.find(l => l.name === rel.person_name)) {
+                            lines.push({ name: rel.person_name, status: "here", color: "text-amber-400" });
+                          }
+                        }
+                      });
+                    });
                   }
 
                   const presenceSummary = lines.length > 0 ? (
