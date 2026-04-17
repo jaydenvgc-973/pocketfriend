@@ -18,8 +18,11 @@ export default function ManageCharacterList() {
   });
 
   const { data: userSettings = {} } = useQuery({
-    queryKey: ['userSettings'],
-    queryFn: () => base44.entities.UserSettings.list().then(list => list[0] || {}),
+    queryKey: ['userSettings', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserSettings.filter({ created_by: currentUser.email }).then(list => list[0] || {})
+      : {},
+    enabled: !!currentUser?.email,
   });
 
   const isAdmin = currentUser?.email === ADMIN_EMAIL;
