@@ -532,10 +532,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Characters: {characters.length}</p>
               {characters.map(c => {
-                const resolved = resolveCharacterLocation(c, locationMap);
+                const presence = getCharacterLivePresence(c, locationMap);
                 return (
                   <div key={c.id} className="text-[10px] text-muted-foreground/70">
-                    • {c.name}: {resolved.resolved_current_location_name || "unknown"}
+                    • {c.name}: {presence.label || "unknown"}
                   </div>
                 );
               })}
