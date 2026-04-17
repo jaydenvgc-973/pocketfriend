@@ -46,6 +46,7 @@ import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
+import { buildDrinkContextBlock } from "@/lib/drinkDecisionEngine";
 
 const voiceCache = new Map();
 const activeAudioRef = new Map();
