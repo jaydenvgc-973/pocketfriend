@@ -38,8 +38,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     return createFailedResolution('No character provided');
   }
 
-  // LAYER 0: If resolved_current_location_id is already set, it IS the authoritative truth
-  // (pre-computed by backend, takes precedence over all schedule calculations)
+  // LAYER 0: resolved_current_location_id + resolved_presence_status = authoritative DB state
+  // If BOTH are set, trust them completely — no schedule inference needed
   if (character.resolved_current_location_id && character.resolved_presence_status) {
     const locId = character.resolved_current_location_id;
     const loc = locationMap[locId];
@@ -49,6 +49,47 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       resolved_location_type: character.resolved_location_type || 'visit',
       resolved_presence_status: character.resolved_presence_status,
       resolved_source_reason: character.resolved_source_reason || 'pre_computed',
+      resolved_zone: null,
+    };
+  }
+
+  // LAYER 0b: location_status field is the next most authoritative source
+  // 'home' → show home, 'at_location' → show resolved location, 'traveling' → show transit
+  if (character.location_status === 'home' || (!character.location_status && !character.resolved_current_location_id)) {
+    const homeId = character.current_home_location_id || character.home_location_id || null;
+    const homeLoc = homeId ? locationMap[homeId] : null;
+    return {
+      resolved_current_location_id: homeId,
+      resolved_current_location_name: homeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'home',
+      resolved_source_reason: 'location_status_home',
+      resolved_zone: null,
+    };
+  }
+
+  if (character.location_status === 'at_location' && character.resolved_current_location_id) {
+    const locId = character.resolved_current_location_id;
+    const loc = locationMap[locId];
+    return {
+      resolved_current_location_id: locId,
+      resolved_current_location_name: loc?.name || character.resolved_current_location_name || 'Unknown',
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: character.resolved_presence_status || 'visiting',
+      resolved_source_reason: 'location_status_at_location',
+      resolved_zone: null,
+    };
+  }
+
+  if (character.location_status === 'traveling') {
+    const destId = character.travel_destination_location_id || character.traveling_to_location_id;
+    const destLoc = destId ? locationMap[destId] : null;
+    return {
+      resolved_current_location_id: destId || null,
+      resolved_current_location_name: destLoc?.name || character.traveling_to_location_name || 'Traveling',
+      resolved_location_type: 'traveling',
+      resolved_presence_status: 'traveling',
+      resolved_source_reason: 'location_status_traveling',
       resolved_zone: null,
     };
   }
@@ -463,8 +504,12 @@ export function checkScheduleViolation(character, locationMap = {}, currentTime 
 export function getCharacterLivePresence(character, locationMap = {}) {
   if (!character) return { status: 'unknown', label: 'Unknown', sublabel: null, isTransit: false, isSleeping: false };
 
-  const loc = locationMap[character.resolved_current_location_id];
-  const locName = loc?.name || character.resolved_current_location_name || 'Home';
+  // Use resolved fields if set, otherwise fall back to location_status + home
+  const resolvedLocId = character.resolved_current_location_id;
+  const homeId = character.current_home_location_id || character.home_location_id;
+  const effectiveLocId = resolvedLocId || (character.location_status === 'home' ? homeId : resolvedLocId);
+  const loc = effectiveLocId ? locationMap[effectiveLocId] : null;
+  const locName = loc?.name || character.resolved_current_location_name || (character.location_status === 'home' ? 'Home' : 'Unknown');
 
   // ── PRIORITY 1: OVERRIDES ──────────────────────────────────────────────────
   const presenceStatus = character.resolved_presence_status || character.location_status;
