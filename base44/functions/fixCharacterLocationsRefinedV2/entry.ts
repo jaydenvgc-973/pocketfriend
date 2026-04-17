@@ -1,125 +1,146 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+/**
+ * fixCharacterLocationsRefinedV2
+ *
+ * SAFE DIAGNOSTIC ONLY — aligns with current system rules:
+ * - Uses asServiceRole for all queries
+ * - Scopes characters strictly to this user's account (owner_email OR created_by)
+ * - Scopes locations to this user's account OR shared (scope='shared')
+ * - Uses resolved_current_location_id (the authoritative field), not legacy current_location_id
+ * - NEVER writes location fields — reports only
+ * - NEVER changes schedules, character types, or sleep times
+ */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    
+
     if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const characters = await base44.entities.Character.filter({ created_by: user.email }, '-created_date', 100);
-    const locations = await base44.entities.LocationReference.list('-created_date', 200);
-    
-    const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
-    const fixes = [];
-    const unresolved = [];
+    // ── Fetch characters belonging to THIS user's account only ─────────────
+    const byCreatedBy = await base44.asServiceRole.entities.Character.filter(
+      { created_by: user.email, status: 'active' }, '-created_date', 200
+    );
+    const byOwnerEmail = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: user.email, status: 'active' }, '-created_date', 200
+    );
+    // Deduplicate
+    const charMap = {};
+    [...byCreatedBy, ...byOwnerEmail].forEach(c => { charMap[c.id] = c; });
+    const characters = Object.values(charMap);
 
-    // Generic categories to check
-    const genericCategories = {
-      gym: ['gym'],
-      bar: ['food_drink', 'social'],
-      restaurant: ['food_drink'],
-      club: ['social']
-    };
+    // ── Fetch locations visible to this user (owned + shared) ──────────────
+    const ownedLocations = await base44.asServiceRole.entities.LocationReference.filter(
+      { created_by: user.email }, '-created_date', 300
+    );
+    const sharedLocations = await base44.asServiceRole.entities.LocationReference.filter(
+      { scope: 'shared' }, '-created_date', 200
+    );
+    const allLocations = [...ownedLocations, ...sharedLocations];
+    const locationMap = {};
+    allLocations.forEach(l => { locationMap[l.id] = l; });
+
+    const issues = [];
+    const clean = [];
 
     for (const char of characters) {
-      if (char.status !== 'active') continue;
+      // Only check active characters (not NPCs without a presence)
+      const isActiveChar = char.character_type === 'active' || char.character_type === 'promoted_npc';
 
-      const activity = (char.current_activity || '').toLowerCase().trim();
-      const currentLoc = char.current_location_id ? locationMap[char.current_location_id] : null;
+      // ── Check 1: resolved_current_location_id points to a deleted/missing location ──
+      if (char.resolved_current_location_id && !locationMap[char.resolved_current_location_id]) {
+        issues.push({
+          characterId: char.id,
+          characterName: char.name,
+          type: 'stale_resolved_location',
+          field: 'resolved_current_location_id',
+          staleId: char.resolved_current_location_id,
+          message: `resolved_current_location_id "${char.resolved_current_location_id}" points to a location that no longer exists or is not visible to this account. Re-assign from character profile.`,
+        });
+        continue;
+      }
 
-      // Check if current location is generic
-      const isCurrentLocGeneric = currentLoc && currentLoc.is_default_generic === true;
+      // ── Check 2: current_home_location_id stale ──────────────────────────
+      if (char.current_home_location_id && !locationMap[char.current_home_location_id]) {
+        issues.push({
+          characterId: char.id,
+          characterName: char.name,
+          type: 'stale_home_location',
+          field: 'current_home_location_id',
+          staleId: char.current_home_location_id,
+          message: `current_home_location_id "${char.current_home_location_id}" points to a deleted or inaccessible location. Re-assign home from character profile.`,
+        });
+      }
 
-      // 1. If character is at a generic location, attempt to find specific match
-      if (isCurrentLocGeneric && currentLoc) {
-        const applicableCategories = Object.entries(genericCategories)
-          .filter(([keyword]) => activity.includes(keyword))
-          .flatMap(([, cats]) => cats);
+      // ── Check 3: current_work_location_id stale ──────────────────────────
+      if (char.current_work_location_id && !locationMap[char.current_work_location_id]) {
+        issues.push({
+          characterId: char.id,
+          characterName: char.name,
+          type: 'stale_work_location',
+          field: 'current_work_location_id',
+          staleId: char.current_work_location_id,
+          message: `current_work_location_id "${char.current_work_location_id}" points to a deleted or inaccessible location. Re-assign work location from character profile.`,
+        });
+      }
 
-        let specificLoc = null;
-        if (applicableCategories.length > 0) {
-          specificLoc = locations.find(l => 
-            !l.is_default_generic && 
-            applicableCategories.includes(l.category) &&
-            l.id !== char.current_location_id
-          );
-        }
+      // ── Check 4: Active character has no home assigned ────────────────────
+      if (isActiveChar && !char.current_home_location_id) {
+        issues.push({
+          characterId: char.id,
+          characterName: char.name,
+          type: 'missing_home',
+          field: 'current_home_location_id',
+          message: `${char.name} has no home location assigned. Assign a home from the character profile.`,
+        });
+      }
 
-        if (specificLoc) {
-          // Found a specific location to upgrade to
-          await base44.entities.Character.update(char.id, { 
-            current_location_id: specificLoc.id 
-          });
-          fixes.push({
+      // ── Check 5: resolved_presence_status is stale/inconsistent ──────────
+      if (isActiveChar && char.resolved_presence_status === 'at_work' && !char.current_work_location_id) {
+        issues.push({
+          characterId: char.id,
+          characterName: char.name,
+          type: 'presence_work_no_location',
+          field: 'resolved_presence_status',
+          message: `${char.name} is marked as "at_work" but has no work location assigned — presence status may display incorrectly.`,
+        });
+      }
+
+      // ── Check 6: NPC ownership cross-account drift ────────────────────────
+      if ((char.character_type === 'npc' || char.character_type === 'family_npc')) {
+        const ownerEmail = char.owner_email || char.created_by;
+        if (ownerEmail && ownerEmail !== user.email) {
+          issues.push({
             characterId: char.id,
             characterName: char.name,
-            action: 'upgraded_from_generic',
-            fromLocation: currentLoc.name,
-            toLocation: specificLoc.name,
-            category: specificLoc.category
-          });
-        } else {
-          // No specific match found, flag as unresolved
-          unresolved.push({
-            characterId: char.id,
-            characterName: char.name,
-            issue: 'at_generic_location',
-            currentLocation: currentLoc.name,
-            activity: char.current_activity,
-            category: currentLoc.category
+            type: 'npc_ownership_drift',
+            field: 'owner_email',
+            message: `NPC "${char.name}" is owned by "${ownerEmail}" but appeared in this account's query — possible ownership drift. Review this NPC's owner_email and created_by fields.`,
           });
         }
       }
 
-      // 2. Check for "rabbit hole" locations in activity
-      // Look for specific place names that might not have LocationReferences
-      const realWorldPatterns = [
-        /(?:at|in|near)\s+([A-Z][a-zA-Z\s&'-]+(?:café|cafe|bar|pub|gym|restaurant|diner|lounge|club|park|mall|store|shop|office|bank|hospital|clinic|school))/gi,
-        /(?:visiting|going to|working at|studying at)\s+([A-Z][a-zA-Z\s&'-]+)/gi
-      ];
-
-      let foundRabbitHole = false;
-      for (const pattern of realWorldPatterns) {
-        const matches = activity.matchAll(pattern);
-        for (const match of matches) {
-          const placeName = match[1]?.trim();
-          if (placeName) {
-            // Check if this place exists as a LocationReference
-            const existingLoc = locations.find(l => 
-              l.name && l.name.toLowerCase().includes(placeName.toLowerCase())
-            );
-
-            if (!existingLoc && char.current_location_id) {
-              // This looks like a rabbit hole location
-              foundRabbitHole = true;
-              unresolved.push({
-                characterId: char.id,
-                characterName: char.name,
-                issue: 'rabbit_hole_location',
-                mentionedPlace: placeName,
-                activity: char.current_activity,
-                currentLocationId: char.current_location_id,
-                recommendation: `Create LocationReference for "${placeName}"`
-              });
-            }
-          }
-        }
+      // If no issues found for this character, mark as clean
+      const hasIssue = issues.some(i => i.characterId === char.id);
+      if (!hasIssue) {
+        clean.push({ characterId: char.id, characterName: char.name, status: 'ok' });
       }
     }
 
     return Response.json({
       summary: {
         totalCharacters: characters.length,
-        activeCharacters: characters.filter(c => c.status === 'active').length,
-        fixesApplied: fixes.length,
-        unresolvedIssues: unresolved.length
+        activeCharacters: characters.filter(c => c.character_type === 'active' || c.character_type === 'promoted_npc').length,
+        npcCharacters: characters.filter(c => c.character_type === 'npc' || c.character_type === 'family_npc').length,
+        issuesFound: issues.length,
+        cleanCharacters: clean.length,
       },
-      fixes,
-      unresolved,
-      nextSteps: unresolved.length > 0 ? 'Create specific LocationReferences for unresolved characters or assign them to existing locations manually.' : 'All character locations have been resolved to specific places.'
+      issues,
+      clean,
+      note: 'This function is read-only. No location fields, schedules, or character types were modified. Resolve issues manually via the character profile editor.',
     });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

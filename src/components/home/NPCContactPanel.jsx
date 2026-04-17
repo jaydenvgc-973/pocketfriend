@@ -16,14 +16,27 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
+  // Fetch NPCs by created_by AND owner_email separately, then deduplicate
+  // NPCs created via createFictionalRelationship use owner_email as the authoritative ownership field
   const { data: rawNpcCharacters = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const [byCreated, byOwner] = await Promise.all([
+        base44.entities.Character.filter({
           created_by: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc'] }
-        })
-      : [],
+          character_type: { $in: ['npc', 'family_npc'] },
+        }),
+        base44.entities.Character.filter({
+          owner_email: currentUser.email,
+          character_type: { $in: ['npc', 'family_npc'] },
+        }),
+      ]);
+      // Deduplicate by id — combine both result sets
+      const map = {};
+      [...byCreated, ...byOwner].forEach(c => { map[c.id] = c; });
+      return Object.values(map);
+    },
     enabled: !!currentUser?.email,
   });
 
@@ -64,15 +77,22 @@ export default function NPCContactPanel() {
     if (!currentUser?.email) return;
     setIsChecking(true);
     try {
-      // Fetch ALL characters on this account (only this user's, via created_by)
-      const allChars = await base44.entities.Character.filter({ created_by: currentUser.email });
-      // Find any that are clearly NPC-type but not yet tagged correctly
+      // Fetch ALL characters on this account via BOTH created_by AND owner_email, then deduplicate
+      const [byCreated, byOwner] = await Promise.all([
+        base44.entities.Character.filter({ created_by: currentUser.email }),
+        base44.entities.Character.filter({ owner_email: currentUser.email }),
+      ]);
+      const charMap = {};
+      [...byCreated, ...byOwner].forEach(c => { charMap[c.id] = c; });
+      const allChars = Object.values(charMap);
+
+      // Find any that are clearly NPC-type but not yet tagged correctly, belonging to this account
       const needsTagging = allChars.filter(c =>
         (c.character_type === 'npc' || c.character_type === 'family_npc' ||
          c.character_type === 'background' || (!c.character_type && !c.is_default && !c.is_active_character))
         && c.protected_active !== true
         && c.status !== 'deleted'
-        && c.created_by === currentUser.email
+        && (c.created_by === currentUser.email || c.owner_email === currentUser.email)
       );
       // Ensure they are tagged as npc so they show up in the list
       await Promise.all(
