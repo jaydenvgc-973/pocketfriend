@@ -27,8 +27,31 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
 
   const handleSleepViolation = onSleepViolation || (async () => {
     onCancel?.();
-    // Delete the message
+    // Delete the bad narrative
     await base44.entities.Message.delete(message.id).catch(() => {});
+    
+    // Generate a sleep-appropriate replacement narrative
+    try {
+      const sleepNarrative = await base44.integrations.Core.InvokeLLM({
+        prompt: `Generate a single short sentence describing a character sleeping. Do NOT describe any actions or activities. Instead, describe: the physical state of sleep, room atmosphere, a brief dream fragment, or sensory details. Examples: "The room is cool and quiet. She sleeps deeply.", "He drifts in and out of dreams, the blankets twisted around him.", "The faint hum of the AC. Somewhere in a dream, voices fade in and out."
+        
+Write ONLY the sentence. No quotes, no labels. Just a vivid, brief sleep observation.`,
+      });
+
+      // Create a replacement message with the same timestamp
+      await base44.entities.Message.create({
+        conversation_id: conversationId,
+        sender_type: 'character',
+        character_id: characterId,
+        content: sleepNarrative?.trim() || "The room is quiet. Sleep continues.",
+        is_narrative: true,
+        is_read: true,
+        timestamp: message.timestamp,
+      }).catch(() => {});
+    } catch (err) {
+      console.error('[Sleep Violation] Failed to generate replacement narrative:', err.message);
+    }
+
     // Log correction flag (fire-and-forget)
     base44.functions.invoke('logNarrativeCorrectionFlag', {
       messageId: message.id,
