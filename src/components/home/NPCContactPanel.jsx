@@ -40,8 +40,12 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Always exclude any character the user has marked as a real active character
-  const npcCharacters = rawNpcCharacters.filter(c => !c.protected_active);
+  // Strictly enforce account ownership — only show NPCs that belong to THIS account
+  // A character belongs to this account if created_by OR owner_email matches the current user
+  const npcCharacters = rawNpcCharacters.filter(c =>
+    !c.protected_active &&
+    (c.created_by === currentUser?.email || c.owner_email === currentUser?.email)
+  );
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
