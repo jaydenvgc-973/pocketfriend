@@ -16,36 +16,25 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Fetch NPCs by created_by AND owner_email separately, then deduplicate
-  // NPCs created via createFictionalRelationship use owner_email as the authoritative ownership field
-  const { data: rawNpcCharacters = [] } = useQuery({
+  // Fetch NPCs by owner_email ONLY — this is the authoritative ownership field for NPCs.
+  // created_by_id (the platform system field) can be wrong due to admin-session creation,
+  // so we NEVER filter by created_by for NPCs. owner_email is the source of truth.
+  const { data: npcCharacters = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const [byCreated, byOwner] = await Promise.all([
-        base44.entities.Character.filter({
-          created_by: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc'] },
-        }),
-        base44.entities.Character.filter({
-          owner_email: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc'] },
-        }),
-      ]);
-      // Deduplicate by id — combine both result sets
-      const map = {};
-      [...byCreated, ...byOwner].forEach(c => { map[c.id] = c; });
-      return Object.values(map);
+      const results = await base44.entities.Character.filter({
+        owner_email: currentUser.email,
+        character_type: { $in: ['npc', 'family_npc'] },
+      });
+      // Final guard: strictly enforce owner_email matches and exclude protected_active
+      return results.filter(c =>
+        c.owner_email === currentUser.email &&
+        !c.protected_active
+      );
     },
     enabled: !!currentUser?.email,
   });
-
-  // Strictly enforce account ownership — only show NPCs that belong to THIS account
-  // A character belongs to this account if created_by OR owner_email matches the current user
-  const npcCharacters = rawNpcCharacters.filter(c =>
-    !c.protected_active &&
-    (c.created_by === currentUser?.email || c.owner_email === currentUser?.email)
-  );
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -81,30 +70,20 @@ export default function NPCContactPanel() {
     if (!currentUser?.email) return;
     setIsChecking(true);
     try {
-      // Fetch ALL characters on this account via BOTH created_by AND owner_email, then deduplicate
-      const [byCreated, byOwner] = await Promise.all([
-        base44.entities.Character.filter({ created_by: currentUser.email }),
-        base44.entities.Character.filter({ owner_email: currentUser.email }),
-      ]);
-      const charMap = {};
-      [...byCreated, ...byOwner].forEach(c => { charMap[c.id] = c; });
-      const allChars = Object.values(charMap);
+      // ONLY query by owner_email — never by created_by, which can return cross-account NPCs
+      // due to the platform's created_by_id being set at creation time and not correctable.
+      const allChars = await base44.entities.Character.filter({ owner_email: currentUser.email });
 
-      // Find any that are clearly NPC-type but not yet tagged correctly, belonging to this account
+      // Find NPC-type characters that aren't tagged correctly — strictly scoped to this account
       const needsTagging = allChars.filter(c =>
-        (c.character_type === 'npc' || c.character_type === 'family_npc' ||
-         c.character_type === 'background' || (!c.character_type && !c.is_default && !c.is_active_character))
-        && c.protected_active !== true
-        && c.status !== 'deleted'
-        && (c.created_by === currentUser.email || c.owner_email === currentUser.email)
+        c.owner_email === currentUser.email &&
+        (c.character_type === 'background' || (!c.character_type && !c.is_default && !c.is_active_character)) &&
+        c.protected_active !== true &&
+        c.status !== 'deleted'
       );
-      // Ensure they are tagged as npc so they show up in the list
       await Promise.all(
-        needsTagging
-          .filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc')
-          .map(c => base44.entities.Character.update(c.id, { character_type: 'npc' }))
+        needsTagging.map(c => base44.entities.Character.update(c.id, { character_type: 'npc' }))
       );
-      // Refresh the NPC list
       queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.email] });
     } finally {
       setIsChecking(false);
