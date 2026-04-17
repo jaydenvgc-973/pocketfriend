@@ -38,6 +38,21 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     return createFailedResolution('No character provided');
   }
 
+  // LAYER 0: If resolved_current_location_id is already set, it IS the authoritative truth
+  // (pre-computed by backend, takes precedence over all schedule calculations)
+  if (character.resolved_current_location_id && character.resolved_presence_status) {
+    const locId = character.resolved_current_location_id;
+    const loc = locationMap[locId];
+    return {
+      resolved_current_location_id: locId,
+      resolved_current_location_name: loc?.name || character.resolved_current_location_name || 'Unknown',
+      resolved_location_type: character.resolved_location_type || 'visit',
+      resolved_presence_status: character.resolved_presence_status,
+      resolved_source_reason: character.resolved_source_reason || 'pre_computed',
+      resolved_zone: null,
+    };
+  }
+
   // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
   // Collect every location this character is linked to as a worker
   const allWorkLocIds = [];
