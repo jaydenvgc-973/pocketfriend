@@ -1024,10 +1024,15 @@ export default function Locations() {
       created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
     };
     if (editingLocationId) {
-      await base44.entities.LocationReference.update(editingLocationId, { ...formData, ...enrichedFields });
+      // On update: NEVER include owner_email or owner_user_id in the payload.
+      // Ownership is immutable — it was set at creation and must not be changed
+      // by edits, admin corrections, or any other operation.
+      const { owner_email, owner_user_id, created_by_role: _role, ...safeFormData } = formData;
+      await base44.entities.LocationReference.update(editingLocationId, { ...safeFormData, scope: enrichedFields.scope, location_type: enrichedFields.location_type });
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
+      // On create: stamp ownership from the authenticated user — never admin fallback.
       const enriched = {
         ...formData,
         ...enrichedFields,
@@ -1065,8 +1070,15 @@ export default function Locations() {
   const handleEdit = (location) => { setInlineEditId(location.id); setShowAddForm(false); };
 
   const handleDuplicate = async (location) => {
-    const { id, created_date, updated_date, created_by, ...rest } = location;
-    const duplicate = { ...rest, name: `${rest.name} (Copy)` };
+    const { id, created_date, updated_date, created_by, owner_email: _oe, owner_user_id: _oui, ...rest } = location;
+    // Re-stamp ownership from the current user — the duplicate belongs to whoever is duplicating it
+    const duplicate = {
+      ...rest,
+      name: `${rest.name} (Copy)`,
+      owner_email: currentUser?.email,
+      owner_user_id: currentUser?.id,
+      created_by_role: currentUser?.role || 'user',
+    };
     const created = await base44.entities.LocationReference.create(duplicate);
     setNewlyCreatedLocation({ id: created.id, name: duplicate.name, category: duplicate.category });
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });

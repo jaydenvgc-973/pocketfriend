@@ -72,12 +72,14 @@ Deno.serve(async (req) => {
         issues_found.push(`${char.name}: current_work_location_id "${char.current_work_location_id}" points to a deleted location. Reassign from character profile.`);
       }
 
-      // ── FIX 6: NPC ownership — NPC must be owned by the same account as its parent ──
-      // Detects NPCs created_by admin session instead of the correct user account.
-      if ((char.character_type === 'npc' || char.character_type === 'family_npc') && char.owner_email && char.created_by !== char.owner_email) {
-        // The owner_email is the authoritative source for NPCs. Update created_by to match.
-        updates.created_by = char.owner_email;
-        fixes_applied.push(`NPC "${char.name}": created_by (${char.created_by}) corrected to owner_email (${char.owner_email})`);
+      // ── FIX 6: NPC ownership integrity check (READ-ONLY REPORT) ──────────────
+      // CRITICAL RULE: Ownership fields (owner_email, owner_user_id, created_by_role)
+      // are IMMUTABLE once set. Admin corrections DO NOT transfer ownership.
+      // If an admin edits or fixes a character/NPC, they are NOT the new owner.
+      // These fields must ONLY be set at creation time by the creating user's session.
+      // This function NEVER modifies owner_email, owner_user_id, or created_by_role.
+      if ((char.character_type === 'npc' || char.character_type === 'family_npc') && !char.owner_email) {
+        issues_found.push(`NPC "${char.name}" (id: ${char.id}) has no owner_email set — this must be fixed at the source (createFictionalRelationship or character creation), not here.`);
       }
 
       if (Object.keys(updates).length > 0) {
