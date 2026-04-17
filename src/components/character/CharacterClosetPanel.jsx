@@ -3,8 +3,9 @@ import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Shirt, Plus, X, Star, Loader2, Wand2, Upload, Package,
-  Camera, ChevronDown, ChevronUp, Check, Archive, AlertTriangle
+  Camera, ChevronDown, ChevronUp, Check, Archive, AlertTriangle, Layers
 } from "lucide-react";
+import BuildOutfitFromItems from "@/components/closet/BuildOutfitFromItems";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -490,6 +491,7 @@ export default function CharacterClosetPanel({ character }) {
   const [tab, setTab] = useState("items");
   const [showAddOutfit, setShowAddOutfit] = useState(false);
   const [showAddItem, setShowAddItem] = useState(false);
+  const [showBuildOutfit, setShowBuildOutfit] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -592,9 +594,16 @@ export default function CharacterClosetPanel({ character }) {
             </button>
           )}
           {tab === "items" && (
-            <button onClick={() => { setShowAddItem(v => !v); setShowAddOutfit(false); }} className="flex items-center gap-1 text-xs text-primary font-medium hover:opacity-80 transition-opacity">
-              <Plus className="w-3.5 h-3.5" /> Add Item
-            </button>
+            <div className="flex items-center gap-2">
+              {ownedItems.length >= 2 && (
+                <button onClick={() => { setShowBuildOutfit(v => !v); setShowAddItem(false); }} className="flex items-center gap-1 text-xs text-emerald-400 font-medium hover:opacity-80 transition-opacity">
+                  <Layers className="w-3.5 h-3.5" /> Build Outfit
+                </button>
+              )}
+              <button onClick={() => { setShowAddItem(v => !v); setShowBuildOutfit(false); }} className="flex items-center gap-1 text-xs text-primary font-medium hover:opacity-80 transition-opacity">
+                <Plus className="w-3.5 h-3.5" /> Add Item
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -632,7 +641,15 @@ export default function CharacterClosetPanel({ character }) {
       {/* Items Tab */}
       {tab === "items" && (
         <div className="space-y-4">
-          {showAddItem && (
+          {showBuildOutfit && (
+            <BuildOutfitFromItems
+              ownedItems={ownedItems}
+              character={character}
+              onSave={async (outfit) => { await handleSaveOutfit(outfit); setShowBuildOutfit(false); setTab("outfits"); }}
+              onCancel={() => setShowBuildOutfit(false)}
+            />
+          )}
+          {showAddItem && !showBuildOutfit && (
             <AddItemForm character={character} onSave={handleSaveItem} onCancel={() => setShowAddItem(false)} />
           )}
           {itemsLoading ? (
