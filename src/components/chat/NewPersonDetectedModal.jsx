@@ -10,7 +10,7 @@ const RELATIONSHIP_TYPES = [
 
 export default function NewPersonDetectedModal({ people, characterId, characterName, onDone }) {
   const [pending, setPending] = useState(
-    people.map(p => ({ ...p, confirmed: false, dismissed: false, saving: false }))
+    people.map(p => ({ ...p, confirmed: false, dismissed: false, saving: false, error: null }))
   );
 
   const updatePerson = (index, changes) => {
@@ -19,7 +19,7 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
 
   const handleAdd = async (index) => {
     const person = pending[index];
-    updatePerson(index, { saving: true });
+    updatePerson(index, { saving: true, error: null });
     try {
       const res = await base44.functions.invoke("createFictionalRelationship", {
         characterId,
@@ -28,14 +28,14 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
         context: person.context,
       });
       if (res?.data?.success) {
-        updatePerson(index, { saving: false, confirmed: true });
+        updatePerson(index, { saving: false, confirmed: true, error: null });
       } else {
-        console.error("Failed to add person:", res?.data?.error || "Unknown error");
-        updatePerson(index, { saving: false });
+        const errorMsg = res?.data?.error || "Failed to add person";
+        updatePerson(index, { saving: false, error: errorMsg });
       }
     } catch (error) {
-      console.error("Error adding person:", error);
-      updatePerson(index, { saving: false });
+      const errorMsg = error?.message || "Network error while adding person";
+      updatePerson(index, { saving: false, error: errorMsg });
     }
   };
 
@@ -111,6 +111,12 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
                   </select>
                   <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
                 </div>
+
+                {person.error && (
+                  <div className="bg-destructive/10 border border-destructive/40 rounded-lg px-3 py-2">
+                    <p className="text-xs text-destructive font-medium">❌ Error: {person.error}</p>
+                  </div>
+                )}
 
                 <div className="flex gap-2">
                   <button
