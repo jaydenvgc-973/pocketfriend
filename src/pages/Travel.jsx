@@ -376,49 +376,65 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // Show characters whose home IS this location AND who are actually home
+                    // STRICT: Show characters whose home IS this location with their actual presence
                     characters.forEach(c => {
                       if (c.current_home_location_id !== selectedLocation.id) return;
                       const presence = getCharacterLivePresence(c, locationMap);
-                      const isActuallyHome = presence.status === 'home' || 
-                        presence.status === 'sleeping' || 
-                        presence.status === 'napping';
-                      const status = presence.status === 'sleeping' ? 'sleeping' : 
-                                    presence.status === 'napping' ? 'napping' :
-                                    isActuallyHome ? 'home' : 'away';
-                      const color = isActuallyHome ? 'text-green-400' : presence.status === 'at_work' ? 'text-blue-400' : 'text-muted-foreground/50';
-                      lines.push({ 
-                        name: c.name, 
-                        status, 
-                        color
-                      });
+
+                      // Determine status based on resolved presence
+                      let status, color;
+                      if (presence.status === 'in_transit' && c.traveling_to_location_id) {
+                        // Traveling to another location
+                        status = `traveling to ${locationMap[c.traveling_to_location_id]?.name || "elsewhere"}`;
+                        color = 'text-amber-400';
+                      } else if (presence.status === 'sleeping') {
+                        status = 'sleeping';
+                        color = 'text-slate-400';
+                      } else if (presence.status === 'napping') {
+                        status = 'napping';
+                        color = 'text-slate-400';
+                      } else if (presence.status === 'at_work') {
+                        status = `at work (${locationMap[c.resolved_current_location_id]?.name || "work"})`;
+                        color = 'text-blue-400';
+                      } else if (presence.status === 'at_school') {
+                        status = `at school (${locationMap[c.resolved_current_location_id]?.name || "school"})`;
+                        color = 'text-blue-400';
+                      } else {
+                        status = 'home';
+                        color = 'text-green-400';
+                      }
+
+                      lines.push({ name: c.name, status, color });
                     });
 
-                    // Family NPCs: only show if they're at this home
+                    // Family NPCs: show where they actually are
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
                       if (lines.find(l => l.name === locFamilyMember.name)) return;
-                      let isAtWork = false;
+                      let atWork = false;
+                      let workLoc = null;
                       for (const char of characters) {
                         const rel = char.fictional_relationships?.find(r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase());
                         if (rel?.current_location_id && rel.current_location_id !== selectedLocation.id) {
-                          isAtWork = true;
+                          atWork = true;
+                          workLoc = locationMap[rel.current_location_id]?.name || "work";
                           break;
                         }
                       }
-                      if (!isAtWork) {
-                        lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
-                      }
+                      const status = atWork ? `at work (${workLoc})` : 'home';
+                      const color = atWork ? 'text-blue-400' : 'text-muted-foreground';
+                      lines.push({ name: locFamilyMember.name, status, color });
                     });
                   } else {
-                    // Non-home venues: show characters who are ACTUALLY at this location
+                    // Non-home venues: show ONLY characters actually at THIS location
                     characters.forEach(c => {
                       const presence = getCharacterLivePresence(c, locationMap);
-                      // Only show if they're CURRENTLY at this venue
+
+                      // Show if traveling TO this location
                       if (presence.status === 'in_transit' && c.traveling_to_location_id === selectedLocation.id) {
-                        // Character is traveling TO this location
                         lines.push({ name: c.name, status: 'traveling here', color: 'text-amber-400' });
-                      } else if (c.resolved_current_location_id === selectedLocation.id) {
-                        // Character is AT this location
+                      } 
+                      // Show if currently AT this location
+                      else if (c.resolved_current_location_id === selectedLocation.id) {
                         const status = presence.status === 'at_work' ? 'working' :
                                       presence.status === 'at_school' ? 'at school' :
                                       presence.status === 'sleeping' ? 'sleeping' :
@@ -434,7 +450,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       }
                     });
 
-                    // NPCs traveling to this venue
+                    // NPCs at this venue
                     characters.forEach(char => {
                       if (!char.fictional_relationships) return;
                       char.fictional_relationships.forEach(rel => {
