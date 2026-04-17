@@ -1085,13 +1085,6 @@ Return JSON:
 
       const responseList = responses?.responses || [];
       for (const resp of responseList) {
-        // IDENTITY PROTECTION: Never render an AI response under the current user's name.
-        // If the LLM returns a speaker that matches the user's own display name or identity, block it.
-        const isUserImpersonation =
-          resp.character_name?.trim().toLowerCase() === displayName?.trim().toLowerCase() ||
-          resp.character_name?.trim().toLowerCase() === currentUser?.full_name?.trim().toLowerCase();
-        if (isUserImpersonation) continue;
-
         const char = sceneCharacters.find(c => c.name === resp.character_name);
         const msg = {
           id: Date.now().toString() + resp.character_name,
