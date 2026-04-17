@@ -7,16 +7,17 @@ import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
   { id: 'mark_read', label: 'Mark messages as read', description: 'Reset all unread notification counts to 0' },
-  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
+  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name, type, or core fields' },
   { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
-  { id: 'location_display', label: 'Location not showing', description: 'Check city/state display' },
+  { id: 'location_display', label: 'Location not showing', description: 'Check city/state and resolved location display' },
   { id: 'availability_display', label: 'Availability incorrect', description: 'Verify all activity types: work, school, gym, bar, home, hospital, prayer, etc.' },
   { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
-  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect and fix characters sharing threads, memories, or routing' },
-  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing on home page and fix created_by' },
+  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect characters sharing threads or cross-routing' },
+  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing — checks owner_email, character_type, and exclude flags' },
+  { id: 'ownership_audit', label: '🔑 Ownership integrity audit', description: 'Verify owner_email and created_by are correct on all characters and NPCs. Flags any misrouted records.' },
   { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
-  { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
-  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values that are out of sync with backend.' },
+  { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists.' },
+  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems for UI values out of sync with backend.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
