@@ -29,12 +29,13 @@ Deno.serve(async (req) => {
       const updates = {};
 
       // ── FIX 1: Missing owner_email ──────────────────────────────────────────
-      // Every character must have owner_email set. For NPCs it should match the parent
-      // character's account, not the admin session.
-      if (!char.owner_email && char.created_by) {
-        updates.owner_email = char.created_by;
-        fixes_applied.push(`${char.name}: owner_email missing — set to created_by (${char.created_by})`);
-      }
+      // STRICT RULE: NEVER overwrite an existing owner_email — it was explicitly set by a user.
+      // Only fill it in if it is completely absent AND created_by is a real user email (not admin session).
+      // Admin session emails (like murqart@gmail.com used as app builder) must NOT be auto-assigned
+      // to characters belonging to other accounts.
+      // This fix is intentionally disabled to prevent cross-account contamination.
+      // owner_email must only be set explicitly by the user or by createFictionalRelationship.
+      // if (!char.owner_email && char.created_by) { ... } — DISABLED
 
       // ── FIX 2: Missing emotional_state default ──────────────────────────────
       if (!char.emotional_state) {
