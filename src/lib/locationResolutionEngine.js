@@ -95,17 +95,21 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
-  // Collect every location this character is linked to as a worker
-  const allWorkLocIds = [];
-  if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
-  if (character.current_work_location_id) allWorkLocIds.push(character.current_work_location_id);
-  if (character.additional_occupation_locations?.length > 0) {
-    character.additional_occupation_locations.forEach(loc => {
-      if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
-        allWorkLocIds.push(loc.location_id);
-      }
-    });
-  }
+  // CHILD GUARDRAIL: Minors cannot work. Ever.
+  const isMinor = character.age && character.age < 14;
+  const allWorkLocIds = !isMinor ? (() => {
+    const ids = [];
+    if (character.occupation_location_id) ids.push(character.occupation_location_id);
+    if (character.current_work_location_id) ids.push(character.current_work_location_id);
+    if (character.additional_occupation_locations?.length > 0) {
+      character.additional_occupation_locations.forEach(loc => {
+        if (loc.location_id && !ids.includes(loc.location_id)) {
+          ids.push(loc.location_id);
+        }
+      });
+    }
+    return ids;
+  })() : [];
 
   // For each work location, check if character is on shift right now
   for (const workLocId of allWorkLocIds) {
