@@ -20,13 +20,23 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
   const handleAdd = async (index) => {
     const person = pending[index];
     updatePerson(index, { saving: true });
-    await base44.functions.invoke("createFictionalRelationship", {
-      characterId,
-      person_name: person.name,
-      relationship_type: person.relationship_type,
-      context: person.context,
-    });
-    updatePerson(index, { saving: false, confirmed: true });
+    try {
+      const res = await base44.functions.invoke("createFictionalRelationship", {
+        characterId,
+        person_name: person.name,
+        relationship_type: person.relationship_type,
+        context: person.context,
+      });
+      if (res?.data?.success) {
+        updatePerson(index, { saving: false, confirmed: true });
+      } else {
+        console.error("Failed to add person:", res?.data?.error || "Unknown error");
+        updatePerson(index, { saving: false });
+      }
+    } catch (error) {
+      console.error("Error adding person:", error);
+      updatePerson(index, { saving: false });
+    }
   };
 
   const handleDismiss = (index) => {
