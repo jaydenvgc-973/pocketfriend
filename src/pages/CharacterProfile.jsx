@@ -848,12 +848,9 @@ export default function CharacterProfile() {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              // Include NPC records OR relationships that are NOT primary character types (Romance, Friend, etc. that aren't family)
               if (!r.related_character_id) return true;
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              // Only show "active" and "promoted_npc" in main character list, not in NPC/world section
-              if (linked && (linked.character_type === "active" || linked.character_type === "promoted_npc")) return false;
-              return true; // Show family_npc, npc, background, or unlinked entries
+              return linked && (linked.character_type === "npc" || linked.character_type === "family_npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -871,8 +868,7 @@ export default function CharacterProfile() {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  if (linked && (linked.character_type === "active" || linked.character_type === "promoted_npc")) return false;
-                  return true;
+                  return linked && (linked.character_type === "npc" || linked.character_type === "family_npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {
