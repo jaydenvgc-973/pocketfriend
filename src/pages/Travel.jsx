@@ -17,7 +17,7 @@ import RealLocationModal from "@/components/travel/RealLocationModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
+import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -376,43 +376,28 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    const charactersAtHome = characters.filter(c => {
-                      const resolved = resolveCharacterLocation(c, locationMap);
-                      return resolved.resolved_current_location_id === selectedLocation.id;
-                    });
-                    charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
-
-                    characters.filter(c =>
-                      c.character_type === 'family_npc' &&
-                      c.status === 'active' &&
-                      (selectedLocation.resident_character_ids || []).includes(c.id)
-                    ).forEach(c => {
-                      if (!lines.find(l => l.name === c.name)) {
-                        lines.push({ name: c.name, status: 'home', color: 'text-muted-foreground' });
+                    characters.forEach(c => {
+                      const presence = getCharacterLivePresence(c, locationMap);
+                      if (presence.status === 'home' || presence.sublabel?.includes(selectedLocation.name)) {
+                        lines.push({ name: c.name, status: "home", color: "text-green-400" });
                       }
                     });
 
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
-                      if (!locFamilyMember.name) return;
-                      let npcLocationId = null;
-                      for (const char of characters) {
-                        const rel = (char.fictional_relationships || []).find(
-                          r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase() && !r.related_character_id
-                        );
-                        if (rel) { npcLocationId = rel.current_location_id || null; break; }
-                      }
-                      if (!npcLocationId || npcLocationId === selectedLocation.id) {
-                        if (!lines.find(l => l.name === locFamilyMember.name)) {
-                          lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
-                        }
+                      if (!lines.find(l => l.name === locFamilyMember.name)) {
+                        lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
                       }
                     });
                   } else {
-                    const currentlyAtLocation = characters.filter(c => {
-                      const resolved = resolveCharacterLocation(c, locationMap);
-                      return resolved.resolved_current_location_id === selectedLocation.id;
+                    characters.forEach(c => {
+                      const presence = getCharacterLivePresence(c, locationMap);
+                      if (c.resolved_current_location_id === selectedLocation.id) {
+                        const statusLabel = presence.status === 'at_work' ? 'working' : 'here';
+                        if (!lines.find(l => l.name === c.name)) {
+                          lines.push({ name: c.name, status: statusLabel, color: statusLabel === 'working' ? 'text-blue-500' : 'text-blue-400' });
+                        }
+                      }
                     });
-                    currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
                     characters.forEach(char => {
                       if (!char.fictional_relationships) return;
@@ -423,27 +408,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                           }
                         }
                       });
-                    });
-
-                    const now = new Date();
-                    const dayOfWeek = now.getDay();
-                    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-                    // Only show characters who are actually scheduled to work right now
-                    // Characters not scheduled at this location at this time should not appear as "here"
-                    characters.forEach(c => {
-                       const resolvedC = resolveCharacterLocation(c, locationMap);
-                       const workerShifts = selectedLocation.worker_shifts || {};
-                       const shift = workerShifts[c.id];
-                       const isScheduledNow = shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end;
-
-                       // If character is shown as "here" but NOT scheduled to work now, remove them
-                       const idx = lines.findIndex(l => l.name === c.name);
-                       if (idx >= 0 && !isScheduledNow) {
-                         lines.splice(idx, 1);
-                       } else if (idx >= 0 && isScheduledNow) {
-                         lines[idx].status = "working";
-                       }
                     });
                   }
 
