@@ -77,7 +77,6 @@ export default function Chat() {
   const [showGameLauncher, setShowGameLauncher] = useState(false);
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
-  const [newPeopleDetected, setNewPeopleDetected] = useState(null); // [{name, relationship_type, context}]
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
