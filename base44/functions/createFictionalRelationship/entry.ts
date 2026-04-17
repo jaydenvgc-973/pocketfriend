@@ -72,12 +72,16 @@ Deno.serve(async (req) => {
       if (existingNPC) {
         related_character_id = existingNPC.id;
       } else {
+        // ── OWNERSHIP RULE: The NPC belongs to the account of the CHARACTER being updated,
+        // NOT the admin session calling this function. Always derive owner from the parent character.
+        const npcOwnerEmail = character.owner_email || character.created_by;
+
         // Create a new standalone NPC Character entity
         const newNPC = await base44.asServiceRole.entities.Character.create({
           name: person_name,
           character_type: 'npc',
-          owner_email: user.email,
-          created_by: user.email,
+          owner_email: npcOwnerEmail,
+          created_by: npcOwnerEmail,
           status: 'active',
           profile_summary: description || context || '',
           background_story: context || '',
