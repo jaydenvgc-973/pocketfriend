@@ -1,313 +1,252 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-/**
- * troubleshootHome
- *
- * Safe, read-only-first diagnostic for the Home page.
- * Rules:
- * - NEVER deletes characters, NPCs, locations, memories, or life events
- * - NEVER changes schedules, sleep times, work times, or work days
- * - NEVER drifts character_type, status, or ownership
- * - Fixes are limited to: unread flags, missing emotional_state default, 
- *   broken activity labels, and cross-contamination reports
- * - Multi-user aware: each user only sees their OWN characters
- *   (owner_email OR created_by match — handles admin-created NPCs correctly)
- */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const { selectedIssues = [] } = await req.json();
 
-    const results = {
-      checked: [],
-      fixed: [],
-      issues_found: []
-    };
+    const results = { checked: [], fixed: [], issues_found: [] };
 
-    // Fetch characters that BELONG to this user account
-    // A character belongs to an account if: created_by OR owner_email matches user.email
-    const allChars = await base44.asServiceRole.entities.Character.list('-created_date', 500);
-    const characters = allChars.filter(c =>
-      (c.created_by === user.email || c.owner_email === user.email) &&
-      c.status !== 'deleted' &&
-      c.status !== 'soft_deleted' &&
-      !c.diagnostic_only &&
-      !c.is_test_character
-    );
+    // Fetch ALL characters this user can see (their own + those owned by them via owner_email)
+    const byCreatedBy = await base44.asServiceRole.entities.Character.filter({ created_by: user.email }, '-created_date', 300);
+    const byOwnerEmail = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email }, '-created_date', 300);
+    // Deduplicate
+    const charMap = {};
+    [...byCreatedBy, ...byOwnerEmail].forEach(c => { charMap[c.id] = c; });
+    const characters = Object.values(charMap);
 
-    // ── CARD DATA CHECK ──────────────────────────────────────────────────
-    if (selectedIssues.includes('card_data')) {
-      results.checked.push('Character card data presence');
+    // ── OWNERSHIP INTEGRITY CHECK ─────────────────────────────────────────────
+    // Detects characters where created_by and owner_email are out of sync.
+    // SAFE: only reports, never deletes or changes any character data except fixing the mismatch.
+    if (selectedIssues.includes('ownership_integrity')) {
+      results.checked.push('Character ownership integrity (created_by vs owner_email)');
+      let mismatchCount = 0;
       for (const char of characters) {
-        const issues = [];
-        if (!char.name) issues.push('missing name');
-        if (!char.emotional_state) issues.push('missing emotional_state');
-        if (!char.character_type) issues.push('missing character_type');
-        if (issues.length > 0) {
-          results.issues_found.push(`${char.name || char.id}: ${issues.join(', ')}`);
+        const hasOwnerEmail = !!char.owner_email;
+        const ownerMatchesCreated = char.owner_email === char.created_by;
+        if (!hasOwnerEmail) {
+          // Fix: set owner_email to created_by so RLS and ownership rules work
+          await base44.asServiceRole.entities.Character.update(char.id, { owner_email: char.created_by });
+          results.fixed.push(`${char.name}: owner_email was missing — set to created_by (${char.created_by})`);
+          mismatchCount++;
+        } else if (!ownerMatchesCreated && char.character_type !== 'npc' && char.character_type !== 'family_npc') {
+          // For active characters, report mismatch without changing — needs manual review
+          results.issues_found.push(`${char.name} (${char.id}): owner_email="${char.owner_email}" differs from created_by="${char.created_by}" — review ownership. If this is an NPC, this may be correct.`);
+          mismatchCount++;
         }
       }
-      if (results.issues_found.length === 0) {
-        results.fixed.push('All character cards have complete data');
+      if (mismatchCount === 0) results.fixed.push('All characters have consistent owner_email and created_by fields.');
+    }
+
+    // ── NPC ROUTING CHECK ─────────────────────────────────────────────────────
+    // Ensures NPC Fictitious Persons are standalone Character records with correct owner.
+    // SAFE: never deletes NPCs, never changes NPC data beyond fixing owner_email.
+    if (selectedIssues.includes('npc_routing')) {
+      results.checked.push('NPC standalone routing and ownership');
+      const npcs = characters.filter(c => c.character_type === 'npc' || c.character_type === 'family_npc');
+      let routingIssues = 0;
+      for (const npc of npcs) {
+        if (!npc.owner_email) {
+          await base44.asServiceRole.entities.Character.update(npc.id, {
+            owner_email: npc.created_by,
+          });
+          results.fixed.push(`NPC "${npc.name}": missing owner_email — set to ${npc.created_by}`);
+          routingIssues++;
+        }
+        // Check if NPC is embedded in a parent character's family_members instead of being standalone
+        // (detect by looking for active characters whose family_members array has a name matching this NPC)
+        const activeChars = characters.filter(c => c.character_type === 'active' || c.character_type === 'promoted_npc');
+        for (const ac of activeChars) {
+          const embeddedMatch = (ac.family_members || []).find(fm => fm.name?.toLowerCase() === npc.name?.toLowerCase());
+          if (embeddedMatch) {
+            results.issues_found.push(`NPC "${npc.name}" exists as standalone Character (ID: ${npc.id}) BUT is also embedded in "${ac.name}"'s family_members array — the embedded copy should be removed manually from the family list to avoid duplication.`);
+          }
+        }
+      }
+      if (routingIssues === 0 && results.issues_found.filter(i => i.includes('family_members')).length === 0) {
+        results.fixed.push(`All ${npcs.length} NPC record(s) are correctly routed as standalone characters.`);
       }
     }
 
-    // ── EMOTIONAL STATE ──────────────────────────────────────────────────
-    if (selectedIssues.includes('emotional_state')) {
-      results.checked.push('Emotional state display on cards');
-      const VALID_STATES = ['calm','irritated','defensive','reflective','closed-off','flirtatious',
-        'bored','burnt out','joyful','anxious','sad','excited','overwhelmed','content','frustrated',
-        'hopelessness','grief','resentment','shame','longing','apathy','detachment','nostalgia'];
-      const missingState = characters.filter(c => !c.emotional_state || !VALID_STATES.includes(c.emotional_state));
-      if (missingState.length > 0) {
-        for (const char of missingState) {
-          // Safe default — does not change schedule, type, ownership, or location
-          await base44.asServiceRole.entities.Character.update(char.id, { emotional_state: 'calm' });
-          results.fixed.push(`${char.name}: emotional_state restored to "calm"`);
-        }
-      } else {
-        results.fixed.push('All characters have valid emotional state');
-      }
-    }
-
-    // ── LOCATION DISPLAY ─────────────────────────────────────────────────
-    if (selectedIssues.includes('location_display')) {
-      results.checked.push('Location display on cards');
-      const noLocation = characters.filter(c => !c.city && !c.state && !c.resolved_current_location_name);
-      if (noLocation.length > 0) {
-        noLocation.forEach(c => {
-          results.issues_found.push(`${c.name}: no city/state or resolved location set — card location will be blank`);
-        });
-      } else {
-        results.fixed.push('All characters have location data');
-      }
-    }
-
-    // ── AVAILABILITY DISPLAY ─────────────────────────────────────────────
-    if (selectedIssues.includes('availability_display')) {
-      results.checked.push('Availability and status display');
-      const activityKeywords = [
-        'work','school','class','gym','bar','club','mall','home','hospital','prayer','worship',
-        'doctor','coffee','café','cafe','park','trail','hike','restaurant','dinner','lunch',
-        'brunch','store','errand','grocery','pharmacy','church','mosque','temple','synagogue',
-        'mass','kingdom hall','training','internship','shadowing','outside','outdoor',
-        'laundromat','laundry','shopping','evening','out for','friend','event','support group',
-        'therapy','therapist','counseling','appointment','procedure','surgery','clinic',
-        'workout','exercise','yoga','pilates','crossfit','spin class','resting','cooking',
-        'watching','cleaning','winding down','morning routine','sleeping','asleep',
-        'apartment','house','studying','tutoring','library','campus','sick','patient','napping'
-      ];
-
-      for (const char of characters) {
-        const fixes = {};
-        const issuesForChar = [];
-
-        // Only set sleep defaults if COMPLETELY missing — never overwrite existing values
-        if (!char.sleep_start_time && !char.wake_up_time) {
-          fixes.sleep_start_time = '23:00';
-          fixes.wake_up_time = '07:00';
-          issuesForChar.push('no sleep schedule → defaulted to 11pm–7am');
-        }
-
-        // Only set work defaults if character HAS a job title but NO hours set
-        if (char.work_details?.job_title && !char.work_start_time && !char.work_end_time) {
-          fixes.work_start_time = '09:00';
-          fixes.work_end_time = '17:00';
-          issuesForChar.push('has job but no work hours → defaulted to 9am–5pm');
-        }
-        if (char.work_details?.job_title && (!char.work_days || char.work_days.length === 0)) {
-          fixes.work_days = [1, 2, 3, 4, 5];
-          issuesForChar.push('has job but no work days → defaulted Mon–Fri');
-        }
-
-        // Clear unrecognized activity labels only — never clear sleep/work status
-        const activity = (char.current_activity || '').toLowerCase().trim();
-        const isRecognized = !activity || activityKeywords.some(kw => activity.includes(kw));
-        if (activity && !isRecognized) {
-          fixes.current_activity = '';
-          issuesForChar.push(`unrecognized activity "${char.current_activity}" → cleared`);
-        }
-
-        if (Object.keys(fixes).length > 0) {
-          await base44.asServiceRole.entities.Character.update(char.id, fixes);
-          results.fixed.push(`${char.name}: ${issuesForChar.join('; ')}`);
-        }
-      }
-      if (results.fixed.length === 0) {
-        results.fixed.push('All characters have complete availability data — nothing to fix');
-      }
-    }
-
-    // ── MARK ALL MESSAGES AS READ ────────────────────────────────────────
+    // ── MARK MESSAGES READ ────────────────────────────────────────────────────
     if (selectedIssues.includes('mark_read')) {
       results.checked.push('Unread message counts');
-      let chatUnread = 0, textUnread = 0, totalMarked = 0;
-
+      let totalMarked = 0;
       for (const char of characters) {
         const convos = await base44.asServiceRole.entities.Conversation.filter(
-          { created_by: user.email },
-          '-updated_date', 200
+          { character_ids: [char.id], created_by: user.email }, '-updated_date', 100
         );
-        const charConvos = convos.filter(c => c.character_ids?.includes(char.id));
-
-        for (const convo of charConvos) {
+        for (const convo of convos) {
           const unreadMsgs = await base44.asServiceRole.entities.Message.filter(
             { conversation_id: convo.id, is_read: false, sender_type: 'character' }
           );
-          if (convo.type === 'direct' || !convo.type) chatUnread += unreadMsgs.length;
-          else if (convo.type === 'phone') textUnread += unreadMsgs.length;
           for (const msg of unreadMsgs) {
             await base44.asServiceRole.entities.Message.update(msg.id, { is_read: true });
             totalMarked++;
           }
         }
       }
-
-      results.fixed.push(`Chat unread cleared: ${chatUnread} → 0`);
-      results.fixed.push(`Text unread cleared: ${textUnread} → 0`);
-      results.fixed.push(`Total marked as read: ${totalMarked}`);
+      results.fixed.push(`Total messages marked as read: ${totalMarked}`);
     }
 
-    // ── CHARACTER SEPARATION / CROSS-CONTAMINATION ───────────────────────
-    if (selectedIssues.includes('character_separation')) {
-      results.checked.push('Character data separation audit');
+    // ── CARD DATA CHECK ───────────────────────────────────────────────────────
+    if (selectedIssues.includes('card_data')) {
+      results.checked.push('Character card data presence');
+      const activeChars = characters.filter(c => c.character_type === 'active' || c.character_type === 'promoted_npc');
+      for (const char of activeChars) {
+        if (!char.name) results.issues_found.push(`Character ID ${char.id}: missing name field`);
+        if (!char.emotional_state) {
+          await base44.asServiceRole.entities.Character.update(char.id, { emotional_state: 'calm' });
+          results.fixed.push(`${char.name}: emotional_state was missing — restored to "calm"`);
+        }
+      }
+      if (results.issues_found.length === 0) results.fixed.push('All active character cards have complete data.');
+    }
 
-      // Detect characters with same name on same account (could indicate duplicate from recovery)
+    // ── EMOTIONAL STATE ───────────────────────────────────────────────────────
+    if (selectedIssues.includes('emotional_state')) {
+      results.checked.push('Emotional state display');
+      const missing = characters.filter(c => !c.emotional_state || c.emotional_state.trim() === '');
+      for (const char of missing) {
+        await base44.asServiceRole.entities.Character.update(char.id, { emotional_state: 'calm' });
+        results.fixed.push(`${char.name}: emotional_state restored to "calm"`);
+      }
+      if (missing.length === 0) results.fixed.push('All characters have emotional state set.');
+    }
+
+    // ── LOCATION DISPLAY ──────────────────────────────────────────────────────
+    // READ-ONLY: reports only, never changes location or schedule data
+    if (selectedIssues.includes('location_display')) {
+      results.checked.push('Location display fields (read-only report)');
+      const noLocation = characters.filter(c =>
+        (c.character_type === 'active' || c.character_type === 'promoted_npc') && !c.city && !c.state
+      );
+      if (noLocation.length > 0) {
+        results.issues_found.push(`${noLocation.length} active character(s) have no city/state set: ${noLocation.map(c => c.name).join(', ')}`);
+      } else {
+        results.fixed.push('All active characters have location data.');
+      }
+    }
+
+    // ── AVAILABILITY DISPLAY ──────────────────────────────────────────────────
+    // Only fixes missing sleep schedule defaults. NEVER changes existing schedules, locations, or work data.
+    if (selectedIssues.includes('availability_display')) {
+      results.checked.push('Availability display — missing defaults only');
+      for (const char of characters.filter(c => c.character_type === 'active' || c.character_type === 'promoted_npc')) {
+        const fixes = {};
+        const notes = [];
+        // Only add sleep defaults if COMPLETELY missing — never overwrite existing
+        if (!char.sleep_start_time && !char.wake_up_time) {
+          fixes.sleep_start_time = '23:00';
+          fixes.wake_up_time = '07:00';
+          notes.push('no sleep schedule → defaulted to 11pm–7am');
+        }
+        if (Object.keys(fixes).length > 0) {
+          await base44.asServiceRole.entities.Character.update(char.id, fixes);
+          results.fixed.push(`${char.name}: ${notes.join('; ')}`);
+        }
+      }
+      if (results.fixed.filter(f => f.includes('sleep')).length === 0) {
+        results.fixed.push('All active characters already have sleep schedule data — nothing changed.');
+      }
+    }
+
+    // ── CHARACTER SEPARATION ──────────────────────────────────────────────────
+    if (selectedIssues.includes('character_separation')) {
+      results.checked.push('Character data separation / cross-contamination');
       const nameMap = {};
-      for (const char of characters) {
+      for (const char of characters.filter(c => c.status === 'active')) {
         const key = char.name?.toLowerCase().trim();
         if (!key) continue;
         if (!nameMap[key]) nameMap[key] = [];
         nameMap[key].push(char);
       }
-      for (const [name, chars] of Object.entries(nameMap)) {
+      for (const [, chars] of Object.entries(nameMap)) {
         if (chars.length > 1) {
-          results.issues_found.push(`Duplicate records for "${name}": ${chars.map(c => `ID ${c.id} (${c.character_type || 'untyped'}, ${c.status || 'active'})`).join(' | ')}`);
+          results.issues_found.push(`Duplicate active records for "${chars[0].name}": ${chars.map(c => `${c.id} (type:${c.character_type||'?'})`).join(' | ')}`);
         }
       }
-
-      // Detect direct conversations that have multiple character IDs (cross-routing risk)
       for (const char of characters) {
-        const convos = await base44.asServiceRole.entities.Conversation.filter(
-          { created_by: user.email }, '-updated_date', 50
-        );
-        const charConvos = convos.filter(c => c.character_ids?.includes(char.id));
-        const crossLinked = charConvos.filter(c => c.character_ids?.length > 1 && c.type === 'direct');
+        const convos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [char.id] }, '-updated_date', 20);
+        const crossLinked = convos.filter(c => c.character_ids && c.character_ids.length > 1 && c.type === 'direct');
         if (crossLinked.length > 0) {
-          results.issues_found.push(`${char.name}: ${crossLinked.length} direct conversation(s) contain multiple character IDs — cross-routing risk`);
+          results.issues_found.push(`${char.name}: ${crossLinked.length} direct conversation(s) contain multiple character IDs — potential cross-routing.`);
         }
       }
-
-      if (results.issues_found.length === 0) {
-        results.fixed.push('All characters have unique records and isolated conversations');
-      }
+      if (results.issues_found.length === 0) results.fixed.push('No duplicate records or cross-linked conversations detected.');
     }
 
-    // ── NOTIFICATION DOTS ────────────────────────────────────────────────
+    // ── MISSING CHARACTERS ────────────────────────────────────────────────────
+    if (selectedIssues.includes('missing_characters')) {
+      results.checked.push('Missing characters (visible on home page)');
+      // Active characters that have no conversations at all
+      const activeChars = characters.filter(c => (c.character_type === 'active' || c.character_type === 'promoted_npc') && c.status === 'active');
+      for (const char of activeChars) {
+        const convos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [char.id], created_by: user.email });
+        if (convos.length === 0) {
+          results.issues_found.push(`"${char.name}" (${char.id}) has no conversations — may not appear on home page correctly. Try opening a chat with this character to initialize the thread.`);
+        }
+      }
+      if (results.issues_found.length === 0) results.fixed.push('All active characters have at least one conversation thread.');
+    }
+
+    // ── NOTIFICATION DOTS ─────────────────────────────────────────────────────
     if (selectedIssues.includes('notification_dots')) {
-      results.checked.push('Notification indicator accuracy');
+      results.checked.push('Notification dot accuracy');
       let total = 0;
       for (const char of characters) {
-        const convos = await base44.asServiceRole.entities.Conversation.filter(
-          { created_by: user.email }, '-updated_date', 50
-        );
-        const charConvos = convos.filter(c => c.character_ids?.includes(char.id));
-        for (const convo of charConvos) {
-          const unread = await base44.asServiceRole.entities.Message.filter(
-            { conversation_id: convo.id, is_read: false, sender_type: 'character' }
-          );
+        const convos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [char.id], created_by: user.email }, '-updated_date', 10);
+        for (const convo of convos) {
+          const unread = await base44.asServiceRole.entities.Message.filter({ conversation_id: convo.id, is_read: false, sender_type: 'character' });
           total += unread.length;
         }
       }
-      results.fixed.push(`Notification count verified: ${total} unread message(s) across all threads`);
+      results.fixed.push(`Verified: ${total} unread message(s) currently across all threads.`);
     }
 
-    // ── MISSING CHARACTERS ───────────────────────────────────────────────
-    if (selectedIssues.includes('missing_characters')) {
-      results.checked.push('Missing characters diagnostic');
-
-      // Characters that exist but have wrong/missing owner fields — report only, never fix ownership silently
-      const missingOwner = characters.filter(c => !c.owner_email && !c.created_by);
-      if (missingOwner.length > 0) {
-        missingOwner.forEach(c => {
-          results.issues_found.push(`${c.name} (ID: ${c.id}): missing both owner_email and created_by — orphaned character`);
-        });
-      }
-
-      // Active characters with no character_type set
-      const untyped = characters.filter(c => !c.character_type);
-      if (untyped.length > 0) {
-        untyped.forEach(c => {
-          results.issues_found.push(`${c.name}: no character_type set — may not show correctly in lists`);
-        });
-      }
-
-      // Characters excluded from homepage — report so admin knows
-      const excluded = characters.filter(c => c.exclude_from_homepage || c.diagnostic_only || c.is_test_character);
-      if (excluded.length > 0) {
-        excluded.forEach(c => {
-          results.issues_found.push(`${c.name}: excluded from homepage (exclude_from_homepage=${c.exclude_from_homepage}, diagnostic_only=${c.diagnostic_only})`);
-        });
-      }
-
-      if (missingOwner.length === 0 && untyped.length === 0 && excluded.length === 0) {
-        results.fixed.push(`All ${characters.length} characters are correctly typed, owned, and visible`);
-      }
-    }
-
-    // ── OWNERSHIP AUDIT (admin-level) ────────────────────────────────────
-    if (selectedIssues.includes('ownership_audit')) {
-      results.checked.push('Character ownership integrity');
-
-      // Detect characters where owner_email ≠ created_by — flag for review
-      const ownershipMismatch = characters.filter(c =>
-        c.owner_email && c.created_by && c.owner_email !== c.created_by
-      );
-      if (ownershipMismatch.length > 0) {
-        ownershipMismatch.forEach(c => {
-          results.issues_found.push(`${c.name} (ID: ${c.id}): owner_email="${c.owner_email}" vs created_by="${c.created_by}" — intentional transfer or data error?`);
-        });
-      } else {
-        results.fixed.push('All character ownership fields are consistent');
-      }
-
-      // Detect NPC characters with wrong owner (created_by doesn't match parent character's owner)
-      const npcs = characters.filter(c => c.character_type === 'npc');
-      for (const npc of npcs) {
-        if (!npc.owner_email) {
-          results.issues_found.push(`NPC "${npc.name}" (ID: ${npc.id}): missing owner_email — could be misrouted`);
+    // ── SHIFT VERIFICATION ────────────────────────────────────────────────────
+    // READ-ONLY: checks schedule vs resolved location. Never changes schedule or location.
+    if (selectedIssues.includes('shift_verification')) {
+      results.checked.push('Work shift vs resolved location alignment (read-only)');
+      const now = new Date();
+      const etHour = ((now.getUTCHours() - 4) + 24) % 24;
+      const dow = now.getDay();
+      for (const char of characters.filter(c => c.work_start_time && c.work_end_time)) {
+        const [sh] = char.work_start_time.split(':').map(Number);
+        const [eh] = char.work_end_time.split(':').map(Number);
+        const onShift = (char.work_days || [1,2,3,4,5]).includes(dow) && etHour >= sh && etHour < eh;
+        if (onShift && char.current_work_location_id) {
+          const atWork = char.resolved_current_location_id === char.current_work_location_id;
+          if (!atWork) {
+            results.issues_found.push(`${char.name}: Should be at work (${sh}:00–${eh}:00) but resolved_current_location_id doesn't match work location. Resolved: ${char.resolved_current_location_id || 'not set'} | Work: ${char.current_work_location_id}`);
+          } else {
+            results.fixed.push(`${char.name}: Correctly at work location during shift.`);
+          }
         }
       }
-    }
-
-    // ── SHIFT VERIFICATION ───────────────────────────────────────────────
-    if (selectedIssues.includes('shift_verification')) {
-      results.checked.push('Work shift accuracy');
-      const res = await base44.asServiceRole.functions.invoke('enforceCharacterWorkSchedule', {});
-      const d = res?.data || {};
-      (d.fixes_applied || d.fixed || []).forEach(f => results.fixed.push(f));
-      (d.issues_found || d.violations || []).forEach(i => results.issues_found.push(i));
-      if (!d.fixes_applied?.length && !d.issues_found?.length) {
-        results.fixed.push('All work shifts verified — no corrections needed');
+      if (results.issues_found.filter(i => i.includes('Should be at work')).length === 0 && results.fixed.filter(f => f.includes('Correctly at work')).length === 0) {
+        results.fixed.push('No characters currently on shift — no shift conflicts to report.');
       }
     }
 
-    // ── STALE DATA SCAN ──────────────────────────────────────────────────
+    // ── STALE DATA SCAN ───────────────────────────────────────────────────────
     if (selectedIssues.includes('stale_data_scan')) {
       results.checked.push('Global stale data scan');
-      const res = await base44.asServiceRole.functions.invoke('dailyFullSystemDiagnostic', {});
-      const d = res?.data || {};
-      (d.fixes_applied || d.fixed || []).forEach(f => results.fixed.push(f));
-      (d.issues_found || []).forEach(i => results.issues_found.push(i));
-      if (!d.fixes_applied?.length && !d.issues_found?.length) {
-        results.fixed.push('Stale data scan complete — no issues found');
+      const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: user.email });
+      const settings = settingsList[0] || {};
+      if (!settings.fictional_world_name) {
+        results.issues_found.push('No fictional world name set — characters will call you "the user". Set in Settings > Your Name (In-World).');
+      } else {
+        results.fixed.push(`World name confirmed: "${settings.fictional_world_name}"`);
       }
+      const noAvatar = characters.filter(c => (c.character_type === 'active' || c.character_type === 'promoted_npc') && !c.avatar_url);
+      if (noAvatar.length > 0) results.issues_found.push(`${noAvatar.length} active character(s) have no avatar: ${noAvatar.map(c => c.name).join(', ')}`);
+      const noAppearanceLock = characters.filter(c => (c.character_type === 'active' || c.character_type === 'promoted_npc') && (!c.appearance_lock || !c.appearance_lock.skin_tone));
+      if (noAppearanceLock.length > 0) results.issues_found.push(`${noAppearanceLock.length} active character(s) have no appearance lock — image drift risk: ${noAppearanceLock.map(c => c.name).join(', ')}`);
+      if (results.issues_found.length === 0) results.fixed.push('No stale data detected across major systems.');
     }
 
     return Response.json({
@@ -317,8 +256,8 @@ Deno.serve(async (req) => {
         fixes_applied: results.fixed,
         issues_found: results.issues_found,
         summary: results.issues_found.length === 0
-          ? `All ${results.checked.length} check(s) passed — ${characters.length} character(s) scanned`
-          : `Found ${results.issues_found.length} issue(s) — ${results.fixed.length} fix(es) applied`
+          ? `All selected checks passed — ${results.fixed.length} item(s) confirmed/repaired.`
+          : `Found ${results.issues_found.length} issue(s) — ${results.fixed.length} fix(es) applied. Review details above.`
       }
     });
   } catch (error) {

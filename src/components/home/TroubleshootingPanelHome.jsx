@@ -6,18 +6,18 @@ import { X, CheckCircle2, Loader2, AlertCircle, Zap } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 
 const ISSUE_LIST = [
+  { id: 'ownership_integrity', label: '🔑 Character ownership integrity', description: 'Verify owner_email and created_by are correctly set on all characters. Fixes NPCs assigned to the wrong account.' },
+  { id: 'npc_routing', label: '🧩 NPC routing check', description: 'Ensure NPC Fictitious Persons are standalone Character records owned by the correct user account — not embedded in family lists.' },
   { id: 'mark_read', label: 'Mark messages as read', description: 'Reset all unread notification counts to 0' },
-  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name, type, or core fields' },
+  { id: 'card_data', label: 'Character cards missing data', description: 'Restore missing name or core fields' },
   { id: 'emotional_state', label: 'Mood/emotional state missing', description: 'Restore character mood display' },
-  { id: 'location_display', label: 'Location not showing', description: 'Check city/state and resolved location display' },
-  { id: 'availability_display', label: 'Availability incorrect', description: 'Verify all activity types: work, school, gym, bar, home, hospital, prayer, etc.' },
+  { id: 'location_display', label: 'Location not showing (read-only)', description: 'Reports which active characters are missing city/state. Never changes location data.' },
+  { id: 'availability_display', label: 'Availability — missing sleep defaults only', description: 'Adds default sleep schedule (11pm–7am) only if BOTH fields are completely absent. Never overwrites existing schedules.' },
   { id: 'notification_dots', label: 'Notification dots stuck', description: 'Recalculate unread counts' },
-  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect characters sharing threads or cross-routing' },
-  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate characters not showing — checks owner_email, character_type, and exclude flags' },
-  { id: 'ownership_audit', label: '🔑 Ownership integrity audit', description: 'Verify owner_email and created_by are correct on all characters and NPCs. Flags any misrouted records.' },
-  { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
-  { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists.' },
-  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems for UI values out of sync with backend.' },
+  { id: 'character_separation', label: 'Character data cross-contamination', description: 'Detect characters sharing threads or duplicate active records. Reports only — no deletions.' },
+  { id: 'missing_characters', label: 'Find missing characters', description: 'Locate active characters with no conversation threads. Reports only.' },
+  { id: 'shift_verification', label: '🕒 Work shift verification (read-only)', description: 'Check if characters on shift have a resolved location mismatch. Reports only — never changes schedules or locations.' },
+  { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan for missing world name, missing avatars, missing appearance locks. Reports issues found.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
@@ -28,10 +28,8 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
   const queryClient = useQueryClient();
 
   const toggleIssue = (issueId) => {
-    setSelectedIssues(prev => 
-      prev.includes(issueId) 
-        ? prev.filter(id => id !== issueId)
-        : [...prev, issueId]
+    setSelectedIssues(prev =>
+      prev.includes(issueId) ? prev.filter(id => id !== issueId) : [...prev, issueId]
     );
   };
 
@@ -62,59 +60,24 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
     setIsRunning(true);
     setError(null);
     setResults(null);
-
     try {
-      // Route missing_characters separately — it has its own dedicated function
-      if (selectedIssues.includes('missing_characters') && selectedIssues.length === 1) {
-        const res = await base44.functions.invoke('findMissingCharacters', {});
-        if (res?.data?.data) {
-          setResults(res.data.data);
-        } else {
-          setError('Missing characters diagnostic failed');
-        }
-      } else if (selectedIssues.includes('simulated_interaction') && selectedIssues.length === 1) {
-        const res = await base44.functions.invoke('troubleshootSimulatedInteraction', {});
-        if (res?.data?.data) {
-          setResults({
-            summary: res.data.data.summary,
-            fixed: res.data.data.fixes_applied || [],
-            issues_found: res.data.data.issues_found || [],
-            checks: (res.data.data.checks_performed || []).map(check => ({
-              name: check, status: 'info', message: 'Diagnostic performed'
-            }))
-          });
-        } else {
-          setError('Simulated interaction diagnostic failed');
-        }
-      } else if (selectedIssues.includes('shift_verification') && selectedIssues.length === 1) {
-        const res = await base44.functions.invoke('enforceCharacterWorkSchedule', {});
-        const data = res?.data;
-        setResults({
-          summary: data?.summary || 'Work shift verification complete.',
-          fixed: data?.fixes_applied || data?.fixed || [],
-          issues_found: data?.issues_found || data?.violations || [],
-          checks: data?.checks || [],
-        });
-      } else if (selectedIssues.includes('stale_data_scan') && selectedIssues.length === 1) {
-        const res = await base44.functions.invoke('dailyFullSystemDiagnostic', {});
-        const data = res?.data;
-        setResults({
-          summary: data?.summary || 'Stale data scan complete.',
-          fixed: data?.fixes_applied || data?.fixed || [],
-          issues_found: data?.issues_found || [],
-          checks: data?.checks || [],
-        });
-      } else {
-        // All other selections go through troubleshootHome with ONLY the selected issues
+      if (selectedIssues.includes('shift_verification') && selectedIssues.length === 1) {
         const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
-        if (res?.data?.data) {
-          setResults(res.data.data);
+        const data = res?.data?.data || res?.data;
+        setResults({ summary: data?.summary || 'Shift check complete.', fixed: data?.fixed || data?.fixes_applied || [], issues_found: data?.issues_found || [], checks: data?.checks || [] });
+      } else if (selectedIssues.includes('stale_data_scan') && selectedIssues.length === 1) {
+        const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
+        const data = res?.data?.data || res?.data;
+        setResults({ summary: data?.summary || 'Stale data scan complete.', fixed: data?.fixed || data?.fixes_applied || [], issues_found: data?.issues_found || [], checks: data?.checks || [] });
+      } else {
+        const res = await base44.functions.invoke('troubleshootHome', { selectedIssues });
+        const data = res?.data?.data || res?.data;
+        if (data) {
+          setResults({ summary: data.summary || 'Diagnostic complete.', fixed: data.fixed || data.fixes_applied || [], issues_found: data.issues_found || [], checks: data.checks || [] });
         } else {
           setError('Failed to run troubleshooting');
         }
       }
-
-      // Always invalidate UI caches after any diagnostic
       await queryClient.invalidateQueries({ queryKey: ['characters'] });
       await queryClient.invalidateQueries({ queryKey: ['conversations'] });
     } catch (err) {
@@ -141,36 +104,27 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-2xl bg-card border border-border rounded-t-2xl max-h-[80vh] overflow-y-auto"
           >
-            {/* Header */}
             <div className="sticky top-0 bg-card/80 backdrop-blur-sm border-b border-border p-4 flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-semibold text-foreground">Home Page Troubleshooting</h3>
-                <p className="text-xs text-muted-foreground mt-1">Diagnose character card and display issues</p>
+                <p className="text-xs text-muted-foreground mt-1">Diagnose and safely repair character and display issues</p>
               </div>
-              <button
-                onClick={onClose}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-              >
+              <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Content */}
             <div className="p-4 space-y-4">
               {!results && !isRunning && (
                 <>
-                  <p className="text-sm text-muted-foreground">
-                    Select the issues you'd like to check and fix:
-                  </p>
+                  <p className="text-sm text-muted-foreground">Select the issues you'd like to check and fix:</p>
                   <div className="space-y-2">
                     {ISSUE_LIST.map(issue => (
                       <button
                         key={issue.id}
                         onClick={() => toggleIssue(issue.id)}
                         className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
-                          selectedIssues.includes(issue.id)
-                            ? 'border-primary bg-primary/10'
-                            : 'border-border bg-secondary/50 hover:bg-secondary'
+                          selectedIssues.includes(issue.id) ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50 hover:bg-secondary'
                         }`}
                       >
                         <div className="flex items-start justify-between">
@@ -179,13 +133,9 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                             <p className="text-xs text-muted-foreground mt-0.5">{issue.description}</p>
                           </div>
                           <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 ml-2 ${
-                            selectedIssues.includes(issue.id)
-                              ? 'bg-primary border-primary'
-                              : 'border-border'
+                            selectedIssues.includes(issue.id) ? 'bg-primary border-primary' : 'border-border'
                           }`}>
-                            {selectedIssues.includes(issue.id) && (
-                              <CheckCircle2 className="w-4 h-4 text-primary-foreground" />
-                            )}
+                            {selectedIssues.includes(issue.id) && <CheckCircle2 className="w-4 h-4 text-primary-foreground" />}
                           </div>
                         </div>
                       </button>
@@ -199,10 +149,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                     >
                       Fix Selected Issues
                     </button>
-                    <button
-                      onClick={onClose}
-                      className="px-4 py-3 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors"
-                    >
+                    <button onClick={onClose} className="px-4 py-3 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors">
                       Close
                     </button>
                   </div>
@@ -220,23 +167,21 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
               {isRunning && (
                 <div className="flex flex-col items-center justify-center py-8 gap-3">
                   <Loader2 className="w-6 h-6 text-primary animate-spin" />
-                  <p className="text-sm text-muted-foreground">Checking Home page systems...</p>
+                  <p className="text-sm text-muted-foreground">Running diagnostic...</p>
                 </div>
               )}
 
               {results && !isRunning && (
                 <div className="space-y-4">
-                  {/* Summary */}
                   <div className="bg-primary/10 border border-primary/30 rounded-lg p-3">
                     <p className="text-sm font-medium text-foreground">{results.summary}</p>
                   </div>
 
-                  {/* Fixed */}
-                  {(results.fixed || results.fixes_applied || []).length > 0 && (
+                  {(results.fixed || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Repairs Applied</p>
                       <div className="space-y-1">
-                        {(results.fixed || results.fixes_applied || []).map((item, i) => (
+                        {(results.fixed || []).map((item, i) => (
                           <div key={i} className="flex items-start gap-2 text-xs text-foreground">
                             <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                             <span>{item}</span>
@@ -246,7 +191,6 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                     </div>
                   )}
 
-                  {/* Issues Found */}
                   {(results.issues_found || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Issues Found</p>
@@ -261,7 +205,6 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                     </div>
                   )}
 
-                  {/* Detailed Checks */}
                   {(results.checks || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Diagnostic Details</p>
@@ -288,10 +231,7 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
                   )}
 
                   <button
-                    onClick={() => {
-                      setResults(null);
-                      setSelectedIssues([]);
-                    }}
+                    onClick={() => { setResults(null); setSelectedIssues([]); }}
                     className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm"
                   >
                     Run Again
