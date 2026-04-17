@@ -1,3 +1,4 @@
+import { base44 } from "@/api/base44Client";
 import { NarrativeBuilderPopup } from "@/components/chat/NarrativeBuilderPopup";
 import { WorldContactsPopup } from "@/components/chat/WorldContactsPopup";
 import { TroubleshootingPanel } from "@/components/chat/TroubleshootingPanel";
