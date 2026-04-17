@@ -1024,13 +1024,13 @@ export default function Scene() {
       //   - VGC Towers distributed NPCs (must be explicitly engaged)
       //   - Diagnostic/test characters (already filtered from characters array)
 
+      // DIALOGUE TARGETING: Only respond if explicitly selected from the "Who's here" picker,
+      // OR if in private mode. Traveled-with companions do NOT auto-respond unless also selected.
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
-        : [
-            ...traveledWithChars,
-            ...selectedNpcs,
-            ...extraNpcs,
-          ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+        : selectedNpcIds !== null && selectedNpcs.length > 0
+          ? [...selectedNpcs, ...extraNpcs].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
+          : [];
 
       const eligibleKnownChars = dialogueEligible.filter(c => !c.isNpc);
       const eligibleNpcList = dialogueEligible
