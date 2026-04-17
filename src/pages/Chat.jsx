@@ -356,7 +356,7 @@ export default function Chat() {
           const isProtected = PROTECTED_CHARACTER_IDS.includes(characterId);
           const msgLimit = isProtected ? 1000 : 50;
           const loadedMsgs = await base44.entities.Message.filter(
-            { conversation_id: convoId },
+            { conversation_id: convoId, $or: [{ sender_type: "user" }, { character_id: characterId }] },
             "-created_date",
             msgLimit
           );
