@@ -429,16 +429,21 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const dayOfWeek = now.getDay();
                     const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
+                    // Only show characters who are actually scheduled to work right now
+                    // Characters not scheduled at this location at this time should not appear as "here"
                     characters.forEach(c => {
-                      const resolvedC = resolveCharacterLocation(c, locationMap);
-                      if (resolvedC.resolved_current_location_id === selectedLocation.id) {
-                        const workerShifts = selectedLocation.worker_shifts || {};
-                        const shift = workerShifts[c.id];
-                        if (shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end) {
-                          const idx = lines.findIndex(l => l.name === c.name);
-                          if (idx >= 0) lines[idx].status = "working";
-                        }
-                      }
+                       const resolvedC = resolveCharacterLocation(c, locationMap);
+                       const workerShifts = selectedLocation.worker_shifts || {};
+                       const shift = workerShifts[c.id];
+                       const isScheduledNow = shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end;
+
+                       // If character is shown as "here" but NOT scheduled to work now, remove them
+                       const idx = lines.findIndex(l => l.name === c.name);
+                       if (idx >= 0 && !isScheduledNow) {
+                         lines.splice(idx, 1);
+                       } else if (idx >= 0 && isScheduledNow) {
+                         lines[idx].status = "working";
+                       }
                     });
                   }
 
