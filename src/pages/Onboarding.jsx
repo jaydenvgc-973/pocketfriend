@@ -132,6 +132,10 @@ Return JSON matching this schema exactly:
       romantic_level: 0,
       attraction_level: 0,
       chosen_family_level: 100,
+      // ── OWNERSHIP: Capture authenticated user at creation time ──
+      owner_email: currentUser.email,
+      owner_user_id: currentUser.id,
+      created_by_role: currentUser.role || 'user',
     };
 
     // Upload system prompt as file instead of writing directly to field
