@@ -866,7 +866,7 @@ export default function CharacterProfile() {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
                 const npcRels = (character.fictional_relationships || []).filter(r => {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return true;
+                  if (!r.related_character_id) return false;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
                   return linked && (linked.character_type === "npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
                 });
