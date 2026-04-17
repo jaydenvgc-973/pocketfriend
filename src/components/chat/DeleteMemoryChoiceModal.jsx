@@ -10,35 +10,33 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
     ? `"${message.content.substring(0, 80)}${message.content.length > 80 ? "…" : ""}"`
     : "(image)";
 
-  // Fallback handlers if not provided
-  const handleNonsense = onNonsense || (() => {
-    // Remove from UI
+  // Correction handlers — delete the message and log the flag
+  const handleNonsense = onNonsense || (async () => {
     onCancel?.();
+    // Delete the message
+    await base44.entities.Message.delete(message.id).catch(() => {});
     // Log correction flag (fire-and-forget)
-    if (characterId && conversationId) {
-      base44.functions.invoke('logNarrativeCorrectionFlag', {
-        messageId: message.id,
-        characterId,
-        conversationId,
-        correctionType: 'nonsense',
-        narrativeContent: message.content || '(image)',
-      }).catch(() => {});
-    }
+    base44.functions.invoke('logNarrativeCorrectionFlag', {
+      messageId: message.id,
+      characterId,
+      conversationId,
+      correctionType: 'nonsense',
+      narrativeContent: message.content || '(image)',
+    }).catch(() => {});
   });
 
-  const handleSleepViolation = onSleepViolation || (() => {
-    // Remove from UI
+  const handleSleepViolation = onSleepViolation || (async () => {
     onCancel?.();
+    // Delete the message
+    await base44.entities.Message.delete(message.id).catch(() => {});
     // Log correction flag (fire-and-forget)
-    if (characterId && conversationId) {
-      base44.functions.invoke('logNarrativeCorrectionFlag', {
-        messageId: message.id,
-        characterId,
-        conversationId,
-        correctionType: 'sleep_violation',
-        narrativeContent: message.content || '(image)',
-      }).catch(() => {});
-    }
+    base44.functions.invoke('logNarrativeCorrectionFlag', {
+      messageId: message.id,
+      characterId,
+      conversationId,
+      correctionType: 'sleep_violation',
+      narrativeContent: message.content || '(image)',
+    }).catch(() => {});
   });
 
   return createPortal(
