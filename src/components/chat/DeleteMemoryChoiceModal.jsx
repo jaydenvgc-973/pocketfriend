@@ -1,13 +1,45 @@
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { Brain, EyeOff, X, AlertCircle, Zap } from "lucide-react";
+import { base44 } from "@/api/base44Client";
 
-export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation }) {
+export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation, characterId, conversationId }) {
   if (!isOpen || !message) return null;
 
   const preview = message.content?.trim()
     ? `"${message.content.substring(0, 80)}${message.content.length > 80 ? "…" : ""}"`
     : "(image)";
+
+  // Fallback handlers if not provided
+  const handleNonsense = onNonsense || (() => {
+    // Remove from UI
+    onCancel?.();
+    // Log correction flag (fire-and-forget)
+    if (characterId && conversationId) {
+      base44.functions.invoke('logNarrativeCorrectionFlag', {
+        messageId: message.id,
+        characterId,
+        conversationId,
+        correctionType: 'nonsense',
+        narrativeContent: message.content || '(image)',
+      }).catch(() => {});
+    }
+  });
+
+  const handleSleepViolation = onSleepViolation || (() => {
+    // Remove from UI
+    onCancel?.();
+    // Log correction flag (fire-and-forget)
+    if (characterId && conversationId) {
+      base44.functions.invoke('logNarrativeCorrectionFlag', {
+        messageId: message.id,
+        characterId,
+        conversationId,
+        correctionType: 'sleep_violation',
+        narrativeContent: message.content || '(image)',
+      }).catch(() => {});
+    }
+  });
 
   return createPortal(
     <AnimatePresence>
@@ -69,7 +101,7 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
               </button>
 
               <button
-                onClick={onNonsense}
+                onClick={handleNonsense}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-colors text-left"
               >
                 <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
@@ -82,7 +114,7 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
               </button>
 
               <button
-                onClick={onSleepViolation}
+                onClick={handleSleepViolation}
                 className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 hover:bg-destructive/20 transition-colors text-left"
               >
                 <div className="w-8 h-8 rounded-full bg-destructive/20 flex items-center justify-center flex-shrink-0">
