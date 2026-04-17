@@ -616,6 +616,23 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         },
       });
 
+      // ── SLEEP STATE VALIDATION: Hard block any awake behavior in narrative if sleep conditions are met
+      // This is a failsafe in case LLM tries to generate awake behavior during sleep hours
+      const AWAKE_PATTERNS = /\b(gets? up|walks?|stands?|looks? out|makes? (coffee|tea|food)|drinks? (coffee|tea)|goes? outside|exercising?|moving|sitting up|taking? (a )?shower|brush(ing)?|gets? dressed|gets? ready|heading|going to|leaving|working|talking|chatting|laughing|eating|cooking|cleaning|doing chores|packing|texting|scrolling|checking phone)\b/gi;
+      if (forceSleep) {
+        // Force sleep-only narrative if any awake pattern was detected
+        if (update.daily_micro_narration && AWAKE_PATTERNS.test(update.daily_micro_narration)) {
+          const sleepFallback = [
+            `${name} is asleep, breathing steadily in the dark.`,
+            `${name} rests quietly under the blankets.`,
+            `The room is still. ${name} sleeps on.`,
+            `${name} shifts slightly in sleep, then settles again.`,
+            `Deep in sleep, ${name} dreams quietly.`,
+          ];
+          update.daily_micro_narration = sleepFallback[Math.floor(Math.random() * sleepFallback.length)];
+        }
+      }
+
       // ── POST-SHIFT EXIT LOGIC (PHASE 1)
       // Inline job drain assessment
       let postShiftUpdate = {};
