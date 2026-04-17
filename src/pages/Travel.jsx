@@ -376,13 +376,21 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
+                    // STRICT: Only show characters whose actual home IS this specific location
                     characters.forEach(c => {
+                      if (c.current_home_location_id !== selectedLocation.id) return;
                       const presence = getCharacterLivePresence(c, locationMap);
-                      if (presence.status === 'home' || presence.sublabel?.includes(selectedLocation.name)) {
-                        lines.push({ name: c.name, status: "home", color: "text-green-400" });
-                      }
+                      const isActuallyHome = presence.status === 'home' || 
+                        presence.status === 'sleeping' || 
+                        presence.status === 'napping';
+                      lines.push({ 
+                        name: c.name, 
+                        status: isActuallyHome ? "home" : "away", 
+                        color: isActuallyHome ? "text-green-400" : "text-muted-foreground/50" 
+                      });
                     });
 
+                    // Show family NPCs who are listed as residents of THIS location
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
                       if (!lines.find(l => l.name === locFamilyMember.name)) {
                         lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
