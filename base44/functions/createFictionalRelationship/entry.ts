@@ -50,9 +50,14 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, already_exists: true });
     }
 
-    // ── FAMILY CHECK: family members stay nested, non-family get a standalone Character entity ──
-    const familyTypes = ['family', 'Family'];
-    const isFamily = familyTypes.some(f => relationship_type.toLowerCase().includes(f.toLowerCase()));
+    // ── FAMILY CHECK: explicit family titles stay nested; all others (including romantic interest,
+    //    friend, rival, coworker, etc.) get their own standalone NPC Character entity ──
+    const FAMILY_KEYWORDS = ['family', 'mother', 'father', 'mom', 'dad', 'sister', 'brother',
+      'aunt', 'uncle', 'cousin', 'grandmother', 'grandfather', 'grandma', 'grandpa',
+      'niece', 'nephew', 'stepmother', 'stepfather', 'stepsister', 'stepbrother',
+      'half-sister', 'half-brother', 'parent', 'sibling', 'child', 'son', 'daughter'];
+    const relLower = relationship_type.toLowerCase();
+    const isFamily = FAMILY_KEYWORDS.some(kw => relLower.includes(kw));
 
     let related_character_id = null;
 
