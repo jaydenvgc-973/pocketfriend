@@ -347,21 +347,47 @@ export default function Scene() {
   });
 
   // PRESENCE SYNC: Scan all characters for NPCs currently at this location (legacy fictional_relationships)
+  // HARD RULE: One NPC = one location. Deduplicate by normalized name.
+  // If the same NPC name appears in multiple characters' relationships, only include them ONCE
+  // and only if their current_location_id exclusively points here (not also somewhere else).
   const npcsTravelingHere = (() => {
-    const traveling = [];
+    // First pass: build a map of NPC name → all their current_location_ids across all characters
+    const npcLocationMap = new Map(); // name → Set of location_ids they appear at
     characters.forEach(char => {
       if (!char.fictional_relationships) return;
       char.fictional_relationships.forEach(rel => {
-        if (!rel.related_character_id && rel.person_name && rel.current_location_id === locationId) {
+        if (!rel.related_character_id && rel.person_name && rel.current_location_id) {
+          const key = rel.person_name.trim().toLowerCase();
+          if (!npcLocationMap.has(key)) npcLocationMap.set(key, { name: rel.person_name, locations: new Set(), role: rel.relationship_type });
+          npcLocationMap.get(key).locations.add(rel.current_location_id);
+        }
+      });
+    });
+
+    const traveling = [];
+    const seen = new Set();
+    npcLocationMap.forEach((data, key) => {
+      // SINGLE LOCATION RULE: only show this NPC here if their ONLY current location is this one
+      // If they appear at multiple locations → presence conflict → do not show anywhere until resolved
+      if (data.locations.size === 1 && data.locations.has(locationId)) {
+        if (!seen.has(key)) {
+          seen.add(key);
+          // RESIDENCE PROTECTION: if this is a home location, only allow NPCs who live here
+          if (isHomeLocation) {
+            const livesHere = (location?.resident_family_members || []).some(
+              fm => fm.name?.trim().toLowerCase() === key
+            );
+            if (!livesHere) return; // NPC does not live here → blocked
+          }
           traveling.push({
-            id: `npc_${rel.person_name.replace(/\s+/g, "_")}_${char.id}`,
-            name: rel.person_name,
-            role: rel.relationship_type || "NPC",
+            id: `npc_${data.name.replace(/\s+/g, "_")}`,
+            name: data.name,
+            role: data.role || "NPC",
             isNpc: true,
             avatar_url: null,
           });
         }
-      });
+      }
     });
     return traveling;
   })();
