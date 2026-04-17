@@ -45,10 +45,10 @@ import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
+import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 
-// Voice playback cache and active audio tracking
 const voiceCache = new Map();
-const activeAudioRef = new Map(); // messageId -> Audio element
+const activeAudioRef = new Map();
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -68,14 +68,16 @@ export default function Chat() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
-  const [deleteTarget, setDeleteTarget] = useState(null); // message pending delete choice
-  const [forwardTarget, setForwardTarget] = useState(null); // message pending forward
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [forwardTarget, setForwardTarget] = useState(null);
+  const [newPeopleDetected, setNewPeopleDetected] = useState(null);
   const [showSendMoney, setShowSendMoney] = useState(false);
   const [isSendingMoney, setIsSendingMoney] = useState(false);
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showGameLauncher, setShowGameLauncher] = useState(false);
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
-  const [pendingAliasResolution, setPendingAliasResolution] = useState(null); // { phrase, characterId, characterName }
+  const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
+  const [newPeopleDetected, setNewPeopleDetected] = useState(null); // [{name, relationship_type, context}]
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1719,13 +1721,15 @@ Reply with ONLY the single emoji or the word "none".`,
       },
     }).catch(() => {});
 
-    // Extract memories from this turn (fire-and-forget)
     if (responseText) {
       base44.functions.invoke("extractMemoriesFromTurn", {
         characterId,
         conversationId: convoId,
         userMessage: text,
         characterReply: responseText,
+      }).then(res => {
+        const detected = res?.data?.newPeopleDetected?.relationships;
+        if (detected?.length > 0) setNewPeopleDetected(detected);
       }).catch(() => {});
     }
 
@@ -1942,16 +1946,8 @@ Reply with ONLY the single emoji or the word "none".`,
       )}
       <BottomNav />
 
-      {/* Approval pop-ups for life events */}
       {pendingApproval?.type === 'move_in' && (
-        <ApprovalPopup
-          type="move_in"
-          title="Moving In Together?"
-          description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`}
-          details={pendingApproval.data}
-          onApprove={approveEvent}
-          onDeny={dismissApproval}
-        >
+        <ApprovalPopup type="move_in" title="Moving In Together?" description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`} details={pendingApproval.data} onApprove={approveEvent} onDeny={dismissApproval}>
           <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
           {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Moving in with:</span> {pendingApproval.data.otherCharName}</p>}
         </ApprovalPopup>
@@ -1980,7 +1976,6 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
 
-      {/* Life event approval pop-up (education/occupation/job training) */}
       {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
       {pendingAliasResolution && (
         <LocationAliasResolutionPopup
@@ -1989,6 +1984,14 @@ Reply with ONLY the single emoji or the word "none".`,
           characterName={pendingAliasResolution.characterName}
           onResolved={() => { setPendingAliasResolution(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
           onDismiss={() => setPendingAliasResolution(null)}
+        />
+      )}
+      {newPeopleDetected && character && (
+        <NewPersonDetectedModal
+          people={newPeopleDetected}
+          characterId={characterId}
+          characterName={character.name}
+          onDone={() => { setNewPeopleDetected(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
         />
       )}
     </div>
