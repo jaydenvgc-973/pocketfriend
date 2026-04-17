@@ -400,15 +400,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     });
 
                     characters.forEach(char => {
-                      if (!char.fictional_relationships) return;
-                      char.fictional_relationships.forEach(rel => {
-                        if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
-                          if (!lines.find(l => l.name === rel.person_name)) {
-                            lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
-                          }
-                        }
-                      });
-                    });
+                       if (!char.fictional_relationships) return;
+                       char.fictional_relationships.forEach(rel => {
+                         if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
+                           // STRICT RULE: Block NPCs from appearing at homes they don't live in
+                           if (isHome) {
+                             const livesHere = selectedLocation.resident_family_members?.some(
+                               fm => fm.name?.trim().toLowerCase() === rel.person_name.trim().toLowerCase()
+                             );
+                             if (!livesHere) return; // Don't show—they don't live here
+                           }
+                           if (!lines.find(l => l.name === rel.person_name)) {
+                             lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
+                           }
+                         }
+                       });
+                     });
                   }
 
                   const presenceSummary = lines.length > 0 ? (

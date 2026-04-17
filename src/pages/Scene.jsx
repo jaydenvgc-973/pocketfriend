@@ -347,24 +347,35 @@ export default function Scene() {
   });
 
   // PRESENCE SYNC: Scan all characters for NPCs currently at this location (legacy fictional_relationships)
+  // STRICT RULE: Block NPCs from appearing at homes they don't live in
   const npcsTravelingHere = (() => {
     const traveling = [];
     const seen = new Set();
+    const isResidentialHome = location?.category === "home" && location?.scope !== "shared";
+    
     characters.forEach(char => {
       if (!char.fictional_relationships) return;
       char.fictional_relationships.forEach(rel => {
         if (!rel.related_character_id && rel.person_name && rel.current_location_id === locationId) {
           const key = rel.person_name.trim().toLowerCase();
-          if (!seen.has(key)) {
-            seen.add(key);
-            traveling.push({
-              id: `npc_${rel.person_name.replace(/\s+/g, "_")}`,
-              name: rel.person_name,
-              role: rel.relationship_type || "NPC",
-              isNpc: true,
-              avatar_url: null,
-            });
+          if (seen.has(key)) return;
+          
+          // BLOCK: NPC at a home they don't live in
+          if (isResidentialHome) {
+            const livesHere = location.resident_family_members?.some(
+              fm => fm.name?.trim().toLowerCase() === key
+            );
+            if (!livesHere) return; // Skip—data is corrupt, they don't actually live here
           }
+          
+          seen.add(key);
+          traveling.push({
+            id: `npc_${rel.person_name.replace(/\s+/g, "_")}`,
+            name: rel.person_name,
+            role: rel.relationship_type || "NPC",
+            isNpc: true,
+            avatar_url: null,
+          });
         }
       });
     });
