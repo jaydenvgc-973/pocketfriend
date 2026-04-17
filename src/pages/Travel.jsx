@@ -391,8 +391,24 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     });
 
                     // Show family NPCs who are listed as residents of THIS location
+                    // BUT: only if they are not currently at work (work takes priority)
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
-                      if (!lines.find(l => l.name === locFamilyMember.name)) {
+                      if (lines.find(l => l.name === locFamilyMember.name)) return; // already listed as character
+                      
+                      // Check if any character source has this NPC and if they're at work
+                      let npcIsAtWork = false;
+                      for (const char of characters) {
+                        const rel = char.fictional_relationships?.find(
+                          r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase()
+                        );
+                        if (rel && rel.current_location_id && rel.current_location_id !== selectedLocation.id) {
+                          npcIsAtWork = true; // NPC is at a different location (work location)
+                          break;
+                        }
+                      }
+                      
+                      // Only show as home if they are not at work
+                      if (!npcIsAtWork) {
                         lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
                       }
                     });
