@@ -138,9 +138,23 @@ function buildRelationshipsContext(character) {
 
   if (character.work_details) {
     const w = character.work_details;
-    section += `\nYOUR WORK: ${w.job_title || "your job"} at a ${w.workplace_type || "workplace"}. ${w.work_environment || ""}`;
+    section += `\nYOUR PRIMARY JOB: ${w.job_title || "your job"} at a ${w.workplace_type || "workplace"}. ${w.work_environment || ""}`;
     if (w.coworker_names?.length) section += ` Coworkers you deal with: ${w.coworker_names.join(", ")}.`;
     section += "\n";
+  }
+
+  // Include all job locations if multiple
+  const allWorkLocIds = [];
+  if (character.occupation_location_id) allWorkLocIds.push({ id: character.occupation_location_id, name: character.occupation_location_name });
+  if (character.additional_occupation_locations?.length > 0) {
+    character.additional_occupation_locations.forEach(loc => {
+      if (loc.location_id && !allWorkLocIds.some(w => w.id === loc.location_id)) {
+        allWorkLocIds.push({ id: loc.location_id, name: loc.location_name, title: loc.job_title });
+      }
+    });
+  }
+  if (allWorkLocIds.length > 1) {
+    section += `\nADDITIONAL JOBS: You also work at: ${allWorkLocIds.map(w => `${w.title ? `${w.title} at ` : ''}${w.name}`).join(", ")}. Refer to all your jobs naturally.\n`;
   }
 
   if ((character.frequented_places || []).length > 0) {
@@ -184,10 +198,25 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
 }
 
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}) {
-  const { allowNarration = false } = options; // Default OFF — narration is opt-in, only enabled for Scene/Moments pages
-  // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
-  const userNameLabel = character.nickname_for_user || userDisplayName || null;
-  const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
+   const { allowNarration = false } = options; // Default OFF — narration is opt-in, only enabled for Scene/Moments pages
+   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
+   const userNameLabel = character.nickname_for_user || userDisplayName || null;
+   const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
+
+   // Build all work locations context for characters with multiple jobs
+   let allJobsContext = "";
+   const allWorkLocIds = [];
+   if (character.occupation_location_id) allWorkLocIds.push({ id: character.occupation_location_id, name: character.occupation_location_name });
+   if (character.additional_occupation_locations?.length > 0) {
+     character.additional_occupation_locations.forEach(loc => {
+       if (loc.location_id && !allWorkLocIds.some(w => w.id === loc.location_id)) {
+         allWorkLocIds.push({ id: loc.location_id, name: loc.location_name, title: loc.job_title });
+       }
+     });
+   }
+   if (allWorkLocIds.length > 0) {
+     allJobsContext = `\nYOU WORK AT MULTIPLE LOCATIONS:\n${allWorkLocIds.map(w => `- ${w.title ? `${w.title} at ` : ''}${w.name}`).join('\n')}\nYou have shifts at each of these places. Reference them naturally when relevant.`;
+   }
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
@@ -289,7 +318,15 @@ THINGS THAT BOTHER YOU (MEDIUM — noticeable shift in tone):
 THINGS THAT CUT DEEP (DEEP — quiet first, then cold):
   - ${deepTriggers}
 
-${knownCharacters.length > 0 ? `\nPEOPLE YOU PERSONALLY KNOW (in the user's world):\n${knownCharacters.map(c => `- ${c.name}: ${c.personality_summary?.split(".")[0] || "someone you know"}. You have a real history with them.`).join("\n")}\nWhen any of these people come up in conversation, speak about them like someone you actually know — with real opinions, feelings, and history.\n` : ""}
+${knownCharacters.length > 0 ? `\nPEOPLE YOU PERSONALLY KNOW (in the user's world):
+CRITICAL: Their current locations are AUTHORITATIVE. Use these to inform where they are and what they're doing:
+${knownCharacters.map(c => {
+  const locName = c.resolved_current_location_name || c.current_home_location_name || "home";
+  const presenceStatus = c.resolved_presence_status || "home";
+  const presence = presenceStatus === 'at_work' ? `working at ${locName}` : presenceStatus === 'at_school' ? `at school (${locName})` : presenceStatus === 'sleeping' ? 'sleeping at home' : presenceStatus === 'traveling' ? `traveling to ${locName}` : `at ${locName}`;
+  return `- ${c.name}: ${c.personality_summary?.split(".")[0] || "someone you know"}. RIGHT NOW: ${presence}. You have a real history with them.`;
+}).join("\n")}
+When any of these people come up, reference their ACTUAL current location. If asked where they are, this is the truth. Do NOT guess or assume — use what's listed above.\n` : ""}
 ${!character.is_default ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:
 Abuela Sophia is the grandmother of someone else entirely — she did not raise you, she is not part of your family, and she has no connection to your life. Never reference her as your grandmother, your family member, or anyone who raised you. You have your own family background. Abuela Sophia belongs to someone else's story, not yours.` : ""}
 

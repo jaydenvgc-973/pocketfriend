@@ -1163,18 +1163,21 @@ ${songsInfo}`;
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
-      // Fetch system prompt from URL if available, otherwise build it
+      // Fetch other characters so this character knows their real current locations
+      let otherCharsCtx = [];
+      try { const allAC = await base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }); otherCharsCtx = allAC.filter(c => c.id !== characterId); } catch (e) {}
       let systemPrompt = "";
       if (character.system_prompt_url) {
         try {
           const promptResponse = await fetch(character.system_prompt_url);
           systemPrompt = await promptResponse.text();
+          // Fix stale world name in URL-based prompts
+          if (userDisplayName) systemPrompt += `\n\nIDENTITY OVERRIDE: The person talking to you is named "${userDisplayName}". Never call them "Mark" or "the user". Only "${userDisplayName}".`;
         } catch (err) {
-          console.warn('[sendMessage] Failed to fetch system_prompt_url, building instead:', err.message);
-          systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false });
+          systemPrompt = buildSystemPrompt(character, otherCharsCtx, userDisplayName, { allowNarration: false });
         }
       } else {
-        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false });
+        systemPrompt = buildSystemPrompt(character, otherCharsCtx, userDisplayName, { allowNarration: false });
       }
       // World name injected into image instruction so LLM uses the right name in prompts — never "the user"
       const userNameForPrompts = userDisplayName || null;
@@ -1330,8 +1333,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         }
       }
 
-
-      // parseCharacterResponse is imported from @/lib/chatResponseParser
 
       // ── LOCATION VALIDATION: prevent AI from contradicting resolved presence ──
       const validateLocationInResponse = (text, presence) => {
@@ -1620,9 +1621,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       // Unknown type fallback — text only
       primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
     }
-
-    // Use primary text message for relationship/conversation tracking (or first image msg id for context)
-    const charMsg = primaryTextMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
