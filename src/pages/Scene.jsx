@@ -297,11 +297,24 @@ export default function Scene() {
 
   // Workers: ONLY if they have a valid resolved presence at this location (not just assignment)
   // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
+  // STRICT ASSIGNMENT RULE: Character must actually be assigned to THIS location as a job site.
+  // Being in worker_character_ids alone is not enough — their occupation must point here.
+  const characterJobLocationIds = (c) => {
+    const ids = new Set();
+    if (c.occupation_location_id) ids.add(c.occupation_location_id);
+    if (c.current_work_location_id) ids.add(c.current_work_location_id);
+    (c.additional_occupation_locations || []).forEach(l => { if (l.location_id) ids.add(l.location_id); });
+    return ids;
+  };
+
   const workerCharacters = location
     ? characters.filter(c => {
         if (characterIds.includes(c.id)) return false;
         if (isCharacterAsleep(c)) return false;
         if (!isCharacterAtWork(c, location)) return false;
+        // STRICT: character's actual job must be at this location, not just assigned in worker_character_ids
+        const jobIds = characterJobLocationIds(c);
+        if (jobIds.size > 0 && !jobIds.has(locationId)) return false; // job is at a different place
         // If resolved_current_location_id is set to somewhere else, they are NOT here
         if (c.resolved_current_location_id && c.resolved_current_location_id !== locationId) return false;
         return true;
@@ -421,7 +434,7 @@ export default function Scene() {
     // Real named workers from the location record (worker_character_ids + worker_job_titles)
     // RULE: A worker assigned to a location is NOT automatically present.
     // They must have live presence confirmed (resolved_current_location_id === locationId).
-    // Only add to the selectable "Who's here" list if live presence is confirmed.
+    // STRICT JOB ASSIGNMENT: their actual occupation must be at this location too.
     const locationWorkerIds = location?.worker_character_ids || [];
     locationWorkerIds.forEach(wid => {
       // Skip characters already auto-shown as "on shift" workers
@@ -430,6 +443,9 @@ export default function Scene() {
       if (characterIds.includes(wid)) return;
       const workerChar = characters.find(c => c.id === wid);
       if (!workerChar) return;
+      // STRICT JOB ASSIGNMENT: character's actual job must point to this location
+      const workerJobIds = characterJobLocationIds(workerChar);
+      if (workerJobIds.size > 0 && !workerJobIds.has(locationId)) return; // job is elsewhere
       // OWNERSHIP/ASSIGNMENT ≠ PRESENCE: only show if live presence confirmed at this location
       if (workerChar.resolved_current_location_id !== locationId) return;
       const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
