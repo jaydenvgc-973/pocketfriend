@@ -15,10 +15,23 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const { characterId, person_name, relationship_type, context, description } = await req.json();
+    const { characterId, person_name, relationship_type, context, description, _feedback_only } = await req.json();
 
     if (!characterId || !person_name || !relationship_type) {
       return Response.json({ error: 'characterId, person_name, and relationship_type are required' }, { status: 400 });
+    }
+
+    // ── NONSENSE FEEDBACK: store as memory, do NOT create a relationship ──
+    if (_feedback_only && relationship_type === '__nonsense_feedback__') {
+      await base44.asServiceRole.entities.Memory.create({
+        character_id: characterId,
+        title: `[NONSENSE FEEDBACK] Bad person detection: "${person_name}"`,
+        description: context || `User marked "${person_name}" as a nonsense detection — the AI was pattern-matching dialogue structure instead of logic.`,
+        emotional_impact: 'neutral',
+        source_context: 'new_person_nonsense_feedback',
+        timestamp: new Date().toISOString(),
+      }).catch(() => {});
+      return Response.json({ success: true, feedback_stored: true });
     }
 
     const character = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]);

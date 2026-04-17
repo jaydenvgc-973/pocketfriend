@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { UserPlus, X, ChevronDown } from "lucide-react";
+import { UserPlus, X, ChevronDown, Ban } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
 const RELATIONSHIP_TYPES = [
@@ -31,6 +31,20 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
 
   const handleDismiss = (index) => {
     updatePerson(index, { dismissed: true });
+  };
+
+  const handleNonsense = async (index) => {
+    const person = pending[index];
+    updatePerson(index, { saving: true });
+    // Record feedback so AI learns this was a bad detection
+    base44.functions.invoke("createFictionalRelationship", {
+      characterId,
+      person_name: person.name,
+      relationship_type: "__nonsense_feedback__",
+      context: `User marked "${person.name}" as nonsense — the AI was matching sentence structure, not actual logic. Context was: "${person.context}". Do NOT suggest this person again.`,
+      _feedback_only: true,
+    }).catch(() => {});
+    updatePerson(index, { saving: false, dismissed: true });
   };
 
   const allHandled = pending.every(p => p.confirmed || p.dismissed);
@@ -101,6 +115,14 @@ export default function NewPersonDetectedModal({ people, characterId, characterN
                     className="px-3 py-2 rounded-xl bg-secondary text-muted-foreground text-xs font-medium hover:text-foreground transition-colors"
                   >
                     Skip
+                  </button>
+                  <button
+                    onClick={() => handleNonsense(originalIndex)}
+                    disabled={person.saving}
+                    title="This is nonsense — the AI misread the dialogue"
+                    className="px-3 py-2 rounded-xl bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors disabled:opacity-60"
+                  >
+                    <Ban className="w-3.5 h-3.5" />
                   </button>
                 </div>
               </div>
