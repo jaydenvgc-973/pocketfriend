@@ -767,7 +767,7 @@ export default function CharacterProfile() {
               if (!r.related_character_id) return false;
               const lc = allCharacters.find(c => c.id === r.related_character_id);
               if (!lc) return true;
-              return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+              return lc.character_type === "active";
             })) && (
               <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
             )}
@@ -777,7 +777,7 @@ export default function CharacterProfile() {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
                   if (!lc) return true;
-                  return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+                  return lc.character_type === "active";
                 })
                 .map((rel, idx) => {
                    const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
@@ -850,7 +850,7 @@ export default function CharacterProfile() {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
               if (!r.related_character_id) return true;
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              return linked && (linked.character_type === "npc" || linked.character_type === "family_npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
+              return linked && (linked.character_type === "npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -868,7 +868,7 @@ export default function CharacterProfile() {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  return linked && (linked.character_type === "npc" || linked.character_type === "family_npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
+                  return linked && (linked.character_type === "npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {
