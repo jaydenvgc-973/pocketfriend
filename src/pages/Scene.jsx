@@ -241,8 +241,19 @@ export default function Scene() {
     ? characters.filter(c => c.current_home_location_id === location.id)
     : [];
   // VGC Towers: residents are selectable but not auto-shown in the presence strip
-  const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
-  const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
+  // AUTHORITATIVE PRESENCE: use resolved_current_location_id if set, otherwise fall back to isCharacterHome
+  const homeResidentsPresent = homeResidents.filter(c => {
+    if (c.resolved_current_location_id) {
+      return c.resolved_current_location_id === locationId;
+    }
+    return isCharacterHome(c, locationMap);
+  });
+  const homeResidentsAway = homeResidents.filter(c => {
+    if (c.resolved_current_location_id) {
+      return c.resolved_current_location_id !== locationId;
+    }
+    return !isCharacterHome(c, locationMap);
+  });
 
   // Family NPCs for home scenes.
   // A family NPC is "present" if their current_location_id is unset (default = home) or === this location.
@@ -446,8 +457,9 @@ export default function Scene() {
       // STRICT JOB ASSIGNMENT: character's actual job must point to this location
       const workerJobIds = characterJobLocationIds(workerChar);
       if (workerJobIds.size > 0 && !workerJobIds.has(locationId)) return; // job is elsewhere
-      // OWNERSHIP/ASSIGNMENT ≠ PRESENCE: only show if live presence confirmed at this location
-      if (workerChar.resolved_current_location_id !== locationId) return;
+      // AUTHORITATIVE PRESENCE: resolved_current_location_id must match this location
+      // If not set, fall back to checking if they're on shift (workerCharacters already handles this above)
+      if (!workerChar.resolved_current_location_id || workerChar.resolved_current_location_id !== locationId) return;
       const jobTitle = location.worker_job_titles?.[wid] || workerChar.work_details?.job_title || "Employee";
       npcs.push({
         id: workerChar.id,
