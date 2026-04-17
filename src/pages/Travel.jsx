@@ -399,25 +399,15 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       }
                     });
 
-                    // HARD RULE: One NPC = one location. Only show NPC here if this is their ONLY location.
-                    // Build a global map of NPC name → all locations they appear at across all characters.
-                    const npcGlobalLocMap = new Map();
                     characters.forEach(char => {
-                      (char.fictional_relationships || []).forEach(rel => {
-                        if (!rel.related_character_id && rel.person_name && rel.current_location_id) {
-                          const key = rel.person_name.trim().toLowerCase();
-                          if (!npcGlobalLocMap.has(key)) npcGlobalLocMap.set(key, { name: rel.person_name, locations: new Set() });
-                          npcGlobalLocMap.get(key).locations.add(rel.current_location_id);
+                      if (!char.fictional_relationships) return;
+                      char.fictional_relationships.forEach(rel => {
+                        if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
+                          if (!lines.find(l => l.name === rel.person_name)) {
+                            lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
+                          }
                         }
                       });
-                    });
-                    npcGlobalLocMap.forEach((data) => {
-                      // Only show if they have exactly ONE location AND it's this one
-                      if (data.locations.size === 1 && data.locations.has(selectedLocation.id)) {
-                        if (!lines.find(l => l.name === data.name)) {
-                          lines.push({ name: data.name, status: "visiting", color: "text-amber-400" });
-                        }
-                      }
                     });
                   }
 
