@@ -1085,6 +1085,17 @@ Return JSON:
 
       const responseList = responses?.responses || [];
       for (const resp of responseList) {
+        // IDENTITY PROTECTION: never render an AI response under the real user's identity
+        const respNameLower = resp.character_name?.trim().toLowerCase();
+        const userNames = [
+          displayName?.trim().toLowerCase(),
+          currentUser?.full_name?.trim().toLowerCase(),
+          currentUser?.email?.split("@")[0]?.toLowerCase(),
+          settings?.fictional_world_name?.trim().toLowerCase(),
+          ...(settings?.user_aliases || []).map(a => a?.trim().toLowerCase()),
+        ].filter(Boolean);
+        if (userNames.includes(respNameLower)) continue; // BLOCKED — AI tried to speak as the user
+
         const char = sceneCharacters.find(c => c.name === resp.character_name);
         const msg = {
           id: Date.now().toString() + resp.character_name,
