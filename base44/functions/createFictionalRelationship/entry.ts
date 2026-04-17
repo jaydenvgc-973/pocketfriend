@@ -4,6 +4,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * createFictionalRelationship
  *
  * Adds a new entry to a character's fictional_relationships array.
+ * For non-family relationships, also creates a standalone NPC Character entity.
  * Called ONLY after explicit user confirmation in the UI.
  */
 Deno.serve(async (req) => {
@@ -49,6 +50,41 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, already_exists: true });
     }
 
+    // ── FAMILY CHECK: family members stay nested, non-family get a standalone Character entity ──
+    const familyTypes = ['family', 'Family'];
+    const isFamily = familyTypes.some(f => relationship_type.toLowerCase().includes(f.toLowerCase()));
+
+    let related_character_id = null;
+
+    if (!isFamily) {
+      // Check if a standalone NPC Character already exists for this person under this user
+      const existingNPC = await base44.asServiceRole.entities.Character.filter({
+        name: person_name,
+        created_by: user.email,
+        character_type: 'npc',
+      }, null, 1).then(c => c?.[0]).catch(() => null);
+
+      if (existingNPC) {
+        related_character_id = existingNPC.id;
+      } else {
+        // Create a new standalone NPC Character entity
+        const newNPC = await base44.asServiceRole.entities.Character.create({
+          name: person_name,
+          character_type: 'npc',
+          owner_email: user.email,
+          created_by: user.email,
+          status: 'active',
+          profile_summary: description || context || '',
+          background_story: context || '',
+          visibility_scope: 'account_private',
+          is_default: false,
+          is_active_character: false,
+          protected_active: false,
+        });
+        related_character_id = newNPC?.id || null;
+      }
+    }
+
     const newRelationship = {
       person_name,
       relationship_type,
@@ -59,7 +95,7 @@ Deno.serve(async (req) => {
       last_interaction_summary: '',
       avatar_url: null,
       current_location_id: null,
-      related_character_id: null,
+      related_character_id,
       user_respect_level: 50,
       friendship_level: 50,
       romantic_level: 0,
@@ -73,7 +109,7 @@ Deno.serve(async (req) => {
       fictional_relationships: updatedRelationships
     });
 
-    return Response.json({ success: true, relationship: newRelationship });
+    return Response.json({ success: true, relationship: newRelationship, npc_character_id: related_character_id });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }
