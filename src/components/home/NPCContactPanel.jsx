@@ -16,22 +16,16 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Fetch NPCs by owner_email ONLY — this is the authoritative ownership field for NPCs.
-  // created_by_id (the platform system field) can be wrong due to admin-session creation,
-  // so we NEVER filter by created_by for NPCs. owner_email is the source of truth.
+  // Use backend function (service role) to fetch NPCs — bypasses RLS entirely.
+  // This is required because NPCs created via createFictionalRelationship use asServiceRole,
+  // which sets the immutable platform created_by_id to the admin session, not the owning user.
+  // Frontend SDK queries go through RLS which leaks cross-account NPCs via created_by_id.
   const { data: npcCharacters = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const results = await base44.entities.Character.filter({
-        owner_email: currentUser.email,
-        character_type: { $in: ['npc', 'family_npc'] },
-      });
-      // Final guard: strictly enforce owner_email matches and exclude protected_active
-      return results.filter(c =>
-        c.owner_email === currentUser.email &&
-        !c.protected_active
-      );
+      const res = await base44.functions.invoke('getNPCsForAccount', {});
+      return res?.data?.npcs || [];
     },
     enabled: !!currentUser?.email,
   });
