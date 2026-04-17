@@ -91,7 +91,7 @@ export default function ManageCharacterList() {
                 {section.items.map((item) => {
                   const itemData = item.data;
                   const itemName = item.type === 'user' 
-                    ? (itemData.full_name || 'You')
+                    ? (itemData.worldName || itemData.full_name || 'You')
                     : itemData.name;
                   const itemId = item.type === 'user' ? 'user' : itemData.id;
 
