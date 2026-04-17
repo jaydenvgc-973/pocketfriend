@@ -47,6 +47,7 @@ import LocationAliasResolutionPopup from "@/components/location/LocationAliasRes
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import { buildDrinkContextBlock } from "@/lib/drinkDecisionEngine";
+import { createCorrectionHandlers } from "@/components/chat/CorrectionHandlers";
 
 const voiceCache = new Map();
 const activeAudioRef = new Map();

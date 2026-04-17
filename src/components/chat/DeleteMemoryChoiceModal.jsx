@@ -1,8 +1,8 @@
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, EyeOff, X } from "lucide-react";
+import { Brain, EyeOff, X, AlertCircle, Zap } from "lucide-react";
 
-export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel }) {
+export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation }) {
   if (!isOpen || !message) return null;
 
   const preview = message.content?.trim()
@@ -65,6 +65,32 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
                 <div>
                   <p className="text-sm font-semibold text-foreground">Forget this</p>
                   <p className="text-xs text-muted-foreground">Removed from thread · erased from memory</p>
+                </div>
+              </button>
+
+              <button
+                onClick={onNonsense}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-colors text-left"
+              >
+                <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="w-4 h-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">This is nonsense</p>
+                  <p className="text-xs text-muted-foreground">Logic failure · system learns stricter rules</p>
+                </div>
+              </button>
+
+              <button
+                onClick={onSleepViolation}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/30 hover:bg-destructive/20 transition-colors text-left"
+              >
+                <div className="w-8 h-8 rounded-full bg-destructive/20 flex items-center justify-center flex-shrink-0">
+                  <Zap className="w-4 h-4 text-destructive" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Violates sleep state</p>
+                  <p className="text-xs text-muted-foreground">Character was asleep · must be blocked</p>
                 </div>
               </button>
 
