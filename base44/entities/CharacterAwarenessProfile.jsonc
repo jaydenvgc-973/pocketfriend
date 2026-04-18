@@ -1,0 +1,91 @@
+{
+  "name": "CharacterAwarenessProfile",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "Reference to the Character entity"
+    },
+    "home_region": {
+      "type": "string",
+      "description": "Region where the character lives (e.g., 'New York', 'California')"
+    },
+    "tracks_us_news": {
+      "type": "boolean",
+      "default": true,
+      "description": "Character stays aware of major U.S. news"
+    },
+    "tracks_entertainment_news": {
+      "type": "boolean",
+      "default": true,
+      "description": "Character stays aware of entertainment/celebrity news"
+    },
+    "tracks_regional_news": {
+      "type": "boolean",
+      "default": true,
+      "description": "Character stays aware of news in their home region"
+    },
+    "tracks_politics": {
+      "type": "boolean",
+      "default": false,
+      "description": "Character is politically engaged and tracks political developments"
+    },
+    "tracks_finance": {
+      "type": "boolean",
+      "default": false,
+      "description": "Character is finance-focused and tracks market/business news"
+    },
+    "tracks_sports": {
+      "type": "boolean",
+      "default": false,
+      "description": "Character follows sports"
+    },
+    "tracks_music": {
+      "type": "boolean",
+      "default": false,
+      "description": "Character is deeply into music"
+    },
+    "favorite_celebrities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "List of celebrity names the character is a fan of"
+    },
+    "celebrity_reference_model": {
+      "type": "string",
+      "description": "If character is based on a real person, the name of that person"
+    },
+    "interest_tags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "description": "Additional interest areas (e.g., 'fashion', 'tech', 'fitness', 'cooking')"
+    },
+    "awareness_priority_level": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "default": "medium",
+      "description": "How current and detailed the character's awareness should be"
+    },
+    "last_awareness_refresh_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last time character awareness was refreshed from current events"
+    },
+    "cached_awareness_context": {
+      "type": "string",
+      "description": "Cached string of current awareness to inject into prompts"
+    }
+  },
+  "required": [
+    "character_id"
+  ]
+}
