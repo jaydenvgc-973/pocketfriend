@@ -11,7 +11,7 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
   const [preview, setPreview] = useState(npc?.photo_url || null);
   const [cropping, setCropping] = useState(false);
   const [error, setError] = useState(null);
-  const fileInputRef = React.useRef(null);
+  const fileInputRef = useRef(null);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
