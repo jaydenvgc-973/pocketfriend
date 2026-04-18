@@ -48,8 +48,7 @@ Deno.serve(async (req) => {
 
     // Build generation prompt
     const colorDesc = product.color ? `${product.color} ` : '';
-    const brandDesc = product.brand ? `by ${product.brand} ` : '';
-    const prompt = `AI-generated product image: ${colorDesc}${product.item_type} ${brandDesc}for an online shopping app. ${styleDesc}. The item must be clearly visible and readable. Suitable for shopping decision-making. Professional retail product photography.`;
+    const prompt = `Clean product photography: A single ${colorDesc}${product.item_type} displayed on a neutral white background. No text, no labels, no prices, no logos, no watermarks, no brand names. Just the item itself in professional retail lighting. Minimal, clean, product-only shot. High quality photography.`;
 
     // Generate image
     const imageRes = await base44.integrations.Core.GenerateImage({
