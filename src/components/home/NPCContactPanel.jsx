@@ -41,12 +41,12 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Show NPCs where created_by matches current user (existing behavior that works)
+  // Show NPCs where owner_email matches current user (includes all account-owned NPCs)
   const npcCharacters = rawNpcCharacters.filter(c => {
     if (c.protected_active) return false;
     // Include all NPC types: npc, family_npc, promoted_npc, npc_fictitious_person
     const isNPC = ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type);
-    return isNPC && c.created_by === currentUser?.email;
+    return isNPC && c.owner_email === currentUser?.email;
   });
 
   // Close dropdown when clicking outside
