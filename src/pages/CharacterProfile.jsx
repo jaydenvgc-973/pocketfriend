@@ -30,6 +30,7 @@ import CharacterBusinessesPanel from "@/components/character/CharacterBusinesses
 import LifeJournal from "@/components/character/LifeJournal";
 import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
 import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
+import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
 
 
 const ZODIAC_SIGNS = {
@@ -843,6 +844,8 @@ export default function CharacterProfile() {
             <Ghost className="w-4 h-4 text-primary" />
             <p className="text-xs text-muted-foreground uppercase tracking-wider">People In Their World</p>
           </div>
+
+          <AddPeopleInTheirWorldPanel character={character} onSuccess={() => refetch()} />
 
           {(() => {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
