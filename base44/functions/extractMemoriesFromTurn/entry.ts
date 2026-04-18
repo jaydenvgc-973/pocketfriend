@@ -121,7 +121,9 @@ Return a JSON object with:
     // ── SAVE MEMORY (text only — no entity/character creation) ────────────
     let createdMemory = null;
     if (memoryResponse.should_remember && memoryResponse.title && memoryResponse.description) {
-      createdMemory = await base44.asServiceRole.entities.Memory.create({
+      // CRITICAL: Save memory scoped to the authenticated user's email
+      // This prevents memories from bleeding across accounts (e.g. "Mark" vs "Jayden")
+      createdMemory = await base44.entities.Memory.create({
         character_id: characterId,
         title: memoryResponse.title,
         description: memoryResponse.description,

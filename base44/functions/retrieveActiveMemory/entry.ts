@@ -14,9 +14,10 @@ Deno.serve(async (req) => {
     const { characterId, currentMessage, recentMessages = [], topK = 12 } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    // Fetch ALL memories for this character (up to 500 — full long-term store)
+    // Fetch ALL memories for this character — STRICT account isolation
+    // Only return memories created by this user to prevent cross-account bleed
     const allMemories = await base44.entities.Memory.filter(
-      { character_id: characterId },
+      { character_id: characterId, created_by: user.email },
       '-timestamp',
       500
     );
