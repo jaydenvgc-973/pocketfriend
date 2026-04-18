@@ -192,10 +192,10 @@ export default function Home() {
   }, [characters, currentUser?.email]);
 
   useEffect(() => {
-    if (!isLoading && settings.length === 0) {
+    if (!isLoading && !currentUser?.email) {
       navigate("/");
     }
-  }, [isLoading, settings]);
+  }, [isLoading, currentUser?.email, navigate]);
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
