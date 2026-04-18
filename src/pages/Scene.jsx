@@ -1082,6 +1082,7 @@ ${fromAction ? "(This was from a scene action, not typed directly)" : ""}
 
 ${npcInstruction}
 Keep each response 1-2 sentences, natural and in-character.
+CRITICAL: Do NOT say your character's own name in the response — never speak about yourself in third person. Use "I", "we", "me", or "us" instead. Only mention your name if ${displayName} directly asks for it.
 
 Return JSON:
 {
