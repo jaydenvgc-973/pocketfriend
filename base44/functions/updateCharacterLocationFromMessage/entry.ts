@@ -1,184 +1,73 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-
-/**
- * updateCharacterLocationFromMessage
- * 
- * Resolution priority:
- *   1. Exact saved-location match (name or keyword)
- *   2. User-scoped alias memory (saved_location or rabbit_hole)
- *   3. No match → return unresolved=true so frontend can show popup
- *
- * If a match is found, updates character's resolved presence fields.
- * NEVER defaults to home just because no exact match exists.
- */
-
-function normalizePhrase(p) {
-  return p.toLowerCase().trim()
-    .replace(/['".,!?]/g, '')
-    .replace(/\bthe\b\s*/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-const PLACE_PATTERNS = [
-  /\b(?:i'm at|i am at|i'm in|currently at|just got to|heading to|at the|going to the|at my|made it to|just pulled up to|arrived at)\s+([\w\s'']+?)(?:\s*[,.]|$)/i,
-  /\b(?:i'm|i am)\s+(?:at|in)\s+(?:the\s+)?([\w\s'']+?)(?:\s*[,.]|$)/i,
-];
-
-const RABBIT_HOLE_TERMS = new Set([
-  'studio', 'rehearsal', 'set', 'backstage', 'session', 'recording session',
-  'appointment', 'class', 'interview', 'court', 'warehouse', 'venue',
-  'stage', 'rooftop', 'gallery', 'lab', 'salon', 'clinic',
-]);
-
-const VAGUE = ['out', 'busy', 'gone', 'away', 'around', 'somewhere', 'back', 'good', 'here'];
-
-function detectSpokenPlace(msg) {
-  const lower = msg.toLowerCase();
-  // Skip pure vague
-  if (VAGUE.some(v => lower === v || lower === `i'm ${v}`)) return null;
-
-  for (const pattern of PLACE_PATTERNS) {
-    const m = msg.match(pattern);
-    if (m && m[1]) {
-      const raw = m[1].trim();
-      if (raw.length < 2 || VAGUE.includes(raw.toLowerCase())) continue;
-      return { raw, normalized: normalizePhrase(raw) };
-    }
-  }
-
-  // Direct mention of a rabbit-hole term
-  for (const term of RABBIT_HOLE_TERMS) {
-    if (lower.includes(term)) {
-      return { raw: term, normalized: term };
-    }
-  }
-
-  return null;
-}
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     const { characterId, messageContent } = await req.json();
+    
     if (!characterId || !messageContent) {
       return Response.json({ error: 'Missing characterId or messageContent' }, { status: 400 });
     }
 
-    const [charArr, locRes, aliasArr] = await Promise.all([
-      base44.entities.Character.filter({ id: characterId }),
-      base44.functions.invoke('fetchAllLocationsForUser', {}),
-      base44.asServiceRole.entities.LocationAlias.filter({ owner_email: user.email }),
-    ]);
+    const char = await base44.entities.Character.filter({ id: characterId });
+    if (!char || char.length === 0) {
+      return Response.json({ error: 'Character not found' }, { status: 404 });
+    }
 
-    const character = charArr?.[0];
-    if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
-
+    const character = char[0];
+    
+    // Get all locations to match against
+    const locRes = await base44.functions.invoke('fetchAllLocationsForUser', {});
     const allLocations = locRes?.data?.locations || [];
-    const aliases = aliasArr || [];
+    
+    // Parse message for location keywords
+    const msgLower = messageContent.toLowerCase();
+    let detectedLocation = null;
+    let detectedLocationName = null;
 
-    // Detect spoken place
-    const detected = detectSpokenPlace(messageContent);
-    if (!detected) {
-      return Response.json({ success: true, updated: false, reason: 'no_place_detected' });
-    }
-
-    const { raw, normalized } = detected;
-
-    // STEP 1: Exact saved-location match
-    let exactMatch = null;
     for (const loc of allLocations) {
-      const locNorm = normalizePhrase(loc.name);
-      const kws = (loc.keywords || []).map(k => normalizePhrase(k));
-      if (locNorm === normalized || kws.includes(normalized)) {
-        exactMatch = loc;
-        break;
-      }
-      // Also check partial: message contains the full location name
-      if (messageContent.toLowerCase().includes(loc.name.toLowerCase()) && loc.name.length > 4) {
-        exactMatch = loc;
-        break;
+      const locNameLower = loc.name.toLowerCase();
+      const keywords = (loc.keywords || []).map(k => k.toLowerCase());
+      
+      // Check if location name or keywords appear in message
+      if (msgLower.includes(locNameLower) || keywords.some(kw => msgLower.includes(kw))) {
+        // Also check for phrases like "at X", "I'm at X", "going to X"
+        const atPattern = new RegExp(`\\b(at|at the|i'm at|i am at|at my|currently at|heading to|going to|here at)\\s+${locNameLower}`, 'i');
+        if (atPattern.test(messageContent)) {
+          detectedLocation = loc.id;
+          detectedLocationName = loc.name;
+          break;
+        }
       }
     }
 
-    if (exactMatch) {
-      await base44.asServiceRole.entities.Character.update(characterId, {
-        resolved_current_location_id: exactMatch.id,
-        resolved_current_location_name: exactMatch.name,
-        resolved_location_type: 'visit',
-        resolved_presence_status: 'visiting',
-        resolved_source_reason: 'chat_exact_match',
-        location_status: 'at_location',
-        is_rabbit_hole: false,
-        rabbit_hole_label: null,
-        last_location_update_time: new Date().toISOString(),
+    // If location detected, update BOTH current_activity AND current_location_id
+    if (detectedLocation && detectedLocationName !== character.current_activity) {
+      await base44.entities.Character.update(characterId, {
+        current_activity: detectedLocationName,
+        current_location_id: detectedLocation
       });
-      return Response.json({ success: true, updated: true, method: 'exact_match', location: exactMatch.name });
+      
+      return Response.json({ 
+        success: true, 
+        updated: true,
+        newLocation: detectedLocationName,
+        message: `Updated ${character.name}'s location to ${detectedLocationName}`
+      });
     }
 
-    // STEP 2: Check alias memory (user-scoped)
-    const alias = aliases.find(a => {
-      const aPhrase = normalizePhrase(a.phrase);
-      return aPhrase === normalized || normalized.includes(aPhrase) || aPhrase.includes(normalized);
-    });
-
-    if (alias) {
-      if (alias.resolution_type === 'saved_location' && alias.resolved_location_id) {
-        await base44.asServiceRole.entities.Character.update(characterId, {
-          resolved_current_location_id: alias.resolved_location_id,
-          resolved_current_location_name: alias.resolved_location_name,
-          resolved_location_type: 'visit',
-          resolved_presence_status: 'visiting',
-          resolved_source_reason: 'chat_alias',
-          location_status: 'at_location',
-          is_rabbit_hole: false,
-          rabbit_hole_label: null,
-          last_location_update_time: new Date().toISOString(),
-        });
-        // Bump use count
-        base44.asServiceRole.entities.LocationAlias.update(alias.id, { use_count: (alias.use_count || 1) + 1 }).catch(() => {});
-        return Response.json({ success: true, updated: true, method: 'alias_saved_location', location: alias.resolved_location_name });
-      }
-
-      if (alias.resolution_type === 'rabbit_hole') {
-        const label = alias.rabbit_hole_label || raw.replace(/\b\w/g, c => c.toUpperCase());
-        await base44.asServiceRole.entities.Character.update(characterId, {
-          resolved_current_location_id: null,
-          resolved_current_location_name: label,
-          resolved_location_type: 'rabbit_hole',
-          resolved_presence_status: 'rabbit_hole',
-          resolved_source_reason: 'chat_alias_rabbit_hole',
-          location_status: 'at_location',
-          is_rabbit_hole: true,
-          rabbit_hole_label: label,
-          rabbit_hole_subtype: alias.rabbit_hole_subtype || null,
-          rabbit_hole_started_at: new Date().toISOString(),
-          last_location_update_time: new Date().toISOString(),
-        });
-        base44.asServiceRole.entities.LocationAlias.update(alias.id, { use_count: (alias.use_count || 1) + 1 }).catch(() => {});
-        return Response.json({ success: true, updated: true, method: 'alias_rabbit_hole', label });
-      }
-
-      if (alias.resolution_type === 'ignored') {
-        return Response.json({ success: true, updated: false, reason: 'alias_ignored' });
-      }
-    }
-
-    // STEP 3: Unresolved — return signal for frontend popup
-    return Response.json({
-      success: true,
+    return Response.json({ 
+      success: true, 
       updated: false,
-      unresolved: true,
-      phrase: raw,
-      normalized,
-      characterId,
-      characterName: character.name,
+      message: 'No location change detected'
     });
   } catch (error) {
-    console.error('[updateCharacterLocationFromMessage]', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

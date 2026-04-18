@@ -766,8 +766,8 @@ export default function CharacterProfile() {
             {(!character.fictional_relationships?.some(r => {
               if (!r.related_character_id) return false;
               const lc = allCharacters.find(c => c.id === r.related_character_id);
-              if (!lc) return false;
-              return lc.character_type === "active";
+              if (!lc) return true;
+              return lc.character_type !== "npc" && lc.character_type !== "family_npc";
             })) && (
               <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
             )}
@@ -776,8 +776,8 @@ export default function CharacterProfile() {
                 .filter(r => {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!lc) return false;
-                  return lc.character_type === "active";
+                  if (!lc) return true;
+                  return lc.character_type !== "npc" && lc.character_type !== "family_npc";
                 })
                 .map((rel, idx) => {
                    const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
@@ -848,9 +848,9 @@ export default function CharacterProfile() {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return false;
+              if (!r.related_character_id) return true;
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              return linked && (linked.character_type === "npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
+              return linked && (linked.character_type === "npc" || linked.character_type === "family_npc");
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -866,9 +866,9 @@ export default function CharacterProfile() {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
                 const npcRels = (character.fictional_relationships || []).filter(r => {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return false;
+                  if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  return linked && (linked.character_type === "npc" || linked.character_type === "background" || linked.character_type === "promoted_npc");
+                  return linked && (linked.character_type === "npc" || linked.character_type === "family_npc");
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {
@@ -1040,24 +1040,6 @@ export default function CharacterProfile() {
 
 
       {editingNPCPhoto && character && (
-        <NPCPhotoEditor
-          npc={editingNPCPhoto.npc}
-          sourceCharacter={editingNPCPhoto.sourceCharacter}
-          onPhotoUpdate={async (photoUrl) => {
-            const updatedRels = (character.fictional_relationships || []).map(r =>
-              r.person_name === editingNPCPhoto.npc.person_name
-                ? { ...r, avatar_url: photoUrl, photo_url: photoUrl }
-                : r
-            );
-            await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
-            queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-            setEditingNPCPhoto(null);
-          }}
-          onClose={() => setEditingNPCPhoto(null)}
-        />
-      )}
-
-      {promotingNPC && character && (
         <NPCPromotionModal
           npcData={promotingNPC.rel}
           sourceCharacter={promotingNPC.sourceCharacter}

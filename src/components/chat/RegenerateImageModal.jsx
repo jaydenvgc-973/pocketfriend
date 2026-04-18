@@ -80,7 +80,7 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
       setShowLocationPicker(true);
       setLoadingLocations(true);
       base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
-        const locs = res?.data?.locations || [];
+        const locs = (res?.data?.locations || []).filter(l => l.image_urls?.length > 0 || l.zones?.some(z => z.image_urls?.length > 0));
         setLocations(locs);
       }).catch(() => setLocations([])).finally(() => setLoadingLocations(false));
       return;

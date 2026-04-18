@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { MessageCircle, Phone, Trash2, Pencil, X, MapPin, MoreVertical, Sparkles, ImagePlus, BarChart2, User, Moon, Briefcase, BookOpen, Home, Gamepad2, Dumbbell, Wine, Music, ShoppingBag, AlertTriangle, DollarSign } from "lucide-react";
 // Note: Sparkles is reused for prayer icon
-import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
+import { resolveCharacterLocation } from "@/lib/locationResolutionEngine";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
@@ -241,66 +241,79 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                // LIVE: use unified presence truth
-                const presence = getCharacterLivePresence(character, locationMap);
-                const isSleeping = presence.isSleeping;
-                const isPraying = false; // removed—use presence.status checks instead
+                // LIVE: compute actual location using resolution engine + locationMap
+                const resolved = resolveCharacterLocation(character, locationMap);
+                const isSleeping = resolved.resolved_source_reason === 'home_sleeping';
+                const isPraying = resolved.resolved_source_reason === 'praying_at_home';
                 
                 let iconType = 'calm';
                 let label = 'available';
                 let color = 'text-muted-foreground';
                 
                 if (isSleeping) {
-                   iconType = 'sleep';
-                   label = presence.sublabel || 'sleeping';
-                   color = 'text-blue-300';
-                 } else if (presence.status === 'at_work') {
-                   iconType = 'work';
-                   label = `working at ${presence.sublabel || 'work'}`;
-                   color = 'text-blue-400';
-                 } else if (presence.status === 'at_school') {
-                   iconType = 'school';
-                   label = `at ${presence.sublabel || 'school'}`;
-                   color = 'text-amber-400';
-                 } else if (presence.status === 'home') {
-                   iconType = 'home';
-                   label = 'at home';
-                   color = 'text-pink-400';
-                 } else if (presence.isTransit) {
-                   iconType = 'out';
-                   label = presence.label;
-                   color = 'text-orange-400';
-                 } else if (presence.label) {
-                   // Any other location — use the label
-                   const loc = locationMap[character.resolved_current_location_id];
-                   const category = loc?.category;
-                   if (category === 'gym') {
-                     iconType = 'gym';
-                   } else if (category === 'food_drink') {
-                     iconType = 'bar';
-                   } else if (category === 'school' || category === 'education') {
-                     iconType = 'school';
-                   } else {
-                     iconType = 'out';
-                   }
-                   label = presence.label;
-                   color = 'text-blue-400';
-                 } else {
-                   iconType = 'calm';
-                   label = 'available';
-                   color = 'text-muted-foreground';
-                 }
+                  iconType = 'sleep';
+                  label = 'sleeping';
+                  color = 'text-blue-300';
+                } else if (isPraying) {
+                  iconType = 'prayer';
+                  label = 'praying';
+                  color = 'text-violet-300';
+                } else if (resolved.resolved_presence_status === 'at_work') {
+                    // At work AND currently on shift — show briefcase
+                    iconType = 'work';
+                    label = `working at ${resolved.resolved_current_location_name}`;
+                    color = 'text-blue-400';
+                } else if (resolved.resolved_location_type === 'work' || resolved.resolved_presence_status === 'at_work_off_shift') {
+                    // At work location but OFF SHIFT — use location's category icon
+                    const loc = locationMap[resolved.resolved_current_location_id];
+                    const category = loc?.category;
+                    if (category === 'gym') {
+                      iconType = 'gym';
+                      color = 'text-cyan-400';
+                    } else if (category === 'food_drink') {
+                      iconType = 'bar';
+                      color = 'text-amber-400';
+                    } else {
+                      iconType = 'visit';
+                      color = 'text-cyan-400';
+                    }
+                    label = `at ${resolved.resolved_current_location_name}`;
+                } else if (resolved.resolved_location_type === 'school') {
+                  iconType = 'school';
+                  label = `at ${resolved.resolved_current_location_name}`;
+                  color = 'text-amber-400';
+                } else if (resolved.resolved_location_type === 'home') {
+                  iconType = 'home';
+                  label = 'at home';
+                  color = 'text-pink-400';
+                } else if (resolved.resolved_presence_status === 'traveling') {
+                  iconType = 'out';
+                  label = `headed to ${resolved.resolved_current_location_name}`;
+                  color = 'text-orange-400';
+                } else if (!resolved.resolved_current_location_id && (character.home_location_id || character.current_home_location_id)) {
+                  // No resolved location but home is assigned — show as home
+                  iconType = 'home';
+                  label = 'at home';
+                  color = 'text-pink-400';
+                } else {
+                  // At any other location — use its category icon
+                  const loc = locationMap[resolved.resolved_current_location_id];
+                  const category = loc?.category;
+                  if (category === 'gym') {
+                    iconType = 'gym';
+                  } else if (category === 'food_drink') {
+                    iconType = 'bar';
+                  } else if (category === 'home') {
+                    iconType = 'home';
+                  } else if (category === 'school' || category === 'education') {
+                    iconType = 'school';
+                  } else {
+                    iconType = 'out';
+                  }
+                  label = `at ${resolved.resolved_current_location_name}`;
+                  color = 'text-blue-400';
+                }
                 
-                // Rabbit hole check before icon rendering
-                if (presence.status === 'rabbit_hole') {
-                   return (
-                     <div className="flex items-center gap-1.5">
-                       <MapPin className="w-3 h-3 text-violet-400" />
-                       <span className="text-xs text-violet-400">{presence.label}</span>
-                     </div>
-                   );
-                 }
-
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,

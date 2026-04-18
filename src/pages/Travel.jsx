@@ -17,7 +17,7 @@ import RealLocationModal from "@/components/travel/RealLocationModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { getCharacterLivePresence } from "@/lib/locationResolutionEngine";
+import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -376,90 +376,69 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // STRICT: Show characters whose home IS this location with their actual presence
-                    characters.forEach(c => {
-                      if (c.current_home_location_id !== selectedLocation.id) return;
-                      const presence = getCharacterLivePresence(c, locationMap);
+                    const charactersAtHome = characters.filter(c => {
+                      const resolved = resolveCharacterLocation(c, locationMap);
+                      return resolved.resolved_current_location_id === selectedLocation.id;
+                    });
+                    charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
-                      // Determine status based on resolved presence
-                      let status, color;
-                      if (presence.status === 'in_transit' && c.traveling_to_location_id) {
-                        // Traveling to another location
-                        status = `traveling to ${locationMap[c.traveling_to_location_id]?.name || "elsewhere"}`;
-                        color = 'text-amber-400';
-                      } else if (presence.status === 'sleeping') {
-                        status = 'sleeping';
-                        color = 'text-slate-400';
-                      } else if (presence.status === 'napping') {
-                        status = 'napping';
-                        color = 'text-slate-400';
-                      } else if (presence.status === 'at_work') {
-                        status = `at work (${locationMap[c.resolved_current_location_id]?.name || "work"})`;
-                        color = 'text-blue-400';
-                      } else if (presence.status === 'at_school') {
-                        status = `at school (${locationMap[c.resolved_current_location_id]?.name || "school"})`;
-                        color = 'text-blue-400';
-                      } else {
-                        status = 'home';
-                        color = 'text-green-400';
+                    characters.filter(c =>
+                      c.character_type === 'family_npc' &&
+                      c.status === 'active' &&
+                      (selectedLocation.resident_character_ids || []).includes(c.id)
+                    ).forEach(c => {
+                      if (!lines.find(l => l.name === c.name)) {
+                        lines.push({ name: c.name, status: 'home', color: 'text-muted-foreground' });
                       }
-
-                      lines.push({ name: c.name, status, color });
                     });
 
-                    // Family NPCs: show where they actually are
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
-                      if (lines.find(l => l.name === locFamilyMember.name)) return;
-                      let atWork = false;
-                      let workLoc = null;
+                      if (!locFamilyMember.name) return;
+                      let npcLocationId = null;
                       for (const char of characters) {
-                        const rel = char.fictional_relationships?.find(r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase());
-                        if (rel?.current_location_id && rel.current_location_id !== selectedLocation.id) {
-                          atWork = true;
-                          workLoc = locationMap[rel.current_location_id]?.name || "work";
-                          break;
+                        const rel = (char.fictional_relationships || []).find(
+                          r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase() && !r.related_character_id
+                        );
+                        if (rel) { npcLocationId = rel.current_location_id || null; break; }
+                      }
+                      if (!npcLocationId || npcLocationId === selectedLocation.id) {
+                        if (!lines.find(l => l.name === locFamilyMember.name)) {
+                          lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
                         }
                       }
-                      const status = atWork ? `at work (${workLoc})` : 'home';
-                      const color = atWork ? 'text-blue-400' : 'text-muted-foreground';
-                      lines.push({ name: locFamilyMember.name, status, color });
                     });
                   } else {
-                    // Non-home venues: show ONLY characters actually at THIS location
-                    characters.forEach(c => {
-                      const presence = getCharacterLivePresence(c, locationMap);
-
-                      // Show if traveling TO this location
-                      if (presence.status === 'in_transit' && c.traveling_to_location_id === selectedLocation.id) {
-                        lines.push({ name: c.name, status: 'traveling here', color: 'text-amber-400' });
-                      } 
-                      // Show if currently AT this location
-                      else if (c.resolved_current_location_id === selectedLocation.id) {
-                        const status = presence.status === 'at_work' ? 'working' :
-                                      presence.status === 'at_school' ? 'at school' :
-                                      presence.status === 'sleeping' ? 'sleeping' :
-                                      presence.status === 'napping' ? 'napping' :
-                                      'here';
-                        const color = presence.status === 'at_work' ? 'text-blue-500' :
-                                     presence.status === 'sleeping' ? 'text-slate-400' :
-                                     presence.status === 'napping' ? 'text-slate-400' :
-                                     'text-blue-400';
-                        if (!lines.find(l => l.name === c.name)) {
-                          lines.push({ name: c.name, status, color });
-                        }
-                      }
+                    const currentlyAtLocation = characters.filter(c => {
+                      const resolved = resolveCharacterLocation(c, locationMap);
+                      return resolved.resolved_current_location_id === selectedLocation.id;
                     });
+                    currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
-                    // NPCs at this venue
                     characters.forEach(char => {
                       if (!char.fictional_relationships) return;
                       char.fictional_relationships.forEach(rel => {
                         if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
                           if (!lines.find(l => l.name === rel.person_name)) {
-                            lines.push({ name: rel.person_name, status: "here", color: "text-amber-400" });
+                            lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
                           }
                         }
                       });
+                    });
+
+                    const now = new Date();
+                    const dayOfWeek = now.getDay();
+                    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+                    characters.forEach(c => {
+                      const resolvedC = resolveCharacterLocation(c, locationMap);
+                      if (resolvedC.resolved_current_location_id === selectedLocation.id) {
+                        const workerShifts = selectedLocation.worker_shifts || {};
+                        const shift = workerShifts[c.id];
+                        if (shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end) {
+                          const idx = lines.findIndex(l => l.name === c.name);
+                          if (idx >= 0) lines[idx].status = "working";
+                        }
+                      }
                     });
                   }
 
@@ -584,10 +563,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Characters: {characters.length}</p>
               {characters.map(c => {
-                const presence = getCharacterLivePresence(c, locationMap);
+                const resolved = resolveCharacterLocation(c, locationMap);
                 return (
                   <div key={c.id} className="text-[10px] text-muted-foreground/70">
-                    • {c.name}: {presence.label || "unknown"}
+                    • {c.name}: {resolved.resolved_current_location_name || "unknown"}
                   </div>
                 );
               })}

@@ -4,7 +4,6 @@ import { getWorldContextForPrompt } from "@/lib/worldKnowledge";
 import { buildReligionPromptContext } from "@/lib/religionUtils";
 import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
-import { getDrinkDecisionRules } from "@/lib/drinkDecisionEngine";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -138,23 +137,9 @@ function buildRelationshipsContext(character) {
 
   if (character.work_details) {
     const w = character.work_details;
-    section += `\nYOUR PRIMARY JOB: ${w.job_title || "your job"} at a ${w.workplace_type || "workplace"}. ${w.work_environment || ""}`;
+    section += `\nYOUR WORK: ${w.job_title || "your job"} at a ${w.workplace_type || "workplace"}. ${w.work_environment || ""}`;
     if (w.coworker_names?.length) section += ` Coworkers you deal with: ${w.coworker_names.join(", ")}.`;
     section += "\n";
-  }
-
-  // Include all job locations if multiple
-  const allWorkLocIds = [];
-  if (character.occupation_location_id) allWorkLocIds.push({ id: character.occupation_location_id, name: character.occupation_location_name });
-  if (character.additional_occupation_locations?.length > 0) {
-    character.additional_occupation_locations.forEach(loc => {
-      if (loc.location_id && !allWorkLocIds.some(w => w.id === loc.location_id)) {
-        allWorkLocIds.push({ id: loc.location_id, name: loc.location_name, title: loc.job_title });
-      }
-    });
-  }
-  if (allWorkLocIds.length > 1) {
-    section += `\nADDITIONAL JOBS: You also work at: ${allWorkLocIds.map(w => `${w.title ? `${w.title} at ` : ''}${w.name}`).join(", ")}. Refer to all your jobs naturally.\n`;
   }
 
   if ((character.frequented_places || []).length > 0) {
@@ -198,48 +183,12 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
 }
 
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}) {
-   const { allowNarration = false } = options; // Default OFF — narration is opt-in, only enabled for Scene/Moments pages
-   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
-   const userNameLabel = character.nickname_for_user || userDisplayName || null;
-   const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
-
-   // Build all work locations context for characters with multiple jobs
-   let allJobsContext = "";
-   const allWorkLocIds = [];
-   if (character.occupation_location_id) allWorkLocIds.push({ id: character.occupation_location_id, name: character.occupation_location_name });
-   if (character.additional_occupation_locations?.length > 0) {
-     character.additional_occupation_locations.forEach(loc => {
-       if (loc.location_id && !allWorkLocIds.some(w => w.id === loc.location_id)) {
-         allWorkLocIds.push({ id: loc.location_id, name: loc.location_name, title: loc.job_title });
-       }
-     });
-   }
-   if (allWorkLocIds.length > 0) {
-     allJobsContext = `\nYOU WORK AT MULTIPLE LOCATIONS:\n${allWorkLocIds.map(w => `- ${w.title ? `${w.title} at ` : ''}${w.name}`).join('\n')}\nYou have shifts at each of these places. Reference them naturally when relevant.`;
-   }
-  // Replace "the user" in memories with the actual user's name so character knows who they're talking to
-  // IDENTITY SANITIZER: Replace "the user" AND any known foreign account names
-  // with the correct user name. This is a hard safety net against cross-account leakage.
-  const KNOWN_FOREIGN_NAMES = ['Mark']; // Names from OTHER user accounts that must never appear
-  const replaceUserRef = (text) => {
-    if (!text) return text;
-    const name = userNameLabel || "the person I'm talking to";
-    let cleaned = text
-      .replace(/\bthe user\b/gi, name)
-      .replace(/\bThe user\b/g, name.charAt(0).toUpperCase() + name.slice(1));
-    // Replace any foreign account name that is NOT the current user's name
-    if (userNameLabel) {
-      for (const foreignName of KNOWN_FOREIGN_NAMES) {
-        if (userNameLabel !== foreignName) {
-          const regex = new RegExp(`\\b${foreignName}\\b`, 'g');
-          cleaned = cleaned.replace(regex, userNameLabel);
-        }
-      }
-    }
-    return cleaned;
-  };
+  const { allowNarration = false } = options; // Default OFF — narration is opt-in, only enabled for Scene/Moments pages
+  // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
+  const userNameLabel = character.nickname_for_user || userDisplayName || null;
+  const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
   const memories = (character.memories || []).map(m =>
-    `- ${m.title}: ${replaceUserRef(m.description)}${m.emotional_impact ? ` | Emotional impact: ${replaceUserRef(m.emotional_impact)}` : ""}${m.lesson_learned ? ` | What they learned: ${replaceUserRef(m.lesson_learned)}` : ""}`
+    `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -291,7 +240,7 @@ ${character.is_default ? `YOUR FAMILY — NAMES AND DYNAMICS:
 - Cousin: Kiara — talks more than she listens, but means well.
 - Aunt: Udelka — you treat her like an overbearing, unwanted sister — not an aunt. She wasn't the one who raised you. She oversteps and you don't give her the same deference. "You're not in a position to tell me what to do."
 - Grandmother: Abuela Sophia — she raised you. She is a pseudo-mom to you. You call her "Abuela Sophia" — never just "Sophia." She doesn't push. That's exactly why you listen to her. She holds real weight in your life.
-- ${userNameLabel || "the person you're talking to"} — inner circle, chosen family. "You can say it — and I'll actually hear it." THIS IS THE PERSON MESSAGING YOU RIGHT NOW.
+- The user — inner circle, chosen family. "You can say it — and I'll actually hear it."
 
 IMPORTANT: Use these names when referencing family. Never say "my sister" when you mean Vanessa or Camila — be specific. That's what makes it real.` : buildFamilySection(character)}
 
@@ -303,18 +252,6 @@ ${character.upset_reaction}
 
 WHAT YOU CARRY (emotional baggage):
 ${character.emotional_baggage}
-
-⚠️ ABSOLUTE IDENTITY RULE — THIS OVERRIDES EVERYTHING ELSE:
-The person messaging you RIGHT NOW is ${userNameLabel ? `"${userNameLabel}"` : "the person you're talking to"}. There is ONE person you are talking to. That person is ${userNameLabel || "this person"}. That is who they have ALWAYS been — in every past message, every memory, every interaction. There is no other user. There is no split identity. There is no "Jayden now, Mark before." There is only one continuous person: ${userNameLabel || "this person"}.
-
-HARD RULES — NON-NEGOTIABLE:
-- NEVER address the current user as "Mark" or any name that is not "${userNameLabel || "their name"}"
-- NEVER say things like "you used to be Mark" or "I knew you as Mark" or treat their past interactions as belonging to someone else
-- ALL past memories, conversations, interactions, and moments with the user belong to ${userNameLabel || "this person"} — the same person you are talking to right now
-- If memory says "Mark did X" and Mark is not a character in this world — that memory refers to ${userNameLabel || "this person"}, rebind it
-- NEVER treat ${userNameLabel || "this person"} as a third party. You are talking TO them, not ABOUT them
-- When you say "you", you mean them — the person messaging you right now — ${userNameLabel || "this person"}
-- "Mark" does NOT exist in this conversation unless Mark is an explicitly named character in your world. If Mark is not a character — the name Mark does not exist here. Do not use it.
 
 YOUR RELATIONSHIP WITH THE PERSON YOU'RE TALKING TO (who you call "${userNameLabel || "them"}"):
 This person is one of the few you can be honest with — they can challenge you, interrupt you, and still be trusted. You two are unified when facing outward, but direct with each other privately. You will defend them publicly without hesitation. But privately, you will always tell them the truth. That matters.
@@ -351,15 +288,7 @@ THINGS THAT BOTHER YOU (MEDIUM — noticeable shift in tone):
 THINGS THAT CUT DEEP (DEEP — quiet first, then cold):
   - ${deepTriggers}
 
-${knownCharacters.length > 0 ? `\nPEOPLE YOU PERSONALLY KNOW (in the user's world):
-CRITICAL: Their current locations are AUTHORITATIVE. Use these to inform where they are and what they're doing:
-${knownCharacters.map(c => {
-  const locName = c.resolved_current_location_name || c.current_home_location_name || "home";
-  const presenceStatus = c.resolved_presence_status || "home";
-  const presence = presenceStatus === 'at_work' ? `working at ${locName}` : presenceStatus === 'at_school' ? `at school (${locName})` : presenceStatus === 'sleeping' ? 'sleeping at home' : presenceStatus === 'traveling' ? `traveling to ${locName}` : `at ${locName}`;
-  return `- ${c.name}: ${c.personality_summary?.split(".")[0] || "someone you know"}. RIGHT NOW: ${presence}. You have a real history with them.`;
-}).join("\n")}
-When any of these people come up, reference their ACTUAL current location. If asked where they are, this is the truth. Do NOT guess or assume — use what's listed above.\n` : ""}
+${knownCharacters.length > 0 ? `\nPEOPLE YOU PERSONALLY KNOW (in the user's world):\n${knownCharacters.map(c => `- ${c.name}: ${c.personality_summary?.split(".")[0] || "someone you know"}. You have a real history with them.`).join("\n")}\nWhen any of these people come up in conversation, speak about them like someone you actually know — with real opinions, feelings, and history.\n` : ""}
 ${!character.is_default ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:
 Abuela Sophia is the grandmother of someone else entirely — she did not raise you, she is not part of your family, and she has no connection to your life. Never reference her as your grandmother, your family member, or anyone who raised you. You have your own family background. Abuela Sophia belongs to someone else's story, not yours.` : ""}
 
@@ -393,8 +322,6 @@ ${character.videos_watched && character.videos_watched.length > 0
 
 WORLD AWARENESS (background context — you live in this world, you don't recite it):
 ${getWorldContextForPrompt()}
-
-${getDrinkDecisionRules()}
 
 FOLLOW-THROUGH RULES — NON-NEGOTIABLE:
 - If you say "give me a sec", "hold on", "one sec", "brb", or any short-wait phrase, you MUST follow up within the same conversation shortly after. Never leave it hanging.

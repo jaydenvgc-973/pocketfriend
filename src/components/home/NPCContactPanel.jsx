@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, X, ChevronDown, UserCheck, RefreshCw } from 'lucide-react';
+import { Users, X, ChevronDown, UserCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
@@ -7,7 +7,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export default function NPCContactPanel() {
   const [isOpen, setIsOpen] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -16,19 +15,19 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Use backend function (service role) to fetch NPCs — bypasses RLS entirely.
-  // This is required because NPCs created via createFictionalRelationship use asServiceRole,
-  // which sets the immutable platform created_by_id to the admin session, not the owning user.
-  // Frontend SDK queries go through RLS which leaks cross-account NPCs via created_by_id.
-  const { data: npcCharacters = [] } = useQuery({
+  const { data: rawNpcCharacters = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return [];
-      const res = await base44.functions.invoke('getNPCsForAccount', {});
-      return res?.data?.npcs || [];
-    },
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({
+          created_by: currentUser.email,
+          character_type: { $in: ['npc', 'family_npc'] }
+        })
+      : [],
     enabled: !!currentUser?.email,
   });
+
+  // Always exclude any character the user has marked as a real active character
+  const npcCharacters = rawNpcCharacters.filter(c => !c.protected_active);
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -57,30 +56,6 @@ export default function NPCContactPanel() {
       queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
-    }
-  };
-
-  const handleCheckForNPCs = async () => {
-    if (!currentUser?.email) return;
-    setIsChecking(true);
-    try {
-      // ONLY query by owner_email — never by created_by, which can return cross-account NPCs
-      // due to the platform's created_by_id being set at creation time and not correctable.
-      const allChars = await base44.entities.Character.filter({ owner_email: currentUser.email });
-
-      // Find NPC-type characters that aren't tagged correctly — strictly scoped to this account
-      const needsTagging = allChars.filter(c =>
-        c.owner_email === currentUser.email &&
-        (c.character_type === 'background' || (!c.character_type && !c.is_default && !c.is_active_character)) &&
-        c.protected_active !== true &&
-        c.status !== 'deleted'
-      );
-      await Promise.all(
-        needsTagging.map(c => base44.entities.Character.update(c.id, { character_type: 'npc' }))
-      );
-      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.email] });
-    } finally {
-      setIsChecking(false);
     }
   };
 
@@ -122,21 +97,9 @@ export default function NPCContactPanel() {
               overflowY: 'auto'
             }}
           >
-            {/* Check for NPCs option — always visible at top */}
-            <div className="border-b border-border">
-              <button
-                onClick={handleCheckForNPCs}
-                disabled={isChecking}
-                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
-                {isChecking ? 'Checking...' : 'Check for NPCs on this account'}
-              </button>
-            </div>
-
             {npcCharacters.length === 0 ? (
               <div className="p-3 text-xs text-muted-foreground text-center">
-                No NPCs found — try "Check for NPCs" above
+                No NPCs to contact
               </div>
             ) : (
               <div>

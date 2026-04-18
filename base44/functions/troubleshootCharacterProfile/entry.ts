@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 Deno.serve(async (req) => {
   try {
@@ -9,256 +9,298 @@ Deno.serve(async (req) => {
     const { characterId, selectedIssues = [] } = await req.json();
     if (!characterId) return Response.json({ error: 'Missing characterId' }, { status: 400 });
 
-    const results = { summary: '', checks: [], fixes_applied: [], issues_found: [] };
+    const results = {
+      summary: '',
+      checks: [],
+      fixes_applied: [],
+      issues_found: [],
+    };
 
+    // Fetch the target character
     const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
     if (chars.length === 0) {
       return Response.json({ success: false, data: { summary: 'Character not found', checks: [], fixes_applied: [], issues_found: ['Character record missing'] } });
     }
     const character = chars[0];
 
-    // All characters visible to this user (for cross-contamination checks)
+    // Fetch all characters belonging to this user for cross-contamination checks
     const allChars = await base44.asServiceRole.entities.Character.filter({ created_by: user.email });
 
-    // ── OWNERSHIP INTEGRITY ───────────────────────────────────────────────────
-    // Ensures owner_email is set correctly. SAFE: only fixes missing owner_email.
-    if (selectedIssues.includes('ownership_integrity')) {
-      const expectedOwner = character.owner_email || character.created_by;
-      if (!character.owner_email) {
-        await base44.asServiceRole.entities.Character.update(characterId, { owner_email: character.created_by });
-        results.fixes_applied.push(`owner_email was missing — set to created_by: ${character.created_by}`);
-        results.checks.push({ name: 'Ownership Integrity', status: 'fixed', message: `owner_email was blank. Corrected to: ${character.created_by}` });
-      } else if (character.owner_email !== character.created_by && character.character_type !== 'npc' && character.character_type !== 'family_npc') {
-        results.checks.push({ name: 'Ownership Integrity', status: 'warning', message: `owner_email (${character.owner_email}) differs from created_by (${character.created_by}). For NPCs this is expected (NPC belongs to account of parent character). For active characters, review if this is intentional.` });
-      } else {
-        results.checks.push({ name: 'Ownership Integrity', status: 'passed', message: `owner_email: ${character.owner_email} | created_by: ${character.created_by}` });
-      }
-    }
-
-    // ── FAMILY LIST INTEGRITY ────────────────────────────────────────────────
-    // READ-ONLY: reports duplicates and title mismatches. Never removes family members.
+    // --- FAMILY LIST CHECK ---
     if (selectedIssues.includes('family_list') || selectedIssues.includes('wrong_titles')) {
       const familyMembers = character.family_members || [];
       const PARENT_TITLES = ['mother', 'mom', 'father', 'dad', 'parent'];
       const CHILD_TITLES = ['son', 'daughter', 'child', 'kid'];
       const SPOUSE_TITLES = ['wife', 'husband', 'spouse', 'partner'];
 
+      let duplicatesFound = [];
+      let wrongTitlesFound = [];
+      let fixes = [];
+
+      // Detect duplicate relationship types (e.g., two entries with title "mother")
       const titleCounts = {};
       familyMembers.forEach(m => {
         const t = (m.relationship_type || '').toLowerCase();
         titleCounts[t] = (titleCounts[t] || 0) + 1;
       });
 
-      let duplicatesFound = false;
       for (const [title, count] of Object.entries(titleCounts)) {
-        if (count > 1 && (PARENT_TITLES.includes(title) || SPOUSE_TITLES.includes(title))) {
-          results.issues_found.push(`Duplicate "${title}" entries (${count} total) in family list — only one expected. Review manually.`);
-          duplicatesFound = true;
+        if (count > 1 && PARENT_TITLES.includes(title)) {
+          duplicatesFound.push(`Duplicate "${title}" entries found (${count} total) — only one parent per title expected`);
+        }
+        if (count > 1 && SPOUSE_TITLES.includes(title)) {
+          duplicatesFound.push(`Duplicate "${title}" entries found (${count} total) — only one spouse expected`);
         }
       }
 
+      // Detect mismatched titles: e.g. a person listed as "mother" but their name appears in fictional_relationships as child
       const fictionalRels = character.fictional_relationships || [];
       familyMembers.forEach(fm => {
         const relTitle = (fm.relationship_type || '').toLowerCase();
         const matchingFictional = fictionalRels.find(r => r.person_name === fm.name);
         if (matchingFictional) {
           const fRelType = (matchingFictional.relationship_type || '').toLowerCase();
-          const clash = (PARENT_TITLES.includes(relTitle) && CHILD_TITLES.includes(fRelType)) || (CHILD_TITLES.includes(relTitle) && PARENT_TITLES.includes(fRelType));
-          if (clash) results.issues_found.push(`"${fm.name}" is listed as "${fm.relationship_type}" in family but "${matchingFictional.relationship_type}" in relationships — title mismatch. Review manually.`);
+          const parentIsChild = PARENT_TITLES.includes(relTitle) && CHILD_TITLES.includes(fRelType);
+          const childIsParent = CHILD_TITLES.includes(relTitle) && PARENT_TITLES.includes(fRelType);
+          if (parentIsChild || childIsParent) {
+            wrongTitlesFound.push(`${fm.name} is listed as "${fm.relationship_type}" in family but "${matchingFictional.relationship_type}" in relationships — title mismatch`);
+          }
         }
       });
 
-      if (!duplicatesFound && results.issues_found.length === 0) {
-        results.checks.push({ name: 'Family List Integrity', status: 'passed', message: `${familyMembers.length} family member(s) — no obvious duplicates or title mismatches.` });
-      }
-    }
-
-    // ── FAMILY SAVE CHECK ────────────────────────────────────────────────────
-    if (selectedIssues.includes('family_save') || selectedIssues.includes('profile_save')) {
-      try {
-        const testVal = character.current_situation || '';
-        await base44.asServiceRole.entities.Character.update(characterId, { current_situation: testVal });
-        const recheck = (await base44.asServiceRole.entities.Character.filter({ id: characterId }))[0];
-        if (recheck?.current_situation === testVal) {
-          results.checks.push({ name: 'Profile Save Round-trip', status: 'passed', message: 'Profile saves are working correctly.' });
-        } else {
-          results.issues_found.push(`Profile save test failed — written value did not match on re-read.`);
+      // Check if a character from fictional_relationships who is another app character (related_character_id set)
+      // is listed as "other" when they should have a specific title
+      const ETHAN_ID = '69c0d59d7e382cc866ded9c9';
+      fictionalRels.filter(r => r.related_character_id && r.related_character_id !== ETHAN_ID).forEach(rel => {
+        if ((rel.relationship_type || '').toLowerCase() === 'other') {
+          // Try to infer a better title
+          const desc = (rel.description || rel.history_summary || '').toLowerCase();
+          if (desc.includes('wife') || desc.includes('married')) {
+            wrongTitlesFound.push(`${rel.person_name} is listed as "other" but description suggests "spouse/wife"`);
+          } else if (desc.includes('husband')) {
+            wrongTitlesFound.push(`${rel.person_name} is listed as "other" but description suggests "spouse/husband"`);
+          }
         }
-      } catch (saveErr) {
-        results.issues_found.push(`Profile save test threw an error: ${saveErr.message}`);
+      });
+
+      if (duplicatesFound.length > 0) {
+        results.issues_found.push(...duplicatesFound);
+      }
+      if (wrongTitlesFound.length > 0) {
+        results.issues_found.push(...wrongTitlesFound);
+      }
+      if (duplicatesFound.length === 0 && wrongTitlesFound.length === 0) {
+        results.checks.push({ name: 'Family List Integrity', status: 'passed', message: `${familyMembers.length} family members found, no obvious duplicates or title mismatches` });
       }
     }
 
-    // ── STATUS / LOCATION CHECK ──────────────────────────────────────────────
-    // READ-ONLY: reports location state. Never changes location or schedule.
+    // --- STATUS / LOCATION CHECK ---
     if (selectedIssues.includes('status_location')) {
-      results.checks.push({
-        name: 'Current Location / Status (Read-Only)',
-        status: 'info',
-        message: [
-          `resolved_current_location_id: ${character.resolved_current_location_id || 'not set'}`,
-          `resolved_presence_status: ${character.resolved_presence_status || 'not set'}`,
-          `current_activity: ${character.current_activity || 'not set'}`,
-          `location_status: ${character.location_status || 'not set'}`,
-          `current_home_location_id: ${character.current_home_location_id || 'not set'}`,
-          `current_work_location_id: ${character.current_work_location_id || 'not set'}`,
-        ].join(' | ')
+      // Check scheduled events for active location
+      const now = new Date();
+      const recentEvents = await base44.asServiceRole.entities.ScheduledEvent.filter(
+        { character_ids: [characterId] },
+        '-trigger_time',
+        20
+      );
+
+      const activeEvent = recentEvents.find(ev => {
+        if (ev.status !== 'completed') return false;
+        const triggerTime = new Date(ev.trigger_time);
+        const hoursAgo = (now - triggerTime) / (1000 * 60 * 60);
+        return hoursAgo < 4; // Event completed in last 4 hours = likely still active
       });
 
-      // Stale location check — report only, never clear
-      if (character.resolved_current_location_id) {
-        const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: character.resolved_current_location_id });
-        if (locs.length === 0) {
-          results.issues_found.push(`resolved_current_location_id "${character.resolved_current_location_id}" points to a location that no longer exists. This may cause display errors. Re-assign this character's home or work location to correct it.`);
+      const LOCATION_KEYWORDS = ['hospital', 'bar', 'gym', 'work', 'school', 'church', 'mosque', 'synagogue', 'temple', 'mall', 'restaurant', 'park', 'clinic'];
+      let detectedLocation = null;
+
+      if (activeEvent) {
+        const desc = (activeEvent.description || '').toLowerCase();
+        detectedLocation = LOCATION_KEYWORDS.find(loc => desc.includes(loc));
+        if (detectedLocation) {
+          results.issues_found.push(`Active event detected: "${activeEvent.description}" — character may currently be at ${detectedLocation}, but current_activity field is: "${character.current_activity || 'not set'}"`);
+          // Auto-fix: set current_activity to the detected location
+          await base44.asServiceRole.entities.Character.update(characterId, { current_activity: detectedLocation });
+          results.fixes_applied.push(`Set current_activity to "${detectedLocation}" based on active scheduled event`);
         }
       }
+
+      const currentActivity = character.current_activity || '';
+      results.checks.push({
+        name: 'Status / Location Source',
+        status: detectedLocation ? 'warning' : 'passed',
+        message: `current_activity = "${currentActivity || 'none'}" | Active scheduled event: ${activeEvent ? activeEvent.description : 'none in last 4h'}`
+      });
     }
 
-    // ── CHARACTER IDENTITY / DUPLICATE RECORDS ───────────────────────────────
-    // READ-ONLY: reports duplicates. Never merges or deletes.
+    // --- CHARACTER IDENTITY / CROSS-CONTAMINATION CHECK ---
     if (selectedIssues.includes('character_identity') || selectedIssues.includes('duplicate_records')) {
+      // Look for other characters with the same name (potential duplicates from recovery)
       const sameName = allChars.filter(c => c.id !== characterId && c.name?.toLowerCase().trim() === character.name?.toLowerCase().trim());
+
       if (sameName.length > 0) {
-        results.issues_found.push(`Found ${sameName.length} other record(s) named "${character.name}": ${sameName.map(c => `ID:${c.id} status:${c.status||'active'} type:${c.character_type||'?'}`).join(' | ')} — review for recovery duplicates. Do NOT delete without verifying which is canonical.`);
+        results.issues_found.push(`Found ${sameName.length} other character record(s) with the same name "${character.name}": IDs = ${sameName.map(c => c.id).join(', ')} — potential recovery duplicates`);
+        sameName.forEach(dup => {
+          results.issues_found.push(`Duplicate: "${dup.name}" (ID: ${dup.id}) status: ${dup.status || 'active'} | created: ${dup.created_date}`);
+        });
       } else {
-        results.checks.push({ name: 'Duplicate Records', status: 'passed', message: `No other records found with name "${character.name}".` });
+        results.checks.push({ name: 'Duplicate Character Records', status: 'passed', message: `No other characters found with name "${character.name}"` });
       }
 
+      // Check for cross-linked conversations: conversations that contain this character's ID but also contain OTHER characters' IDs unexpectedly
       const charConvos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [characterId] }, '-updated_date', 30);
       const crossLinked = charConvos.filter(c => c.character_ids && c.character_ids.length > 1 && c.type !== 'group' && c.type !== 'npc');
+
       if (crossLinked.length > 0) {
-        results.issues_found.push(`${crossLinked.length} non-group conversation(s) where ${character.name} shares character_ids with another character — possible routing issue.`);
+        results.issues_found.push(`Found ${crossLinked.length} non-group conversation(s) where ${character.name} is linked alongside another character. This can cause cross-routing.`);
+        crossLinked.forEach(c => {
+          results.issues_found.push(`Thread "${c.title}" (${c.type}) has character_ids: [${c.character_ids.join(', ')}]`);
+        });
       } else {
-        results.checks.push({ name: 'Thread Isolation', status: 'passed', message: `All ${charConvos.length} conversation(s) are correctly isolated.` });
+        results.checks.push({ name: 'Thread Identity Separation', status: 'passed', message: `All ${charConvos.length} conversations are correctly isolated to ${character.name}` });
       }
 
-      results.checks.push({ name: 'Character Identity Audit', status: 'info', message: `ID: ${character.id} | type: ${character.character_type||'?'} | status: ${character.status||'active'} | owner: ${character.owner_email||character.created_by} | created_by: ${character.created_by}` });
-    }
-
-    // ── NPC ROUTING CHECK ────────────────────────────────────────────────────
-    // Checks if this NPC is properly a standalone record and has correct ownership.
-    if (selectedIssues.includes('duplicate_relationships')) {
-      const fictionalRels = character.fictional_relationships || [];
-      const relNameMap = {};
-      fictionalRels.forEach(r => {
-        const key = r.person_name?.toLowerCase().trim();
-        if (!key) return;
-        relNameMap[key] = (relNameMap[key] || 0) + 1;
+      // Character ID report
+      results.checks.push({
+        name: 'Character Identity Audit',
+        status: 'info',
+        message: `Canonical ID for ${character.name}: ${character.id} | Status: ${character.status || 'active'} | Created: ${character.created_date}`
       });
-      const dups = Object.entries(relNameMap).filter(([, count]) => count > 1);
-      if (dups.length > 0) {
-        dups.forEach(([name, count]) => results.issues_found.push(`"${name}" appears ${count} times in fictional_relationships — duplicate entry. Review manually.`));
-      } else {
-        results.checks.push({ name: 'Fictional Relationships', status: 'passed', message: `${fictionalRels.length} relationship(s) — no duplicates detected.` });
+    }
+
+    // --- PROFILE SAVE CHECK ---
+    if (selectedIssues.includes('profile_save') || selectedIssues.includes('family_save')) {
+      // Verify that a test update round-trips correctly
+      const testValue = character.current_situation || '';
+      try {
+        await base44.asServiceRole.entities.Character.update(characterId, { current_situation: testValue });
+        const recheckArr = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+        const recheck = recheckArr[0];
+        if (recheck?.current_situation === testValue) {
+          results.checks.push({ name: 'Profile Save Round-trip', status: 'passed', message: 'Profile save is working — test update persisted and retrieved correctly' });
+        } else {
+          results.issues_found.push(`Profile save may have an issue — updated value did not match on re-read. Expected "${testValue}", got "${recheck?.current_situation}"`);
+        }
+      } catch (saveErr) {
+        results.issues_found.push(`Profile save failed during test: ${saveErr.message}`);
       }
     }
 
-    // ── WORLD NAME ENFORCEMENT ───────────────────────────────────────────────
+    // --- WORLD NAME ENFORCEMENT ---
     if (selectedIssues.includes('world_name_enforcement')) {
-      const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: user.email });
+      const settingsList = await base44.asServiceRole.entities.UserSettings.list();
       const worldName = settingsList?.[0]?.fictional_world_name || null;
-      const PLACEHOLDER = [/\bthe user\b/i, /\bthe player\b/i, /\bplayer\b/i];
+      const PLACEHOLDER_PATTERNS = [/\bthe user\b/i, /\bthe player\b/i, /\bplayer\b/i];
 
       if (!worldName) {
-        results.checks.push({ name: 'World Name', status: 'warning', message: 'No world name set — go to Settings > Your Name (In-World) to set one.' });
+        results.checks.push({ name: 'World Name Enforcement', status: 'warning', message: 'No world name set in UserSettings. Set one in Settings > Your Name (In-World). Characters will use pronouns until then.' });
       } else {
+        // Check memories
         const memories = await base44.asServiceRole.entities.Memory.filter({ character_id: characterId }, '-timestamp', 300);
-        const stale = memories.filter(m => PLACEHOLDER.some(p => p.test(m.title||'') || p.test(m.description||'')));
-        if (stale.length > 0) {
-          for (const mem of stale) {
-            const newTitle = (mem.title||'').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
-            const newDesc = (mem.description||'').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
+        const staleMemories = memories.filter(m => PLACEHOLDER_PATTERNS.some(p => p.test(m.title || '') || p.test(m.description || '')));
+        if (staleMemories.length > 0) {
+          let corrected = 0;
+          for (const mem of staleMemories) {
+            const newTitle = (mem.title || '').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
+            const newDesc = (mem.description || '').replace(/\bthe user\b/gi, worldName).replace(/\bthe player\b/gi, worldName);
             await base44.asServiceRole.entities.Memory.update(mem.id, { title: newTitle, description: newDesc });
+            corrected++;
           }
-          results.fixes_applied.push(`Corrected ${stale.length} memory record(s): replaced placeholder identity with "${worldName}"`);
-          results.checks.push({ name: 'World Name — Memory', status: 'fixed', message: `${stale.length} stale memory record(s) corrected.` });
+          results.fixes_applied.push(`Corrected ${corrected} memory record(s): replaced placeholder identity with "${worldName}"`);
+          results.checks.push({ name: 'World Name — Memory', status: 'failed', message: `${staleMemories.length} memory record(s) had stale "the user" placeholder. Corrected to "${worldName}". Root cause: memories were created before world name was set.` });
         } else {
           results.checks.push({ name: 'World Name — Memory', status: 'passed', message: `All ${memories.length} memory record(s) are free of placeholder identity.` });
         }
 
-        if (character.system_prompt && PLACEHOLDER.some(p => p.test(character.system_prompt))) {
+        // Check system_prompt cache
+        if (character.system_prompt && PLACEHOLDER_PATTERNS.some(p => p.test(character.system_prompt))) {
           await base44.asServiceRole.entities.Character.update(characterId, { system_prompt: null });
-          results.fixes_applied.push(`Cleared stale system_prompt cache — will regenerate with "${worldName}" on next chat.`);
-          results.checks.push({ name: 'World Name — Cached Prompt', status: 'fixed', message: `system_prompt contained placeholder identity — cleared.` });
+          results.fixes_applied.push(`Cleared stale system_prompt cache — will regenerate with world name "${worldName}" on next chat.`);
+          results.checks.push({ name: 'World Name — Cached Prompt', status: 'failed', message: `system_prompt contained placeholder identity. Cleared. Root cause: CACHE_STALE. Prompt will rebuild on next chat with correct world name.` });
         } else {
-          results.checks.push({ name: 'World Name — Cached Prompt', status: 'passed', message: 'No placeholder identity in cached system_prompt.' });
+          results.checks.push({ name: 'World Name — Cached Prompt', status: 'passed', message: 'No placeholder identity found in cached system_prompt.' });
         }
+
+        // Check relationship labels / nickname
+        const nickname = character.nickname_for_user;
+        if (nickname && PLACEHOLDER_PATTERNS.some(p => p.test(nickname))) {
+          await base44.asServiceRole.entities.Character.update(characterId, { nickname_for_user: worldName });
+          results.fixes_applied.push(`Corrected nickname_for_user from placeholder to "${worldName}"`);
+        }
+        results.checks.push({ name: 'World Name — Nickname Override', status: 'info', message: nickname ? `Per-character nickname: "${nickname}"` : `No per-character nickname — uses global world name "${worldName}"` });
       }
     }
 
-    // ── APPEARANCE LOCK CHECK ────────────────────────────────────────────────
+    // --- APPEARANCE LOCK CHECK ---
     if (selectedIssues.includes('appearance_lock_check')) {
       const lock = character.appearance_lock || {};
-      const coreFields = ['skin_tone', 'hair_type', 'hairstyle', 'overall_aesthetic'];
-      const filled = coreFields.filter(f => lock[f]?.trim());
-      const empty = coreFields.filter(f => !lock[f]?.trim());
+      const lockFields = ['skin_tone', 'hair_type', 'hairstyle', 'overall_aesthetic'];
+      const filledFields = lockFields.filter(f => lock[f] && lock[f].trim());
+      const emptyFields = lockFields.filter(f => !lock[f] || !lock[f].trim());
 
-      if (filled.length === 0) {
-        results.checks.push({ name: 'Appearance Lock', status: 'warning', message: `No appearance lock data set — image generation may drift. Set values in Character Profile > Appearance Lock.` });
-        results.issues_found.push(`No appearance lock for ${character.name} — skin tone, hair, and aesthetic can change between images without this.`);
+      if (filledFields.length === 0) {
+        results.checks.push({ name: 'Appearance Lock', status: 'warning', message: `Appearance lock is empty — image generation will not have enforced identity anchors. Go to Character Profile > Appearance Lock to set values or use Auto-detect.` });
+        results.issues_found.push(`No appearance lock data set for ${character.name}. Without this, skin tone, hair type, and aesthetic can drift between generated images.`);
       } else {
-        results.checks.push({ name: 'Appearance Lock', status: 'passed', message: `${filled.length}/${coreFields.length} core fields set. Empty: ${empty.join(', ') || 'none'}.` });
-      }
-
-      if (!character.gender) {
-        results.checks.push({ name: 'Gender', status: 'warning', message: 'No gender set — can affect image generation consistency.' });
-      } else {
-        results.checks.push({ name: 'Gender', status: 'passed', message: `Gender: ${character.gender}` });
+        results.checks.push({ name: 'Appearance Lock', status: 'passed', message: `${filledFields.length}/${lockFields.length} core appearance fields set. Empty: ${emptyFields.join(', ') || 'none'}.` });
       }
 
       const appearanceAge = character.appearance_age;
-      results.checks.push({ name: 'Appearance Age', status: appearanceAge ? 'passed' : 'info', message: appearanceAge ? `appearance_age override: ${appearanceAge}` : 'No appearance_age override set — using birthday or default.' });
+      const birthdayAge = character.birthday ? Math.floor((Date.now() - new Date(character.birthday).getTime()) / (365.25 * 24 * 3600 * 1000)) : null;
+      if (appearanceAge != null) {
+        results.checks.push({ name: 'Appearance Age', status: 'passed', message: `appearance_age override = ${appearanceAge}. Birthday age = ${birthdayAge ?? 'N/A'}. Image generation will use ${appearanceAge}.` });
+      } else if (birthdayAge != null) {
+        results.checks.push({ name: 'Appearance Age', status: 'info', message: `No appearance_age override. Image generation will use birthday-calculated age: ${birthdayAge}. If this looks wrong in images, set an appearance_age override.` });
+      } else {
+        results.checks.push({ name: 'Appearance Age', status: 'warning', message: `No appearance_age set and no birthday. Image generation has no age anchor — results may vary.` });
+      }
+
+      const gender = character.gender;
+      if (!gender) {
+        results.checks.push({ name: 'Gender', status: 'warning', message: `No gender set on character. This can affect image generation consistency. Go to Character Profile to set gender.` });
+      } else {
+        results.checks.push({ name: 'Gender', status: 'passed', message: `Gender: ${gender}` });
+      }
     }
 
-    // ── STALE LOCATION REFERENCES ────────────────────────────────────────────
-    // READ-ONLY: reports stale location IDs. Never removes or changes them.
+    // --- STALE LOCATION REFERENCES ---
     if (selectedIssues.includes('stale_location_refs')) {
-      const allLocsRes = await base44.asServiceRole.functions.invoke('fetchAllLocationsForUser', {}).catch(() => ({ locations: [] }));
-      const validIds = new Set((allLocsRes?.data?.locations || allLocsRes?.locations || []).map(l => l.id));
+      const allLocations = await base44.asServiceRole.functions.invoke('fetchAllLocationsForUser', {}).then(r => r?.locations || []).catch(() => []);
+      const validLocationIds = new Set(allLocations.map(l => l.id));
 
       const locationFields = [
         { field: 'current_home_location_id', label: 'Home' },
         { field: 'current_work_location_id', label: 'Work' },
-        { field: 'occupation_location_id', label: 'Occupation' },
-        { field: 'education_location_id', label: 'Education' },
-        { field: 'resolved_current_location_id', label: 'Resolved Current' },
+        { field: 'occupation_location_id', label: 'Occupation Location' },
+        { field: 'education_location_id', label: 'Education Location' },
+        { field: 'resolved_current_location_id', label: 'Resolved Location' },
       ];
 
       let staleCount = 0;
       for (const { field, label } of locationFields) {
         const val = character[field];
-        if (val && !validIds.has(val)) {
-          results.issues_found.push(`STALE: ${label} (${field}) = "${val}" points to a deleted or missing location. Reassign this in the character profile.`);
+        if (val && !validLocationIds.has(val)) {
+          results.issues_found.push(`STALE LOCATION: ${label} field (${field}) points to deleted/missing location ID "${val}". This character may be referencing a location that no longer exists.`);
           staleCount++;
         }
       }
 
       if (staleCount === 0) {
-        results.checks.push({ name: 'Stale Location References', status: 'passed', message: 'All location ID references are valid.' });
+        results.checks.push({ name: 'Stale Location References', status: 'passed', message: `All location ID references are valid.` });
       } else {
-        results.checks.push({ name: 'Stale Location References', status: 'failed', message: `${staleCount} stale location reference(s) found — review details above. Do NOT delete locations; re-assign the character.` });
+        results.checks.push({ name: 'Stale Location References', status: 'failed', message: `${staleCount} stale location reference(s) found. Characters referencing deleted locations can cause broken invites and scene errors. Update location assignments on the character profile.` });
       }
-    }
-
-    // ── FIX EVERYTHING ───────────────────────────────────────────────────────
-    if (selectedIssues.includes('fix_everything')) {
-      const res = await base44.asServiceRole.functions.invoke('fixEverything', {}).catch(e => ({ data: { error: e.message } }));
-      const d = res?.data || {};
-      results.checks.push(...(d.systems_checked || []).map(s => ({ name: s, status: 'info', message: '' })));
-      results.fixes_applied.push(...(d.corrective_actions_taken || []));
-      results.issues_found.push(...(d.issues_found || []));
-      results.issues_found.push(...(d.corrective_actions_recommended || []).map(r => `RECOMMENDED: ${r}`));
-      results.issues_found.push(...(d.unresolved_items || []).map(u => `UNRESOLVED: ${u}`));
-      results.checks.push({ name: 'Fix Everything', status: 'info', message: d.summary || 'Master diagnostic complete.' });
     }
 
     const totalIssues = results.issues_found.length;
     const totalFixes = results.fixes_applied.length;
-    results.summary = totalIssues === 0 && totalFixes === 0
-      ? `No issues found for ${character.name}.`
-      : totalFixes > 0
-        ? `Found ${totalIssues} issue(s), applied ${totalFixes} fix(es) for ${character.name}.`
-        : `Found ${totalIssues} issue(s) for ${character.name} — review details above.`;
+    if (totalIssues === 0 && totalFixes === 0) {
+      results.summary = `No issues found for ${character.name} on the selected checks.`;
+    } else if (totalFixes > 0) {
+      results.summary = `Found ${totalIssues} issue(s), applied ${totalFixes} fix(es) for ${character.name}.`;
+    } else {
+      results.summary = `Found ${totalIssues} issue(s) for ${character.name} — review details above.`;
+    }
 
     return Response.json({ success: true, data: results });
   } catch (error) {

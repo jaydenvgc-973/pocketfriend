@@ -59,13 +59,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    // ── MEMORY + NEW PEOPLE DETECTION ────────────────────────────────────
-    // Analyze the turn for significant memories AND detect new people mentioned.
-    // People detected are returned to the frontend for user confirmation — NOT auto-saved.
-    const existingRelationshipNames = (character.fictional_relationships || []).map(r => r.person_name?.toLowerCase()).filter(Boolean);
-    const existingFamilyNames = (character.family_members || []).map(m => m.name?.toLowerCase()).filter(Boolean);
-    const knownNames = [...existingRelationshipNames, ...existingFamilyNames];
-
+    // ── MEMORY EXTRACTION ONLY ────────────────────────────────────────────
+    // Analyze the turn for significant conversational memories.
+    // People detection (family/relationships/transient) is DISABLED — it was causing
+    // automatic character creation and family member injection from dialogue.
     const memoryResponse = await base44.integrations.Core.InvokeLLM({
       prompt: `You are analyzing a conversation turn for ${character.name}, a character with:
 - Personality: ${character.personality_summary}
@@ -76,25 +73,21 @@ CONVERSATION TURN:
 User: ${userMessage}
 ${character.name}: ${characterReply}
 
-Already known people (DO NOT flag these): ${knownNames.length > 0 ? knownNames.join(', ') : 'none'}
-
-TASK 1 — Memory: Does this exchange contain any significant memory that ${character.name} should remember?
+Does this exchange contain any significant memory that ${character.name} should remember? This could be:
 - Important information about the user
 - Decisions or commitments made
 - Emotional moments
 - Details about the user's life or preferences
 
-TASK 2 — New People: Are any NEW named individuals mentioned (not in the already known list above)?
-Only flag real named people (e.g. "Mateo", "Jordan") — NOT generic references like "my friend", "someone", "they".
-Do NOT flag the user themselves or ${character.name}.
+IMPORTANT: Do NOT flag mentions of other people as memories that require creating new characters or family entries.
+Just extract conversational facts and emotional moments.
 
 Return a JSON object with:
-- should_remember: boolean
-- title: string (brief memory title, empty if false)
-- description: string (focus on events/emotions)
-- emotional_impact: string
-- lesson_learned: string
-- new_people: array of objects with { name: string, relationship_type: string (best guess: Friend/Coworker/Family/Acquaintance/Romantic Interest/Other), context: string (one sentence about who they are based on the conversation) }`,
+- should_remember: boolean (true only if there is a clear, significant, memorable moment)
+- title: string (brief memory title, empty if should_remember is false)
+- description: string (description of the memory — focus on events/emotions, not people)
+- emotional_impact: string (how it emotionally affects the character)
+- lesson_learned: string (optional lesson or takeaway)`,
       response_json_schema: {
         type: "object",
         properties: {
@@ -102,51 +95,15 @@ Return a JSON object with:
           title: { type: "string" },
           description: { type: "string" },
           emotional_impact: { type: "string" },
-          lesson_learned: { type: "string" },
-          new_people: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                relationship_type: { type: "string" },
-                context: { type: "string" }
-              }
-            }
-          }
+          lesson_learned: { type: "string" }
         }
       }
     });
 
-    // ── IDENTITY SANITIZATION: Replace any foreign user names before storing ──
-    // This prevents cross-account contamination (e.g. "Mark" leaking into Jayden's memories)
-    const userSettingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
-    const worldName = userSettingsList[0]?.fictional_world_name || null;
-    const FOREIGN_USER_NAMES = ['Mark']; // Names belonging to OTHER user accounts
-
-    const sanitizeForStorage = (text) => {
-      if (!text || !worldName) return text;
-      let cleaned = text;
-      for (const foreignName of FOREIGN_USER_NAMES) {
-        if (worldName !== foreignName) {
-          const regex = new RegExp(`\\b${foreignName}\\b`, 'g');
-          cleaned = cleaned.replace(regex, worldName);
-        }
-      }
-      return cleaned;
-    };
-
-    if (memoryResponse.title) memoryResponse.title = sanitizeForStorage(memoryResponse.title);
-    if (memoryResponse.description) memoryResponse.description = sanitizeForStorage(memoryResponse.description);
-    if (memoryResponse.emotional_impact) memoryResponse.emotional_impact = sanitizeForStorage(memoryResponse.emotional_impact);
-    if (memoryResponse.lesson_learned) memoryResponse.lesson_learned = sanitizeForStorage(memoryResponse.lesson_learned);
-
     // ── SAVE MEMORY (text only — no entity/character creation) ────────────
     let createdMemory = null;
     if (memoryResponse.should_remember && memoryResponse.title && memoryResponse.description) {
-      // CRITICAL: Save memory scoped to the authenticated user's email
-      // This prevents memories from bleeding across accounts (e.g. "Mark" vs "Jayden")
-      createdMemory = await base44.entities.Memory.create({
+      createdMemory = await base44.asServiceRole.entities.Memory.create({
         character_id: characterId,
         title: memoryResponse.title,
         description: memoryResponse.description,
@@ -157,21 +114,17 @@ Return a JSON object with:
       });
     }
 
-    // ── RETURN DETECTED PEOPLE FOR USER CONFIRMATION ─────────────────────
-    // New people are returned to the frontend — NOT auto-saved.
-    // The user must confirm before any relationship is created.
-    const detectedPeople = (memoryResponse.new_people || []).filter(p =>
-      p.name && !knownNames.includes(p.name.toLowerCase())
-    );
-
+    // ── NO CHARACTER/FAMILY/RELATIONSHIP CREATION ─────────────────────────
+    // People detected in dialogue are NOT persisted as entities, family members,
+    // or fictional relationships. That must be done manually by the user.
     return Response.json({
       success: true,
       memoryCreated: !!createdMemory,
       memory: createdMemory,
       newPeopleDetected: {
-        family: [],
-        relationships: detectedPeople, // returned for user confirmation only
-        transient: []
+        family: [],        // Always empty — no auto-creation
+        relationships: [], // Always empty — no auto-creation
+        transient: []      // Always empty — no auto-creation
       }
     });
 

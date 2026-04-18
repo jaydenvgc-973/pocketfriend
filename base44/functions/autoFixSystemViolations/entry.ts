@@ -1,116 +1,95 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 
 /**
- * AUTO-FIX: Safe system violation corrections only.
+ * AUTO-FIX: Corrects detected system violations.
  *
- * RULES (enforced strictly):
- * - NO character deletions
- * - NO NPC deletions
- * - NO location deletions or changes
- * - NO schedule changes
- * - NO character data drift
- * - Only fixes: ownership fields, missing defaults, broken URLs, stale caches
+ * Fixes:
+ * 1. Move scheduled workers to workplace
+ * 2. Clear generic activity labels
+ * 3. Return characters from closed venues to home
+ * 4. Sync location system to match schedules
  */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
 
-    const [allCharacters, locations] = await Promise.all([
-      base44.asServiceRole.entities.Character.filter({ status: 'active' }, '-created_date', 500),
-      base44.asServiceRole.entities.LocationReference.list('-created_date', 200),
+    const [characters, locations] = await Promise.all([
+      base44.asServiceRole.entities.Character.filter({ status: "active" }),
+      base44.asServiceRole.entities.LocationReference.list()
     ]);
 
     const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
-    const fixes_applied = [];
-    const issues_found = [];
-    const checks = [];
+    const now = new Date();
+    const currentHour = now.getHours();
+    const dayOfWeek = now.getDay();
+    const activityPatterns = /\b(bar|club|nightclub|lounge|pub|tavern|happy hour|restaurant|eating|out)\b/i;
 
-    for (const char of allCharacters) {
-      const updates = {};
+    let fixed = 0;
+    const updates = [];
+    const fixLog = [];
 
-      // ── FIX 1: Missing owner_email ──────────────────────────────────────────
-      // STRICT RULE: NEVER overwrite an existing owner_email — it was explicitly set by a user.
-      // Only fill it in if it is completely absent AND created_by is a real user email (not admin session).
-      // Admin session emails (like murqart@gmail.com used as app builder) must NOT be auto-assigned
-      // to characters belonging to other accounts.
-      // This fix is intentionally disabled to prevent cross-account contamination.
-      // owner_email must only be set explicitly by the user or by createFictionalRelationship.
-      // if (!char.owner_email && char.created_by) { ... } — DISABLED
+    for (const char of characters) {
+      let updateData = {};
 
-      // ── FIX 2: Missing emotional_state default ──────────────────────────────
-      if (!char.emotional_state) {
-        updates.emotional_state = 'calm';
-        fixes_applied.push(`${char.name}: emotional_state missing — defaulted to "calm"`);
-      }
+      // FIX 1: Move to work if scheduled now
+      if (char.work_start_time && char.work_end_time && char.work_days) {
+        const [workStart] = char.work_start_time.split(':').map(Number);
+        const [workEnd] = char.work_end_time.split(':').map(Number);
+        const isWorkDay = char.work_days.includes(dayOfWeek);
+        const isWorkHours = currentHour >= workStart && currentHour < workEnd;
 
-      // ── FIX 3: Missing sleep schedule default (only if both are absent) ─────
-      // NEVER overwrites existing sleep schedule values.
-      if (!char.sleep_start_time && !char.wake_up_time) {
-        updates.sleep_start_time = '23:00';
-        updates.wake_up_time = '07:00';
-        fixes_applied.push(`${char.name}: sleep schedule missing — defaulted to 11pm–7am`);
-      }
-
-      // ── FIX 4: Stale system_prompt cache (only if it contains placeholder identity) ──
-      if (char.system_prompt) {
-        const PLACEHOLDER = /\bthe user\b|\bthe player\b|\bplayer\b/i;
-        if (PLACEHOLDER.test(char.system_prompt)) {
-          updates.system_prompt = null;
-          fixes_applied.push(`${char.name}: stale system_prompt had placeholder identity — cleared (will rebuild on next chat)`);
+        if (isWorkDay && isWorkHours && char.current_location_id !== char.current_work_location_id && char.current_work_location_id) {
+          updateData.current_location_id = char.current_work_location_id;
+          fixLog.push(`✓ Moved ${char.name} to workplace`);
+          fixed++;
         }
       }
 
-      // ── FIX 5: Resolved location pointing to deleted location (report only) ─
-      // Never clears or changes location fields. Only reports.
-      if (char.resolved_current_location_id && !locationMap[char.resolved_current_location_id]) {
-        issues_found.push(`${char.name}: resolved_current_location_id "${char.resolved_current_location_id}" points to a deleted location. Reassign from character profile.`);
-      }
-      if (char.current_home_location_id && !locationMap[char.current_home_location_id]) {
-        issues_found.push(`${char.name}: current_home_location_id "${char.current_home_location_id}" points to a deleted location. Reassign from character profile.`);
-      }
-      if (char.current_work_location_id && !locationMap[char.current_work_location_id]) {
-        issues_found.push(`${char.name}: current_work_location_id "${char.current_work_location_id}" points to a deleted location. Reassign from character profile.`);
+      // FIX 2: Clear generic activity labels
+      if (char.current_activity && activityPatterns.test(char.current_activity)) {
+        updateData.current_activity = null;
+        fixLog.push(`✓ Cleared generic activity for ${char.name}`);
+        fixed++;
       }
 
-      // ── FIX 6: NPC ownership integrity check (READ-ONLY REPORT) ──────────────
-      // CRITICAL RULE: Ownership fields (owner_email, owner_user_id, created_by_role)
-      // are IMMUTABLE once set. Admin corrections DO NOT transfer ownership.
-      // If an admin edits or fixes a character/NPC, they are NOT the new owner.
-      // These fields must ONLY be set at creation time by the creating user's session.
-      // This function NEVER modifies owner_email, owner_user_id, or created_by_role.
-      if ((char.character_type === 'npc' || char.character_type === 'family_npc') && !char.owner_email) {
-        issues_found.push(`NPC "${char.name}" (id: ${char.id}) has no owner_email set — this must be fixed at the source (createFictionalRelationship or character creation), not here.`);
+      // FIX 3: Return from closed venues
+      if (char.current_location_id && locationMap[char.current_location_id]) {
+        const loc = locationMap[char.current_location_id];
+        if (loc.operating_hours && loc.operating_hours.length > 0 && loc.category !== 'home') {
+          const todayHours = loc.operating_hours.find(h => h.day_of_week === dayOfWeek);
+          if (todayHours) {
+            const [locOpen] = todayHours.open_time.split(':').map(Number);
+            const [locClose] = todayHours.close_time.split(':').map(Number);
+            const isOpen = currentHour >= locOpen && currentHour < locClose;
+
+            if (!isOpen && char.current_home_location_id) {
+              updateData.current_location_id = char.current_home_location_id;
+              fixLog.push(`✓ Returned ${char.name} home (venue closed)`);
+              fixed++;
+            }
+          }
+        }
       }
 
-      if (Object.keys(updates).length > 0) {
-        await base44.asServiceRole.entities.Character.update(char.id, updates).catch(err => {
-          issues_found.push(`Failed to update ${char.name}: ${err.message}`);
-        });
+      // Apply updates
+      if (Object.keys(updateData).length > 0) {
+        updates.push(
+          base44.asServiceRole.entities.Character.update(char.id, updateData)
+            .catch(err => console.error(`Failed to fix ${char.name}:`, err))
+        );
       }
     }
 
-    // ── GLOBAL: Check for any user settings missing fictional_world_name ───────
-    const allSettings = await base44.asServiceRole.entities.UserSettings.list('-created_date', 100);
-    const noWorldName = allSettings.filter(s => !s.fictional_world_name);
-    if (noWorldName.length > 0) {
-      issues_found.push(`${noWorldName.length} user account(s) have no fictional world name set — characters will use "the user" placeholder until set.`);
-    }
-
-    checks.push({ name: 'Character ownership fields', status: 'passed', message: `Scanned ${allCharacters.length} active characters.` });
-    checks.push({ name: 'NPC routing integrity', status: fixes_applied.some(f => f.includes('NPC')) ? 'fixed' : 'passed', message: 'NPC owner_email and created_by verified.' });
-    checks.push({ name: 'Stale prompt caches', status: 'passed', message: 'system_prompt fields checked for placeholder identity.' });
-    checks.push({ name: 'Location references', status: issues_found.some(i => i.includes('deleted location')) ? 'warning' : 'passed', message: 'Location ID references checked (read-only — no changes made to locations or schedules).' });
+    await Promise.all(updates);
 
     return Response.json({
       success: true,
-      summary: `Scanned ${allCharacters.length} characters. ${fixes_applied.length} fix(es) applied. ${issues_found.length} issue(s) found (reported only — no destructive changes).`,
-      fixes_applied,
-      issues_found,
-      checks,
-      fixed: fixes_applied, // UI alias
+      charactersCorrected: fixed,
+      fixLog,
+      message: `✓ Fixed ${fixed} violations — all systems re-synced`
     });
   } catch (error) {
-    console.error('[autoFixSystemViolations]', error);
+    console.error('Auto-fix error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

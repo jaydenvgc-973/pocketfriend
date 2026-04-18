@@ -342,51 +342,6 @@ Deno.serve(async (req) => {
       const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
       const timeOfDay = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/New_York' });
       const fullDate = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', timeZone: 'America/New_York' });
-
-      // ── SLEEP GATE: determine if character is currently in their sleep window ──
-      const currentHour = now.getHours(); // 0–23 in server time (UTC) — convert to ET
-      const etOffset = -4; // EDT (UTC-4) or -5 for EST; using -4 for current DST window
-      const etHour = ((now.getUTCHours() + etOffset) + 24) % 24;
-      const etMinute = now.getUTCMinutes();
-      const etTotalMinutes = etHour * 60 + etMinute;
-
-      const parseSleepTime = (timeStr, fallback) => {
-        if (!timeStr) return fallback;
-        const [h, m] = timeStr.split(':').map(Number);
-        return h * 60 + (m || 0);
-      };
-
-      const sleepStartMin = parseSleepTime(character.sleep_start_time, 23 * 60); // default 11pm
-      const wakeUpMin = parseSleepTime(character.wake_up_time, 7 * 60);          // default 7am
-
-      // Sleep window crosses midnight: e.g. sleep=23:00, wake=07:00
-      const isSleepWindow = sleepStartMin > wakeUpMin
-        ? (etTotalMinutes >= sleepStartMin || etTotalMinutes < wakeUpMin)  // crosses midnight
-        : (etTotalMinutes >= sleepStartMin && etTotalMinutes < wakeUpMin); // same-day window (unusual)
-
-      // Additional hard check: deep night hours (0–5 AM) = almost certainly asleep unless night owl
-      const isDeepNight = etHour >= 0 && etHour < 5;
-      const isNightOwl = character.trait_night_owl === true;
-      const forceSleep = (isSleepWindow || isDeepNight) && !isNightOwl;
-
-      if (forceSleep) {
-        // Generate a sleep-appropriate micro-narration instead of calling full LLM
-        const sleepNarrations = [
-          `${name} is asleep, resting quietly in the dark.`,
-          `${name} is in bed, somewhere between sleep and shallow dreams.`,
-          `The apartment is quiet. ${name} hasn't stirred.`,
-          `${name} is asleep — the room still, the night doing its thing.`,
-          `${name} sleeps. Nothing to report.`,
-          `Deep in sleep now. The world outside keeps moving; ${name} doesn't.`,
-        ];
-        const picked = sleepNarrations[Math.floor(Math.random() * sleepNarrations.length)];
-        await base44.asServiceRole.entities.Character.update(character.id, {
-          daily_micro_narration: picked,
-          life_last_updated: new Date().toISOString(),
-        });
-        results.push({ id: character.id, name, status: 'sleep_gated' });
-        continue; // skip LLM call entirely for this character
-      }
       const lastUpdated = character.life_last_updated
         ? new Date(character.life_last_updated).toLocaleString('en-US', { timeZone: 'America/New_York' })
         : 'never';
@@ -465,8 +420,7 @@ REALISM RULES — READ CAREFULLY:
 7. AVOID PERFECTION: Real people sometimes make poor choices, say the wrong thing, avoid their problems, or act from emotion rather than reason.
 8. DAY/TIME MATTERS: ${dayOfWeek} at ${timeOfDay} shapes what's plausible. A Friday night feels different from a Tuesday morning.
 9. ENVIRONMENT SHAPES EVENTS: Bars lead to different outcomes than gyms. Work leads to different pressures than home.
-10. SCHEDULE IS GROUND TRUTH: The structured life context above (work hours, sleep, education, training) takes priority over guessing. If ${name} is in class right now, they're in class. If they should be sleeping, THEY ARE ASLEEP — do NOT narrate awake behaviors.
-10a. SLEEP ENFORCEMENT (HARD RULE): If the current time falls inside the character's sleep window, the daily_micro_narration MUST describe the character as asleep, resting, or dreaming. NEVER show them making coffee, walking around, exercising, socializing, or doing any awake task during sleep hours. Acceptable sleep-state narrations: asleep in bed, shifting under blankets, dreaming, resting quietly, sleeping lightly. Unacceptable during sleep: any daytime activity, any food prep, any movement for non-sleep reasons.
+10. SCHEDULE IS GROUND TRUTH: The structured life context above (work hours, sleep, education, training) takes priority over guessing. If ${name} is in class right now, they're in class. If they should be sleeping, they are.
 11. OCCUPATION SHAPES LIFE: If ${name} recently changed jobs or started training, that affects their stress, schedule, income, and daily narrative.
 12. EDUCATION MATTERS: If ${name} is enrolled in something, it affects their time, social circle, aspirations, and daily stress.
 
@@ -616,23 +570,6 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         },
       });
 
-      // ── SLEEP STATE VALIDATION: Hard block any awake behavior in narrative if sleep conditions are met
-      // This is a failsafe in case LLM tries to generate awake behavior during sleep hours
-      const AWAKE_PATTERNS = /\b(gets? up|walks?|stands?|looks? out|makes? (coffee|tea|food)|drinks? (coffee|tea)|goes? outside|exercising?|moving|sitting up|taking? (a )?shower|brush(ing)?|gets? dressed|gets? ready|heading|going to|leaving|working|talking|chatting|laughing|eating|cooking|cleaning|doing chores|packing|texting|scrolling|checking phone)\b/gi;
-      if (forceSleep) {
-        // Force sleep-only narrative if any awake pattern was detected
-        if (update.daily_micro_narration && AWAKE_PATTERNS.test(update.daily_micro_narration)) {
-          const sleepFallback = [
-            `${name} is asleep, breathing steadily in the dark.`,
-            `${name} rests quietly under the blankets.`,
-            `The room is still. ${name} sleeps on.`,
-            `${name} shifts slightly in sleep, then settles again.`,
-            `Deep in sleep, ${name} dreams quietly.`,
-          ];
-          update.daily_micro_narration = sleepFallback[Math.floor(Math.random() * sleepFallback.length)];
-        }
-      }
-
       // ── POST-SHIFT EXIT LOGIC (PHASE 1)
       // Inline job drain assessment
       let postShiftUpdate = {};
@@ -702,23 +639,16 @@ Keep fictional_relationships to 3-5. Include life_event_to_log only if something
         // Silent fail — orchestrator is optional
       }
 
-      // ── PROTECTED FIELDS: These must NEVER be overwritten by simulation.
-      // owner_email, owner_user_id, created_by_role are set manually by the user
-      // and are the authoritative source of record ownership. Any update payload
-      // that omits them is safe — partial updates do not clear existing field values.
-      // We explicitly DO NOT include them here to prevent any accidental overwrite.
       await base44.asServiceRole.entities.Character.update(character.id, {
         // fictional_relationships: intentionally omitted — user-controlled only
         // transient_encounters: intentionally omitted — user-controlled only
-        // owner_email: intentionally omitted — NEVER overwrite
-        // owner_user_id: intentionally omitted — NEVER overwrite
-        // created_by_role: intentionally omitted — NEVER overwrite
         current_life_event: lifeEvent || '',
         daily_micro_narration: update.daily_micro_narration || '',
         emotional_state: update.emotional_state || character.emotional_state || 'calm',
         health_status: update.health_status || character.health_status || 'healthy',
         health_habits: update.health_habits || character.health_habits || '',
         life_last_updated: new Date().toISOString(),
+        departed_characters: [],
         ...postShiftUpdate,
       });
 

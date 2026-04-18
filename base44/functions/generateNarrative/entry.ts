@@ -73,64 +73,6 @@ Deno.serve(async (req) => {
     else if (hourET >= 17 && hourET < 20) timeOfDayDesc = 'evening';
     else if (hourET >= 20) timeOfDayDesc = 'night';
 
-    // ── BUILD LIVE NEEDS STATE BLOCK ──────────────────────────────────────────
-    const BANDS = [
-      { label: 'critical', min: 0,  max: 19  },
-      { label: 'low',      min: 20, max: 39  },
-      { label: 'reduced',  min: 40, max: 59  },
-      { label: 'stable',   min: 60, max: 79  },
-      { label: 'strong',   min: 80, max: 100 },
-    ];
-    const getBand = (val) => {
-      const v = Math.max(0, Math.min(100, val ?? 70));
-      return BANDS.find(b => v >= b.min && v <= b.max)?.label ?? 'stable';
-    };
-    const ns = {
-      hunger:    getBand(char.hunger_value),
-      energy:    getBand(char.energy_value),
-      social:    getBand(char.social_value),
-      health:    getBand(char.health_value),
-      mental:    getBand(char.mental_value),
-      financial: getBand(char.financial_need_value),
-      hygiene:   getBand(char.hygiene_value),
-      comfort:   getBand(char.comfort_value),
-    };
-    const nv = {
-      hunger:    Math.round(char.hunger_value    ?? 70),
-      energy:    Math.round(char.energy_value    ?? 75),
-      social:    Math.round(char.social_value    ?? 65),
-      health:    Math.round(char.health_value    ?? 80),
-      mental:    Math.round(char.mental_value    ?? 70),
-      financial: Math.round(char.financial_need_value ?? 60),
-      hygiene:   Math.round(char.hygiene_value   ?? 75),
-      comfort:   Math.round(char.comfort_value   ?? 70),
-    };
-    // Build combination notes
-    const needsCombos = [];
-    if ((ns.energy === 'critical' || ns.energy === 'low') && (ns.social === 'stable' || ns.social === 'strong')) needsCombos.push('Physically low but wants social contact — may seek company briefly or with low effort.');
-    if ((ns.energy === 'strong') && (ns.mental === 'low' || ns.mental === 'critical')) needsCombos.push('Physically energized but emotionally strained — may be restless or brittle.');
-    if ((ns.comfort === 'critical' || ns.comfort === 'low') && (ns.energy === 'strong')) needsCombos.push('Restless and uncomfortable — wants to move or leave current environment.');
-    if ((ns.hygiene === 'low' || ns.hygiene === 'critical') && (ns.social === 'strong')) needsCombos.push('Self-conscious about hygiene despite wanting social contact — may want to freshen up first.');
-    if ((ns.mental === 'strong') && (ns.health === 'low' || ns.health === 'critical')) needsCombos.push('Mentally composed but physically unwell.');
-    if ((ns.financial === 'low' || ns.financial === 'critical') && (ns.social === 'strong')) needsCombos.push('Wants to socialize but limited by finances — leans toward free or cheap options.');
-    const needsComboStr = needsCombos.length > 0 ? `\nCOMBINATION EFFECTS:\n${needsCombos.map(c => `  • ${c}`).join('\n')}` : '';
-
-    const needsBlock = `
-════════════════════════════════════
-LIVE NEEDS — FULL STATE TRUTH (authoritative — overrides all prior context)
-════════════════════════════════════
-  Hunger:    ${nv.hunger}/100  → ${ns.hunger.toUpperCase()}
-  Energy:    ${nv.energy}/100  → ${ns.energy.toUpperCase()}
-  Social:    ${nv.social}/100  → ${ns.social.toUpperCase()}
-  Health:    ${nv.health}/100  → ${ns.health.toUpperCase()}
-  Mental:    ${nv.mental}/100  → ${ns.mental.toUpperCase()}
-  Financial: ${nv.financial}/100 → ${ns.financial.toUpperCase()}
-  Hygiene:   ${nv.hygiene}/100 → ${ns.hygiene.toUpperCase()}
-  Comfort:   ${nv.comfort}/100 → ${ns.comfort.toUpperCase()}
-${needsComboStr}
-NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do not describe hunger if hunger is stable. Do not describe illness if health is strong (unless an injury/illness flag is active). Do not describe financial stress if financial is stable. All physical and emotional descriptions must match the above states.
-════════════════════════════════════`;
-
     // ── BUILD STATUS CONTEXT STRING ───────────────────────────────────────────
     const locationContext = resolvedLocationName
       ? `Current location: ${resolvedLocationName}`

@@ -1,9 +1,9 @@
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
-import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { ActiveCharacterProvider } from '@/lib/ActiveCharacterContext';
@@ -43,9 +43,19 @@ import { base44 } from '@/api/base44Client';
 
 const AuthenticatedApp = ({ holidaysEnabled }) => {
   const { isLoadingAuth, isLoadingPublicSettings, authError, navigateToLogin } = useAuth();
-
-  // Preserve current route across orientation changes and remounts (read-only — no navigate)
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  // Preserve current route across orientation changes and remounts
   useRoutePreservation();
+
+  // On mount, restore the last known route if it differs from current location
+  useEffect(() => {
+    const saved = sessionStorage.getItem('lastKnownRoute');
+    if (saved && saved !== '/' && saved !== location.pathname + location.search) {
+      navigate(saved, { replace: true });
+    }
+  }, []);
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
@@ -59,7 +69,13 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     } else if (authError.type === 'auth_required') {
-      navigateToLogin();
+      // Only redirect to login if we're not already on a preserved route
+      const preserved = sessionStorage.getItem('lastKnownRoute');
+      const currentPath = location.pathname;
+      // Don't redirect if user is on a real page (not '/')
+      if (!preserved || currentPath === '/') {
+        navigateToLogin();
+      }
       return null;
     }
   }
@@ -115,7 +131,20 @@ function App() {
     checkHolidaysSetting();
   }, []);
 
-
+  // Prevent navigation on orientation change — block any history manipulation triggered by resize/rotate
+  useEffect(() => {
+    const handleOrientationChange = () => {
+      // Store current route immediately before any potential re-render
+      const current = window.location.pathname + window.location.search;
+      sessionStorage.setItem('lastKnownRoute', current);
+    };
+    window.addEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('resize', handleOrientationChange);
+    return () => {
+      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('resize', handleOrientationChange);
+    };
+  }, []);
 
   return (
     <AuthProvider>

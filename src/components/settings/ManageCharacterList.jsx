@@ -18,11 +18,8 @@ export default function ManageCharacterList() {
   });
 
   const { data: userSettings = {} } = useQuery({
-    queryKey: ['userSettings', currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.UserSettings.filter({ created_by: currentUser.email }).then(list => list[0] || {})
-      : {},
-    enabled: !!currentUser?.email,
+    queryKey: ['userSettings'],
+    queryFn: () => base44.entities.UserSettings.list().then(list => list[0] || {}),
   });
 
   const isAdmin = currentUser?.email === ADMIN_EMAIL;
@@ -94,7 +91,7 @@ export default function ManageCharacterList() {
                 {section.items.map((item) => {
                   const itemData = item.data;
                   const itemName = item.type === 'user' 
-                    ? (itemData.worldName || itemData.full_name || 'You')
+                    ? (itemData.full_name || 'You')
                     : itemData.name;
                   const itemId = item.type === 'user' ? 'user' : itemData.id;
 

@@ -14,10 +14,9 @@ Deno.serve(async (req) => {
     const { characterId, currentMessage, recentMessages = [], topK = 12 } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    // Fetch ALL memories for this character — STRICT account isolation
-    // Only return memories created by this user to prevent cross-account bleed
+    // Fetch ALL memories for this character (up to 500 — full long-term store)
     const allMemories = await base44.entities.Memory.filter(
-      { character_id: characterId, created_by: user.email },
+      { character_id: characterId },
       '-timestamp',
       500
     );
@@ -87,35 +86,11 @@ Deno.serve(async (req) => {
       if (!combined.find(m => m.id === mem.id)) combined.push(mem);
     }
 
-    // IDENTITY SANITIZATION: Get the current user's world name and replace any
-    // contaminated names (from other users' sessions) before returning memories.
-    // This is a hard safety net against cross-account identity leakage.
-    const userSettingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
-    const worldName = userSettingsList[0]?.fictional_world_name || null;
-    const userAliases = userSettingsList[0]?.user_aliases || [];
-
-    // Known foreign names that must never appear as the user's identity
-    // These are names from OTHER user accounts that leaked into memory
-    const FOREIGN_USER_NAMES = ['Mark']; // Add others if discovered
-
-    const sanitizeText = (text) => {
-      if (!text || !worldName) return text;
-      let cleaned = text;
-      for (const foreignName of FOREIGN_USER_NAMES) {
-        // Only replace if worldName is different from the foreign name
-        if (worldName !== foreignName) {
-          const regex = new RegExp(`\\b${foreignName}\\b`, 'g');
-          cleaned = cleaned.replace(regex, worldName);
-        }
-      }
-      return cleaned;
-    };
-
     const result = combined.slice(0, topK).map(m => ({
       id: m.id,
-      title: sanitizeText(m.title),
-      description: sanitizeText(m.description),
-      emotional_impact: sanitizeText(m.emotional_impact),
+      title: m.title,
+      description: m.description,
+      emotional_impact: m.emotional_impact,
       timestamp: m.timestamp,
       source_context: m.source_context,
       _score: m._score,

@@ -38,78 +38,18 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     return createFailedResolution('No character provided');
   }
 
-  // LAYER 0: resolved_current_location_id + resolved_presence_status = authoritative DB state
-  // If BOTH are set, trust them completely — no schedule inference needed
-  if (character.resolved_current_location_id && character.resolved_presence_status) {
-    const locId = character.resolved_current_location_id;
-    const loc = locationMap[locId];
-    return {
-      resolved_current_location_id: locId,
-      resolved_current_location_name: loc?.name || character.resolved_current_location_name || 'Unknown',
-      resolved_location_type: character.resolved_location_type || 'visit',
-      resolved_presence_status: character.resolved_presence_status,
-      resolved_source_reason: character.resolved_source_reason || 'pre_computed',
-      resolved_zone: null,
-    };
-  }
-
-  // LAYER 0b: location_status field is the next most authoritative source
-  // 'home' → show home, 'at_location' → show resolved location, 'traveling' → show transit
-  if (character.location_status === 'home' || (!character.location_status && !character.resolved_current_location_id)) {
-    const homeId = character.current_home_location_id || character.home_location_id || null;
-    const homeLoc = homeId ? locationMap[homeId] : null;
-    return {
-      resolved_current_location_id: homeId,
-      resolved_current_location_name: homeLoc?.name || 'Home',
-      resolved_location_type: 'home',
-      resolved_presence_status: 'home',
-      resolved_source_reason: 'location_status_home',
-      resolved_zone: null,
-    };
-  }
-
-  if (character.location_status === 'at_location' && character.resolved_current_location_id) {
-    const locId = character.resolved_current_location_id;
-    const loc = locationMap[locId];
-    return {
-      resolved_current_location_id: locId,
-      resolved_current_location_name: loc?.name || character.resolved_current_location_name || 'Unknown',
-      resolved_location_type: character.resolved_location_type || 'visit',
-      resolved_presence_status: character.resolved_presence_status || 'visiting',
-      resolved_source_reason: 'location_status_at_location',
-      resolved_zone: null,
-    };
-  }
-
-  if (character.location_status === 'traveling') {
-    const destId = character.travel_destination_location_id || character.traveling_to_location_id;
-    const destLoc = destId ? locationMap[destId] : null;
-    return {
-      resolved_current_location_id: destId || null,
-      resolved_current_location_name: destLoc?.name || character.traveling_to_location_name || 'Traveling',
-      resolved_location_type: 'traveling',
-      resolved_presence_status: 'traveling',
-      resolved_source_reason: 'location_status_traveling',
-      resolved_zone: null,
-    };
-  }
-
   // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
-  // CHILD GUARDRAIL: Minors cannot work. Ever.
-  const isMinor = character.age && character.age < 14;
-  const allWorkLocIds = !isMinor ? (() => {
-    const ids = [];
-    if (character.occupation_location_id) ids.push(character.occupation_location_id);
-    if (character.current_work_location_id) ids.push(character.current_work_location_id);
-    if (character.additional_occupation_locations?.length > 0) {
-      character.additional_occupation_locations.forEach(loc => {
-        if (loc.location_id && !ids.includes(loc.location_id)) {
-          ids.push(loc.location_id);
-        }
-      });
-    }
-    return ids;
-  })() : [];
+  // Collect every location this character is linked to as a worker
+  const allWorkLocIds = [];
+  if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
+  if (character.current_work_location_id) allWorkLocIds.push(character.current_work_location_id);
+  if (character.additional_occupation_locations?.length > 0) {
+    character.additional_occupation_locations.forEach(loc => {
+      if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
+        allWorkLocIds.push(loc.location_id);
+      }
+    });
+  }
 
   // For each work location, check if character is on shift right now
   for (const workLocId of allWorkLocIds) {
@@ -161,20 +101,6 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         resolved_zone: null,
       };
     }
-  }
-
-  // LAYER 2.5: Rabbit hole — character is at an off-screen/unbuilt destination confirmed by user
-  // This must come BEFORE home fallback. A rabbit hole is a valid current presence.
-  if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
-    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
-    return {
-      resolved_current_location_id: null,
-      resolved_current_location_name: label,
-      resolved_location_type: 'rabbit_hole',
-      resolved_presence_status: 'rabbit_hole',
-      resolved_source_reason: character.resolved_source_reason || 'rabbit_hole',
-      resolved_zone: null,
-    };
   }
 
   // LAYER 3: Check active travel state
@@ -508,12 +434,8 @@ export function checkScheduleViolation(character, locationMap = {}, currentTime 
 export function getCharacterLivePresence(character, locationMap = {}) {
   if (!character) return { status: 'unknown', label: 'Unknown', sublabel: null, isTransit: false, isSleeping: false };
 
-  // Use resolved fields if set, otherwise fall back to location_status + home
-  const resolvedLocId = character.resolved_current_location_id;
-  const homeId = character.current_home_location_id || character.home_location_id;
-  const effectiveLocId = resolvedLocId || (character.location_status === 'home' ? homeId : resolvedLocId);
-  const loc = effectiveLocId ? locationMap[effectiveLocId] : null;
-  const locName = loc?.name || character.resolved_current_location_name || (character.location_status === 'home' ? 'Home' : 'Unknown');
+  const loc = locationMap[character.resolved_current_location_id];
+  const locName = loc?.name || character.resolved_current_location_name || 'Home';
 
   // ── PRIORITY 1: OVERRIDES ──────────────────────────────────────────────────
   const presenceStatus = character.resolved_presence_status || character.location_status;
@@ -545,12 +467,6 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   }
   if (hungerCritical) {
     return { status: 'hunger_critical', label: 'Looking for food', sublabel: locName, isTransit: false, isSleeping: false };
-  }
-
-  // ── PRIORITY 1.5: RABBIT HOLE ─────────────────────────────────────────────
-  if (character.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole === true) {
-    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
-    return { status: 'rabbit_hole', label, sublabel: character.rabbit_hole_subtype || null, isTransit: false, isSleeping: false };
   }
 
   // ── PRIORITY 2: TRANSIT STATE ──────────────────────────────────────────────
@@ -602,13 +518,6 @@ export function buildLiveLocationContext(character, locationMap = {}, imageMode 
   const locName = (locId && locationMap[locId]?.name) || character.resolved_current_location_name;
   const now = new Date();
   const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-
-  // ── RABBIT HOLE ───────────────────────────────────────────────────────────
-  if (presence === 'rabbit_hole' || character.is_rabbit_hole === true) {
-    const label = character.rabbit_hole_label || character.resolved_current_location_name || 'Off-screen';
-    if (imageMode) return `[LOCATION LOCKED: character is at an off-screen location: "${label}" — do not place them at home or any built venue]`;
-    return `\n\nLOCATION TRUTH (SYSTEM-LOCKED at ${timeStr}): You are currently at "${label}" — an off-screen destination not in the built location list. You are NOT at home. Do NOT describe yourself as being at home or any other built location. This is your current presence.`;
-  }
 
   // ── SLEEPING ──────────────────────────────────────────────────────────────
   if (presence === 'sleeping' || presence === 'napping') {

@@ -6,19 +6,18 @@ import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 
 const ISSUE_LIST = [
-  { id: 'ownership_integrity', label: '🔑 Ownership integrity', description: 'Verify owner_email and created_by are correctly set. For NPCs, confirms they belong to the right user account.' },
-  { id: 'family_list', label: 'Family list check (read-only)', description: 'Detect duplicate or mismatched family members. Reports only — never removes members.' },
-  { id: 'family_save', label: 'Family / profile edits not saving', description: 'Runs a save round-trip test to confirm profile writes are persisting correctly.' },
-  { id: 'wrong_titles', label: 'Wrong relationship titles (read-only)', description: 'Detect titles that conflict between family list and fictional relationships. Reports only.' },
-  { id: 'profile_save', label: 'Character details not saving', description: 'Verify that profile field writes round-trip correctly.' },
-  { id: 'status_location', label: 'Missing or incorrect status/location (read-only)', description: 'Report current resolved location, presence status, and home/work IDs. Never changes location or schedule.' },
-  { id: 'character_identity', label: 'Profile data cross-contamination (read-only)', description: 'Detect duplicate records with the same name. Reports only — never merges or deletes.' },
-  { id: 'duplicate_relationships', label: 'Duplicate people in relationships (read-only)', description: 'Detect duplicate entries in fictional_relationships. Reports only.' },
-  { id: 'duplicate_records', label: 'Duplicate character records (read-only)', description: 'Find other active records with the same name. Reports only — never deletes.' },
-  { id: 'world_name_enforcement', label: 'Character using "the user" instead of my name', description: 'Correct stale identity in memories and system_prompt cache. Safe: only replaces placeholder text.' },
-  { id: 'appearance_lock_check', label: 'Appearance lock / age appearance check', description: 'Report appearance_lock field completeness. Never modifies appearance data.' },
-  { id: 'stale_location_refs', label: 'Character referencing deleted location (read-only)', description: 'Detect stale location IDs. Reports only — never removes or changes location assignments.' },
-  { id: 'fix_everything', label: '🔧 Fix Everything — Full System Deep Diagnostic', description: 'Master cross-system scan. Applies only safe fixes (ownership, defaults, stale caches). No deletions, no location changes, no schedule changes.' },
+  { id: 'family_list', label: 'Family list incorrect', description: 'Check for duplicate or incorrectly added family members from conversation keywords' },
+  { id: 'family_save', label: 'Family edits not saving', description: 'Diagnose why family list changes revert after save' },
+  { id: 'wrong_titles', label: 'Wrong relationship titles', description: 'Fix titles assigned to the wrong relationship (e.g., child listed as mother)' },
+  { id: 'profile_save', label: 'Character details not saving', description: 'Check if profile field saves are being overwritten or rejected' },
+  { id: 'status_location', label: 'Missing or incorrect status/location', description: 'Find the correct active source for current location/status and sync card display' },
+  { id: 'character_identity', label: 'Profile data cross-contamination', description: 'Detect if data from another character is mixing into this profile' },
+  { id: 'duplicate_relationships', label: 'Duplicate people in relationships', description: 'Find and remove duplicate entries for the same person' },
+  { id: 'duplicate_records', label: 'Duplicate or recovered character records', description: 'Find hidden duplicate character entries from recovery and isolate the correct one' },
+  { id: 'world_name_enforcement', label: 'Character using "the user" instead of my name', description: 'Detect stale identity references in this character\'s memories, relationship labels, and context. Traces the full root-cause chain and corrects placeholder identity at all layers.' },
+  { id: 'appearance_lock_check', label: 'Appearance lock / age appearance not persisting', description: 'Verify appearance_lock fields and appearance_age are correctly saved and will be used in image generation — detect drift or missing data.' },
+  { id: 'stale_location_refs', label: 'Character referencing deleted location', description: 'Detect stale location IDs pointing to deleted or non-existent locations in this character\'s profile, invites, and memories.' },
+  { id: 'fix_everything', label: '🔧 Fix Everything — Full System Deep Diagnostic', description: 'Master cross-system scan: presence consistency, VGC Towers NPC distribution, identity leaks, stale caches, scene population, and more. Applies auto-fixes where possible.' },
 ];
 
 export default function ProfileTroubleshootingPanel({ isOpen, onClose, characterId, characterName }) {
@@ -36,8 +35,35 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
     setIsRunning(true);
     setError(null);
     setResults(null);
+
     try {
-      const res = await base44.functions.invoke('troubleshootCharacterProfile', { characterId, selectedIssues });
+      // Route "fix_everything" to the master diagnostic function
+      if (selectedIssues.includes('fix_everything')) {
+        const res = await base44.functions.invoke('fixEverything', {});
+        if (res?.data) {
+          const d = res.data;
+          setResults({
+            summary: d.summary || 'Fix Everything complete.',
+            checks: (d.systems_checked || []).map(s => ({ name: s, status: 'info', message: '' })),
+            fixes_applied: d.corrective_actions_taken || [],
+            issues_found: [
+              ...(d.issues_found || []),
+              ...(d.corrective_actions_recommended || []).map(r => `RECOMMENDED: ${r}`),
+              ...(d.unresolved_items || []).map(u => `UNRESOLVED: ${u}`),
+            ],
+          });
+        } else {
+          setError('Fix Everything returned no data');
+        }
+        setIsRunning(false);
+        return;
+      }
+
+      const res = await base44.functions.invoke('troubleshootCharacterProfile', {
+        characterId,
+        selectedIssues,
+      });
+
       if (res?.data?.data) {
         setResults(res.data.data);
         queryClient.invalidateQueries({ queryKey: ['character', characterId] });
@@ -74,7 +100,7 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
                 <Wrench className="w-4 h-4 text-primary" />
                 <div>
                   <h3 className="text-sm font-semibold text-foreground">Profile Troubleshooting — {characterName}</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Safe diagnostics only — no deletions, no location changes</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Deep diagnostic for selected issues only</p>
                 </div>
               </div>
               <button onClick={onClose} className="text-muted-foreground hover:text-foreground transition-colors">
@@ -92,7 +118,9 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
                         key={issue.id}
                         onClick={() => toggleIssue(issue.id)}
                         className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
-                          selectedIssues.includes(issue.id) ? 'border-primary bg-primary/10' : 'border-border bg-secondary/50 hover:bg-secondary'
+                          selectedIssues.includes(issue.id)
+                            ? 'border-primary bg-primary/10'
+                            : 'border-border bg-secondary/50 hover:bg-secondary'
                         }`}
                       >
                         <div className="flex items-start justify-between">
@@ -127,7 +155,7 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
               {isRunning && (
                 <div className="flex flex-col items-center justify-center py-8 gap-3">
                   <Loader2 className="w-6 h-6 text-primary animate-spin" />
-                  <p className="text-sm text-muted-foreground">Running diagnostic...</p>
+                  <p className="text-sm text-muted-foreground">Running deep diagnostic...</p>
                 </div>
               )}
 
@@ -140,7 +168,7 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
                   {(results.fixes_applied || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-emerald-400 uppercase tracking-wider">Fixed</p>
-                      {(results.fixes_applied || []).map((item, i) => (
+                      {results.fixes_applied.map((item, i) => (
                         <div key={i} className="flex items-start gap-2 text-xs text-foreground">
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                           <span>{item}</span>
@@ -152,7 +180,7 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
                   {(results.issues_found || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-amber-400 uppercase tracking-wider">Issues Found</p>
-                      {(results.issues_found || []).map((item, i) => (
+                      {results.issues_found.map((item, i) => (
                         <div key={i} className="flex items-start gap-2 text-xs text-foreground">
                           <AlertCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
                           <span>{item}</span>
@@ -164,10 +192,9 @@ export default function ProfileTroubleshootingPanel({ isOpen, onClose, character
                   {(results.checks || []).length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Checks</p>
-                      {(results.checks || []).map((check, i) => (
+                      {results.checks.map((check, i) => (
                         <div key={i} className={`rounded-lg p-2.5 border text-xs ${
                           check.status === 'passed' ? 'bg-emerald-500/10 border-emerald-500/20' :
-                          check.status === 'fixed' ? 'bg-cyan-500/10 border-cyan-500/20' :
                           check.status === 'warning' ? 'bg-amber-500/10 border-amber-500/20' :
                           check.status === 'failed' ? 'bg-destructive/10 border-destructive/20' :
                           'bg-secondary border-border'
