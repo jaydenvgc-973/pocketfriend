@@ -1214,18 +1214,18 @@ ${songsInfo}`;
           .slice(0, 5);
 
         const relContext = senderRelEntry
-          ? `Your relationship with ${activeCharacter.name}: ${senderRelEntry.relationship_type || "known person"} — Respect: ${senderRelEntry.user_respect_level ?? 50}/100, Friendship: ${senderRelEntry.friendship_level ?? 75}/100, Romantic: ${senderRelEntry.romantic_level ?? 0}/100. Current status: ${senderRelEntry.current_status || "ongoing"}. ${senderRelEntry.last_interaction_summary ? `Last time you interacted: ${senderRelEntry.last_interaction_summary}` : ""} ${senderRelEntry.description ? `Background: ${senderRelEntry.description}` : ""}`
-          : `You know ${activeCharacter.name} from your world.`;
+           ? `Your relationship with ${activeCharacter.name}: ${senderRelEntry.relationship_type || "known person"} — Respect: ${senderRelEntry.user_respect_level ?? 50}/100, Friendship: ${senderRelEntry.friendship_level ?? 75}/100, Romantic: ${senderRelEntry.romantic_level ?? 0}/100. Current status: ${senderRelEntry.current_status || "ongoing"}. ${senderRelEntry.last_interaction_summary ? `Last time you interacted: ${senderRelEntry.last_interaction_summary}` : ""} ${senderRelEntry.description ? `Background: ${senderRelEntry.description}` : ""}`
+           : `You know ${activeCharacter.name} from your world.`;
 
         const memoryContext2 = relevantMemories.length > 0
-          ? `\nMemories involving ${activeCharacter.name}:\n${relevantMemories.map(m => `- ${m.title}: ${m.description}`).join("\n")}`
-          : "";
+           ? `\nMemories involving ${activeCharacter.name}:\n${relevantMemories.map(m => `- ${m.title}: ${m.description}`).join("\n")}`
+           : "";
 
-        playAsInstruction = `\n\nCRITICAL — IDENTITY OF THE SENDER: The message you just received is NOT from the app user. It is from ${activeCharacter.name} (${activeCharacter.personality_summary || activeCharacter.archetype || "someone you know"}). You already know exactly who ${activeCharacter.name} is — do NOT ask for identification or treat them as a stranger.
+        playAsInstruction = `\n\n🔴 CRITICAL — WHO IS SPEAKING: The message is DEFINITELY NOT from the app user. It is FROM another character: ${activeCharacter.name} (${activeCharacter.personality_summary || activeCharacter.archetype || "someone you know"}).
 
-${relContext}${memoryContext2}
+        ${relContext}${memoryContext2}
 
-Respond to ${activeCharacter.name} as you genuinely would in real life — drawing on your history, your current relationship state, and your emotional context with them. Your first reply must reflect that you immediately recognize them and respond with continuity from your shared history. Do NOT treat this as a new interaction.`;
+        Your response must: 1. Treat ${activeCharacter.name} as a REAL CHARACTER in your life, not as "the user" 2. Recognize them immediately — you know who they are 3. Have a conversation with THEM, not about them 4. NEVER explain "I thought you were someone else" or act confused about their identity. This is character-to-character interaction.`;
       }
 
       // --- MEDIA FREQUENCY GATING ---
