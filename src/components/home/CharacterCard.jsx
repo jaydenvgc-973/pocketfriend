@@ -314,6 +314,17 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   color = 'text-blue-400';
                 }
                 
+                // Rabbit hole check before icon rendering
+                if (resolved.resolved_presence_status === 'rabbit_hole' || character.is_rabbit_hole) {
+                  const rhLabel = character.rabbit_hole_label || resolved.resolved_current_location_name || 'Off-screen';
+                  return (
+                    <div className="flex items-center gap-1.5">
+                      <MapPin className="w-3 h-3 text-violet-400" />
+                      <span className="text-xs text-violet-400">{rhLabel}</span>
+                    </div>
+                  );
+                }
+
                 const iconComponents = {
                   'sleep': Moon,
                   'work': Briefcase,

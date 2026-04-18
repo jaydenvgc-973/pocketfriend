@@ -250,32 +250,160 @@ CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist
 // These functions build structured subject objects from raw data.
 // Images and prompts are assembled FROM these records — never the other way around.
 
-function buildCharacterSubject(charRecord, clientRefs = []) {
+function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext = '') {
   const serverRefs = [];
   if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
   if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
   // Always use server-side refs as authoritative; client refs are fallback only
   const faceRefs = serverRefs.length > 0 ? serverRefs : clientRefs;
 
-  // Resolve current outfit
+  // ── OUTFIT ROTATION ENGINE ───────────────────────────────────────────────
+  // Resolves the contextually correct outfit using presence, activity, location,
+  // time of day, and daily rotation logic — NOT just the static current_outfit field.
   const currentOutfit = charRecord.current_outfit;
   const closet = charRecord.character_closet || [];
   const closetOutfits = closet.filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
+
+  // ── PRIORITY RESOLUTION ─────────────────────────────────────────────────────
+  // 1. Manual selection made today (same calendar day) → respect it
+  // 2. Otherwise → resolve contextually using presence/activity/time
+  const currentOutfitId = currentOutfit?.outfit_id || null;
+  const manualToday = currentOutfit?.change_reason === 'manual_selection' && currentOutfit?.last_changed_at
+    ? new Date(currentOutfit.last_changed_at).toDateString() === new Date().toDateString()
+    : false;
+
   let activeOutfit = null;
-  if (currentOutfit?.label) {
+
+  if (manualToday && currentOutfit?.label) {
+    // User manually picked today — respect it exactly
     activeOutfit = currentOutfit;
+    console.log(`[OUTFIT] Manual selection today: "${activeOutfit.label}" (${activeOutfit.category})`);
   } else if (closetOutfits.length > 0) {
-    const hour = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).getHours();
-    const isNight = hour >= 21 || hour < 6;
-    const isMorning = hour >= 6 && hour < 11;
-    if (isNight) {
-      activeOutfit = closetOutfits.find(o => o.category === 'sleepwear' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
-    } else if (isMorning) {
-      activeOutfit = closetOutfits.find(o => o.category === 'daily_casual' || o.category === 'lounge') || closetOutfits[closetOutfits.length - 1];
-    } else {
-      activeOutfit = closetOutfits.find(o => o.is_favorite) || closetOutfits[closetOutfits.length - 1];
+    // ── Full contextual resolution ───────────────────────────────────────────
+    const presenceStatus = charRecord.resolved_presence_status || charRecord.location_status || 'home';
+    const currentActivity = (charRecord.current_activity || '').toLowerCase();
+    // Use the image prompt as the activity/context text
+    const activityText = (clientPromptContext || currentActivity).toLowerCase();
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = nowET.getHours();
+    const minute = nowET.getMinutes();
+
+    // ── Step 1: Determine target category ────────────────────────────────────
+    let targetCategory = 'daily_casual'; // fallback default
+
+    const combined = `${activityText} ${currentActivity}`;
+
+    // Priority 1: Bath/grooming state
+    if (/\b(bath|shower|bathing|showering|tub|robe|towel|grooming)\b/.test(combined)) {
+      targetCategory = 'bath';
     }
+    // Priority 2: Sleep state or approaching bedtime
+    else if (presenceStatus === 'sleeping' || presenceStatus === 'napping' || /\b(sleep|asleep|nap|napping|bedtime|bed time)\b/.test(combined)) {
+      targetCategory = 'sleepwear';
+    }
+    else if (charRecord.sleep_start_time) {
+      const [sh, sm] = charRecord.sleep_start_time.split(':').map(Number);
+      const sleepMin = sh * 60 + sm;
+      const nowMin = hour * 60 + minute;
+      const diff = sleepMin > nowMin ? sleepMin - nowMin : (sleepMin + 1440) - nowMin;
+      if (diff <= 60) targetCategory = 'sleepwear';
+    }
+    // Priority 3: Swimwear — pool, beach, water
+    else if (/\b(swim|swimming|pool|beach|ocean|lake|water park|sunbath|snorkel|surf)\b/.test(combined)) {
+      targetCategory = 'swimwear';
+    }
+    // Priority 4: Gym/workout
+    else if (/\b(gym|workout|working out|lifting|cardio|yoga|jogging|running|training|exercise|rehearsal|dance rehearsal|choreography)\b/.test(combined) || presenceStatus === 'at_gym') {
+      targetCategory = 'gym';
+    }
+    // Priority 5: Work
+    else if (presenceStatus === 'at_work' || /\b(working|at work|on shift|office|clocked in)\b/.test(combined)) {
+      targetCategory = 'work';
+    }
+    // Priority 6: Formal/event
+    else if (/\b(wedding|funeral|gala|graduation|ceremony|black tie|formal event)\b/.test(combined)) {
+      targetCategory = 'formal';
+    }
+    // Priority 7: Church
+    else if (/\b(church|service|worship|mass|prayer|praying)\b/.test(combined)) {
+      targetCategory = 'church';
+    }
+    // Priority 8: Nightlife
+    else if (/\b(club|nightclub|party|night out|going out|bar hop)\b/.test(combined)) {
+      targetCategory = 'nightlife';
+    }
+    // Priority 9: Date night
+    else if (/\b(date|date night|romantic dinner|anniversary)\b/.test(combined)) {
+      targetCategory = 'date_night';
+    }
+    // Priority 10: Lounge (home relaxing)
+    else if (presenceStatus === 'home' && (hour >= 19 || hour < 7 || /\b(relax|relaxing|chilling|lounge|lounging|home|couch|tv)\b/.test(combined))) {
+      targetCategory = 'lounge';
+    }
+    // Default: daily casual
+    else {
+      targetCategory = 'daily_casual';
+    }
+
+    // ── Step 2: Fallback chain ────────────────────────────────────────────────
+    const fallbackChains = {
+      bath:         ['bath', 'sleepwear', 'lounge'],
+      sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
+      swimwear:     ['swimwear', 'gym', 'daily_casual'],
+      gym:          ['gym', 'outdoor', 'daily_casual'],
+      work:         ['work', 'formal', 'daily_casual'],
+      formal:       ['formal', 'work', 'daily_casual'],
+      church:       ['church', 'formal', 'work', 'daily_casual'],
+      nightlife:    ['nightlife', 'date_night', 'special', 'daily_casual'],
+      date_night:   ['date_night', 'nightlife', 'formal', 'daily_casual'],
+      lounge:       ['lounge', 'daily_casual', 'sleepwear'],
+      daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+    };
+    const chain = fallbackChains[targetCategory] || ['daily_casual', 'lounge'];
+
+    // ── Step 3: Pick from pool with daily rotation ───────────────────────────
+    const getDailyRotationIndex = (pool) => {
+      if (pool.length <= 1) return 0;
+      const now = new Date();
+      const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+      const idHash = (charRecord.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+      return (dayOfYear + idHash) % pool.length;
+    };
+
+    const pickFromPool = (pool) => {
+      if (pool.length === 0) return null;
+      if (pool.length === 1) return pool[0];
+      const favorites = pool.filter(o => o.is_favorite);
+      const candidates = favorites.length > 0 ? favorites : pool;
+      if (candidates.length === 1) return candidates[0];
+      const idx = getDailyRotationIndex(candidates);
+      const picked = candidates[idx];
+      // Avoid same as current if alternatives exist
+      if (picked?.outfit_id === currentOutfitId && candidates.length > 1) {
+        return candidates[(idx + 1) % candidates.length];
+      }
+      return picked;
+    };
+
+    for (const cat of chain) {
+      const pool = closetOutfits.filter(o => o.category === cat);
+      if (pool.length > 0) {
+        activeOutfit = pickFromPool(pool);
+        console.log(`[OUTFIT] Resolved category="${cat}" (target="${targetCategory}") | pool=${pool.length} | picked="${activeOutfit?.label}" | presence="${presenceStatus}"`);
+        break;
+      }
+    }
+
+    // Last resort — any outfit
+    if (!activeOutfit) {
+      activeOutfit = pickFromPool(closetOutfits);
+      if (activeOutfit) console.log(`[OUTFIT] Last-resort pick: "${activeOutfit.label}"`);
+    }
+  } else if (currentOutfit?.label) {
+    // No closet but a current_outfit exists — use it
+    activeOutfit = currentOutfit;
   }
+
   let outfitDesc = null;
   if (activeOutfit) {
     const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
@@ -438,7 +566,8 @@ Deno.serve(async (req) => {
       characterName, userWorldName, subjectType, characterId,
       manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode,
       userAppearanceData, includesUser,
-      liveLocationContext // authoritative location truth string from buildLiveLocationContext()
+      liveLocationContext, // authoritative location truth string from buildLiveLocationContext()
+      isCreativeGeneration // true = media grid / user-directed creative; false/absent = presence-based scene
     } = await req.json();
 
     if (!messageId || !prompt) {
@@ -449,6 +578,25 @@ Deno.serve(async (req) => {
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // IMAGE MODE BRANCHING — master decision tree
+    // Every image request is classified BEFORE any location logic runs.
+    //
+    // MODES:
+    //   presence_scene   — represents where the character currently is
+    //                      → must obey live location truth (built / real-world / rabbit hole)
+    //                      → home fallback BANNED unless character is actually home
+    //
+    //   creative         — user-directed from media grid, prompt, or concept
+    //                      → must NOT be blocked by unresolved location
+    //                      → location used only if user explicitly selected one
+    //
+    // The flag `isCreativeGeneration` is passed by the media grid caller.
+    // Chat-based scene images (no flag) default to presence_scene.
+    // ══════════════════════════════════════════════════════════════════════════
+    const imageMode = isCreativeGeneration === true ? 'creative' : 'presence_scene';
+    console.log(`[IMAGE_MODE] mode="${imageMode}" | manualLocationId=${manualLocationId || 'none'} | isCreativeGeneration=${isCreativeGeneration}`);
 
     // ── PARSE SUBJECT TYPE ──────────────────────────────────────────────────
     let resolvedSubjectType = subjectType || "character";
@@ -467,7 +615,7 @@ Deno.serve(async (req) => {
       try {
         const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
         if (charRecord) {
-          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || []);
+          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], cleanPrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         }
       } catch (err) {
@@ -514,7 +662,157 @@ Deno.serve(async (req) => {
 
     if (resolvedSubjectType !== "user") {
       try {
-        if (manualLocationId) {
+        // ══════════════════════════════════════════════════════════════════════
+        // LOCATION RESOLUTION BRANCHING
+        //
+        // CREATIVE MODE: only resolve if the user explicitly passed a manualLocationId.
+        //   → skip all presence-based logic
+        //   → skip rabbit hole detection
+        //   → skip home enforcement
+        //   → generate from prompt alone if no location selected
+        //
+        // PRESENCE SCENE MODE: full truth chain
+        //   1. rabbit hole → context-true AI-generated scene, NO home fallback
+        //   2. manual location override → built or real-world reference imagery
+        //   3. live presence gate → authoritative location from character state
+        //   4. unresolved → text-based parse against saved locations
+        //   5. home with no images → residential text lock (never a venue fallback)
+        // ══════════════════════════════════════════════════════════════════════
+
+        if (imageMode === 'creative' && !manualLocationId) {
+          // Creative generation with no explicit location selected — skip all location logic.
+          // The prompt is the entire source of truth. No presence enforcement. No home fallback.
+          console.log(`[LOCATION] 🎨 CREATIVE MODE — no location selected. Generating from prompt only.`);
+          // locationImages, locationNote, resolvedLocationName, resolvedZoneName remain empty — intentional.
+        } else {
+
+        // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
+        // If the character is in a rabbit hole, we MUST use the rabbit hole context.
+        // Saved location imagery is FORBIDDEN. Home fallback is BANNED.
+        // Rabbit hole images are context-true but creatively synthesized (original AI scene, not retrieval).
+        const charForRabbitCheck = characterId
+          ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
+          : null;
+
+        const isRabbitHole = charForRabbitCheck?.resolved_presence_status === 'rabbit_hole'
+          || charForRabbitCheck?.is_rabbit_hole === true;
+
+        if (isRabbitHole && !manualLocationId) {
+          const rhLabel = charForRabbitCheck.rabbit_hole_label
+            || charForRabbitCheck.resolved_current_location_name
+            || 'off-screen location';
+
+          // Infer rabbit hole type from label + activity in prompt
+          const RABBIT_HOLE_TYPE_MAP = [
+            {
+              type: 'dance_studio',
+              labelKeywords: ['studio', 'set', 'rehearsal', 'dance'],
+              activityKeywords: ['choreo', 'choreography', 'rehearse', 'rehearsing', 'run-through', 'run through', 'moves', 'dance', 'practice'],
+              environmentDesc: 'professional dance rehearsal studio, open practice floor with sprung hardwood, mirrored walls, rehearsal lighting, speaker system, water bottles and bags on the side, movement-ready space',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'not an apartment', 'no bed', 'no nightstands', 'no domestic furniture', 'no living room', 'no home decor'],
+            },
+            {
+              type: 'music_studio',
+              labelKeywords: ['studio', 'booth', 'recording', 'session'],
+              activityKeywords: ['recording', 'vocals', 'laying down', 'track', 'mixing', 'in the booth', 'session'],
+              environmentDesc: 'professional music recording studio, mixing console, acoustic foam panels, studio monitors, recording booth glass, dimmed mood lighting',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed', 'no domestic furniture'],
+            },
+            {
+              type: 'production_set',
+              labelKeywords: ['set', 'shoot', 'film', 'stage', 'production'],
+              activityKeywords: ['filming', 'shooting', 'camera blocking', 'on set', 'scene', 'director'],
+              environmentDesc: 'professional film or TV production set, camera equipment, c-stands and lighting rigs, reflectors, crew atmosphere',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed', 'no domestic furniture'],
+            },
+            {
+              type: 'backstage',
+              labelKeywords: ['backstage', 'green room', 'dressing room', 'wings'],
+              activityKeywords: ['before show', 'pre-show', 'getting ready', 'warming up', 'waiting'],
+              environmentDesc: 'backstage dressing room or green room, vanity mirrors with bulb lighting, costume racks, theatrical atmosphere',
+              exclusions: ['not residential', 'not a bedroom at home', 'no home decor'],
+            },
+            {
+              type: 'gym_studio',
+              labelKeywords: ['gym', 'fitness', 'training'],
+              activityKeywords: ['workout', 'training', 'lifting', 'exercise', 'conditioning', 'cardio', 'sweat'],
+              environmentDesc: 'commercial gym or fitness training facility, weight racks, training equipment, athletic environment',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed'],
+            },
+            {
+              type: 'office',
+              labelKeywords: ['office', 'meeting', 'conference', 'boardroom'],
+              activityKeywords: ['meeting', 'conference', 'presentation', 'call', 'zoom', 'work'],
+              environmentDesc: 'professional office or conference room, desk environment, business atmosphere',
+              exclusions: ['not residential', 'not a bedroom', 'not home interior', 'no bed'],
+            },
+          ];
+
+          const labelLower = rhLabel.toLowerCase();
+          const activityLower = cleanPrompt.toLowerCase();
+          let matchedType = null;
+
+          for (const entry of RABBIT_HOLE_TYPE_MAP) {
+            const labelHit = entry.labelKeywords.some(k => labelLower.includes(k));
+            const activityHit = entry.activityKeywords.some(k => activityLower.includes(k));
+            if (labelHit && activityHit) { matchedType = entry; break; }
+            if (activityHit && labelLower.length < 20) { matchedType = entry; break; }
+            if (labelHit) { matchedType = entry; break; }
+          }
+
+          const envDesc = matchedType?.environmentDesc || `${rhLabel} — functional non-residential off-screen location`;
+          const exclusions = (matchedType?.exclusions || ['not residential', 'not a bedroom', 'not home interior', 'no bed', 'no domestic furniture']).join(', ');
+
+          locationNote = `
+
+════════════════════════════════════════════════════════════
+RABBIT HOLE LOCATION — CONTEXT-TRUE, CREATIVELY GENERATED
+════════════════════════════════════════════════════════════
+The character's current location is: "${rhLabel}"
+This is an OFF-SCREEN location (rabbit hole) — not a saved location with reference images.
+Generate an ORIGINAL, CINEMATIC, context-accurate scene for this environment type.
+
+MANDATORY ENVIRONMENT: ${envDesc}
+
+GENERATION APPROACH — GUIDED WORLDBUILDING:
+This is NOT a photo retrieval. This is NOT a room-lock render.
+You have creative freedom to synthesize a believable, visually rich environment that:
+  • Matches the place type (${matchedType?.type || 'general off-screen location'})
+  • Reflects the character's current activity
+  • Feels like an original photograph of a real place of this type
+  • Has authentic props, layout, lighting, and atmosphere consistent with this environment
+  • Reads clearly as: "this is clearly where the character is right now"
+
+ABSOLUTE BANS — ZERO EXCEPTIONS:
+${exclusions}
+
+⛔ DO NOT use any saved location imagery (especially home/residential).
+⛔ DO NOT fall back to bedroom, apartment, or home interior under any circumstances.
+⛔ The character is NOT home. They are at "${rhLabel}".
+⛔ DO NOT reuse unrelated saved residential imagery.
+⛔ DO NOT generate a generic room with no connection to the place type.
+
+ENVIRONMENT EXAMPLES FOR THIS TYPE:
+dance studio → sprung hardwood, full-length mirrors, rehearsal lighting, speaker stands
+music studio → mixing console, acoustic foam, booth glass, studio monitors, dim ambient light
+production set → camera rigs, c-stands, lighting gels, crew equipment, set dressing
+backstage → vanity mirrors with bulbs, costume racks, green room sofa, show atmosphere
+gym/training → weight racks, rubber floors, athletic equipment, high-ceiling training space
+office/meeting → desk environment, whiteboards, conference table, professional atmosphere
+
+The environment must feel real, functional, and original.
+════════════════════════════════════════════════════════════`;
+
+          locationImages = []; // No saved location images for rabbit holes
+          resolvedLocationName = rhLabel;
+          resolvedZoneName = matchedType?.type || null;
+
+          console.log(`[RABBIT_HOLE] 🐇 Locked environment: "${rhLabel}" → type: "${matchedType?.type || 'generic'}" | Activity: "${activityLower.substring(0, 60)}"`);
+        }
+
+        if (isRabbitHole && !manualLocationId) {
+          // Already handled above — skip all other location resolution
+        } else if (manualLocationId) {
           const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
@@ -645,6 +943,7 @@ Deno.serve(async (req) => {
             }
           }
         }
+        } // end else (non-creative / presence-scene branch)
       } catch (err) {
         console.error('[LOCATION] Resolution failed:', err.message);
       }
@@ -751,9 +1050,9 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
     }
 
     // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
-    // Always inject the live location context into the final prompt as a hard override.
-    // This is the last line of defense against stale context leaking into image generation.
-    if (liveLocationContext && liveLocationContext.trim()) {
+    // Inject authoritative live location context for presence-based scenes ONLY.
+    // Creative generations skip this — the user's prompt is the source of truth there.
+    if (imageMode === 'presence_scene' && liveLocationContext && liveLocationContext.trim()) {
       enhancedPrompt = `${liveLocationContext}\n\n${enhancedPrompt}`;
       console.log(`[LOCATION_SYNC] Live location context injected into prompt.`);
     }

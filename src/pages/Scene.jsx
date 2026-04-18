@@ -171,8 +171,14 @@ export default function Scene() {
   const sendNarrationRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
-  const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
+  const { data: settingsList = [] } = useQuery({
+    queryKey: ["userSettings", currentUser?.email],
+    queryFn: () => base44.entities.UserSettings.filter({ created_by: currentUser.email }),
+    enabled: !!currentUser?.email,
+  });
   const settings = settingsList[0] || {};
+  // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
+  // Never derive it from shared/cached settings that may belong to another account.
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const { data: locationsData = [] } = useQuery({
@@ -212,6 +218,7 @@ export default function Scene() {
   const isHomeLocation = location?.category === "home";
   const isSharedLocation = location?.scope === 'shared' || location?.location_type === 'shared';
   const isAdmin = currentUser?.role === 'admin';
+  const isVGCTowers = location?.name === 'VGC Towers';
 
   // VALID PRESENCE STATES that indicate real physical presence
   const VALID_PRESENCE_STATES = new Set(['home', 'social_visit', 'work', 'school', 'hospital', 'supervised', null, undefined, '']);
@@ -233,6 +240,7 @@ export default function Scene() {
   const homeResidents = isHomeLocation
     ? characters.filter(c => c.current_home_location_id === location.id)
     : [];
+  // VGC Towers: residents are selectable but not auto-shown in the presence strip
   const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
   const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
 
@@ -338,14 +346,49 @@ export default function Scene() {
   const allPossibleNpcs = (() => {
     const npcs = [];
 
-    // Home: only show family members explicitly listed as residents of THIS location
+    // Home: build resident NPC list with correct hierarchy:
+    // 1. Fictitious NPC Character entities (highest priority)
+    // 2. Real Character residents
+    // 3. NPC family members (resident_family_members)
     if (isHomeLocation) {
+      // FIRST: fictional NPC Character records (vgcDistributedNpcs / Character entities)
+      vgcDistributedNpcs.forEach(n => {
+        if (!npcs.find(x => x.id === n.id)) {
+          npcs.push({
+            id: n.id,
+            name: n.name,
+            role: n.character_type === 'family_npc' ? 'Family' : 'Resident',
+            isNpc: true,
+            npcType: 'resident',
+            avatar_url: n.avatar_url || null,
+            personality_summary: n.personality_summary,
+            emotional_state: n.emotional_state,
+          });
+        }
+      });
+
+      // SECOND: real Character entities living here
+      homeResidents.forEach(c => {
+        if (!npcs.find(x => x.id === c.id) && !characterIds.includes(c.id)) {
+          npcs.push({
+            id: c.id,
+            name: c.name,
+            role: 'Resident',
+            isNpc: false,
+            npcType: 'resident',
+            avatar_url: c.avatar_url || null,
+            personality_summary: c.personality_summary,
+            emotional_state: c.emotional_state,
+          });
+        }
+      });
+
+      // THIRD: NPC family members from resident_family_members (lowest priority)
       (location.resident_family_members || []).forEach(fm => {
         if (!fm.name) return;
-        // Skip if already represented by a real Character entity in sceneCharacters
-        const alreadyInScene = characters.find(c => c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
-        if (alreadyInScene) return;
-        // Look up avatar from the source character's family_members array
+        // Skip if already represented by a real Character entity above
+        const alreadyAdded = npcs.find(x => x.name?.trim().toLowerCase() === fm.name.trim().toLowerCase());
+        if (alreadyAdded) return;
         const sourceChar = fm.source_character_id
           ? characters.find(c => c.id === fm.source_character_id)
           : homeResidents.find(c =>
@@ -544,8 +587,6 @@ export default function Scene() {
   const traveledWithChars = broughtCharacters; // strictly from characterIds URL param
 
   // Build the full scene roster maintaining semantic separation
-  const isVGCTowers = location?.name === 'VGC Towers';
-
   const allSceneChars = [
     // Section 1: Traveled-with companions (explicit selection only)
     ...traveledWithChars,
@@ -770,13 +811,22 @@ export default function Scene() {
 
     const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
 
+    // Resolve zone images — these are ALWAYS the authoritative environment reference
+    const currentZoneForAction = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
+    const allZoneImagesFlat = locationZones.flatMap(z => z.image_urls || []);
+    const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
+    const authoratativeEnvRefs = activeZoneImagesForAction.length > 0
+      ? [...activeZoneImagesForAction, ...allZoneImagesFlat.filter(u => !activeZoneImagesForAction.includes(u))].slice(0, 4)
+      : allZoneImagesFlat.length > 0
+        ? allZoneImagesFlat.slice(0, 4)
+        : (firstImage ? [firstImage] : []);
+
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
       const isGlobal = location.location_type === "global";
 
       if (!isGlobal) {
-        // Character-specific or residential: enforce strict no-strangers rule
         const physicallyPresent = [
           ...homeResidentsPresent,
           ...broughtCharacters,
@@ -787,10 +837,13 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
         }
       }
+      if (authoratativeEnvRefs.length > 0) {
+        finalPrompt += ` ENVIRONMENT AUTHORITY: The reference images define this location's exact room — reproduce the same layout, furniture, colors, and architecture. Do not invent a new environment.`;
+      }
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
-          existing_image_urls: firstImage ? [firstImage] : undefined,
+          existing_image_urls: authoratativeEnvRefs.length > 0 ? authoratativeEnvRefs : undefined,
         });
         setSceneImage(result.url);
       } catch { setSceneImage(firstImage); }
@@ -798,120 +851,66 @@ export default function Scene() {
       return;
     }
 
+    // authoratativeEnvRefs already computed above — zone images are the ONLY environment source
+    const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
+    const isGlobal = location.location_type === "global";
+    const envNote = authoratativeEnvRefs.length > 0
+      ? `CRITICAL ENVIRONMENT RULE: The reference images are the AUTHORITATIVE source for this location's environment. Reproduce the EXACT room shown — same layout, furniture, wall colors, lighting, and architecture. Do NOT invent a new room. Characters exist INSIDE this environment; they do NOT define it.`
+      : "";
+
     let prompt;
     if (isHomeLocation) {
-      // All people physically present in the house right now:
-      // - brought characters (user's companions who traveled here)
-      // - active residents who are currently home (not away)
-      // - NPC family members who live here (from familyMemberNpcsPresent)
-      // - NPC residents listed on the location record (resident_family_members)
       const physicallyPresentChars = [
         ...homeResidentsPresent,
         ...broughtCharacters,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-
-      // Gather NPC family members present (with their photo_url as avatar references)
-      const npcFamilyPresentAvatars = familyMemberNpcsPresent
-        .map(fm => {
-          // Look up photo_url from the source character's family_members array
-          let photoUrl = null;
-          for (const char of homeResidents) {
-            const match = char.family_members?.find(
-              m => m.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
-            );
-            if (match?.photo_url) { photoUrl = match.photo_url; break; }
-          }
-          return photoUrl;
-        })
-        .filter(Boolean);
 
       const allPresentNames = [
         ...physicallyPresentChars.map(c => c.name),
         ...familyMemberNpcsPresent.map(fm => fm.name),
       ];
 
-      // Build strict people instruction
-      const strictPeopleRule = allPresentNames.length > 0
-        ? `STRICT RULE: The ONLY people who may appear in this image are: ${allPresentNames.join(", ")}. Their appearance must match their reference photos exactly — do NOT alter body type, weight, age, or ethnicity. Generate NO other people, NO strangers, NO background figures, NO silhouettes of anyone else.`
-        : `STRICT RULE: This space is completely empty. NO people, NO silhouettes, NO background figures — only the room itself.`;
+      // Cap at 3 visible characters to preserve environment fidelity
+      const visibleNames = allPresentNames.slice(0, 3);
 
-      // Always depict the home as lived-in and furnished when residents exist
+      const strictPeopleRule = visibleNames.length > 0
+        ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
+        : `STRICT RULE: This space is completely empty — no people, no silhouettes, only the room.`;
+
       const atmosphereSuffix = (location.resident_family_members?.length > 0 || homeResidents.length > 0)
-        ? " The home is clearly lived-in: warm, fully furnished, and decorated with personal belongings."
+        ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
-      const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
-      const zoneSuffix = currentZone?.zone_name ? ` in the ${currentZone.zone_name}` : "";
-      const zoneImages = currentZone?.image_urls || [];
-
-      prompt = `Realistic interior scene inside ${location.name}${zoneSuffix}, cozy home setting, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic, warm, authentic atmosphere.`;
-
-      // Collect all available avatar/photo references — character avatars + NPC family photos
-      const residentAvatars = physicallyPresentChars.map(c => c.avatar_url).filter(Boolean);
-      const zoneRefs = zoneImages.slice(0, 1);
-      const refs = [...residentAvatars, ...npcFamilyPresentAvatars, ...zoneRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
-      try {
-        const result = await base44.integrations.Core.GenerateImage({
-          prompt,
-          existing_image_urls: refs.length > 0 ? refs : undefined,
-        });
-        setSceneImage(result.url);
-      } catch { setSceneImage(firstImage); }
-      finally { setIsGeneratingImage(false); }
-      return;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic.`;
     } else {
-      const currentZone = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
-      const zoneSuffix = currentZone?.zone_name ? ` — ${currentZone.zone_name} area` : "";
-      const isGlobal = location.location_type === "global";
-      const activeZoneImages = currentZone?.image_urls || [];
-
-      // Collect all avatar references for non-home locations (workers, selected NPCs, brought chars)
-      const allSceneAvatars = [
-        ...broughtCharacters.map(c => c.avatar_url),
-        ...workerCharacters.map(c => c.avatar_url),
-        ...vgcDistributedNpcs.map(c => c.avatar_url),
-        ...selectedNpcs.map(n => n.avatar_url),
-      ].filter(Boolean);
-
       if (isGlobal) {
-        // Global location: ambient people are fine, just mention who the user is with
-        const charNames = sceneCharacters.map(c => c.name).join(", ");
-        const peopleDesc = sceneCharacters.length > 0 ? `with ${charNames} among other patrons` : "with other people around";
-        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${outfitSuffix} Immersive, cinematic, photorealistic. Natural and authentic atmosphere.`;
+        const charNames = sceneCharacters.slice(0, 3).map(c => c.name).join(", ");
+        const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${outfitSuffix} Photorealistic.`;
       } else {
-        // Character-specific location: ONLY the exact people present, no strangers ever
-        // Include workers and NPCs with avatars — they are real staff at this venue
         const physicallyPresent = [
           ...broughtCharacters,
-          ...workerCharacters,
-          ...vgcDistributedNpcs,
           ...(selectedNpcIds ? selectedNpcs : []),
-        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i).slice(0, 3); // cap at 3
 
-        let peopleDesc;
-        if (physicallyPresent.length > 0) {
-          peopleDesc = `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures whatsoever.`;
-        } else {
-          peopleDesc = `The space is completely empty. No people at all — no silhouettes, no background figures, nobody visible anywhere in the image.`;
-        }
-        prompt = `Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic, authentic. CRITICAL: Do NOT generate any random or unrecognized people in this image.`;
+        const peopleDesc = physicallyPresent.length > 0
+          ? `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`
+          : `The space is completely empty — no silhouettes, no background figures, nobody.`;
+
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic.`;
       }
+    }
 
-      // Prioritize active zone images first, then fall back to firstImage
-      const zoneRefs = activeZoneImages.slice(0, 2);
-      const nonHomeRefs = [...zoneRefs, ...(zoneRefs.length === 0 && firstImage ? [firstImage] : []), ...allSceneAvatars].slice(0, 4);
-
-      try {
-        const result = await base44.integrations.Core.GenerateImage({
-          prompt,
-          existing_image_urls: nonHomeRefs.length > 0 ? nonHomeRefs : undefined,
-        });
-        setSceneImage(result.url);
-      } catch {
-        setSceneImage(firstImage);
-      } finally {
-        setIsGeneratingImage(false);
-      }
+    try {
+      const result = await base44.integrations.Core.GenerateImage({
+        prompt,
+        existing_image_urls: authoratativeEnvRefs.length > 0 ? authoratativeEnvRefs : undefined,
+      });
+      setSceneImage(result.url);
+    } catch {
+      setSceneImage(firstImage);
+    } finally {
+      setIsGeneratingImage(false);
     }
   };
 
@@ -1025,13 +1024,14 @@ export default function Scene() {
       //   - VGC Towers distributed NPCs (must be explicitly engaged)
       //   - Diagnostic/test characters (already filtered from characters array)
 
+      // DIALOGUE TARGETING: ONLY characters explicitly selected via the "Who's here" picker may respond.
+      // Nothing else — not traveled-with chars, not extraNpcs, not residents, not workers.
+      // Private mode overrides to a single target only.
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
-        : [
-            ...traveledWithChars,
-            ...selectedNpcs,
-            ...extraNpcs,
-          ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+        : selectedNpcs.length > 0
+          ? selectedNpcs
+          : [];
 
       const eligibleKnownChars = dialogueEligible.filter(c => !c.isNpc);
       const eligibleNpcList = dialogueEligible
@@ -1086,6 +1086,17 @@ Return JSON:
 
       const responseList = responses?.responses || [];
       for (const resp of responseList) {
+        // IDENTITY PROTECTION: never render an AI response under the real user's identity
+        const respNameLower = resp.character_name?.trim().toLowerCase();
+        const userNames = [
+          displayName?.trim().toLowerCase(),
+          currentUser?.full_name?.trim().toLowerCase(),
+          currentUser?.email?.split("@")[0]?.toLowerCase(),
+          settings?.fictional_world_name?.trim().toLowerCase(),
+          ...(settings?.user_aliases || []).map(a => a?.trim().toLowerCase()),
+        ].filter(Boolean);
+        if (userNames.includes(respNameLower)) continue; // BLOCKED — AI tried to speak as the user
+
         const char = sceneCharacters.find(c => c.name === resp.character_name);
         const msg = {
           id: Date.now().toString() + resp.character_name,
@@ -1542,7 +1553,7 @@ Return JSON:
         </button>
       </div>
 
-      {/* Character presence strip */}
+      {/* Character presence strip — only shows characters the user explicitly traveled with or selected */}
       <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50 flex-shrink-0">
         {/* User */}
         <div className="flex flex-col items-center gap-1">
@@ -1554,7 +1565,9 @@ Return JSON:
           </div>
           <span className="text-[9px] text-primary font-medium">{displayName}</span>
         </div>
-        {displayCharacters.map(char => (
+        {[...traveledWithChars, ...selectedNpcs, ...extraNpcs]
+          .filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
+          .map(char => (
           <div key={char.id} className="flex flex-col items-center gap-1">
             <div className="w-8 h-8 rounded-full bg-secondary border-2 border-border flex items-center justify-center overflow-hidden">
               {char.avatar_url
@@ -1565,7 +1578,7 @@ Return JSON:
             <span className="text-[9px] text-muted-foreground truncate max-w-[40px]">{char.name.split(" ")[0]}</span>
           </div>
         ))}
-        {displayCharacters.length === 0 && (
+        {traveledWithChars.length === 0 && selectedNpcs.length === 0 && extraNpcs.length === 0 && (
           <span className="text-xs text-muted-foreground ml-1">You're here alone</span>
         )}
       </div>

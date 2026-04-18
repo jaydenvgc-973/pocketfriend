@@ -1,0 +1,75 @@
+{
+  "name": "LocationAlias",
+  "type": "object",
+  "properties": {
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user account this alias belongs to. NEVER shared cross-account."
+    },
+    "phrase": {
+      "type": "string",
+      "description": "The normalized spoken phrase (e.g. 'dance hall', 'studio', 'grandma's house')"
+    },
+    "phrase_raw": {
+      "type": "string",
+      "description": "Original raw phrase as detected, before normalization"
+    },
+    "resolution_type": {
+      "type": "string",
+      "enum": [
+        "saved_location",
+        "rabbit_hole",
+        "ignored"
+      ],
+      "description": "saved_location = maps to a real saved location. rabbit_hole = treat as off-screen presence. ignored = user said this phrase never means a real place."
+    },
+    "resolved_location_id": {
+      "type": "string",
+      "description": "If resolution_type=saved_location, the ID of the LocationReference record."
+    },
+    "resolved_location_name": {
+      "type": "string",
+      "description": "Display name of the resolved location."
+    },
+    "rabbit_hole_label": {
+      "type": "string",
+      "description": "If resolution_type=rabbit_hole, the display label to use (e.g. 'Studio', 'Rehearsal')."
+    },
+    "rabbit_hole_subtype": {
+      "type": "string",
+      "description": "Optional subtype for context (e.g. 'recording', 'rehearsal', 'appointment')."
+    },
+    "character_id": {
+      "type": "string",
+      "description": "Optional: if this alias is character-specific, the character ID. Null = applies to all characters for this user."
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of character if character-scoped."
+    },
+    "confidence": {
+      "type": "number",
+      "default": 1.0,
+      "description": "Confidence score 0-1. User-confirmed = 1.0."
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "user_confirmed",
+        "auto_inferred",
+        "category_match"
+      ],
+      "default": "user_confirmed"
+    },
+    "use_count": {
+      "type": "integer",
+      "default": 1,
+      "description": "How many times this alias has been used/matched."
+    }
+  },
+  "required": [
+    "owner_email",
+    "phrase",
+    "resolution_type"
+  ]
+}

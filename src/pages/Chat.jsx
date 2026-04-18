@@ -42,11 +42,14 @@ import {
 } from "@/lib/responseTimingUtils";
 import { filterDashes } from "@/lib/dashFilter";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
+import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
+import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
+import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
+import { buildDrinkContextBlock } from "@/lib/drinkDecisionEngine";
 
-// Voice playback cache and active audio tracking
 const voiceCache = new Map();
-const activeAudioRef = new Map(); // messageId -> Audio element
+const activeAudioRef = new Map();
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -66,13 +69,15 @@ export default function Chat() {
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
   const [playingAudioId, setPlayingAudioId] = useState(null);
   const [voiceErrors, setVoiceErrors] = useState({});
-  const [deleteTarget, setDeleteTarget] = useState(null); // message pending delete choice
-  const [forwardTarget, setForwardTarget] = useState(null); // message pending forward
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [forwardTarget, setForwardTarget] = useState(null);
+  const [newPeopleDetected, setNewPeopleDetected] = useState(null);
   const [showSendMoney, setShowSendMoney] = useState(false);
   const [isSendingMoney, setIsSendingMoney] = useState(false);
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showGameLauncher, setShowGameLauncher] = useState(false);
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
+  const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1184,6 +1189,9 @@ ${songsInfo}`;
       const livePresence = getCharacterLivePresence(character, {});
       const awarenessContext = buildLiveLocationContext(character, {});
 
+      // ── LIVE NEEDS: full state consistency enforcement ─────────────────────
+      const needsContext = buildNeedsContextBlock(character);
+
       // Hard validation: if AI response contradicts resolved presence, it gets corrected before display
       const _presenceForValidation = livePresence;
 
@@ -1294,7 +1302,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
@@ -1713,13 +1721,15 @@ Reply with ONLY the single emoji or the word "none".`,
       },
     }).catch(() => {});
 
-    // Extract memories from this turn (fire-and-forget)
     if (responseText) {
       base44.functions.invoke("extractMemoriesFromTurn", {
         characterId,
         conversationId: convoId,
         userMessage: text,
         characterReply: responseText,
+      }).then(res => {
+        const detected = res?.data?.newPeopleDetected?.relationships;
+        if (detected?.length > 0) setNewPeopleDetected(detected);
       }).catch(() => {});
     }
 
@@ -1730,11 +1740,23 @@ Reply with ONLY the single emoji or the word "none".`,
       messageContent: text,
     }).catch(() => {});
 
-    // Update character location if character response mentions being somewhere (fire-and-forget)
+    // Update character location if character response mentions being somewhere
+    // If location is unresolved, show alias resolution popup
     if (responseText) {
       base44.functions.invoke("updateCharacterLocationFromMessage", {
         characterId,
         messageContent: responseText,
+      }).then(res => {
+        if (res?.data?.unresolved && res.data.phrase) {
+          setPendingAliasResolution({
+            phrase: res.data.phrase,
+            characterId: res.data.characterId || characterId,
+            characterName: res.data.characterName || character?.name,
+          });
+        } else if (res?.data?.updated) {
+          // Location updated — refresh character data so card reflects it
+          queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        }
       }).catch(() => {});
     }
 
@@ -1924,16 +1946,8 @@ Reply with ONLY the single emoji or the word "none".`,
       )}
       <BottomNav />
 
-      {/* Approval pop-ups for life events */}
       {pendingApproval?.type === 'move_in' && (
-        <ApprovalPopup
-          type="move_in"
-          title="Moving In Together?"
-          description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`}
-          details={pendingApproval.data}
-          onApprove={approveEvent}
-          onDeny={dismissApproval}
-        >
+        <ApprovalPopup type="move_in" title="Moving In Together?" description={`It looks like ${pendingApproval.data.character?.name} may be moving in${pendingApproval.data.otherCharName ? ` with ${pendingApproval.data.otherCharName}` : ' with someone'}. Approve this household change?`} details={pendingApproval.data} onApprove={approveEvent} onDeny={dismissApproval}>
           <p><span className="text-muted-foreground">Character:</span> {pendingApproval.data.character?.name}</p>
           {pendingApproval.data.otherCharName && <p><span className="text-muted-foreground">Moving in with:</span> {pendingApproval.data.otherCharName}</p>}
         </ApprovalPopup>
@@ -1962,8 +1976,24 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
 
-      {/* Life event approval pop-up (education/occupation/job training) */}
       {character && <PendingLifeEventApproval characterId={characterId} character={character} />}
+      {pendingAliasResolution && (
+        <LocationAliasResolutionPopup
+          phrase={pendingAliasResolution.phrase}
+          characterId={pendingAliasResolution.characterId}
+          characterName={pendingAliasResolution.characterName}
+          onResolved={() => { setPendingAliasResolution(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
+          onDismiss={() => setPendingAliasResolution(null)}
+        />
+      )}
+      {newPeopleDetected && character && (
+        <NewPersonDetectedModal
+          people={newPeopleDetected}
+          characterId={characterId}
+          characterName={character.name}
+          onDone={() => { setNewPeopleDetected(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
+        />
+      )}
     </div>
   );
 }

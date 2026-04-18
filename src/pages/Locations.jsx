@@ -349,7 +349,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
   const [form, setForm] = useState({
     name: editingLocation?.name || "",
-    location_type: editingLocation?.location_type || "global",
+    location_type: editingLocation?.location_type === "shared" ? "global" : (editingLocation?.location_type || "global"),
+    is_shared: editingLocation?.location_type === "shared" || editingLocation?.scope === "shared" || false,
     character_id: editingLocation?.character_id || "",
     category: editingLocation?.category || "home",
     subtype: Array.isArray(editingLocation?.subtype) ? editingLocation.subtype : (editingLocation?.subtype ? [editingLocation.subtype] : []),
@@ -416,7 +417,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const handleSave = () => {
     if (!canSave) return;
     const effectiveType = (form.location_type === "character_specific" && !form.character_id) ? "global" : form.location_type;
-    const charObj = effectiveType === "character_specific" ? characters.find(c => c.id === form.character_id) : null;
+    const charObj = (effectiveType === "character_specific") ? characters.find(c => c.id === form.character_id) : null;
     const ownerChar = !form.owner_is_npc && form.owner_character_id
       ? (form.owner_character_id === currentUser?.id ? { name: worldName } : characters.find(c => c.id === form.owner_character_id))
       : null;
@@ -440,18 +441,30 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
 
       <Input value={form.name} onChange={e => update("name", e.target.value)} placeholder="e.g. Jayden's Apartment, Downtown Gym" className="h-11 rounded-xl" />
 
-      <div>
-        <label className="text-xs text-muted-foreground uppercase tracking-wider mb-2 block">Type</label>
-        <div className="grid grid-cols-3 gap-2">
-          {["global", "character_specific", "shared"].map(t => (
+      <div className="space-y-3">
+        <label className="text-xs text-muted-foreground uppercase tracking-wider block">Type</label>
+        <div className="grid grid-cols-2 gap-2">
+          {["global", "character_specific"].map(t => (
             <button key={t} onClick={() => update("location_type", t)}
               className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.location_type === t ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>
-              {t === "global" ? "🌐 Global" : t === "character_specific" ? "👤 Character-specific" : "🔗 Shared"}
+              {t === "global" ? "🌐 Global" : "👤 Character-specific"}
             </button>
           ))}
         </div>
-        {form.location_type === 'shared' && currentUser?.role !== 'admin' && (
-          <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-xl px-3 py-2">⚠️ Shared locations are admin-controlled. Once created, only admins can edit them. Characters can visit but cannot be permanently assigned as workers or residents.</p>
+        <div className="flex items-center justify-between px-3 py-2.5 rounded-xl border border-border bg-card">
+          <div>
+            <p className="text-sm text-foreground font-medium">🔗 Shared</p>
+            <p className="text-xs text-muted-foreground">Visible to all users (admin-controlled)</p>
+          </div>
+          <button
+            onClick={() => update("is_shared", !form.is_shared)}
+            className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ${form.is_shared ? "bg-primary" : "bg-secondary border border-border"}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${form.is_shared ? "translate-x-5" : "translate-x-0"}`} />
+          </button>
+        </div>
+        {form.is_shared && currentUser?.role !== 'admin' && (
+          <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-xl px-3 py-2">⚠️ Shared locations are admin-controlled. Once created, only admins can edit them.</p>
         )}
       </div>
 
@@ -1003,17 +1016,23 @@ export default function Locations() {
 
   const handleSave = async (formData, editingLocationId = null) => {
     let locationId;
+    const isAdmin = currentUser?.role === 'admin';
+    const scopeValue = formData.is_shared ? 'shared' : 'account_global';
+    const enrichedFields = {
+      scope: scopeValue,
+      location_type: formData.is_shared ? 'shared' : formData.location_type,
+      created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
+    };
     if (editingLocationId) {
-      await base44.entities.LocationReference.update(editingLocationId, formData);
+      await base44.entities.LocationReference.update(editingLocationId, { ...formData, ...enrichedFields });
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
       const enriched = {
         ...formData,
+        ...enrichedFields,
         owner_email: currentUser?.email,
         owner_user_id: currentUser?.id,
-        created_by_role: currentUser?.role || 'user',
-        scope: formData.location_type === 'shared' ? 'shared' : 'account_global',
       };
       const created = await base44.entities.LocationReference.create(enriched);
       locationId = created.id;
