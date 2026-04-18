@@ -1,25 +1,32 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Camera, Upload, Loader2, X, ZoomIn } from 'lucide-react';
+import { Camera, Upload, Loader2, X, ZoomIn, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import NPCPhotoCropper from './NPCPhotoCropper';
+import { toast } from 'sonner';
 
 export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, onClose }) {
   const [uploading, setUploading] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState(npc?.photo_url || null);
   const [cropping, setCropping] = useState(false);
+  const [error, setError] = useState(null);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     
+    setError(null);
     setUploading(true);
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
       setPreview(file_url);
-    } catch {
-      // ignore
+      toast.success('Photo uploaded');
+    } catch (err) {
+      const message = err?.message || 'Failed to upload photo';
+      setError(message);
+      toast.error(message);
+      console.error('Photo upload error:', err);
     } finally {
       setUploading(false);
     }
@@ -28,6 +35,7 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
   const handleGenerate = async () => {
     if (!sourceCharacter) return;
     
+    setError(null);
     setGenerating(true);
     try {
       const prompt = `A realistic solo portrait photo of ${npc.person_name}, who is ${sourceCharacter.name}'s ${npc.relationship_type}.
@@ -41,9 +49,15 @@ Solo headshot or upper body portrait. Natural lighting, unposed, like a real per
       
       if (result?.url) {
         setPreview(result.url);
+        toast.success('Photo generated');
+      } else {
+        throw new Error('No image URL returned');
       }
-    } catch (error) {
-      console.error('NPC photo generation failed:', error);
+    } catch (err) {
+      const message = err?.message || 'Failed to generate photo';
+      setError(message);
+      toast.error(message);
+      console.error('NPC photo generation failed:', err);
     } finally {
       setGenerating(false);
     }
@@ -64,6 +78,13 @@ Solo headshot or upper body portrait. Natural lighting, unposed, like a real per
             <X className="w-4 h-4" />
           </button>
         </div>
+
+        {error && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30">
+            <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0 mt-0.5" />
+            <p className="text-xs text-destructive">{error}</p>
+          </div>
+        )}
 
         {/* Preview */}
         {preview && (
@@ -131,8 +152,15 @@ Solo headshot or upper body portrait. Natural lighting, unposed, like a real per
         {preview && (
           <Button
             onClick={async () => {
-              await onPhotoUpdate(preview);
-              onClose();
+              try {
+                await onPhotoUpdate(preview);
+                toast.success('Photo saved');
+                onClose();
+              } catch (err) {
+                const message = err?.message || 'Failed to save photo';
+                setError(message);
+                toast.error(message);
+              }
             }}
             className="w-full rounded-xl"
             size="sm"
