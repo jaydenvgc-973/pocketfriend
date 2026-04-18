@@ -3,13 +3,24 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const { characterId, conversationId, userMessage, characterReply, playingAsCharacterId } = await req.json();
+    let { characterId, conversationId, userMessage, characterReply, playingAsCharacterId } = await req.json();
 
     if (!characterId || !conversationId) {
       return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    // Extract memories for the target character
+    // If playingAsCharacterId not provided, check the last user message for it
+    if (!playingAsCharacterId) {
+      const lastUserMsg = await base44.entities.Message.filter(
+        { conversation_id: conversationId, sender_type: 'user' },
+        '-created_date',
+        1
+      ).then(r => r[0]);
+      if (lastUserMsg?.played_as_character_id) {
+        playingAsCharacterId = lastUserMsg.played_as_character_id;
+      }
+    }
+
     const targetChar = await base44.entities.Character.filter({ id: characterId }).then(r => r[0]);
     const playingAsChar = playingAsCharacterId
       ? await base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
@@ -57,11 +68,12 @@ Extract any NEW people names mentioned (NPCs not yet in your world) from the use
     // If user was playing as a character, create a simple emotional journal entry
     if (playingAsChar && targetChar) {
       const emotionalReflection = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${playingAsChar.name}. You just had a conversation with ${targetChar.name}. Based on this exchange:
-User: "${userMessage}"
-${targetChar.name}: "${characterReply?.substring(0, 150)}"
+        prompt: `You are ${playingAsChar.name}. Personality: ${playingAsChar.personality_summary || 'unknown'}. You just talked with ${targetChar.name}.
 
-Write ONE sentence about how you felt during this conversation. Keep it simple and personal (e.g., "That was nice talking with them" or "They seemed upset").`,
+What you said: "${userMessage}"
+How they responded: "${characterReply?.substring(0, 150)}"
+
+Write ONE sentence about how this interaction made you feel. Be authentic to your personality and what you just learned about them.`,
       });
 
       await base44.entities.Memory.create({
