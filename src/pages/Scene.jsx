@@ -26,6 +26,7 @@ import InviteOutModal from "@/components/home/InviteOutModal";
 import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
+import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -827,14 +828,23 @@ export default function Scene() {
       const isGlobal = location.location_type === "global";
 
       if (!isGlobal) {
-        const physicallyPresent = [
+        // Apply residential filtering for home locations — residents only, plus user
+        const rawPresent = [
           ...homeResidentsPresent,
           ...broughtCharacters,
         ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+
+        const physicallyPresent = isHomeLocation
+          ? resolveSceneImagePeople(location, rawPresent, currentUser, true)
+          : rawPresent;
+
         if (physicallyPresent.length === 0) {
           finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
         } else {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
+          if (isHomeLocation) {
+            finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
+          }
         }
       }
       if (authoratativeEnvRefs.length > 0) {
@@ -860,19 +870,19 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      const physicallyPresentChars = [
-        ...homeResidentsPresent,
-        ...broughtCharacters,
-      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+      // ── RESIDENTIAL SCENE FILTERING ──────────────────────────────────────
+      // Strict residence occupant-only rule: only residents and user may appear
+      const validResidentialPeople = resolveSceneImagePeople(
+        location,
+        [...homeResidentsPresent, ...broughtCharacters, ...familyMemberNpcsPresent],
+        currentUser,
+        true // include user
+      );
 
-      const allPresentNames = [
-        ...physicallyPresentChars.map(c => c.name),
-        ...familyMemberNpcsPresent.map(fm => fm.name),
-      ];
-
-      // Cap at 3 visible characters to preserve environment fidelity
-      const visibleNames = allPresentNames.slice(0, 3);
-
+      const visibleNames = validResidentialPeople.slice(0, 3).map(c => c.name);
+      
+      const residentialConstraint = buildResidentialImageConstraint(location, validResidentialPeople);
+      
       const strictPeopleRule = visibleNames.length > 0
         ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
         : `STRICT RULE: This space is completely empty — no people, no silhouettes, only the room.`;
@@ -881,7 +891,7 @@ export default function Scene() {
         ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${outfitSuffix} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${outfitSuffix} Photorealistic.`;
     } else {
       if (isGlobal) {
         const charNames = sceneCharacters.slice(0, 3).map(c => c.name).join(", ");
