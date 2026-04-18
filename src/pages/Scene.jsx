@@ -969,7 +969,7 @@ export default function Scene() {
     // Detect when user wants to buy: "I'll take it", "I like it", "how much", "price", etc.
     const isBusinessVenue = ["business", "workplace", "grocery"].includes(location?.category);
     if (isBusinessVenue) {
-      const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|i'll take|i want to buy|i'd like to buy|i want to get|i'll get it|price)/);
+      const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|i love it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|i'll take|i want to buy|i'd like to buy|i want to get|i'll get it|price)/);
       if (purchaseIntentMatch) {
         const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25; // $25-$150
         setMessages(prev => [...prev, {
