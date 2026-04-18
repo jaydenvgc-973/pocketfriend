@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams, Link } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { useParams } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
+import ChatHeader from "@/components/chat/ChatHeader";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
@@ -1796,39 +1796,20 @@ Reply with ONLY the single emoji or the word "none".`,
 
   return (
     <div className={`h-screen flex flex-col bg-background pb-[60px] ${isPhone ? "max-w-lg mx-auto" : ""}`}>
-      <div className="sticky top-0 z-[1000] bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 pointer-events-auto">
-        <Link to="/home" className="text-muted-foreground hover:text-foreground transition-colors pointer-events-auto cursor-pointer">
-          <ArrowLeft className="w-5 h-5" />
-        </Link>
-        <Link to={`/profile/${characterId}`}>
-          {character && <CharacterAvatar character={character} size="sm" />}
-        </Link>
-        <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-foreground truncate">{character?.name || "Loading..."}</h2>
-          <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
-        </div>
-        <ChatActionsMenu
-          visible={{
-            media: !!character,
-            game: !!character && !isPhone,
-            narrative: !!character && !!conversationId,
-            contacts: !!character && (character.fictional_relationships || []).length > 0,
-            story: !!character,
-            money: !!character,
-            troubleshoot: !!character && !!conversationId,
-          }}
-          onSelect={(id) => {
-            if (id === "media") setShowMediaGallery(true);
-            if (id === "game") setShowGameLauncher(true);
-            if (id === "narrative") setShowNarrativeAction(true);
-            if (id === "contacts") setShowWorldContacts(true);
-            if (id === "story") setShowNarrativeBuilder(true);
-            if (id === "money") setShowSendMoney(true);
-            if (id === "shopping") setShowShopping(true);
-            if (id === "troubleshoot") setShowTroubleshooting(true);
-          }}
-        />
-      </div>
+      <ChatHeader
+        character={character}
+        characterId={characterId}
+        isPhone={isPhone}
+        conversationId={conversationId}
+        onMediaGalleryToggle={() => setShowMediaGallery(true)}
+        onGameLauncherToggle={() => setShowGameLauncher(true)}
+        onNarrativeActionToggle={() => setShowNarrativeAction(true)}
+        onWorldContactsToggle={() => setShowWorldContacts(true)}
+        onNarrativeBuilderToggle={() => setShowNarrativeBuilder(true)}
+        onSendMoneyToggle={() => setShowSendMoney(true)}
+        onShoppingToggle={() => setShowShopping(true)}
+        onTroubleshootingToggle={() => setShowTroubleshooting(true)}
+      />
       {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (
         <NarrativeActionButton
