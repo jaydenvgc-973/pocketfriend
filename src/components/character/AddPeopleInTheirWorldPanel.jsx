@@ -32,7 +32,9 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   });
 
   // Get all account NPCs (any character type that's not 'active')
-  const accountNPCs = allAccountCharacters.filter(c => c.character_type !== 'active');
+  const accountNPCs = allAccountCharacters.filter(c => 
+    c.character_type && ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type)
+  );
 
   // Get NPCs already linked to this character
   const existingNPCIds = new Set(
@@ -51,8 +53,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
       // Create new npc_fictitious_person
       const newNPC = await base44.entities.Character.create({
         name: newName.trim(),
-        character_type: 'npc_fictitious_person',
-        owner_email: character.created_by
+        character_type: 'npc_fictitious_person'
       });
 
       // Add to fictional_relationships
