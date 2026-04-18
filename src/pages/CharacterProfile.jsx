@@ -850,7 +850,8 @@ export default function CharacterProfile() {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
               if (!r.related_character_id) return true;
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              return linked && (linked.character_type === "npc" || linked.character_type === "family_npc" || linked.character_type === "npc_fictitious_person");
+              const isNPC = linked && ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(linked.character_type);
+              return isNPC;
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -868,7 +869,8 @@ export default function CharacterProfile() {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
                   if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  return linked && (linked.character_type === "npc" || linked.character_type === "family_npc" || linked.character_type === "npc_fictitious_person");
+                  const isNPC = linked && ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(linked.character_type);
+                  return isNPC;
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {

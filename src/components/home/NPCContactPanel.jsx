@@ -45,7 +45,9 @@ export default function NPCContactPanel() {
   // NO fallback to created_by — that causes data bleed between users
   const npcCharacters = rawNpcCharacters.filter(c => {
     if (c.protected_active) return false;
-    return c.owner_email === currentUser?.email;
+    // Include all NPC types: npc, family_npc, promoted_npc, npc_fictitious_person
+    const isNPC = ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type);
+    return isNPC && c.owner_email === currentUser?.email;
   });
 
   // Close dropdown when clicking outside
