@@ -929,6 +929,8 @@ The environment must feel real, functional, and original.
                 // Home location has no images — generate purely from text with strong residential lock
                 console.log(`[LOCATION] 🏠 HOME (no images): generating residential environment from text`);
                 locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
+                resolvedLocationName = realTimeLoc.name;
+                resolvedZoneName = liveZoneHint;
               }
             } else if (!isHome) {
               // Only attempt text-based location parse when character is NOT forced home
@@ -940,6 +942,12 @@ The environment must feel real, functional, and original.
                 locationNote = buildRoomLockNote(locationName, zoneName);
                 console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
               }
+            } else if (isHome && realTimeLoc) {
+              // Home with a location record but no images — still lock to that location for context
+              console.log(`[LOCATION] 🏠 HOME (location exists, no images): applying home location lock`);
+              resolvedLocationName = realTimeLoc.name;
+              resolvedZoneName = liveZoneHint;
+              locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home — specifically ${realTimeLoc.name}. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
             } else {
               // Home with no location record at all
               console.log(`[LOCATION] 🏠 HOME (no location record): applying generic residential lock`);
