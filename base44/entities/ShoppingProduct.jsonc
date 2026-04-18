@@ -32,38 +32,21 @@
       "type": "string",
       "description": "Product name"
     },
-    "description": {
-      "type": "string",
-      "description": "Product description"
-    },
     "brand": {
       "type": "string",
-      "description": "Brand name (optional)"
+      "description": "Brand name"
     },
     "color": {
       "type": "string",
       "description": "Product color"
     },
-    "size_options": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "description": "Available sizes",
-      "default": []
-    },
     "price": {
       "type": "number",
-      "description": "Price in USD",
-      "default": 0
-    },
-    "currency": {
-      "type": "string",
-      "default": "USD"
+      "description": "Price in USD"
     },
     "image_url": {
       "type": "string",
-      "description": "AI-generated product image URL"
+      "description": "Generated product image URL"
     },
     "image_status": {
       "type": "string",
@@ -72,8 +55,7 @@
         "generated",
         "failed"
       ],
-      "default": "not_generated",
-      "description": "Image generation status"
+      "default": "not_generated"
     },
     "image_generation_prompt": {
       "type": "string",
@@ -81,27 +63,7 @@
     },
     "image_generation_style": {
       "type": "string",
-      "enum": [
-        "product_clean",
-        "hanger_display",
-        "mannequin_display",
-        "shoe_product_shot",
-        "accessory_product_shot"
-      ],
-      "description": "Style used for image generation"
-    },
-    "visual_identity_seed": {
-      "type": "string",
-      "description": "Seed to keep visual consistency across regenerations"
-    },
-    "status": {
-      "type": "string",
-      "enum": [
-        "available",
-        "unavailable",
-        "archived"
-      ],
-      "default": "available"
+      "description": "Style used for generation"
     }
   },
   "required": [

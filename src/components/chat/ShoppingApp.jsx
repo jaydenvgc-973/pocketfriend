@@ -1,18 +1,18 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ShoppingBag, Loader } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 const SAMPLE_PRODUCTS = [
-  { id: "p1", category: "clothes", item_type: "hoodie", name: "Essential Hoodie", brand: "Basic", price: 65, color: "Black", image_url: null, image_status: "not_generated" },
-  { id: "p2", category: "clothes", item_type: "hoodie", name: "Oversized Hoodie", brand: "Comfort", price: 75, color: "Gray", image_url: null, image_status: "not_generated" },
-  { id: "p3", category: "clothes", item_type: "shirt", name: "Classic Tee", brand: "Basic", price: 25, color: "White", image_url: null, image_status: "not_generated" },
-  { id: "p4", category: "clothes", item_type: "jacket", name: "Denim Jacket", brand: "Classic", price: 95, color: "Blue", image_url: null, image_status: "not_generated" },
-  { id: "p5", category: "sneakers", item_type: "sneakers", name: "High Tops", brand: "Street", price: 120, color: "Black", image_url: null, image_status: "not_generated" },
-  { id: "p6", category: "sneakers", item_type: "sneakers", name: "Minimalist Sneakers", brand: "Clean", price: 100, color: "White", image_url: null, image_status: "not_generated" },
-  { id: "p7", category: "accessories", item_type: "hat", name: "Baseball Cap", brand: "Basic", price: 30, color: "Black", image_url: null, image_status: "not_generated" },
-  { id: "p8", category: "accessories", item_type: "bag", name: "Canvas Backpack", brand: "Carry", price: 85, color: "Khaki", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "hoodie", name: "Essential Hoodie", brand: "Basic", price: 65, color: "Black", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "hoodie", name: "Oversized Hoodie", brand: "Comfort", price: 75, color: "Gray", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "shirt", name: "Classic Tee", brand: "Basic", price: 25, color: "White", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "jacket", name: "Denim Jacket", brand: "Classic", price: 95, color: "Blue", image_url: null, image_status: "not_generated" },
+  { category: "sneakers", item_type: "sneakers", name: "High Tops", brand: "Street", price: 120, color: "Black", image_url: null, image_status: "not_generated" },
+  { category: "sneakers", item_type: "sneakers", name: "Minimalist Sneakers", brand: "Clean", price: 100, color: "White", image_url: null, image_status: "not_generated" },
+  { category: "accessories", item_type: "hat", name: "Baseball Cap", brand: "Basic", price: 30, color: "Black", image_url: null, image_status: "not_generated" },
+  { category: "accessories", item_type: "bag", name: "Canvas Backpack", brand: "Carry", price: 85, color: "Khaki", image_url: null, image_status: "not_generated" },
 ];
 
 export default function ShoppingApp({ conversationId, characterId, character, onClose, currentUser }) {
@@ -20,6 +20,21 @@ export default function ShoppingApp({ conversationId, characterId, character, on
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [generatingImage, setGeneratingImage] = useState(null);
   const queryClient = useQueryClient();
+
+  // Initialize products on mount
+  useEffect(() => {
+    if (!currentUser?.email) return;
+    
+    const initProducts = async () => {
+      const existing = await base44.entities.ShoppingProduct.filter({ created_by: currentUser.email });
+      if (existing.length === 0) {
+        await base44.entities.ShoppingProduct.bulkCreate(SAMPLE_PRODUCTS);
+        queryClient.invalidateQueries({ queryKey: ["shoppingProducts"] });
+      }
+    };
+    
+    initProducts();
+  }, [currentUser?.email, queryClient]);
 
   const { data: userBalance = 0 } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
@@ -30,7 +45,15 @@ export default function ShoppingApp({ conversationId, characterId, character, on
     enabled: !!currentUser?.email,
   });
 
-  const products = SAMPLE_PRODUCTS.filter(p => p.category === category);
+  const { data: dbProducts = [] } = useQuery({
+    queryKey: ["shoppingProducts", category],
+    queryFn: async () => {
+      const all = await base44.entities.ShoppingProduct.list();
+      return all.filter(p => p.category === category);
+    },
+  });
+
+  const products = dbProducts;
 
   const ensureProductImage = async (product) => {
     if (product.image_url) return product;
