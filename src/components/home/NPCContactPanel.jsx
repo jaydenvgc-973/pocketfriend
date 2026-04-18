@@ -42,7 +42,8 @@ export default function NPCContactPanel() {
   });
 
   // Always exclude any character the user has marked as a real active character
-  const npcCharacters = rawNpcCharacters.filter(c => !c.protected_active);
+  // CRITICAL: Also filter by owner_email to ensure data isolation
+  const npcCharacters = rawNpcCharacters.filter(c => !c.protected_active && c.owner_email === currentUser?.email);
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
