@@ -27,6 +27,7 @@ import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
+import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -812,15 +813,24 @@ export default function Scene() {
 
     const outfitSuffix = outfitLines.length > 0 ? ` OUTFIT REQUIREMENT: ${outfitLines.join('. ')}. Reproduce these exact outfits — do NOT use avatar/reference photo clothing.` : '';
 
-    // Resolve zone images — these are ALWAYS the authoritative environment reference
+    // ── REFERENCE IMAGE ASSEMBLY: AVATARS FIRST (IDENTITY SOURCE) ──────────────
+    // Prioritize character avatars for identity locking, then location environment refs
     const currentZoneForAction = locationZones.find(z => z.zone_name === activeZone) || locationZones[0];
     const allZoneImagesFlat = locationZones.flatMap(z => z.image_urls || []);
     const activeZoneImagesForAction = currentZoneForAction?.image_urls || [];
-    const authoratativeEnvRefs = activeZoneImagesForAction.length > 0
+    const envRefs = activeZoneImagesForAction.length > 0
       ? [...activeZoneImagesForAction, ...allZoneImagesFlat.filter(u => !activeZoneImagesForAction.includes(u))].slice(0, 4)
       : allZoneImagesFlat.length > 0
         ? allZoneImagesFlat.slice(0, 4)
         : (firstImage ? [firstImage] : []);
+    
+    // Get visible people for this scene (residents + brought chars for home, or brought chars for public)
+    const visiblePeopleForScene = isHomeLocation
+      ? [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
+      : broughtCharacters;
+    
+    // Prioritize avatars (identity lock) before environment images
+    const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
@@ -844,6 +854,7 @@ export default function Scene() {
           finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
+            finalPrompt += buildIdentityLockBlock(physicallyPresent, currentUser);
           }
         }
       }
@@ -870,8 +881,8 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      // ── RESIDENTIAL SCENE FILTERING ──────────────────────────────────────
-      // Strict residence occupant-only rule: only residents and user may appear
+      // ── RESIDENTIAL SCENE FILTERING + IDENTITY LOCK ────────────────────────
+      // Strict residence occupant-only rule + 100% face match to avatars
       const validResidentialPeople = resolveSceneImagePeople(
         location,
         [...homeResidentsPresent, ...broughtCharacters, ...familyMemberNpcsPresent],
@@ -882,6 +893,7 @@ export default function Scene() {
       const visibleNames = validResidentialPeople.slice(0, 3).map(c => c.name);
       
       const residentialConstraint = buildResidentialImageConstraint(location, validResidentialPeople);
+      const identityLockBlock = buildIdentityLockBlock(validResidentialPeople, currentUser);
       
       const strictPeopleRule = visibleNames.length > 0
         ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
@@ -891,12 +903,13 @@ export default function Scene() {
         ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${outfitSuffix} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${outfitSuffix} Photorealistic.`;
     } else {
       if (isGlobal) {
         const charNames = sceneCharacters.slice(0, 3).map(c => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${outfitSuffix} Photorealistic.`;
+        const charIdentityLocks = buildIdentityLockBlock(sceneCharacters.slice(0, 3), currentUser);
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${outfitSuffix} Photorealistic.`;
       } else {
         const physicallyPresent = [
           ...broughtCharacters,
@@ -907,7 +920,8 @@ export default function Scene() {
           ? `Only these specific people are present: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no background figures.`
           : `The space is completely empty — no silhouettes, no background figures, nobody.`;
 
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${outfitSuffix} Photorealistic.`;
+        const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser);
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${charIdentityLocks}${outfitSuffix} Photorealistic.`;
       }
     }
 
