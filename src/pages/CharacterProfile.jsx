@@ -1040,24 +1040,6 @@ export default function CharacterProfile() {
 
 
       {editingNPCPhoto && character && (
-        <NPCPhotoEditor
-          npc={editingNPCPhoto.npc}
-          sourceCharacter={editingNPCPhoto.sourceCharacter}
-          onPhotoUpdate={async (photoUrl) => {
-            const updatedRels = (character.fictional_relationships || []).map(r =>
-              r.person_name === editingNPCPhoto.npc.person_name
-                ? { ...r, avatar_url: photoUrl, photo_url: photoUrl }
-                : r
-            );
-            await base44.entities.Character.update(character.id, { fictional_relationships: updatedRels });
-            queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-            setEditingNPCPhoto(null);
-          }}
-          onClose={() => setEditingNPCPhoto(null)}
-        />
-      )}
-
-      {promotingNPC && character && (
         <NPCPromotionModal
           npcData={promotingNPC.rel}
           sourceCharacter={promotingNPC.sourceCharacter}

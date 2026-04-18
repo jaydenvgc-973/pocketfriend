@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Users, X, ChevronDown, UserCheck, RefreshCw } from 'lucide-react';
+import { Users, X, ChevronDown, UserCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
@@ -7,7 +7,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export default function NPCContactPanel() {
   const [isOpen, setIsOpen] = useState(false);
-  const [isChecking, setIsChecking] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
 
@@ -60,33 +59,6 @@ export default function NPCContactPanel() {
     }
   };
 
-  const handleCheckForNPCs = async () => {
-    if (!currentUser?.email) return;
-    setIsChecking(true);
-    try {
-      // Fetch ALL characters on this account (only this user's, via created_by)
-      const allChars = await base44.entities.Character.filter({ created_by: currentUser.email });
-      // Find any that are clearly NPC-type but not yet tagged correctly
-      const needsTagging = allChars.filter(c =>
-        (c.character_type === 'npc' || c.character_type === 'family_npc' ||
-         c.character_type === 'background' || (!c.character_type && !c.is_default && !c.is_active_character))
-        && c.protected_active !== true
-        && c.status !== 'deleted'
-        && c.created_by === currentUser.email
-      );
-      // Ensure they are tagged as npc so they show up in the list
-      await Promise.all(
-        needsTagging
-          .filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc')
-          .map(c => base44.entities.Character.update(c.id, { character_type: 'npc' }))
-      );
-      // Refresh the NPC list
-      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser.email] });
-    } finally {
-      setIsChecking(false);
-    }
-  };
-
   const handleMarkAsActive = async (e, npc) => {
     e.stopPropagation();
     try {
@@ -125,21 +97,9 @@ export default function NPCContactPanel() {
               overflowY: 'auto'
             }}
           >
-            {/* Check for NPCs option — always visible at top */}
-            <div className="border-b border-border">
-              <button
-                onClick={handleCheckForNPCs}
-                disabled={isChecking}
-                className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
-                {isChecking ? 'Checking...' : 'Check for NPCs on this account'}
-              </button>
-            </div>
-
             {npcCharacters.length === 0 ? (
               <div className="p-3 text-xs text-muted-foreground text-center">
-                No NPCs found — try "Check for NPCs" above
+                No NPCs to contact
               </div>
             ) : (
               <div>

@@ -171,14 +171,8 @@ export default function Scene() {
   const sendNarrationRef = useRef(null);
 
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
-  const { data: settingsList = [] } = useQuery({
-    queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => base44.entities.UserSettings.filter({ created_by: currentUser.email }),
-    enabled: !!currentUser?.email,
-  });
+  const { data: settingsList = [] } = useQuery({ queryKey: ["userSettings"], queryFn: () => base44.entities.UserSettings.list() });
   const settings = settingsList[0] || {};
-  // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
-  // Never derive it from shared/cached settings that may belong to another account.
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const { data: locationsData = [] } = useQuery({
@@ -1024,14 +1018,13 @@ export default function Scene() {
       //   - VGC Towers distributed NPCs (must be explicitly engaged)
       //   - Diagnostic/test characters (already filtered from characters array)
 
-      // DIALOGUE TARGETING: ONLY characters explicitly selected via the "Who's here" picker may respond.
-      // Nothing else — not traveled-with chars, not extraNpcs, not residents, not workers.
-      // Private mode overrides to a single target only.
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
-        : selectedNpcs.length > 0
-          ? selectedNpcs
-          : [];
+        : [
+            ...traveledWithChars,
+            ...selectedNpcs,
+            ...extraNpcs,
+          ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
 
       const eligibleKnownChars = dialogueEligible.filter(c => !c.isNpc);
       const eligibleNpcList = dialogueEligible
@@ -1086,17 +1079,6 @@ Return JSON:
 
       const responseList = responses?.responses || [];
       for (const resp of responseList) {
-        // IDENTITY PROTECTION: never render an AI response under the real user's identity
-        const respNameLower = resp.character_name?.trim().toLowerCase();
-        const userNames = [
-          displayName?.trim().toLowerCase(),
-          currentUser?.full_name?.trim().toLowerCase(),
-          currentUser?.email?.split("@")[0]?.toLowerCase(),
-          settings?.fictional_world_name?.trim().toLowerCase(),
-          ...(settings?.user_aliases || []).map(a => a?.trim().toLowerCase()),
-        ].filter(Boolean);
-        if (userNames.includes(respNameLower)) continue; // BLOCKED — AI tried to speak as the user
-
         const char = sceneCharacters.find(c => c.name === resp.character_name);
         const msg = {
           id: Date.now().toString() + resp.character_name,

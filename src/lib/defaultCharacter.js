@@ -4,7 +4,6 @@ import { getWorldContextForPrompt } from "@/lib/worldKnowledge";
 import { buildReligionPromptContext } from "@/lib/religionUtils";
 import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
-import { getDrinkDecisionRules } from "@/lib/drinkDecisionEngine";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -323,8 +322,6 @@ ${character.videos_watched && character.videos_watched.length > 0
 
 WORLD AWARENESS (background context — you live in this world, you don't recite it):
 ${getWorldContextForPrompt()}
-
-${getDrinkDecisionRules()}
 
 FOLLOW-THROUGH RULES — NON-NEGOTIABLE:
 - If you say "give me a sec", "hold on", "one sec", "brb", or any short-wait phrase, you MUST follow up within the same conversation shortly after. Never leave it hanging.

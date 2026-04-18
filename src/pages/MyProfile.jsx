@@ -374,7 +374,6 @@ export default function MyProfile() {
           onUpdate={updateSettings}
           displayName={displayName}
           gender={settings.user_gender}
-          ownerEmail={user?.email}
         />
 
         {/* User Aliases */}

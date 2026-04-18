@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, MapPin, Search, Rabbit, Check, Ban } from "lucide-react";
+import { X, MapPin, Search, Rabbit, Check } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 
@@ -51,6 +51,7 @@ export default function LocationAliasResolutionPopup({ phrase, characterId, char
 
   const handleRabbitHole = async () => {
     setIsSaving(true);
+    // Capitalize the phrase as the label
     const label = phrase.replace(/\b\w/g, c => c.toUpperCase());
     try {
       const res = await base44.functions.invoke("resolveLocationAlias", {
@@ -63,22 +64,6 @@ export default function LocationAliasResolutionPopup({ phrase, characterId, char
     } finally {
       setIsSaving(false);
     }
-  };
-
-  const handleNonsense = async () => {
-    setIsSaving(true);
-    try {
-      // Record this as a nonsense detection so the AI can learn from it
-      await base44.functions.invoke("resolveLocationAlias", {
-        phrase,
-        resolutionType: "nonsense",
-        characterId: characterId || null,
-        feedback: "User marked this location detection as nonsense — the AI was pattern-matching sentence structure rather than applying real logic.",
-      });
-    } catch { /* fire-and-forget */ } finally {
-      setIsSaving(false);
-    }
-    onDismiss();
   };
 
   return (
@@ -135,17 +120,6 @@ export default function LocationAliasResolutionPopup({ phrase, characterId, char
                 <div>
                   <p className="text-sm font-medium text-foreground">Treat as off-screen destination</p>
                   <p className="text-xs text-muted-foreground">Show as active rabbit hole — no saved location needed</p>
-                </div>
-              </button>
-              <button
-                onClick={handleNonsense}
-                disabled={isSaving}
-                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-destructive/10 border border-destructive/20 text-left hover:bg-destructive/15 transition-colors disabled:opacity-60"
-              >
-                <Ban className="w-5 h-5 text-destructive flex-shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-foreground">This is nonsense</p>
-                  <p className="text-xs text-muted-foreground">The AI misread the sentence — this isn't a location reference</p>
                 </div>
               </button>
               <button onClick={onDismiss} className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors py-2">
