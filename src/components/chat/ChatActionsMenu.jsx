@@ -91,15 +91,17 @@ export default function ChatActionsMenu({ visible = {}, onSelect }) {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 bg-black/60"
+              className="fixed inset-0 z-40 bg-black/60"
               onClick={() => setAppsOpen(false)}
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.9, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
               transition={{ duration: 0.2 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-72 bg-card border border-border rounded-3xl shadow-2xl p-5"
+              className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+            >
+              <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-5 pointer-events-auto"
             >
               <div className="flex items-center justify-between mb-5">
                 <h2 className="text-base font-semibold text-foreground">Apps</h2>
@@ -125,6 +127,7 @@ export default function ChatActionsMenu({ visible = {}, onSelect }) {
                     </button>
                   );
                 })}
+              </div>
               </div>
             </motion.div>
           </>
