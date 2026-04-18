@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Camera, Upload, Loader2, X, ZoomIn, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
   const [preview, setPreview] = useState(npc?.photo_url || null);
   const [cropping, setCropping] = useState(false);
   const [error, setError] = useState(null);
+  const fileInputRef = React.useRef(null);
 
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -20,8 +21,10 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
     setUploading(true);
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
-      setPreview(file_url);
-      toast.success('Photo uploaded');
+      if (file_url) {
+        setPreview(file_url);
+        toast.success('Photo uploaded');
+      }
     } catch (err) {
       const message = err?.message || 'Failed to upload photo';
       setError(message);
@@ -29,6 +32,7 @@ export default function NPCPhotoEditor({ npc, sourceCharacter, onPhotoUpdate, on
       console.error('Photo upload error:', err);
     } finally {
       setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -102,32 +106,31 @@ Solo headshot or upper body portrait. Natural lighting, unposed, like a real per
 
         <div className="space-y-2">
           {/* Upload */}
-          <label className="block">
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleFileUpload}
-              disabled={uploading || generating}
-              className="hidden"
-            />
-            <button
-              onClick={e => e.currentTarget.parentElement?.querySelector('input[type="file"]')?.click()}
-              disabled={uploading || generating}
-              className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-border bg-secondary/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors disabled:opacity-50"
-            >
-              {uploading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Uploading...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4" />
-                  Upload Photo
-                </>
-              )}
-            </button>
-          </label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileUpload}
+            disabled={uploading || generating}
+            className="hidden"
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading || generating}
+            className="w-full flex items-center justify-center gap-2 p-3 rounded-xl border-2 border-dashed border-border bg-secondary/50 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors disabled:opacity-50"
+          >
+            {uploading ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Uploading...
+              </>
+            ) : (
+              <>
+                <Upload className="w-4 h-4" />
+                Upload Photo
+              </>
+            )}
+          </button>
 
           {/* Generate */}
           <button
