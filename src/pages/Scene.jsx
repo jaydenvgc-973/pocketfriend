@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus, LogOut } from "lucide-react";
+import { ArrowLeft, Sparkles, Camera, DollarSign, RefreshCw, Send, Users, ChevronDown, Check, MapPin, ZoomIn, BookOpen, UserPlus, LogOut, X } from "lucide-react";
 import ImageLightbox from "@/components/ui/ImageLightbox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -969,20 +969,17 @@ export default function Scene() {
     // Detect when user wants to buy: "I'll take it", "I like it", "how much", "price", etc.
     const isBusinessVenue = ["business", "workplace", "grocery"].includes(location?.category);
     if (isBusinessVenue) {
-      const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|price)/);
+      const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|i'll take|i want to buy|i'd like to buy|i want to get|i'll get it|price)/);
       if (purchaseIntentMatch) {
-        // Generate a product image with a realistic price for an item at this venue
-        // Store pending product in state for purchase flow
         const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25; // $25-$150
         setMessages(prev => [...prev, {
-          id: Date.now().toString(),
+          id: `product_${Date.now()}`,
           sender: "product",
-          productType: "clothing", // could be expanded
           price: randomPrice,
-          location: location.name,
+          locationName: location.name,
           timestamp: new Date().toISOString(),
         }]);
-        return;
+        return true; // signal to sendMessage: purchase handled, skip LLM
       }
     }
 
@@ -1054,10 +1051,15 @@ export default function Scene() {
 
     const userMsg = { id: Date.now().toString(), sender: "user", content: text, timestamp: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
-    setIsTyping(true);
 
-    // Check if we should update the scene image
-    checkImageTrigger(text, actionImagePrompt, actionScenePrompt);
+    // Check if we should update the scene image — returns true if it was a purchase intent (skip LLM)
+    const wasPurchaseIntent = checkImageTrigger(text, actionImagePrompt, actionScenePrompt);
+    if (wasPurchaseIntent) {
+      setIsTyping(false);
+      return;
+    }
+
+    setIsTyping(true);
 
     // Update actions based on new message context
     setActions(getLocationActions(location.category, text));
@@ -1916,13 +1918,14 @@ Return JSON:
         userBalance={settings.user_balance ?? 6000}
         userSettings={settings}
         currentUser={currentUser}
-        traveledWithChars={traveledWithChars}
+        traveledWithChars={[...traveledWithChars, ...selectedNpcs.filter(n => !n.isNpc)].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)}
         onClose={() => setPendingPurchase(null)}
         onPurchased={(message) => {
+          const price = pendingPurchase?.price;
           setMessages(prev => [...prev, {
             id: Date.now().toString(),
             sender: "narrative",
-            content: `✓ Purchased for $${pendingPurchase.price} — ${message}.`,
+            content: `✓ Purchased for $${price} — ${message}.`,
             timestamp: new Date().toISOString(),
           }]);
           setPendingPurchase(null);
