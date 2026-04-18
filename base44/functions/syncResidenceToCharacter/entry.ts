@@ -24,14 +24,34 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId and action are required' }, { status: 400 });
     }
 
+    // CRITICAL: Verify character ownership
+    const character = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+    if (!character || character.length === 0) {
+      return Response.json({ error: 'Character not found' }, { status: 404 });
+    }
+    if (character[0].owner_email !== user.email) {
+      return Response.json({ error: 'Unauthorized: character does not belong to current user' }, { status: 403 });
+    }
+
     if (action === 'assign') {
       if (!locationId || !locationName) {
         return Response.json({ error: 'locationId and locationName required for assign' }, { status: 400 });
       }
+
+      // CRITICAL: Verify location ownership
+      const location = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId });
+      if (!location || location.length === 0) {
+        return Response.json({ error: 'Location not found' }, { status: 404 });
+      }
+      if (location[0].owner_email !== user.email) {
+        return Response.json({ error: 'Unauthorized: location does not belong to current user' }, { status: 403 });
+      }
+
       await base44.asServiceRole.entities.Character.update(characterId, {
         home_location_id: locationId,
         home_location_name: locationName,
         is_homeless: false,
+        owner_email: user.email,
       });
       return Response.json({ success: true, action: 'assigned', characterId, locationId, locationName });
     }

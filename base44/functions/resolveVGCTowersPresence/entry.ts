@@ -88,7 +88,7 @@ Deno.serve(async (req) => {
 
     if (!isWithinTravelWindow(now)) {
       // Outside travel window — send eligible residents home
-      const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active' });
+      const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active', owner_email: user.email });
       const toReturn = allChars.filter(c =>
         isEligible(c) &&
         c.current_live_location_id &&
@@ -105,8 +105,8 @@ Deno.serve(async (req) => {
       return Response.json({ message: 'Outside travel window — residents returned home', returned: toReturn.length });
     }
 
-    // Get all locations
-    const allLocations = await base44.asServiceRole.entities.LocationReference.list();
+    // Get all locations scoped to current user
+    const allLocations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: user.email });
     const vgcTowers = allLocations.find(l => l.name === 'VGC Towers');
 
     // Valid travel destinations: open, non-residential, allowed category
@@ -122,8 +122,8 @@ Deno.serve(async (req) => {
       return Response.json({ message: 'No valid travel destinations available right now' });
     }
 
-    // Get all characters
-    const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active' });
+    // Get all characters scoped to current user
+    const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active', owner_email: user.email });
     const eligible = allChars.filter(isEligible);
 
     if (eligible.length === 0) {
@@ -170,9 +170,16 @@ Deno.serve(async (req) => {
       }
 
       // Pick a destination, weighted away from current location
-      const choices = ageFilteredDests.filter(l => l.id !== char.current_live_location_id);
+      const choices = ageFilteredDests.filter(l => l.id !== char.current_live_location_id && l.owner_email === user.email);
       const pool = choices.length > 0 ? choices : ageFilteredDests;
       const dest = pool[Math.floor(Math.random() * pool.length)];
+
+      // CRITICAL: Enforce user data isolation — destination must belong to same user
+      if (dest.owner_email !== user.email) {
+        console.warn(`[DATA_ISOLATION] Blocked cross-user NPC travel: char ${char.id} (user: ${char.owner_email}) → location ${dest.id} (owner: ${dest.owner_email})`);
+        stayedCount++;
+        continue;
+      }
 
       await base44.asServiceRole.entities.Character.update(char.id, {
         current_live_location_id: dest.id,
