@@ -85,7 +85,6 @@ export default function Chat() {
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
   });
-  const [isRegeneratingNarrative, setIsRegeneratingNarrative] = useState(false);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
