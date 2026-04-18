@@ -156,8 +156,7 @@ export default function ShoppingApp({ conversationId, characterId, character, on
       animate={{ opacity: 1, scale: 1 }}
       className="fixed top-20 inset-x-0 z-50 flex items-center justify-center"
     >
-      <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-6"
-    >
+      <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-6">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <ShoppingBag className="w-5 h-5 text-primary" />
@@ -203,7 +202,8 @@ export default function ShoppingApp({ conversationId, characterId, character, on
             </motion.button>
           ))}
         </AnimatePresence>
-      </div>
-    </motion.div>
+        </div>
+        </div>
+        </motion.div>
   );
 }
