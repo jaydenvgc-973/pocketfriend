@@ -99,8 +99,9 @@ export default function ShoppingApp({ conversationId, characterId, character, on
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-sm bg-card border border-border rounded-3xl shadow-2xl p-6"
+        className="fixed top-20 inset-x-0 z-50 flex items-center justify-center"
       >
+        <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-6">
         <button
           onClick={() => setSelectedProduct(null)}
           className="absolute top-4 right-4 p-1.5 rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
@@ -146,9 +147,10 @@ export default function ShoppingApp({ conversationId, characterId, character, on
             Close
           </button>
         </div>
-      </motion.div>
-    );
-  }
+        </div>
+        </motion.div>
+        );
+        }
 
   return (
     <motion.div
