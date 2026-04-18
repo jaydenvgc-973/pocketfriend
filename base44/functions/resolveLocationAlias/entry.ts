@@ -29,6 +29,7 @@ Deno.serve(async (req) => {
       rabbitHoleLabel,
       rabbitHoleSubtype,
       characterId,
+      feedback,
     } = await req.json();
 
     if (!phrase || !resolutionType) {
@@ -117,6 +118,20 @@ Deno.serve(async (req) => {
         await base44.asServiceRole.entities.Character.update(characterId, presenceUpdate);
         console.log(`[resolveLocationAlias] Updated character ${characterId} presence → ${resolutionType}: ${locationName || rabbitHoleLabel}`);
       }
+    }
+
+    // ── NONSENSE FEEDBACK: store a Memory so the AI learns from the bad detection ──
+    if (resolutionType === 'nonsense' && characterId) {
+      const feedbackNote = feedback || `User marked "${phrase}" as a nonsense location detection — the AI was pattern-matching sentence structure instead of applying actual logic.`;
+      await base44.asServiceRole.entities.Memory.create({
+        character_id: characterId,
+        title: `[NONSENSE FEEDBACK] Bad location detection: "${phrase}"`,
+        description: feedbackNote,
+        emotional_impact: 'neutral',
+        source_context: 'location_alias_nonsense_feedback',
+        timestamp: new Date().toISOString(),
+      }).catch(() => {});
+      console.log(`[resolveLocationAlias] Stored nonsense feedback for "${phrase}" on character ${characterId}`);
     }
 
     return Response.json({
