@@ -40,20 +40,34 @@ Deno.serve(async (req) => {
 
     // Fetch location reference images if needed
     let locationRefImages = originalLocationRefs;
-    if (locationRefImages.length === 0 && originalLocationId) {
+    if (locationRefImages.length === 0 && (originalLocationId || manualLocationId)) {
       try {
-        const loc = await base44.asServiceRole.entities.LocationReference.get(originalLocationId).catch(() => null);
+        const locId = manualLocationId || originalLocationId;
+        const loc = await base44.asServiceRole.entities.LocationReference.get(locId).catch(() => null);
         if (loc) {
-          if (originalZoneName && loc.zones?.length > 0) {
-            const zone = loc.zones.find(z => z.zone_name === originalZoneName);
-            if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.slice(0, 3);
+          const zoneToUse = manualZoneId || originalZoneName;
+          if (zoneToUse && loc.zones?.length > 0) {
+            const zone = loc.zones.find(z => z.zone_name === zoneToUse);
+            if (zone?.image_urls?.length > 0) {
+              locationRefImages = zone.image_urls.slice(0, 6);
+              console.log(`[regen] Zone "${zoneToUse}" images: ${locationRefImages.length}`);
+            }
           }
-          if (locationRefImages.length === 0) {
-            const firstZone = loc.zones?.find(z => z.image_urls?.length > 0);
-            locationRefImages = firstZone?.image_urls?.slice(0, 3) || loc.image_urls?.slice(0, 3) || [];
+          if (locationRefImages.length === 0 && loc.zones?.length > 0) {
+            const firstZone = loc.zones.find(z => z.image_urls?.length > 0);
+            if (firstZone) {
+              locationRefImages = firstZone.image_urls.slice(0, 6);
+              console.log(`[regen] Auto-zone "${firstZone.zone_name}" images: ${locationRefImages.length}`);
+            }
+          }
+          if (locationRefImages.length === 0 && loc.image_urls?.length > 0) {
+            locationRefImages = loc.image_urls.slice(0, 6);
+            console.log(`[regen] Location flat images: ${locationRefImages.length}`);
           }
         }
-      } catch (_) {}
+      } catch (err) {
+        console.warn('[regen] Location image fetch failed:', err.message);
+      }
     }
 
     // If user manually selected a correct location, override the stored generation context
@@ -136,8 +150,8 @@ CHARACTER HAIR — STRICT:
 Ultra high-resolution photorealistic photograph. Real photo, not illustration.${qualityFooter}`;
 
       referenceImages = [
-        ...locationRefImages.slice(0, 3),
-        ...charRefImages.slice(0, 4),
+        ...locationRefImages.slice(0, 4),
+        ...charRefImages.slice(0, 3),
       ].filter(Boolean);
 
     } else if (reason === 'no_avatar') {
@@ -172,8 +186,8 @@ ${charDesc ? `Additional context: ${charDesc}.` : ''}
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
       referenceImages = [
-        ...locationRefImages.slice(0, 3),
-        ...charRefImages.slice(0, 4),
+        ...locationRefImages.slice(0, 4),
+        ...charRefImages.slice(0, 3),
       ].filter(Boolean);
 
     } else if (reason === 'dont_like' && customPrompt) {
@@ -184,8 +198,8 @@ ${hasLocation ? `REFERENCE IMAGE ORDER: First ${locationRefImages.length} image(
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
       referenceImages = [
-        ...locationRefImages.slice(0, 3),
-        ...charRefImages.slice(0, 4),
+        ...locationRefImages.slice(0, 4),
+        ...charRefImages.slice(0, 3),
       ].filter(Boolean);
 
     } else if (reason === 'custom_prompt' && customPrompt) {
@@ -196,8 +210,8 @@ ${hasLocation ? `REFERENCE IMAGE ORDER: First ${locationRefImages.length} image(
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
       referenceImages = [
-        ...locationRefImages.slice(0, 3),
-        ...charRefImages.slice(0, 4),
+        ...locationRefImages.slice(0, 4),
+        ...charRefImages.slice(0, 3),
       ].filter(Boolean);
 
     } else {
@@ -205,8 +219,8 @@ Photorealistic photograph. Natural lighting.${qualityFooter}`;
       prompt = `${scenePrompt}${roomLock}
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photograph.${qualityFooter}`;
       referenceImages = [
-        ...locationRefImages.slice(0, 3),
-        ...charRefImages.slice(0, 4),
+        ...locationRefImages.slice(0, 4),
+        ...charRefImages.slice(0, 3),
       ].filter(Boolean);
     }
 
