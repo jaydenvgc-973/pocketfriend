@@ -24,6 +24,7 @@ import RealtorTourModal from "@/components/scene/RealtorTourModal";
 import MoveInPopup from "@/components/travel/MoveInPopup";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import LeaveLocationModal from "@/components/scene/LeaveLocationModal";
+import ProductPurchaseModal from "@/components/scene/ProductPurchaseModal";
 import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
@@ -164,6 +165,7 @@ export default function Scene() {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [privateTarget, setPrivateTarget] = useState(null); // { id, name } — pull aside mode
+  const [pendingPurchase, setPendingPurchase] = useState(null); // { price, productId, targetCharacterId }
   const bottomRef = useRef(null);
   const npcDropdownRef = useRef(null);
   const zonPickerRef = useRef(null);
@@ -955,7 +957,7 @@ export default function Scene() {
     }
   };
 
-  // Detect if a message/action should trigger an image update
+  // Detect if a message/action should trigger an image update OR a purchase intent
   const checkImageTrigger = (text, actionImagePrompt = null) => {
     if (actionImagePrompt) {
       generateFocusedImage(actionImagePrompt);
@@ -963,13 +965,33 @@ export default function Scene() {
     }
     const t = text.toLowerCase();
 
+    // ── PURCHASE INTENT DETECTION (AT BUSINESS VENUES) ────────────────────────────
+    // Detect when user wants to buy: "I'll take it", "I like it", "how much", "price", etc.
+    const isBusinessVenue = ["business", "workplace", "grocery"].includes(location?.category);
+    if (isBusinessVenue) {
+      const purchaseIntentMatch = t.match(/(?:i'll take it|i like it|how much|what's the price|what is the price|how much does it cost|what's the cost|i want it|can i buy|i'll buy it|price)/);
+      if (purchaseIntentMatch) {
+        // Generate a product image with a realistic price for an item at this venue
+        // Store pending product in state for purchase flow
+        const randomPrice = Math.floor(Math.random() * (150 - 25 + 1)) + 25; // $25-$150
+        setMessages(prev => [...prev, {
+          id: Date.now().toString(),
+          sender: "product",
+          productType: "clothing", // could be expanded
+          price: randomPrice,
+          location: location.name,
+          timestamp: new Date().toISOString(),
+        }]);
+        return;
+      }
+    }
+
     // ── BUSINESS ITEM REQUEST DETECTION ────────────────────────────────────────
     // At a business/workplace, detect when the user is asking to see or find an item.
     // Triggers a worker NPC to "show" the item by generating a focused product image.
-    const isBusinessVenue = ["business", "workplace", "grocery"].includes(location?.category);
     if (isBusinessVenue) {
       // Pattern 1: "show me X", "can you show me X", "can I see X", "I want to see X"
-      const showMatch = t.match(/(?:show me|can you show me|can i see|i want to see|let me see|could i see)\s+(.+)/);
+      const showMatch = t.match(/(?:show me|can you show me|can i see|i want to see|let me see|could i see)\s+(?:a |an |the )?(.+)/);
       if (showMatch) {
         const item = showMatch[1].replace(/[?.!]+$/, "").trim();
         generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
@@ -1669,10 +1691,21 @@ Return JSON:
               key={msg.id}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" ? "justify-center" : "justify-start"}`}
+              className={`flex gap-2 ${msg.sender === "user" ? "justify-end" : msg.sender === "narrative" ? "justify-center" : msg.sender === "product" ? "justify-center" : "justify-start"}`}
             >
               {msg.sender === "narrative" ? (
                 <span className="text-xs text-muted-foreground italic bg-secondary/50 px-3 py-1.5 rounded-full max-w-xs text-center">{msg.content}</span>
+              ) : msg.sender === "product" ? (
+                <button
+                  onClick={() => setPendingPurchase({ price: msg.price, productId: msg.id })}
+                  className="flex flex-col items-center gap-2 p-3 rounded-2xl bg-card border-2 border-primary/40 hover:border-primary/80 hover:shadow-lg transition-all max-w-[75%]"
+                >
+                  <div className="w-32 h-32 bg-primary/10 rounded-lg flex items-center justify-center">
+                    <span className="text-4xl">👔</span>
+                  </div>
+                  <p className="text-sm font-bold text-foreground">${msg.price}</p>
+                  <p className="text-xs text-muted-foreground">Click to buy</p>
+                </button>
               ) : msg.sender === "character" ? (
                 <>
                   <div className="w-7 h-7 rounded-full bg-secondary flex items-center justify-center flex-shrink-0 overflow-hidden mt-0.5">
@@ -1873,6 +1906,27 @@ Return JSON:
         broughtCharacters={broughtCharacters}
         onLeaveWithChars={handleLeaveWithCharacters}
         onLeaveCharactersBehind={handleLeaveCharactersBehind}
+      />
+
+      {/* Product Purchase Modal */}
+      <ProductPurchaseModal
+        isOpen={!!pendingPurchase}
+        price={pendingPurchase?.price}
+        productId={pendingPurchase?.productId}
+        userBalance={settings.user_balance ?? 6000}
+        userSettings={settings}
+        currentUser={currentUser}
+        traveledWithChars={traveledWithChars}
+        onClose={() => setPendingPurchase(null)}
+        onPurchased={(message) => {
+          setMessages(prev => [...prev, {
+            id: Date.now().toString(),
+            sender: "narrative",
+            content: `✓ Purchased for $${pendingPurchase.price} — ${message}.`,
+            timestamp: new Date().toISOString(),
+          }]);
+          setPendingPurchase(null);
+        }}
       />
 
       {/* Invite notifications */}
