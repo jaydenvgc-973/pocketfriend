@@ -99,9 +99,9 @@ export default function ChatActionsMenu({ visible = {}, onSelect }) {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
+              className="fixed inset-0 z-50 flex items-center justify-center"
             >
-              <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-5 pointer-events-auto"
+              <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-5"
             >
               <div className="flex items-center justify-between mb-5">
                 <h2 className="text-base font-semibold text-foreground">Apps</h2>
