@@ -562,7 +562,7 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const {
-      messageId, prompt, characterReferenceImages, userReferenceImages,
+      messageId, prompt, characterReferenceImages, userReferenceImages, locationReferenceImages,
       characterName, userWorldName, subjectType, characterId,
       manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode,
       userAppearanceData, includesUser,
@@ -680,10 +680,14 @@ Deno.serve(async (req) => {
         // ══════════════════════════════════════════════════════════════════════
 
         if (imageMode === 'creative' && !manualLocationId) {
-          // Creative generation with no explicit location selected — skip all location logic.
-          // The prompt is the entire source of truth. No presence enforcement. No home fallback.
-          console.log(`[LOCATION] 🎨 CREATIVE MODE — no location selected. Generating from prompt only.`);
-          // locationImages, locationNote, resolvedLocationName, resolvedZoneName remain empty — intentional.
+          // Creative generation with no explicit location selected — use passed location refs if provided
+          if (locationReferenceImages?.length > 0) {
+            locationImages = locationReferenceImages.slice(0, 6);
+            console.log(`[LOCATION] 🎨 CREATIVE MODE — using passed location reference images: ${locationImages.length}`);
+          } else {
+            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location selected. Generating from prompt only.`);
+          }
+          // locationNote, resolvedLocationName, resolvedZoneName remain empty — intentional for creative.
         } else {
 
         // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
@@ -969,10 +973,11 @@ The environment must feel real, functional, and original.
       console.log(`[REFS] User-only: ${referenceImages.length} refs`);
     } else if (finalCharSubject) {
       // CHARACTER-ONLY MODE
-      const charSlice = finalCharSubject.face_refs.slice(0, 4);
-      const locSlice = locationImages.slice(0, 3);
+      const charSlice = finalCharSubject.face_refs.slice(0, 3);
+      const locSlice = locationImages.slice(0, 4);
+      // Prioritize location refs (zone/environment images) so model locks the space first
       referenceImages = [...locSlice, ...charSlice].filter(Boolean);
-      console.log(`[REFS] Character-only: char=${charSlice.length} + loc=${locSlice.length} = ${referenceImages.length} total`);
+      console.log(`[REFS] Character-only: loc=${locSlice.length} + char=${charSlice.length} = ${referenceImages.length} total`);
     } else {
       referenceImages = locationImages.slice(0, 5);
     }
