@@ -54,30 +54,37 @@ Extract any NEW people names mentioned (NPCs not yet in your world) from the use
       });
     }
 
-    // If user was playing as a character, ALSO create memory for them
-    if (playingAsChar && userMessage) {
+    // If user was playing as a character, create a simple emotional journal entry
+    if (playingAsChar && targetChar) {
+      const emotionalReflection = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are ${playingAsChar.name}. You just had a conversation with ${targetChar.name}. Based on this exchange:
+User: "${userMessage}"
+${targetChar.name}: "${characterReply?.substring(0, 150)}"
+
+Write ONE sentence about how you felt during this conversation. Keep it simple and personal (e.g., "That was nice talking with them" or "They seemed upset").`,
+      });
+
       await base44.entities.Memory.create({
         character_id: playingAsCharacterId,
-        title: `Conversation with ${targetChar?.name || 'someone'}`,
-        description: `I said: "${userMessage}". They replied: "${characterReply?.substring(0, 200) || '(no reply)'}"`,
+        title: `Talked with ${targetChar.name}`,
+        description: emotionalReflection,
         emotional_impact: 'neutral',
         timestamp: new Date().toISOString(),
         source_context: `conversation_${conversationId}_as_${playingAsCharacterId}`,
       });
 
-      // Also create/update the fictional relationship for the playing-as character
+      // Create/update fictional relationship
       const existingRels = await base44.entities.CharacterRelationship.filter({
         character_id: playingAsCharacterId,
         related_character_id: characterId,
       });
 
-      if (existingRels.length === 0 && targetChar) {
+      if (existingRels.length === 0) {
         await base44.entities.CharacterRelationship.create({
           character_id: playingAsCharacterId,
           related_character_id: characterId,
           person_name: targetChar.name,
           relationship_type: 'acquaintance',
-          description: `Someone I know`,
           current_status: 'ongoing',
           friendship_level: 50,
           user_respect_level: 50,
