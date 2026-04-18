@@ -10,16 +10,29 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   const [isLoading, setIsLoading] = useState(false);
   const queryClient = useQueryClient();
 
-  // Fetch all npc_fictitious_person characters
-  const { data: allNPCsInWorld = [] } = useQuery({
-    queryKey: ['npc_fictitious_people'],
-    queryFn: async () => {
-      const chars = await base44.entities.Character.filter({
-        character_type: 'npc_fictitious_person'
-      });
-      return chars;
-    }
+  // Get current user for filtering account-associated characters
+  const { data: currentUser = null } = useQuery({
+    queryKey: ['user'],
+    queryFn: () => base44.auth.me(),
+    staleTime: 60000,
   });
+
+  // Fetch all account characters including active characters and NPCs
+  const { data: allAccountCharacters = [] } = useQuery({
+    queryKey: ['accountCharacters', currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const chars = await base44.entities.Character.filter({
+        created_by: currentUser.email
+      });
+      // Filter out the current character itself and return all others
+      return chars.filter(c => c.id !== character.id);
+    },
+    enabled: !!currentUser?.email
+  });
+
+  // Get all account NPCs (any character type that's not 'active')
+  const accountNPCs = allAccountCharacters.filter(c => c.character_type !== 'active');
 
   // Get NPCs already linked to this character
   const existingNPCIds = new Set(
@@ -29,7 +42,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
   );
 
   // Filter to only show NPCs not already linked
-  const availableNPCs = allNPCsInWorld.filter(npc => !existingNPCIds.has(npc.id));
+  const availableNPCs = accountNPCs.filter(npc => !existingNPCIds.has(npc.id));
 
   const handleAddNew = async () => {
     if (!newName.trim()) return;
