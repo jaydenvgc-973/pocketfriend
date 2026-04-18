@@ -1831,6 +1831,16 @@ Reply with ONLY the single emoji or the word "none".`,
         />
       )}
 
+      {showShopping && character && (
+        <ShoppingApp
+          conversationId={conversationId}
+          characterId={characterId}
+          character={character}
+          onClose={() => setShowShopping(false)}
+          currentUser={currentUser}
+        />
+      )}
+
       {showSendMoney && character && (
         <SendMoneyModal
           character={character}
