@@ -29,6 +29,7 @@ import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
 import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
+import ShoppingApp from "@/components/chat/ShoppingApp";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
@@ -77,6 +78,7 @@ export default function Chat() {
   const [showMediaGallery, setShowMediaGallery] = useState(false);
   const [showGameLauncher, setShowGameLauncher] = useState(false);
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
+  const [showShopping, setShowShopping] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
 
   const bottomRef = useRef(null);
@@ -1822,6 +1824,7 @@ Reply with ONLY the single emoji or the word "none".`,
             if (id === "contacts") setShowWorldContacts(true);
             if (id === "story") setShowNarrativeBuilder(true);
             if (id === "money") setShowSendMoney(true);
+            if (id === "shopping") setShowShopping(true);
             if (id === "troubleshoot") setShowTroubleshooting(true);
           }}
         />
