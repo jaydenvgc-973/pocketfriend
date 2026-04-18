@@ -12,7 +12,7 @@ export function usePlayAsMemory(activeCharacter, character, conversationId, resp
       try {
         await base44.functions.invoke("extractMemoriesFromTurn", {
           characterId: activeCharacter.id,
-          conversationId: convoId,
+          conversationId: conversationId,
           userMessage: userText || "(played as action)",
           characterReply: responseText,
           context: `As ${activeCharacter.name}, I was talking with ${character.name}. I said/did something that led to them saying: "${responseText.substring(0, 100)}"`,
