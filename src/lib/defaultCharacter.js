@@ -218,12 +218,25 @@ export function buildSystemPrompt(character, knownCharacters = [], userDisplayNa
      allJobsContext = `\nYOU WORK AT MULTIPLE LOCATIONS:\n${allWorkLocIds.map(w => `- ${w.title ? `${w.title} at ` : ''}${w.name}`).join('\n')}\nYou have shifts at each of these places. Reference them naturally when relevant.`;
    }
   // Replace "the user" in memories with the actual user's name so character knows who they're talking to
+  // IDENTITY SANITIZER: Replace "the user" AND any known foreign account names
+  // with the correct user name. This is a hard safety net against cross-account leakage.
+  const KNOWN_FOREIGN_NAMES = ['Mark']; // Names from OTHER user accounts that must never appear
   const replaceUserRef = (text) => {
     if (!text) return text;
     const name = userNameLabel || "the person I'm talking to";
-    return text
+    let cleaned = text
       .replace(/\bthe user\b/gi, name)
       .replace(/\bThe user\b/g, name.charAt(0).toUpperCase() + name.slice(1));
+    // Replace any foreign account name that is NOT the current user's name
+    if (userNameLabel) {
+      for (const foreignName of KNOWN_FOREIGN_NAMES) {
+        if (userNameLabel !== foreignName) {
+          const regex = new RegExp(`\\b${foreignName}\\b`, 'g');
+          cleaned = cleaned.replace(regex, userNameLabel);
+        }
+      }
+    }
+    return cleaned;
   };
   const memories = (character.memories || []).map(m =>
     `- ${m.title}: ${replaceUserRef(m.description)}${m.emotional_impact ? ` | Emotional impact: ${replaceUserRef(m.emotional_impact)}` : ""}${m.lesson_learned ? ` | What they learned: ${replaceUserRef(m.lesson_learned)}` : ""}`

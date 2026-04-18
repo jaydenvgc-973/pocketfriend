@@ -118,6 +118,29 @@ Return a JSON object with:
       }
     });
 
+    // ── IDENTITY SANITIZATION: Replace any foreign user names before storing ──
+    // This prevents cross-account contamination (e.g. "Mark" leaking into Jayden's memories)
+    const userSettingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
+    const worldName = userSettingsList[0]?.fictional_world_name || null;
+    const FOREIGN_USER_NAMES = ['Mark']; // Names belonging to OTHER user accounts
+
+    const sanitizeForStorage = (text) => {
+      if (!text || !worldName) return text;
+      let cleaned = text;
+      for (const foreignName of FOREIGN_USER_NAMES) {
+        if (worldName !== foreignName) {
+          const regex = new RegExp(`\\b${foreignName}\\b`, 'g');
+          cleaned = cleaned.replace(regex, worldName);
+        }
+      }
+      return cleaned;
+    };
+
+    if (memoryResponse.title) memoryResponse.title = sanitizeForStorage(memoryResponse.title);
+    if (memoryResponse.description) memoryResponse.description = sanitizeForStorage(memoryResponse.description);
+    if (memoryResponse.emotional_impact) memoryResponse.emotional_impact = sanitizeForStorage(memoryResponse.emotional_impact);
+    if (memoryResponse.lesson_learned) memoryResponse.lesson_learned = sanitizeForStorage(memoryResponse.lesson_learned);
+
     // ── SAVE MEMORY (text only — no entity/character creation) ────────────
     let createdMemory = null;
     if (memoryResponse.should_remember && memoryResponse.title && memoryResponse.description) {
