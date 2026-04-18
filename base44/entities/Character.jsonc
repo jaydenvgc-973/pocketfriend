@@ -50,6 +50,20 @@
     }
   },
   "properties": {
+    "owner_user_id": {
+      "type": "string",
+      "description": "ID of the User record who owns this character (Phase 1 addition)"
+    },
+    "data_scope": {
+      "type": "string",
+      "enum": [
+        "private_user",
+        "shared",
+        "system_global"
+      ],
+      "default": "private_user",
+      "description": "Ownership scope: private_user = user-specific, shared = explicit sharing, system_global = system-level"
+    },
     "name": {
       "type": "string",
       "description": "Character display name"
@@ -63,7 +77,7 @@
     "full_name": {
       "type": "string"
     },
-    "owner_user_id": {
+    "owner_user_id_legacy": {
       "type": "string",
       "description": "The ID of the User record who owns this character."
     },
