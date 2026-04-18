@@ -95,33 +95,33 @@ export default function ChatActionsMenu({ visible = {}, onSelect }) {
               onClick={() => setAppsOpen(false)}
             />
             <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              initial={{ opacity: 0, scale: 0.9, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              exit={{ opacity: 0, scale: 0.9, y: 10 }}
               transition={{ duration: 0.2 }}
-              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-card border border-border rounded-3xl shadow-2xl p-6"
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-72 bg-card border border-border rounded-3xl shadow-2xl p-5"
             >
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-lg font-semibold text-foreground">Apps</h2>
+              <div className="flex items-center justify-between mb-5">
+                <h2 className="text-base font-semibold text-foreground">Apps</h2>
                 <button
                   onClick={() => setAppsOpen(false)}
-                  className="p-1.5 rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+                  className="p-1 rounded-lg bg-secondary text-muted-foreground hover:text-foreground transition-colors"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-4">
                 {filteredApps.map(item => {
                   const Icon = item.icon;
                   return (
                     <button
                       key={item.id}
                       onClick={() => handleAppsSelect(item.id)}
-                      className="flex flex-col items-center gap-3 p-4 rounded-2xl bg-secondary hover:bg-secondary/80 transition-colors text-center"
+                      className="aspect-square flex flex-col items-center justify-center gap-2 rounded-2xl bg-secondary hover:bg-secondary/80 transition-colors"
                     >
                       <Icon className="w-6 h-6 text-primary" />
-                      <span className="text-xs font-medium text-foreground">{item.label}</span>
+                      <span className="text-xs font-medium text-foreground text-center px-1">{item.label}</span>
                     </button>
                   );
                 })}
