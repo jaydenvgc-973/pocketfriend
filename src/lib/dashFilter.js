@@ -14,7 +14,37 @@
  *
  * EXCEPTION: hyphens inside words ("self-aware", "x-ray", "well-known") are preserved.
  */
-export function filterDashes(text) {
+export function filterDashes(text, worldName = null) {
+  // IDENTITY HARD LOCK: Also sanitize foreign user names as part of this filter pass
+  // This ensures every response goes through identity sanitization before display
+  if (text && worldName) {
+    const FOREIGN_USER_NAMES = ['Mark'];
+    for (const foreignName of FOREIGN_USER_NAMES) {
+      if (worldName !== foreignName) {
+        // Direct address patterns
+        text = text.replace(
+          new RegExp(`(Hey|Hi|Yo|Listen|Look|Come on|Stop|Wait|Oh|Okay|Right|No|Yes|Yeah|Sorry|Damn|But|So|And|Because|,|\\.|\\?|!)\\s+${foreignName}\\b`, 'gi'),
+          (match, pre) => `${pre} ${worldName}`
+        );
+        // Trailing address
+        text = text.replace(new RegExp(`\\b${foreignName}([,\\.\\?!])`, 'g'), `${worldName}$1`);
+        // Identity claims
+        text = text.replace(
+          new RegExp(`(you(?:'re| are| were| used to be)|I (?:know|knew|remember) you as|calling you)\\s+${foreignName}\\b`, 'gi'),
+          (match, pre) => `${pre} ${worldName}`
+        );
+        // Sentence-level: if line contains "you" and the foreign name, replace it
+        const lines = text.split(/(?<=[.!?])\s+/);
+        text = lines.map(line => {
+          if (/\byou\b|\byour\b/i.test(line) && new RegExp(`\\b${foreignName}\\b`, 'i').test(line)) {
+            return line.replace(new RegExp(`\\b${foreignName}\\b`, 'gi'), worldName);
+          }
+          return line;
+        }).join(' ');
+      }
+    }
+  }
+
   if (!text) return text;
 
   let result = text;

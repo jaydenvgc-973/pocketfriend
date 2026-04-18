@@ -41,6 +41,7 @@ import {
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
 import { filterDashes } from "@/lib/dashFilter";
+import { sanitizeIdentityInResponse } from "@/lib/identitySanitizer";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
@@ -1412,7 +1413,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       // DASH FILTER: remove AI-generated dashes (— – and spaced -) from visible dialogue
       // Real people texting never use dashes for pauses or dramatic effect
-      responseText = filterDashes(responseText);
+      responseText = filterDashes(responseText, userSettings.fictional_world_name || null);
 
       // image_generation_prompts is INTERNAL ONLY — never shown to user
       // If photogenic + explicit request forced an image but LLM gave no prompt, generate a natural selfie prompt
