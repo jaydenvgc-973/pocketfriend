@@ -1,24 +1,25 @@
 import { useState } from "react";
+import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ShoppingBag, DollarSign } from "lucide-react";
+import { X, ShoppingBag, Loader } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 const SAMPLE_PRODUCTS = [
-  { id: "p1", category: "clothes", type: "hoodie", name: "Essential Hoodie", brand: "Basic", price: 65, color: "Black", image: "🖤" },
-  { id: "p2", category: "clothes", type: "hoodie", name: "Oversized Hoodie", brand: "Comfort", price: 75, color: "Gray", image: "🩶" },
-  { id: "p3", category: "clothes", type: "shirt", name: "Classic Tee", brand: "Basic", price: 25, color: "White", image: "⚪" },
-  { id: "p4", category: "clothes", type: "jacket", name: "Denim Jacket", brand: "Classic", price: 95, color: "Blue", image: "🔵" },
-  { id: "p5", category: "sneakers", type: "sneakers", name: "High Tops", brand: "Street", price: 120, color: "Black", image: "👟" },
-  { id: "p6", category: "sneakers", type: "sneakers", name: "Minimalist Sneakers", brand: "Clean", price: 100, color: "White", image: "⚪" },
-  { id: "p7", category: "accessories", type: "hat", name: "Baseball Cap", brand: "Basic", price: 30, color: "Black", image: "⚫" },
-  { id: "p8", category: "accessories", type: "bag", name: "Canvas Backpack", brand: "Carry", price: 85, color: "Khaki", image: "🎒" },
+  { id: "p1", category: "clothes", item_type: "hoodie", name: "Essential Hoodie", brand: "Basic", price: 65, color: "Black", image_url: null, image_status: "not_generated" },
+  { id: "p2", category: "clothes", item_type: "hoodie", name: "Oversized Hoodie", brand: "Comfort", price: 75, color: "Gray", image_url: null, image_status: "not_generated" },
+  { id: "p3", category: "clothes", item_type: "shirt", name: "Classic Tee", brand: "Basic", price: 25, color: "White", image_url: null, image_status: "not_generated" },
+  { id: "p4", category: "clothes", item_type: "jacket", name: "Denim Jacket", brand: "Classic", price: 95, color: "Blue", image_url: null, image_status: "not_generated" },
+  { id: "p5", category: "sneakers", item_type: "sneakers", name: "High Tops", brand: "Street", price: 120, color: "Black", image_url: null, image_status: "not_generated" },
+  { id: "p6", category: "sneakers", item_type: "sneakers", name: "Minimalist Sneakers", brand: "Clean", price: 100, color: "White", image_url: null, image_status: "not_generated" },
+  { id: "p7", category: "accessories", item_type: "hat", name: "Baseball Cap", brand: "Basic", price: 30, color: "Black", image_url: null, image_status: "not_generated" },
+  { id: "p8", category: "accessories", item_type: "bag", name: "Canvas Backpack", brand: "Carry", price: 85, color: "Khaki", image_url: null, image_status: "not_generated" },
 ];
 
 export default function ShoppingApp({ conversationId, characterId, character, onClose, currentUser }) {
   const [category, setCategory] = useState("clothes");
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [actionMode, setActionMode] = useState(null); // null | "buy_self" | "forward" | "ask_character"
+  const [generatingImage, setGeneratingImage] = useState(null);
   const queryClient = useQueryClient();
 
   const { data: userBalance = 0 } = useQuery({
@@ -31,6 +32,34 @@ export default function ShoppingApp({ conversationId, characterId, character, on
   });
 
   const products = SAMPLE_PRODUCTS.filter(p => p.category === category);
+
+  const ensureProductImage = async (product) => {
+    if (product.image_url) return product;
+    
+    setGeneratingImage(product.id);
+    try {
+      const res = await base44.functions.invoke("generateProductImage", {
+        productId: product.id,
+        category: product.category,
+        itemType: product.item_type,
+        name: product.name,
+        color: product.color,
+        brand: product.brand
+      });
+
+      if (res?.data?.image_url) {
+        const updated = { ...product, image_url: res.data.image_url, image_status: "generated" };
+        setSelectedProduct(updated);
+        return updated;
+      }
+      return product;
+    } catch (err) {
+      console.error('[ensureProductImage] Failed:', err.message);
+      return product;
+    } finally {
+      setGeneratingImage(null);
+    }
+  };
 
   const handleBuyForSelf = async (product) => {
     if (userBalance < product.price) {
@@ -109,7 +138,23 @@ export default function ShoppingApp({ conversationId, characterId, character, on
           <X className="w-4 h-4" />
         </button>
 
-        <div className="text-5xl text-center mb-4">{selectedProduct.image}</div>
+        <div className="w-full h-48 bg-secondary rounded-2xl mb-4 flex items-center justify-center overflow-hidden">
+          {selectedProduct.image_url ? (
+            <img src={selectedProduct.image_url} alt={selectedProduct.name} className="w-full h-full object-cover" />
+          ) : generatingImage === selectedProduct.id ? (
+            <div className="flex flex-col items-center gap-2">
+              <Loader className="w-6 h-6 animate-spin text-primary" />
+              <p className="text-xs text-muted-foreground">Generating image...</p>
+            </div>
+          ) : (
+            <button
+              onClick={() => ensureProductImage(selectedProduct)}
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90"
+            >
+              Generate Image
+            </button>
+          )}
+        </div>
         <h3 className="text-lg font-semibold text-foreground text-center">{selectedProduct.name}</h3>
         <p className="text-xs text-muted-foreground text-center mb-2">{selectedProduct.brand} • {selectedProduct.color}</p>
         <p className="text-2xl font-bold text-primary text-center mb-6">${selectedProduct.price}</p>
@@ -193,12 +238,23 @@ export default function ShoppingApp({ conversationId, characterId, character, on
           {products.map(product => (
             <motion.button
               key={product.id}
-              onClick={() => setSelectedProduct(product)}
+              onClick={() => {
+                setSelectedProduct(product);
+                if (!product.image_url) {
+                  ensureProductImage(product);
+                }
+              }}
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
-              className="p-3 rounded-2xl bg-secondary hover:bg-secondary/80 transition-colors text-center"
+              className="p-2 rounded-2xl bg-secondary hover:bg-secondary/80 transition-colors text-center overflow-hidden"
             >
-              <div className="text-4xl mb-2">{product.image}</div>
+              <div className="w-full h-24 bg-secondary-darker rounded-lg mb-2 flex items-center justify-center">
+                {product.image_url ? (
+                  <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-xl">📦</span>
+                )}
+              </div>
               <p className="text-xs font-medium text-foreground truncate">{product.name}</p>
               <p className="text-xs text-primary font-semibold mt-1">${product.price}</p>
             </motion.button>
