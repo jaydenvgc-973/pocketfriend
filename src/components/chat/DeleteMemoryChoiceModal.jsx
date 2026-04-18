@@ -1,8 +1,8 @@
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Brain, EyeOff, X } from "lucide-react";
+import { Brain, EyeOff, X, RefreshCw, Moon } from "lucide-react";
 
-export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel }) {
+export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, onForget, onCancel, onNonsense, onSleepViolation, isRegenerating }) {
   if (!isOpen || !message) return null;
 
   const preview = message.content?.trim()
@@ -65,6 +65,34 @@ export default function DeleteMemoryChoiceModal({ message, isOpen, onRemember, o
                 <div>
                   <p className="text-sm font-semibold text-foreground">Forget this</p>
                   <p className="text-xs text-muted-foreground">Removed from thread · erased from memory</p>
+                </div>
+              </button>
+
+              <button
+                onClick={onNonsense}
+                disabled={isRegenerating}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 transition-colors text-left disabled:opacity-60"
+              >
+                <div className="w-8 h-8 rounded-full bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+                  <RefreshCw className="w-4 h-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">This is nonsense</p>
+                  <p className="text-xs text-muted-foreground">Illogical or poorly constructed</p>
+                </div>
+              </button>
+
+              <button
+                onClick={onSleepViolation}
+                disabled={isRegenerating}
+                className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-blue-500/10 border border-blue-500/30 hover:bg-blue-500/20 transition-colors text-left disabled:opacity-60"
+              >
+                <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+                  <Moon className="w-4 h-4 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-foreground">Violates sleep state</p>
+                  <p className="text-xs text-muted-foreground">Waking actions while asleep</p>
                 </div>
               </button>
 

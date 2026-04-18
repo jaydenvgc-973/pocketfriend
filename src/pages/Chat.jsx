@@ -34,6 +34,7 @@ import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
+import { useNarrativeCorrection } from "@/hooks/useNarrativeCorrection";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -80,6 +81,11 @@ export default function Chat() {
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
   const [showShopping, setShowShopping] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
+
+  const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
+    characterId, conversationId, messages, setMessages,
+  });
+  const [isRegeneratingNarrative, setIsRegeneratingNarrative] = useState(false);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -1929,6 +1935,9 @@ Reply with ONLY the single emoji or the word "none".`,
         onRemember={handleDeleteRemember}
         onForget={handleDeleteForget}
         onCancel={() => setDeleteTarget(null)}
+        onNonsense={() => { const t = deleteTarget; setDeleteTarget(null); handleNonsenseNarrative(t); }}
+        onSleepViolation={() => { const t = deleteTarget; setDeleteTarget(null); handleSleepViolationNarrative(t); }}
+        isRegenerating={isRegeneratingNarrative}
       />
       {forwardTarget && (
         <ForwardMessageModal
