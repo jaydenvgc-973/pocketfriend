@@ -87,14 +87,14 @@ Write ONE sentence about how this interaction made you feel. Be authentic to you
 
       // Create/update fictional relationship
       const existingRels = await base44.entities.CharacterRelationship.filter({
-        character_id: playingAsCharacterId,
-        related_character_id: characterId,
+        source_character_id: playingAsCharacterId,
+        target_character_id: characterId,
       });
 
       if (existingRels.length === 0) {
         await base44.entities.CharacterRelationship.create({
-          character_id: playingAsCharacterId,
-          related_character_id: characterId,
+          source_character_id: playingAsCharacterId,
+          target_character_id: characterId,
           person_name: targetChar.name,
           relationship_type: 'acquaintance',
           current_status: 'ongoing',
