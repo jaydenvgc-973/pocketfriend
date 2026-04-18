@@ -154,7 +154,9 @@ export default function ShoppingApp({ conversationId, characterId, character, on
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md bg-card border border-border rounded-3xl shadow-2xl p-6 max-h-[90vh] overflow-y-auto"
+      className="fixed top-20 inset-x-0 z-50 flex items-center justify-center"
+    >
+      <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-6"
     >
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
