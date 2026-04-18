@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, ShoppingBag, Loader } from "lucide-react";
 import { base44 } from "@/api/base44Client";
