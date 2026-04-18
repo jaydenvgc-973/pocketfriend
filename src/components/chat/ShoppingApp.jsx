@@ -46,14 +46,17 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         brand: product.brand
       });
 
+      console.log('[ensureProductImage] Response:', res);
       if (res?.data?.image_url) {
         const updated = { ...product, image_url: res.data.image_url, image_status: "generated" };
         setSelectedProduct(updated);
         return updated;
+      } else {
+        console.warn('[ensureProductImage] No image_url in response:', res?.data);
       }
       return product;
     } catch (err) {
-      console.error('[ensureProductImage] Failed:', err.message);
+      console.error('[ensureProductImage] Error:', err);
       return product;
     } finally {
       setGeneratingImage(null);
