@@ -44,7 +44,7 @@ import {
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
 import { filterDashes } from "@/lib/dashFilter";
-import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
+import { stripCharacterNamePrefix, stripSelfReferenceName } from "@/lib/nameFilterUtils";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
