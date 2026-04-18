@@ -23,11 +23,11 @@ export default function NPCContactPanel() {
       const [byCreatedBy, byOwnerEmail] = await Promise.all([
         base44.entities.Character.filter({
           created_by: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc', 'npc_fictitious_person'] }
+          character_type: { $in: ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'] }
         }),
         base44.entities.Character.filter({
           owner_email: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc', 'npc_fictitious_person'] }
+          character_type: { $in: ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'] }
         }),
       ]);
       // Merge and deduplicate
