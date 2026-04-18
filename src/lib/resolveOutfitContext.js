@@ -1,0 +1,307 @@
+/**
+ * OUTFIT CONTEXT RESOLVER
+ *
+ * Safe integration layer — reads existing app state and returns the correct outfit.
+ * This module does NOT own any truths. It only READS them from other systems:
+ *   - Sleep state → from sleepUtils / character.resolved_presence_status
+ *   - Work state  → from character.resolved_presence_status / workScheduleUtils
+ *   - Location    → from locationResolutionEngine
+ *   - Activity    → from character.current_activity
+ *   - Time of day → from system clock
+ *
+ * Output: { outfit, category, reason, description }
+ * All consumers (image gen, narrative, profile, scene) use this single result.
+ */
+
+import { resolveTargetCategory, buildOutfitPromptText } from './outfitRotationEngine.js';
+
+/**
+ * Build a context object from a character's current app state.
+ * This is a READ-ONLY operation — no writes, no side effects.
+ *
+ * @param {object} character - Full character record
+ * @param {object} locationMap - Map of locationId → location record (for category lookup)
+ * @returns {object} outfit_context matching the spec schema
+ */
+export function buildOutfitContext(character, locationMap = {}) {
+  if (!character) return null;
+
+  const now = new Date();
+  const hour = now.getHours();
+
+  const presenceStatus = character.resolved_presence_status || character.location_status || 'home';
+  const isAsleep = presenceStatus === 'sleeping' || presenceStatus === 'napping';
+
+  // Pre-sleep window: within 60 minutes of scheduled sleep start
+  let isInPreSleepWindow = false;
+  if (!isAsleep && character.sleep_start_time) {
+    const [sh, sm] = character.sleep_start_time.split(':').map(Number);
+    const sleepMin = sh * 60 + sm;
+    const nowMin = hour * 60 + now.getMinutes();
+    const diff = sleepMin > nowMin ? sleepMin - nowMin : (sleepMin + 1440) - nowMin;
+    if (diff <= 60 && diff >= 0) isInPreSleepWindow = true;
+  }
+
+  // Water/swim venue detection — only if character is actually there
+  const currentLocationId = character.resolved_current_location_id || character.current_home_location_id;
+  const currentLocation = currentLocationId ? locationMap[currentLocationId] : null;
+  const locationCategory = currentLocation?.category || null;
+  const WATER_VENUE_CATEGORIES = ['outdoor']; // pools/beaches are often tagged outdoor
+  const WATER_VENUE_KEYWORDS = ['pool', 'beach', 'water park', 'hot tub', 'resort', 'lake', 'ocean'];
+  const isAtWaterVenue = (() => {
+    if (!currentLocation) return false;
+    const locName = (currentLocation.name || '').toLowerCase();
+    if (WATER_VENUE_KEYWORDS.some(k => locName.includes(k))) return true;
+    const keywords = (currentLocation.keywords || []).join(' ').toLowerCase();
+    if (WATER_VENUE_KEYWORDS.some(k => keywords.includes(k))) return true;
+    const activity = (character.current_activity || '').toLowerCase();
+    return /\b(swim|swimming|pool|beach|ocean|lake|water park|hot tub)\b/.test(activity);
+  })();
+
+  const atWorkShift = presenceStatus === 'at_work';
+
+  const atHomeRelaxing = (presenceStatus === 'home') &&
+    /\b(relax|relaxing|chilling|lounge|lounging|resting|watching|couch|home)\b/.test(
+      (character.current_activity || '').toLowerCase()
+    );
+
+  // Time-of-day
+  let timeOfDay = 'morning';
+  if (hour >= 5 && hour < 12) timeOfDay = 'morning';
+  else if (hour >= 12 && hour < 17) timeOfDay = 'afternoon';
+  else if (hour >= 17 && hour < 21) timeOfDay = 'evening';
+  else timeOfDay = 'night';
+
+  return {
+    owner_id: character.id,
+    is_awake: !isAsleep,
+    is_asleep: isAsleep,
+    is_in_pre_sleep_window: isInPreSleepWindow,
+    current_activity: character.current_activity || 'idle',
+    current_location_type: locationCategory || (presenceStatus === 'home' ? 'home' : null),
+    time_of_day: timeOfDay,
+    at_work_shift: atWorkShift,
+    at_water_venue: isAtWaterVenue,
+    at_home_relaxing: atHomeRelaxing,
+    manual_override: character.current_outfit?.change_reason === 'manual_selection' &&
+      character.current_outfit?.last_changed_at &&
+      new Date(character.current_outfit.last_changed_at).toDateString() === new Date().toDateString(),
+  };
+}
+
+/**
+ * Resolve the outfit category from context.
+ * This is the authoritative priority order from the spec.
+ *
+ * @param {object} context - Output of buildOutfitContext()
+ * @returns {string} category key (e.g. 'sleepwear', 'work', 'daily_casual')
+ */
+export function resolveCategoryFromContext(context) {
+  if (!context) return 'daily_casual';
+
+  // 1. Manual override (set today)
+  if (context.manual_override) return null; // null = respect current_outfit as-is
+
+  // 2. Asleep → sleepwear
+  if (context.is_asleep) return 'sleepwear';
+
+  // 3. Pre-sleep window → sleepwear
+  if (context.is_in_pre_sleep_window) return 'sleepwear';
+
+  // 4. Water venue → swimwear
+  if (context.at_water_venue) return 'swimwear';
+
+  // 5. Work shift → work
+  if (context.at_work_shift) return 'work';
+
+  // 6. Home + relaxing → lounge
+  if (context.at_home_relaxing) return 'lounge';
+
+  // 7. Location-based fallback
+  if (context.current_location_type) {
+    const locMap = {
+      home: 'lounge',
+      gym: 'gym',
+      religion: 'church',
+      school: 'school',
+      workplace: 'work',
+      business: 'work',
+    };
+    const mapped = locMap[context.current_location_type];
+    if (mapped) return mapped;
+  }
+
+  // 8. Default: daily casual
+  return 'daily_casual';
+}
+
+/**
+ * Pick the best outfit from the closet for the resolved category.
+ * Uses daily rotation — deterministic per day, avoids repeating the same outfit
+ * if alternatives exist.
+ *
+ * @param {object} character - Full character record
+ * @param {string} targetCategory - Resolved category
+ * @returns {object|null} Outfit item or null
+ */
+export function pickOutfitFromCloset(character, targetCategory) {
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.type === 'outfit' || (!item.piece_id?.startsWith('piece_') && item.outfit_id));
+  if (outfits.length === 0) return null;
+
+  const currentOutfitId = character.current_outfit?.outfit_id || null;
+
+  // Safe fallback chain per spec
+  const FALLBACK_CHAINS = {
+    sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
+    swimwear:     ['swimwear', 'gym', 'daily_casual'],
+    gym:          ['gym', 'outdoor', 'daily_casual'],
+    work:         ['work', 'formal', 'daily_casual'],
+    formal:       ['formal', 'work', 'daily_casual'],
+    church:       ['church', 'formal', 'daily_casual'],
+    nightlife:    ['nightlife', 'date_night', 'daily_casual'],
+    date_night:   ['date_night', 'nightlife', 'daily_casual'],
+    school:       ['school', 'daily_casual'],
+    lounge:       ['lounge', 'daily_casual'],
+    outdoor:      ['outdoor', 'daily_casual'],
+    daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+    bath:         ['bath', 'sleepwear', 'lounge'],
+  };
+
+  const chain = FALLBACK_CHAINS[targetCategory] || ['daily_casual', 'lounge'];
+
+  for (const cat of chain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length === 0) continue;
+    if (pool.length === 1) return pool[0];
+
+    // Daily rotation: deterministic by day + character ID
+    const now = new Date();
+    const dayOfYear = Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
+    const idHash = (character.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+    const idx = (dayOfYear + idHash) % pool.length;
+    const picked = pool[idx];
+
+    // Avoid same as current if alternatives exist
+    if (picked?.outfit_id === currentOutfitId && pool.length > 1) {
+      return pool[(idx + 1) % pool.length];
+    }
+    return picked;
+  }
+
+  // Last resort: any outfit
+  return outfits[0] || null;
+}
+
+/**
+ * Main entry point: resolve the complete outfit state for a character.
+ *
+ * Safe to call from anywhere — profile, scene, chat, image gen, narrative.
+ * Always reads existing app state; never writes.
+ *
+ * @param {object} character - Full character record
+ * @param {object} locationMap - Map of locationId → location record
+ * @returns {{ outfit, category, reason, description, source }} resolved state
+ */
+export function resolveCharacterOutfit(character, locationMap = {}) {
+  if (!character) return { outfit: null, category: null, reason: 'no_character', description: null };
+
+  const context = buildOutfitContext(character, locationMap);
+  const closet = character.character_closet || [];
+  const hasCloset = closet.some(item => item.outfit_id);
+
+  // If manual override set today, use it as-is
+  if (context.manual_override && character.current_outfit?.label) {
+    return {
+      outfit: character.current_outfit,
+      category: character.current_outfit.category || 'daily_casual',
+      reason: 'manual_override',
+      description: buildOutfitPromptText(character.current_outfit),
+      source: 'manual',
+    };
+  }
+
+  const targetCategory = resolveCategoryFromContext(context);
+
+  if (!hasCloset) {
+    // Graceful fallback for characters with no closet data yet
+    const fallback = character.current_outfit?.label ? character.current_outfit : null;
+    return {
+      outfit: fallback,
+      category: targetCategory || 'daily_casual',
+      reason: fallback ? 'current_outfit_fallback' : 'no_closet',
+      description: fallback ? buildOutfitPromptText(fallback) : null,
+      source: 'fallback',
+    };
+  }
+
+  const outfit = pickOutfitFromCloset(character, targetCategory);
+
+  const reasonMap = {
+    sleepwear: context.is_asleep ? 'sleep_state' : 'pre_sleep_window',
+    swimwear: 'water_venue',
+    work: 'work_shift',
+    lounge: 'home_relaxing',
+    gym: 'gym_context',
+    church: 'religion_context',
+  };
+  const reason = reasonMap[targetCategory] || 'daily_context';
+
+  return {
+    outfit,
+    category: targetCategory,
+    reason,
+    description: outfit ? buildOutfitPromptText(outfit) : null,
+    source: 'closet',
+  };
+}
+
+/**
+ * Build a narrative hint for the outfit — used by chat/narrative systems.
+ * Returns a short, natural-language description suitable for injecting into prompts.
+ * Never forces clothing to be the main subject — only a supporting detail.
+ *
+ * @param {object} resolvedOutfit - Output of resolveCharacterOutfit()
+ * @param {object} character - Character record (for sleep/location state)
+ * @returns {string|null} Narrative hint or null if not relevant
+ */
+export function buildOutfitNarrativeHint(resolvedOutfit, character) {
+  if (!resolvedOutfit?.outfit && !resolvedOutfit?.category) return null;
+  if (!resolvedOutfit.description && !resolvedOutfit.category) return null;
+
+  const { category, reason, description } = resolvedOutfit;
+
+  // Asleep — stay grounded in sleep, not clothing
+  if (reason === 'sleep_state') {
+    if (description) return `settled in for sleep in ${description}`;
+    return 'already in sleepwear for the night';
+  }
+
+  // Pre-sleep — winding down
+  if (reason === 'pre_sleep_window') {
+    if (description) return `changed into ${description} for the night`;
+    return 'changed into sleepwear as the evening winds down';
+  }
+
+  // Work attire — reinforce professional context
+  if (category === 'work' && description) {
+    return `dressed for work in ${description}`;
+  }
+
+  // Lounge at home — softer, relaxed
+  if (category === 'lounge' && description) {
+    return `relaxed at home in ${description}`;
+  }
+
+  // Swimwear — context-locked
+  if (category === 'swimwear' && description) {
+    return `wearing ${description}`;
+  }
+
+  // Daily casual — only mention if description exists, keep it light
+  if (category === 'daily_casual' && description) {
+    return `dressed casually in ${description}`;
+  }
+
+  return null;
+}

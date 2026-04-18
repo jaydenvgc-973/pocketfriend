@@ -183,7 +183,7 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
 }
 
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}) {
-  const { allowNarration = false } = options; // Default OFF — narration is opt-in, only enabled for Scene/Moments pages
+  const { allowNarration = false, outfitHint = null } = options; // outfitHint: optional string from resolveOutfitContext
   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
   const userNameLabel = character.nickname_for_user || userDisplayName || null;
   const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
@@ -294,6 +294,7 @@ Abuela Sophia is the grandmother of someone else entirely — she did not raise 
 
 ${buildReligionPromptContext(character)}
 YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
+${outfitHint ? `\nWHAT YOU'RE WEARING RIGHT NOW (use this only when clothing is relevant to the scene — do not force it into every response): ${outfitHint}` : ""}
 ${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}
 ${character.daily_micro_narration ? `\nWHAT YOU'RE DOING RIGHT NOW (third-person context for grounding — use this to inform how you show up in conversation, what you might mention in passing, what just happened or is happening): ${character.daily_micro_narration}` : ""}
 ${(character.city || character.state) ? `\nWHERE YOU LIVE: ${[character.city, character.state].filter(Boolean).join(", ")}.` : ""}

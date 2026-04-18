@@ -14,6 +14,7 @@ import VoiceDiagnosticsPanel from "@/components/chat/VoiceDiagnosticsPanel";
 import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { resolveCharacterOutfit, buildOutfitNarrativeHint } from "@/lib/resolveOutfitContext";
 import { getCharacterLivePresence, buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
@@ -1161,20 +1162,18 @@ ${songsInfo}`;
       }
 
       const userDisplayName = userSettings.fictional_world_name || null;
-      // Fetch system prompt from URL if available, otherwise build it
+      const outfitHint = buildOutfitNarrativeHint(resolveCharacterOutfit(character, {}), character);
       let systemPrompt = "";
       if (character.system_prompt_url) {
         try {
           const promptResponse = await fetch(character.system_prompt_url);
           systemPrompt = await promptResponse.text();
         } catch (err) {
-          console.warn('[sendMessage] Failed to fetch system_prompt_url, building instead:', err.message);
-          systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false });
+          systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint });
         }
       } else {
-        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false });
+        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint });
       }
-      // World name injected into image instruction so LLM uses the right name in prompts — never "the user"
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 

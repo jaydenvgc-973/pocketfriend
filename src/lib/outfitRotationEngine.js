@@ -277,3 +277,33 @@ export function buildOutfitPromptText(outfit) {
 export function getCategoryLabel(categoryValue) {
   return OUTFIT_CATEGORIES.find(c => c.value === categoryValue)?.label || categoryValue;
 }
+
+/**
+ * CANONICAL SPEC CATEGORY ALIASES
+ *
+ * The spec uses 5 canonical names. These map to the existing category values
+ * already used throughout the app. Both names resolve to the same data.
+ *
+ * Spec name        → Internal value
+ * daily_wear       → daily_casual
+ * work_attire      → work
+ * loungewear       → lounge
+ * sleepwear        → sleepwear  (same)
+ * swimwear         → swimwear   (same)
+ */
+export const SPEC_CATEGORY_ALIAS = {
+  daily_wear:   'daily_casual',
+  work_attire:  'work',
+  loungewear:   'lounge',
+  sleepwear:    'sleepwear',
+  swimwear:     'swimwear',
+};
+
+/**
+ * Normalize a category value — accepts both spec aliases and internal values.
+ * Safe for use anywhere category strings are compared.
+ */
+export function normalizeCategory(cat) {
+  if (!cat) return 'daily_casual';
+  return SPEC_CATEGORY_ALIAS[cat] || cat;
+}
