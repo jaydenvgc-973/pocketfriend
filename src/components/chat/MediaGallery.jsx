@@ -310,12 +310,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       // Build the prompt for generateImageAsync
       const fullPrompt = `[CHARACTER] ${promptText}${multiOutfitSuffix}`;
 
+      // Collect location reference images for the selected location and zone
+      const locRefImages = selectedLocation
+        ? (selectedZone && selectedLocation.zones?.find(z => z.zone_name === selectedZone)?.image_urls)
+          || selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls
+          || selectedLocation.image_urls
+          || []
+        : [];
+
       // Call generateImageAsync which handles location locking, character refs, etc.
       const genRes = await base44.functions.invoke('generateImageAsync', {
         messageId: newMsg.id,
         prompt: fullPrompt,
         characterReferenceImages: charReferenceImages,
         userReferenceImages: userReferenceImages,
+        locationReferenceImages: locRefImages,
         characterName: charName,
         userWorldName: userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || null,
         subjectType,
