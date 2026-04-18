@@ -17,12 +17,27 @@ export default function NPCContactPanel() {
 
   const { data: rawNpcCharacters = [] } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      // Fetch by both created_by (legacy) and owner_email (new field) to catch all account-owned NPCs
+      const [byCreatedBy, byOwnerEmail] = await Promise.all([
+        base44.entities.Character.filter({
           created_by: currentUser.email,
           character_type: { $in: ['npc', 'family_npc'] }
-        })
-      : [],
+        }),
+        base44.entities.Character.filter({
+          owner_email: currentUser.email,
+          character_type: { $in: ['npc', 'family_npc'] }
+        }),
+      ]);
+      // Merge and deduplicate
+      const seen = new Set();
+      return [...byCreatedBy, ...byOwnerEmail].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
+    },
     enabled: !!currentUser?.email,
   });
 
