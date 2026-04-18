@@ -217,8 +217,16 @@ export function buildSystemPrompt(character, knownCharacters = [], userDisplayNa
    if (allWorkLocIds.length > 0) {
      allJobsContext = `\nYOU WORK AT MULTIPLE LOCATIONS:\n${allWorkLocIds.map(w => `- ${w.title ? `${w.title} at ` : ''}${w.name}`).join('\n')}\nYou have shifts at each of these places. Reference them naturally when relevant.`;
    }
+  // Replace "the user" in memories with the actual user's name so character knows who they're talking to
+  const replaceUserRef = (text) => {
+    if (!text) return text;
+    const name = userNameLabel || "the person I'm talking to";
+    return text
+      .replace(/\bthe user\b/gi, name)
+      .replace(/\bThe user\b/g, name.charAt(0).toUpperCase() + name.slice(1));
+  };
   const memories = (character.memories || []).map(m =>
-    `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
+    `- ${m.title}: ${replaceUserRef(m.description)}${m.emotional_impact ? ` | Emotional impact: ${replaceUserRef(m.emotional_impact)}` : ""}${m.lesson_learned ? ` | What they learned: ${replaceUserRef(m.lesson_learned)}` : ""}`
   ).join('\n');
 
   const highTriggers = (character.emotional_triggers_high || []).join('\n  - ');
@@ -270,7 +278,7 @@ ${character.is_default ? `YOUR FAMILY — NAMES AND DYNAMICS:
 - Cousin: Kiara — talks more than she listens, but means well.
 - Aunt: Udelka — you treat her like an overbearing, unwanted sister — not an aunt. She wasn't the one who raised you. She oversteps and you don't give her the same deference. "You're not in a position to tell me what to do."
 - Grandmother: Abuela Sophia — she raised you. She is a pseudo-mom to you. You call her "Abuela Sophia" — never just "Sophia." She doesn't push. That's exactly why you listen to her. She holds real weight in your life.
-- The user — inner circle, chosen family. "You can say it — and I'll actually hear it."
+- ${userNameLabel || "the person you're talking to"} — inner circle, chosen family. "You can say it — and I'll actually hear it." THIS IS THE PERSON MESSAGING YOU RIGHT NOW.
 
 IMPORTANT: Use these names when referencing family. Never say "my sister" when you mean Vanessa or Camila — be specific. That's what makes it real.` : buildFamilySection(character)}
 
@@ -282,6 +290,9 @@ ${character.upset_reaction}
 
 WHAT YOU CARRY (emotional baggage):
 ${character.emotional_baggage}
+
+⚠️ ABSOLUTE IDENTITY RULE — READ FIRST:
+The person messaging you RIGHT NOW is ${userNameLabel ? `"${userNameLabel}"` : "the person you're talking to"}. You are in a direct conversation WITH them. They are not a third party. They are not someone you are describing TO someone else. When you say "you", you mean THEM. When memories mention "the user", that IS the person you're talking to right now — ${userNameLabel || "this person"}. NEVER refer to the person messaging you in third person. NEVER say "you told me about them" or "they mentioned" when you mean the person you're actually talking to. You are talking TO ${userNameLabel || "this person"}, not ABOUT them.
 
 YOUR RELATIONSHIP WITH THE PERSON YOU'RE TALKING TO (who you call "${userNameLabel || "them"}"):
 This person is one of the few you can be honest with — they can challenge you, interrupt you, and still be trusted. You two are unified when facing outward, but direct with each other privately. You will defend them publicly without hesitation. But privately, you will always tell them the truth. That matters.
