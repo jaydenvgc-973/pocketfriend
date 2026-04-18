@@ -1,156 +1,96 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
-
-/**
- * extractMemoriesFromTurn
- *
- * STRICT MODE — Zero Trust Character Creation
- *
- * RULES:
- * - MAY store conversational memories (text) in the Memory entity
- * - MUST NOT create characters automatically from dialogue
- * - MUST NOT add family members automatically from dialogue
- * - MUST NOT add fictional_relationships automatically from dialogue
- * - MUST NOT add transient_encounters that reference new named individuals
- *
- * The only thing this function does automatically is store a Memory record
- * (plain text note). All people detection is DISABLED.
- * Family lock is always honored — if locked, no memory about family is stored.
- */
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
+    const { characterId, conversationId, userMessage, characterReply, playingAsCharacterId } = await req.json();
 
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!characterId || !conversationId) {
+      return Response.json({ error: 'Missing required fields' }, { status: 400 });
     }
 
-    const { characterId, conversationId, userMessage, characterReply } = await req.json();
+    // Extract memories for the target character
+    const targetChar = await base44.entities.Character.filter({ id: characterId }).then(r => r[0]);
+    const playingAsChar = playingAsCharacterId
+      ? await base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
+      : null;
 
-    if (!characterId || !userMessage || !characterReply) {
-      return Response.json({
-        error: 'characterId, userMessage, and characterReply are required'
-      }, { status: 400 });
-    }
+    let newPeopleDetected = [];
 
-    // Get character details
-    const character = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).then(c => c?.[0]);
+    // Create memory for target character about this interaction
+    if (targetChar && characterReply) {
+      const targetMemory = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are ${targetChar.name}. Someone just said: "${userMessage}" and you replied: "${characterReply}". 
 
-    if (!character) {
-      return Response.json({ error: 'Character not found' }, { status: 404 });
-    }
-
-    // ── FAMILY LOCK CHECK ─────────────────────────────────────────────────
-    // If family list is locked, do not store any memory that mentions family members.
-    // This prevents the memory system from being a back-channel for family data creation.
-    const familyKeywords = /\b(mom|mother|dad|father|sister|brother|son|daughter|grandmother|grandfather|grandma|grandpa|aunt|uncle|cousin|niece|nephew|spouse|wife|husband|family|parent|sibling|child|kids?|baby|infant|pregnant|birth|born)\b/i;
-    const messageText = `${userMessage} ${characterReply}`;
-    const mentionsFamily = familyKeywords.test(messageText);
-
-    if (character.family_list_locked && mentionsFamily) {
-      // Family lock active + family mention → store nothing, return silently
-      return Response.json({
-        success: true,
-        memoryCreated: false,
-        blocked: true,
-        reason: 'FAMILY_LIST_LOCKED — family mention ignored',
-        newPeopleDetected: { family: [], relationships: [], transient: [] }
-      });
-    }
-
-    // ── MEMORY + NEW PEOPLE DETECTION ────────────────────────────────────
-    // Analyze the turn for significant memories AND detect new people mentioned.
-    // People detected are returned to the frontend for user confirmation — NOT auto-saved.
-    const existingRelationshipNames = (character.fictional_relationships || []).map(r => r.person_name?.toLowerCase()).filter(Boolean);
-    const existingFamilyNames = (character.family_members || []).map(m => m.name?.toLowerCase()).filter(Boolean);
-    const knownNames = [...existingRelationshipNames, ...existingFamilyNames];
-
-    const memoryResponse = await base44.integrations.Core.InvokeLLM({
-      prompt: `You are analyzing a conversation turn for ${character.name}, a character with:
-- Personality: ${character.personality_summary}
-- Traits: ${character.personality_traits?.join(', ') || 'N/A'}
-- Current mood: ${character.emotional_state}
-
-CONVERSATION TURN:
-User: ${userMessage}
-${character.name}: ${characterReply}
-
-Already known people (DO NOT flag these): ${knownNames.length > 0 ? knownNames.join(', ') : 'none'}
-
-TASK 1 — Memory: Does this exchange contain any significant memory that ${character.name} should remember?
-- Important information about the user
-- Decisions or commitments made
-- Emotional moments
-- Details about the user's life or preferences
-
-TASK 2 — New People: Are any NEW named individuals mentioned (not in the already known list above)?
-Only flag real named people (e.g. "Mateo", "Jordan") — NOT generic references like "my friend", "someone", "they".
-Do NOT flag the user themselves or ${character.name}.
-
-Return a JSON object with:
-- should_remember: boolean
-- title: string (brief memory title, empty if false)
-- description: string (focus on events/emotions)
-- emotional_impact: string
-- lesson_learned: string
-- new_people: array of objects with { name: string, relationship_type: string (best guess: Friend/Coworker/Family/Acquaintance/Romantic Interest/Other), context: string (one sentence about who they are based on the conversation) }`,
-      response_json_schema: {
-        type: "object",
-        properties: {
-          should_remember: { type: "boolean" },
-          title: { type: "string" },
-          description: { type: "string" },
-          emotional_impact: { type: "string" },
-          lesson_learned: { type: "string" },
-          new_people: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                relationship_type: { type: "string" },
-                context: { type: "string" }
+Extract any NEW people names mentioned (NPCs not yet in your world) from the user's message or your response. List them as JSON: [{"name": "Name", "relationship_type": "friend/family/etc", "context": "brief context"}] or empty [] if none.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            people: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  relationship_type: { type: "string" },
+                  context: { type: "string" }
+                }
               }
             }
           }
         }
-      }
-    });
+      });
 
-    // ── SAVE MEMORY (text only — no entity/character creation) ────────────
-    let createdMemory = null;
-    if (memoryResponse.should_remember && memoryResponse.title && memoryResponse.description) {
-      createdMemory = await base44.asServiceRole.entities.Memory.create({
+      newPeopleDetected = targetMemory?.people || [];
+
+      // Store memory for target character
+      await base44.entities.Memory.create({
         character_id: characterId,
-        title: memoryResponse.title,
-        description: memoryResponse.description,
-        emotional_impact: memoryResponse.emotional_impact || 'neutral',
-        lesson_learned: memoryResponse.lesson_learned || '',
-        source_context: conversationId || 'chat',
-        timestamp: new Date().toISOString()
+        title: `Conversation moment`,
+        description: `They said: "${userMessage}". I responded: "${characterReply.substring(0, 200)}"`,
+        emotional_impact: 'neutral',
+        timestamp: new Date().toISOString(),
+        source_context: `conversation_${conversationId}`,
       });
     }
 
-    // ── RETURN DETECTED PEOPLE FOR USER CONFIRMATION ─────────────────────
-    // New people are returned to the frontend — NOT auto-saved.
-    // The user must confirm before any relationship is created.
-    const detectedPeople = (memoryResponse.new_people || []).filter(p =>
-      p.name && !knownNames.includes(p.name.toLowerCase())
-    );
+    // If user was playing as a character, ALSO create memory for them
+    if (playingAsChar && userMessage) {
+      await base44.entities.Memory.create({
+        character_id: playingAsCharacterId,
+        title: `Conversation with ${targetChar?.name || 'someone'}`,
+        description: `I said: "${userMessage}". They replied: "${characterReply?.substring(0, 200) || '(no reply)'}"`,
+        emotional_impact: 'neutral',
+        timestamp: new Date().toISOString(),
+        source_context: `conversation_${conversationId}_as_${playingAsCharacterId}`,
+      });
 
-    return Response.json({
-      success: true,
-      memoryCreated: !!createdMemory,
-      memory: createdMemory,
-      newPeopleDetected: {
-        family: [],
-        relationships: detectedPeople, // returned for user confirmation only
-        transient: []
+      // Also create/update the fictional relationship for the playing-as character
+      const existingRels = await base44.entities.CharacterRelationship.filter({
+        character_id: playingAsCharacterId,
+        related_character_id: characterId,
+      });
+
+      if (existingRels.length === 0 && targetChar) {
+        await base44.entities.CharacterRelationship.create({
+          character_id: playingAsCharacterId,
+          related_character_id: characterId,
+          person_name: targetChar.name,
+          relationship_type: 'acquaintance',
+          description: `Someone I know`,
+          current_status: 'ongoing',
+          friendship_level: 50,
+          user_respect_level: 50,
+          romantic_level: 0,
+          attraction_level: 0,
+          chosen_family_level: 0,
+        });
       }
-    });
+    }
 
+    return Response.json({ success: true, newPeopleDetected });
   } catch (error) {
+    console.error('extractMemoriesFromTurn error:', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
