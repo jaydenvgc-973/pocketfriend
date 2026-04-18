@@ -99,7 +99,7 @@ export default function ChatActionsMenu({ visible = {}, onSelect }) {
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
               transition={{ duration: 0.2 }}
-              className="fixed inset-0 z-50 flex items-end justify-center pb-32 pointer-events-none"
+              className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none"
             >
               <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-5 pointer-events-auto"
             >
