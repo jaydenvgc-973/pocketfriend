@@ -962,7 +962,36 @@ export default function Scene() {
       return;
     }
     const t = text.toLowerCase();
-    // "show me X" or "look at X" or "what does X look like"
+
+    // ── BUSINESS ITEM REQUEST DETECTION ────────────────────────────────────────
+    // At a business/workplace, detect when the user is asking to see or find an item.
+    // Triggers a worker NPC to "show" the item by generating a focused product image.
+    const isBusinessVenue = ["business", "workplace", "grocery"].includes(location?.category);
+    if (isBusinessVenue) {
+      // Pattern 1: "show me X", "can you show me X", "can I see X", "I want to see X"
+      const showMatch = t.match(/(?:show me|can you show me|can i see|i want to see|let me see|could i see)\s+(.+)/);
+      if (showMatch) {
+        const item = showMatch[1].replace(/[?.!]+$/, "").trim();
+        generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
+        return;
+      }
+      // Pattern 2: "I'm looking for a/an/the X", "looking for X"
+      const lookingMatch = t.match(/(?:i'm looking for|i am looking for|looking for)\s+(?:a |an |the )?(.+)/);
+      if (lookingMatch) {
+        const item = lookingMatch[1].replace(/[?.!]+$/, "").trim();
+        generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
+        return;
+      }
+      // Pattern 3: "do you have X", "do you carry X", "do you sell X"
+      const haveMatch = t.match(/(?:do you have|do you carry|do you sell|got any|have any)\s+(?:a |an |the )?(.+)/);
+      if (haveMatch) {
+        const item = haveMatch[1].replace(/[?.!]+$/, "").trim();
+        generateFocusedImage(`${item} displayed on a retail shelf or counter at ${location.name}, product close-up, professional lighting,`);
+        return;
+      }
+    }
+
+    // "show me X" or "look at X" or "what does X look like" — general (non-business)
     const showMatch = t.match(/(?:show me|look at|what does|can i see|i want to see)\s+(.+)/);
     if (showMatch) {
       generateFocusedImage(`${showMatch[1]} at ${location.name},`);
