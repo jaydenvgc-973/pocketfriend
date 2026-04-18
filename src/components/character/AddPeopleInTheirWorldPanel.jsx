@@ -31,10 +31,11 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     enabled: !!currentUser?.email
   });
 
-  // Get all account NPCs (any character type that's not 'active')
-  const accountNPCs = allAccountCharacters.filter(c => 
-    c.character_type && ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type)
-  );
+  // Get all account NPCs (any character that's not the primary 'active' type and not the current character)
+  const accountNPCs = allAccountCharacters.filter(c => {
+    // Show all characters except active characters (includes npc, family_npc, promoted_npc, npc_fictitious_person)
+    return c.character_type !== 'active' && c.id !== character.id;
+  });
 
   // Get NPCs already linked to this character
   const existingNPCIds = new Set(
