@@ -219,7 +219,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               error={regenError}
               originalPrompt={message.generation_context?.prompt || null}
             />
-            {message.content && message.content.trim() && (
+            {message.content && typeof message.content === 'string' && message.content.trim() && (
               message.is_forwarded ? (
                 <div className="px-4 py-2.5">
                   <div className="flex items-center gap-1 mb-1">
