@@ -41,13 +41,11 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // PHASE 3: Dual-compatibility read logic
-  // Accept records that match either owner_email OR created_by (legacy fallback)
-  // Always exclude protected_active to ensure no bleeding into active character lists
+  // Strict ownership isolation: only show NPCs where owner_email matches current user
+  // NO fallback to created_by — that causes data bleed between users
   const npcCharacters = rawNpcCharacters.filter(c => {
-    if (c.protected_active) return false; // Never show protected active characters in NPC list
-    // Accept if owner_email matches (new field) OR created_by matches (legacy fallback)
-    return c.owner_email === currentUser?.email || c.created_by === currentUser?.email;
+    if (c.protected_active) return false;
+    return c.owner_email === currentUser?.email;
   });
 
   // Close dropdown when clicking outside
