@@ -17,6 +17,7 @@ const ISSUE_LIST = [
   { id: 'simulated_interaction', label: 'Simulated interaction tool issues', description: 'Diagnose and fix connection, state, or execution failures' },
   { id: 'shift_verification', label: '🕒 Work shift verification', description: 'Check if characters on shift are correctly shown on cards, travel popups, and employee lists. Flags STALE_SCHEDULE_LOCATION_DATA if mismatched.' },
   { id: 'stale_data_scan', label: '🔄 Global stale data diagnostic', description: 'Scan all major systems (cards, popups, profile, balance, world name, relationships, appearance lock) for UI values that are out of sync with backend.' },
+  { id: 'fix_locations', label: '📍 Fix location display', description: 'Detect characters with stale, generic, or missing location data. Clears generic labels and resets resolved location fields for affected characters.' },
 ];
 
 export default function TroubleshootingPanelHome({ isOpen, onClose }) {
@@ -100,6 +101,17 @@ export default function TroubleshootingPanelHome({ isOpen, onClose }) {
         setResults({
           summary: data?.summary || 'Stale data scan complete.',
           fixed: data?.fixes_applied || data?.fixed || [],
+          issues_found: data?.issues_found || [],
+          checks: data?.checks || [],
+        });
+      } else if (selectedIssues.includes('fix_locations') && selectedIssues.length === 1) {
+        const res = await base44.functions.invoke('troubleshootLocations', {
+          selectedIssues: ['stale_location_refs', 'generic_location_labels', 'resolved_location_sync'],
+        });
+        const data = res?.data?.data || res?.data;
+        setResults({
+          summary: data?.summary || 'Location diagnostic complete.',
+          fixed: data?.fixes_applied || [],
           issues_found: data?.issues_found || [],
           checks: data?.checks || [],
         });

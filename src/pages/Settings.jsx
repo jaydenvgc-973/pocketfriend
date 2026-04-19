@@ -3,7 +3,7 @@ import { useUserSettings } from "@/hooks/useUserSettings";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search, GitMerge } from "lucide-react";
+import { ArrowLeft, Trash2, RotateCcw, BookOpen, Camera, Heart, BarChart2, User, Briefcase, LogOut, Check, MapPin, Sparkles, Church, DollarSign, Search, GitMerge, Wrench } from "lucide-react";
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 import { Switch } from "@/components/ui/switch";
@@ -24,6 +24,7 @@ import SettingsTextFields from "@/components/settings/SettingsTextFields";
 import DiagnosticReportViewer from "@/components/settings/DiagnosticReportViewer";
 import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesModal";
 import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
+import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubleshootingPanel";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -33,6 +34,7 @@ export default function Settings() {
   const [charVoiceForms, setCharVoiceForms] = useState({});
   const [savingCharIds, setSavingCharIds] = useState(new Set());
   const [showDiagnostic, setShowDiagnostic] = useState(false);
+  const [showSettingsTroubleshooting, setShowSettingsTroubleshooting] = useState(false);
   const [showSuggestedDupes, setShowSuggestedDupes] = useState(false);
   const [suggestedDupes, setSuggestedDupes] = useState([]);
 
@@ -479,6 +481,20 @@ export default function Settings() {
 
         <div className="pt-4 border-t border-border">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-4">System & Data</p>
+
+          {/* Troubleshooting panel — Location, Moments, System & Data */}
+          <button
+            onClick={() => setShowSettingsTroubleshooting(true)}
+            className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left mb-3"
+          >
+            <div className="w-9 h-9 rounded-xl bg-primary/10 flex items-center justify-center flex-shrink-0">
+              <Wrench className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-medium text-foreground">Troubleshoot — Location, Moments & System</p>
+              <p className="text-xs text-muted-foreground">Safe diagnostics for location sync, Moments page, world identity, character records, and more</p>
+            </div>
+          </button>
           
           <GenericLocationFixer />
           
@@ -727,6 +743,11 @@ export default function Settings() {
       <div className="pb-28" />
       <BottomNav />
 
+      <SettingsTroubleshootingPanel
+        isOpen={showSettingsTroubleshooting}
+        onClose={() => setShowSettingsTroubleshooting(false)}
+        user={user}
+      />
       <SuggestedDuplicatesModal 
         isOpen={showSuggestedDupes} 
         onClose={() => setShowSuggestedDupes(false)}
