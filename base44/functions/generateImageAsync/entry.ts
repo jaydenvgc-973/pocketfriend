@@ -787,7 +787,7 @@ Deno.serve(async (req) => {
           ];
 
           const labelLower = rhLabel.toLowerCase();
-          const activityLower = cleanPrompt.toLowerCase();
+          const activityLower = scenePrompt.toLowerCase();
           let matchedType = null;
 
           for (const entry of RABBIT_HOLE_TYPE_MAP) {
@@ -888,6 +888,21 @@ The environment must feel real, functional, and original.
             // ── AUTHORITATIVE PRESENCE GATE ───────────────────────────────────────
             // Determine the character's TRUE live presence state BEFORE resolving any location.
             // This prevents stale work/venue context from bleeding into home/sleep images.
+            //
+            // SCENE TRUTH RULE (enforced here and via scenePrompt above):
+            // ─────────────────────────────────────────────────────────────
+            // The character's current location is determined ONLY by their stored state.
+            // Dialogue mentions, future plans, conversation topics, and past places
+            // mentioned in the message text CANNOT override the live presence state.
+            //
+            // Examples of what MUST NOT relocate the scene:
+            //   "I have to go to the restaurant later"  → restaurant = future, NOT current
+            //   "I was at the bar earlier"              → bar = past,   NOT current
+            //   "I need to stop by the hospital"        → hospital = intent, NOT current
+            //   "I'm thinking about the club"           → club = topic, NOT current
+            //
+            // Only a real movement event, travel action, or schedule transition that
+            // has been committed to the character's state can change the image location.
             const livePresence = charRecord?.resolved_presence_status || 'home';
             const isHome = ['home', 'sleeping', 'napping'].includes(livePresence);
             const isAtWork = livePresence === 'at_work';
