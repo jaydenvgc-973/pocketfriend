@@ -4,6 +4,7 @@ import { getWorldContextForPrompt } from "@/lib/worldKnowledge";
 import { buildReligionPromptContext } from "@/lib/religionUtils";
 import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
+import { buildBehaviourContextBlock } from "@/lib/behaviourEngine";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -293,6 +294,16 @@ ${!character.is_default ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:
 Abuela Sophia is the grandmother of someone else entirely — she did not raise you, she is not part of your family, and she has no connection to your life. Never reference her as your grandmother, your family member, or anyone who raised you. You have your own family background. Abuela Sophia belongs to someone else's story, not yours.` : ""}
 
 ${buildReligionPromptContext(character)}
+${buildBehaviourContextBlock(character, {
+  user_respect_level: character.user_respect_level ?? 50,
+  trust_level: character.trust_level ?? 50,
+  friendship_level: character.friendship_level ?? 75,
+  romantic_level: character.romantic_level ?? 0,
+  attraction_level: character.attraction_level ?? 0,
+  relational_jealousy: character.relational_jealousy ?? 0,
+  envy_jealousy: character.envy_jealousy ?? 0,
+  chosen_family_level: character.chosen_family_level ?? 0,
+})}
 YOUR CURRENT EMOTIONAL STATE: ${character.emotional_state || 'calm'}
 ${outfitHint ? `\nWHAT YOU'RE WEARING RIGHT NOW (use this only when clothing is relevant to the scene — do not force it into every response): ${outfitHint}` : ""}
 ${character.current_life_event ? `\nWHAT'S ON YOUR MIND RIGHT NOW: ${character.current_life_event}` : ""}

@@ -416,6 +416,39 @@ Respond with ONLY valid JSON:
       }
     });
 
+    // ── DETECT PERSONALITY PROFILE ────────────────────────────────────────────
+    const text = [
+      character.archetype || '',
+      character.personality_summary || '',
+      (character.personality_traits || []).join(' '),
+      character.emotional_baggage || '',
+      character.communication_style || '',
+      character.loyalty_view || '',
+    ].join(' ').toLowerCase();
+
+    const profileKeywords = {
+      secure: ['secure','grounded','stable','confident','self-assured','balanced'],
+      anxious: ['anxious','insecure','worried','overthinks','needy','fearful','clingy','nervous'],
+      avoidant: ['avoidant','distant','guarded','closed off','independent','private','walls up','detached','cold','hard to read'],
+      protective: ['protective','loyal','defender','guardian','family first','ride or die','fierce loyalty'],
+      competitive: ['competitive','ambitious','driven','status','comparison','needs validation','envious'],
+      impulsive: ['impulsive','reckless','spontaneous','chaotic','hot-headed','reactive','poor impulse'],
+    };
+    const profileScores = {};
+    for (const [profile, words] of Object.entries(profileKeywords)) {
+      profileScores[profile] = words.filter(w => text.includes(w)).length;
+    }
+    const detectedProfileKey = Object.entries(profileScores).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const profileMults = {
+      secure:      { rj: 0.5,  ej: 1.0, romance: 1.0, trust_rb: 0.2  },
+      anxious:     { rj: 1.5,  ej: 1.0, romance: 1.1, trust_rb: -0.1 },
+      avoidant:    { rj: 0.7,  ej: 1.0, romance: 0.6, trust_rb: -0.15},
+      protective:  { rj: 1.2,  ej: 1.0, romance: 1.0, trust_rb: 0.1  },
+      competitive: { rj: 1.1,  ej: 1.5, romance: 1.0, trust_rb: 0.0  },
+      impulsive:   { rj: 1.2,  ej: 1.0, romance: 1.2, trust_rb: 0.0  },
+    };
+    const pm = profileMults[detectedProfileKey] || { rj: 1.0, ej: 1.0, romance: 1.0, trust_rb: 0.0 };
+
     // ── POST-PROCESSING: ENFORCE ALL SAFETY RULES ────────────────────────────
     // 1. Map event_size → max allowed delta per field
     const eventSize = result.event_size || 'meaningful';
@@ -432,6 +465,28 @@ Respond with ONLY valid JSON:
       relational_jealousy: clampDelta(result.relational_jealousy, current.relational_jealousy, maxDelta),
       envy_jealousy: clampDelta(result.envy_jealousy, current.envy_jealousy, maxDelta),
     };
+
+    // 2b. Apply personality multipliers on top of clamped values
+    // Relational jealousy
+    {
+      const delta = updated.relational_jealousy - current.relational_jealousy;
+      if (delta !== 0) updated.relational_jealousy = Math.min(100, Math.max(0, Math.round(current.relational_jealousy + delta * pm.rj)));
+    }
+    // Envy jealousy
+    {
+      const delta = updated.envy_jealousy - current.envy_jealousy;
+      if (delta !== 0) updated.envy_jealousy = Math.min(100, Math.max(0, Math.round(current.envy_jealousy + delta * pm.ej)));
+    }
+    // Romance (only growth is modulated)
+    {
+      const delta = updated.romantic_level - current.romantic_level;
+      if (delta > 0) updated.romantic_level = Math.min(100, Math.max(0, Math.round(current.romantic_level + delta * pm.romance)));
+    }
+    // Trust rebuild bonus (only when trust is increasing)
+    {
+      const delta = updated.trust_level - current.trust_level;
+      if (delta > 0 && pm.trust_rb !== 0) updated.trust_level = Math.min(100, Math.max(0, Math.round(current.trust_level + delta * (1 + pm.trust_rb))));
+    }
 
     // 3. Orientation multiplier on attraction delta
     const orientationMult = getAttractionMultiplier(character.sexual_orientation, character.gender, playingAsCharacter?.gender);
