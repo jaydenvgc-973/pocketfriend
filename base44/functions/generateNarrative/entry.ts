@@ -319,6 +319,36 @@ NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do no
 
     const overusedWords = extractDistinctiveWords([...recentNarratives, ...recentCharMsgs]);
 
+    // ── HOME ACTIVITY REPETITION DETECTOR ─────────────────────────────────────
+    // Scan recent narratives for overused home activity anchor phrases
+    const HOME_ACTIVITY_ANCHORS = [
+      { term: 'coffee', label: 'coffee/making coffee' },
+      { term: 'window', label: 'looking out the window' },
+      { term: 'stares out', label: 'staring outside' },
+      { term: 'gazes out', label: 'gazing outside' },
+      { term: 'looks out', label: 'looking outside' },
+      { term: 'cup of', label: 'cup of something' },
+      { term: 'mug', label: 'mug/cup' },
+    ];
+    const recentNarrativeText = recentNarratives.join(' ').toLowerCase();
+    const overusedHomeActions = HOME_ACTIVITY_ANCHORS
+      .filter(({ term }) => {
+        const matches = (recentNarrativeText.match(new RegExp(term, 'g')) || []).length;
+        return matches >= 2;
+      })
+      .map(({ label }) => label);
+
+    const homeActivityGuardBlock = overusedHomeActions.length > 0 ? `
+════════════════════════════════════
+HOME ACTIVITY OVERUSE DETECTED — MANDATORY ROTATION
+════════════════════════════════════
+The following home activities have appeared too frequently in recent narratives. You MUST NOT use them in this scene:
+${overusedHomeActions.map(a => `  ✗ "${a}"`).join('\n')}
+
+Choose a DIFFERENT home activity from the expanded activity pool above.
+Repeating a blocked activity is a generation failure — regenerate with an alternative.
+════════════════════════════════════` : '';
+
     const repetitionGuardBlock = overusedWords.length > 0
       ? `
 ════════════════════════════════════
@@ -602,12 +632,99 @@ Behavior should reflect social assessment, calibrated engagement, and selective 
 CLUB / NIGHTLIFE:
 Behavior should reflect immersion in environment, responsive movement, and shifting between participation and observation. Characters move with the crowd or step back from it depending on what the moment calls for.
 
+HOME / APARTMENT — EXPANDED ACTIVITY SYSTEM:
+When ${characterName} is home and AWAKE, the narrative MUST draw from a rich, context-driven activity pool. Do NOT default to coffee or window-looking unless the context specifically warrants it AND it has not appeared in recent narratives.
+
+HOME IS AN ACTIVE SPACE. The character interacts with it — they are not just standing near a window.
+
+ACTIVITY SELECTION RULES (evaluate in this order before choosing an action):
+1. What time is it? → Morning = getting ready, eating, cleaning up. Afternoon = productivity, errands at home, relaxing. Evening = winding down, cooking, TV, socializing. Late night = low-energy, quiet activities.
+2. What are their needs? → Hungry = cooking/eating/ordering food. Low hygiene = showering/grooming. Low comfort = tidying/changing clothes/resting. Low mental = entertainment, calling someone, scrolling.
+3. What is their personality? → Disciplined = cleaning, organizing, planning. Social = calling people, hosting. Low-energy = leftovers, TV, scrolling. Ambitious = job browsing, planning. Image-conscious = grooming, getting dressed up.
+4. What have recent narratives described? → Do NOT repeat coffee, window-gazing, or any single activity used in the last 3–5 narratives.
+5. Are there unfinished tasks or plans? → Continue them. Do not reset.
+
+VALID HOME ACTIVITIES (rotate from this pool — never repeat the same one twice in close succession):
+
+KITCHEN / FOOD:
+  • preparing a meal from scratch
+  • reheating leftovers
+  • eating at the table or on the couch
+  • ordering food and waiting for delivery
+  • unpacking groceries and putting them away
+  • making a snack
+  • pouring a drink (water, juice, soda — not always coffee)
+  • washing dishes after eating
+  • putting dishes away
+  • wiping down the counters
+
+CLEANING / MAINTENANCE:
+  • washing clothes / starting the washer
+  • moving clothes to the dryer
+  • folding laundry
+  • ironing an outfit
+  • making the bed
+  • tidying a room
+  • organizing a shelf, drawer, or closet
+  • cleaning the bathroom
+  • vacuuming or sweeping
+  • taking out trash
+
+PERSONAL CARE / WELLNESS:
+  • showering or getting out of the shower
+  • grooming (hair, skin, nails)
+  • getting dressed or picking out an outfit
+  • freshening up before going out
+  • doing a home workout or stretching
+  • winding down with low effort (lying on the couch, not sleeping)
+
+ENTERTAINMENT / RELAXATION:
+  • watching TV or a show
+  • watching a movie
+  • playing video games
+  • reading a book or scrolling an article
+  • listening to music while doing something else
+  • scrolling social media
+  • going through old photos
+  • posting something online
+
+PRODUCTIVITY / LIFE MANAGEMENT:
+  • planning out their day or week
+  • checking messages or emails
+  • making a phone call
+  • looking for work or browsing opportunities
+  • updating a resume or application
+  • managing bills or paperwork
+  • following through on something they said they'd do
+
+SOCIAL / LIFESTYLE:
+  • having someone over
+  • getting the place ready for company
+  • talking with someone who came by
+  • casual home hangout
+
+HARD RULE — OVERUSE BLOCK:
+  ✗ Do NOT use coffee or tea as the primary activity if it has appeared in any of the 5 most recent narratives.
+  ✗ Do NOT describe looking out a window as a standalone activity.
+  ✗ Do NOT use vague passive phrasing like "standing in the kitchen" or "moving through the apartment" without a specific action.
+  ✗ Do NOT default to generic idle behavior when a richer option is available.
+
+If coffee or tea has appeared recently: choose something from the KITCHEN, CLEANING, ENTERTAINMENT, or PRODUCTIVITY pools instead.
+
+HOME SPACE AWARENESS — match activity to room context:
+  Kitchen context → cooking, eating, cleaning up, drinks
+  Bathroom context → showering, grooming, cleaning
+  Bedroom context → getting dressed, reading, winding down, organizing
+  Living room context → TV, gaming, scrolling, hosting, relaxing
+  Laundry area → washing, drying, folding
+
 ════════════════════════════════════
 
 FINAL RULE: If ${characterName} is ASLEEP or the sleep window is active, the narrative MUST reflect rest or sleep at their confirmed location. No active behavior, errands, social engagement, or movement is allowed during a confirmed sleep state.
 
 Do not refer to anyone as "the user" — use their name (${userLabel}) or natural pronouns.
 ${sceneReactionBlock}
+${homeActivityGuardBlock}
 ${repetitionGuardBlock}
 ${antiRepetitionStyleBlock}
 
