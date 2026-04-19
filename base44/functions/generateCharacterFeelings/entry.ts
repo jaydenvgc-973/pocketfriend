@@ -145,7 +145,7 @@ YOUR FEELINGS TOWARD ${nickname.toUpperCase()} (CANONICAL — your text MUST ref
 - Trust: ${trust}/100 ${trust >= 70 ? '← HIGH — reflect feeling safe, believing them, emotional security' : trust <= 25 ? '← LOW — reflect suspicion, guardedness, fear of betrayal' : '← MODERATE'}
 - Friendship: ${friendship}/100
 - Romantic: ${romantic}/100
-- Attraction: ${attraction}/100
+- Social Pull: ${attraction}/100
 - Chosen family: ${chosenFamily}/100
 ${relationalJealousy > 30 ? `- Relational Jealousy: ${relationalJealousy}/100 ← Notable — you fear losing their attention/closeness to someone else` : ''}
 ${envyJealousy > 30 ? `- Envy: ${envyJealousy}/100 ← Notable — you envy something about their life, status, or what they have` : ''}

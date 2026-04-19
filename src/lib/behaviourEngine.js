@@ -347,7 +347,7 @@ OBSERVABLE BEHAVIORS (what you DO):
   Respect (${bars.user_respect_level ?? 50}/100): ${r.behavior}
   Trust (${bars.trust_level ?? 50}/100): ${t.behavior}
   Romance (${bars.romantic_level ?? 0}/100): ${ro.behavior}
-  Attraction (${bars.attraction_level ?? 0}/100): ${at.behavior}
+  Social Pull (${bars.attraction_level ?? 0}/100): ${at.behavior}
   Relational Jealousy (${bars.relational_jealousy ?? 0}/100): ${rj.behavior}
   Envy (${bars.envy_jealousy ?? 0}/100): ${ej.behavior}
   Chosen Family (${bars.chosen_family_level ?? 0}/100): ${cf}

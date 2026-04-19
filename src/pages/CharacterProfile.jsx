@@ -375,11 +375,9 @@ export default function CharacterProfile() {
               { label: "Trust", value: character.trust_level ?? 50 },
               { label: "Friendship", value: character.friendship_level ?? 75 },
               { label: "Romantic", value: character.romantic_level ?? 0 },
-              { label: "Attraction", value: character.attraction_level ?? 0 },
+              { label: "Social Pull", value: character.attraction_level ?? 0 },
               { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
-              ...(((character.relational_jealousy ?? 0) > 5 || (character.envy_jealousy ?? 0) > 5) ? [
-                { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
-              ] : [])
+              { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
             ].map(({ label, value, sublabel }) => (
               <div key={label}>
                 <div className="flex justify-between mb-1">
@@ -822,7 +820,7 @@ export default function CharacterProfile() {
                           { label: "Respect", value: rel.user_respect_level ?? 50 },
                           { label: "Friendship", value: rel.friendship_level ?? 75 },
                           { label: "Romantic", value: rel.romantic_level ?? 0 },
-                          { label: "Attraction", value: rel.attraction_level ?? 0 },
+                          { label: "Social Pull", value: rel.attraction_level ?? 0 },
                           { label: "Chosen Family", value: rel.chosen_family_level ?? 0 }
                         ].map(({ label, value }) => (
                           <div key={label}>

@@ -13,10 +13,12 @@ import NPCRelationshipEditor from "@/components/character/NPCRelationshipEditor"
 
 const LEVELS = [
   { key: "user_respect_level", label: "Respect", color: "text-blue-400" },
+  { key: "trust_level", label: "Trust", color: "text-sky-400" },
   { key: "friendship_level", label: "Friendship", color: "text-emerald-400" },
   { key: "romantic_level", label: "Romantic", color: "text-pink-400" },
-  { key: "attraction_level", label: "Attraction", color: "text-orange-400" },
+  { key: "attraction_level", label: "Social Pull", color: "text-orange-400" },
   { key: "chosen_family_level", label: "Chosen Family", color: "text-purple-400" },
+  { key: "relational_jealousy", label: "Jealousy", color: "text-amber-400" },
 ];
 
 export default function EditCharacterRelationships() {
@@ -54,10 +56,12 @@ export default function EditCharacterRelationships() {
     setSelectedChar(char);
     setLevels({
       user_respect_level: char.user_respect_level ?? 50,
+      trust_level: char.trust_level ?? 50,
       friendship_level: char.friendship_level ?? 75,
       romantic_level: char.romantic_level ?? 0,
       attraction_level: char.attraction_level ?? 0,
       chosen_family_level: char.chosen_family_level ?? 0,
+      relational_jealousy: char.relational_jealousy ?? 0,
     });
     setForm({
       voice_enabled: char.voice_enabled || false,
