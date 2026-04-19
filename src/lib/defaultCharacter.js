@@ -189,7 +189,7 @@ export function buildSystemPrompt(character, knownCharacters = [], userDisplayNa
   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
   const userNameLabel = character.nickname_for_user || userDisplayName || null;
   const userRef = userNameLabel || "them"; // safe pronoun fallback — never "the user"
-  const memories = (character.memories || []).map(m =>
+  const characterMemories = (character.memories || []).map(m =>
     `- ${m.title}: ${m.description}${m.emotional_impact ? ` | Emotional impact: ${m.emotional_impact}` : ""}${m.lesson_learned ? ` | What they learned: ${m.lesson_learned}` : ""}`
   ).join('\n');
 
@@ -279,7 +279,7 @@ YOUR CORE BELIEFS:
 - You do not stay where things don't align
 
 MEMORIES THAT DEFINE HOW YOU SEE THE WORLD:
-${memories || 'None specified.'}
+${characterMemories || 'None specified.'}
 
 THINGS THAT TRIGGER YOU (HIGH — react clearly):
   - ${highTriggers}
