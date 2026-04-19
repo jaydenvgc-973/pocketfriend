@@ -1,16 +1,156 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── UNIVERSAL SCALE BANDS ─────────────────────────────────────────────────────
+// Range → Behavior label (used in LLM context to prevent semantic drift)
+const SCALE_BANDS = {
+  respect: [
+    [0,10,'Contempt/dismissive'],
+    [11,25,'Belittling/not taken seriously'],
+    [26,40,'Doubtful/low regard'],
+    [41,60,'Neutral/situational respect'],
+    [61,75,'Values opinions/listens'],
+    [76,90,'Admiration/strong regard'],
+    [91,100,'Deep admiration/looks up to them'],
+  ],
+  trust: [
+    [0,10,'Expects betrayal'],
+    [11,25,'Highly suspicious'],
+    [26,40,'Guarded/cautious'],
+    [41,60,'Conditional trust'],
+    [61,75,'Comfortable opening up'],
+    [76,90,'Strong emotional safety'],
+    [91,100,'Complete trust/full vulnerability'],
+  ],
+  friendship: [
+    [0,10,'Avoids interaction'],
+    [11,25,'Dislikes presence'],
+    [26,40,'Distant/minimal bonding'],
+    [41,60,'Casual friendliness'],
+    [61,75,'Enjoys time together'],
+    [76,90,'Close friend'],
+    [91,100,'Best friend level'],
+  ],
+  romance: [
+    [0,10,'No romantic feeling'],
+    [11,25,'Disinterest'],
+    [26,40,'Slight curiosity'],
+    [41,60,'Growing feelings'],
+    [61,75,'Emotional attachment'],
+    [76,90,'Strong romantic bond'],
+    [91,100,'Deep love/defining attachment'],
+  ],
+  attraction: [
+    [0,10,'No attraction'],
+    [11,25,'Minimal interest'],
+    [26,40,'Mild attraction'],
+    [41,60,'Noticeable pull'],
+    [61,75,'Strong attraction'],
+    [76,90,'Intense desire'],
+    [91,100,'Magnetic/overwhelming'],
+  ],
+  relational_jealousy: [
+    [0,10,'Completely secure'],
+    [11,25,'Rare concern'],
+    [26,40,'Mild sensitivity'],
+    [41,60,'Notices attention shifts'],
+    [61,75,'Feels threatened sometimes'],
+    [76,90,'Reactive/protective'],
+    [91,100,'Possessive/highly insecure'],
+  ],
+  envy_jealousy: [
+    [0,10,'No comparison'],
+    [11,25,'Slight awareness'],
+    [26,40,'Occasional comparison'],
+    [41,60,'Wants similar things'],
+    [61,75,'Frustration/desire'],
+    [76,90,'Resentment/fixation'],
+    [91,100,'Obsessive comparison'],
+  ],
+  chosen_family: [
+    [0,10,'No bond'],
+    [11,25,'Acquaintance'],
+    [26,40,'Light connection'],
+    [41,60,'Familiar'],
+    [61,75,'Strong bond'],
+    [76,90,'Deep loyalty'],
+    [91,100,'Permanent inner circle'],
+  ],
+};
+
+function getBandLabel(dimension, value) {
+  const bands = SCALE_BANDS[dimension];
+  if (!bands) return '';
+  const band = bands.find(([lo, hi]) => value >= lo && value <= hi);
+  return band ? band[2] : '';
+}
+
+// ── CHANGE MAGNITUDE LIMITS PER EVENT SIZE ───────────────────────────────────
+// Small: ±1–3 | Meaningful: ±4–8 | Major: ±9–15 | Defining: ±16–25
+const MAX_SINGLE_TURN_DELTA = 25; // hard cap — no 0→100 jumps ever
+
+function clampDelta(proposed, current, max = MAX_SINGLE_TURN_DELTA) {
+  const delta = proposed - current;
+  const clamped = Math.sign(delta) * Math.min(Math.abs(delta), max);
+  return Math.min(100, Math.max(0, Math.round(current + clamped)));
+}
+
+// ── TRUST SLOW-REBUILD GATE ───────────────────────────────────────────────────
+// After betrayal (trust < 30), recovery is capped at +3/turn until rebuilt
+function clampTrustRebuild(proposed, current) {
+  const delta = proposed - current;
+  if (current < 30 && delta > 3) {
+    return Math.min(100, Math.round(current + 3));
+  }
+  return clampDelta(proposed, current);
+}
+
+// ── TRUST → RELATIONAL JEALOUSY MODULATION ───────────────────────────────────
+// Higher trust dampens insecurity-driven relational jealousy.
+// Only applies meaningfully when romantically attached.
+function modulateRelationalJealousy(rawRJ, trust, romantic) {
+  if (romantic < 20) return rawRJ;
+  // trust=100 → -20% | trust=50 → 0% | trust=0 → +20%
+  const mod = (50 - trust) / 250;
+  return Math.min(100, Math.max(0, Math.round(rawRJ * (1 + mod))));
+}
+
+// ── INFIDELITY RISK (derived, not stored) ────────────────────────────────────
+// Score = (100-respect)*0.35 + (100-trust)*0.30 + externalAttraction*0.20 + resentment*0.15
+function computeInfidelityRisk(respect, trust, externalAttraction = 0, resentment = 0) {
+  const score = (100 - respect) * 0.35 + (100 - trust) * 0.30 + externalAttraction * 0.20 + resentment * 0.15;
+  if (score <= 25) return 'very_low';
+  if (score <= 50) return 'low';
+  if (score <= 70) return 'moderate';
+  if (score <= 85) return 'high';
+  return 'very_high';
+}
+
+// ── DECAY SIMULATION (per cycle, called when relevant) ───────────────────────
+// Trust: -1/cycle | Romance: -1 to -2 | Friendship: -1 | Jealousy: slow decay | Respect: stable
+function applyDecay(current, hoursElapsed) {
+  if (!hoursElapsed || hoursElapsed < 24) return current;
+  const days = hoursElapsed / 24;
+  return {
+    trust_level: Math.max(0, Math.round(current.trust_level - days * 1)),
+    romance: Math.max(0, Math.round(current.romantic_level - days * 1.5)),
+    friendship: Math.max(0, Math.round(current.friendship_level - days * 1)),
+    relational_jealousy: Math.max(0, Math.round(current.relational_jealousy - days * 0.5)),
+    envy_jealousy: Math.max(0, Math.round(current.envy_jealousy - days * 0.5)),
+  };
+  // respect is NOT decayed — it's stable unless actively damaged
+}
+
 // ── MILESTONES ────────────────────────────────────────────────────────────────
 const MILESTONES = [
-  { field: 'friendship_level', threshold: 25, label: 'budding friendship' },
-  { field: 'friendship_level', threshold: 50, label: 'genuine friendship' },
-  { field: 'friendship_level', threshold: 75, label: 'deep friendship' },
-  { field: 'romantic_level', threshold: 25, label: 'romantic spark' },
-  { field: 'romantic_level', threshold: 50, label: 'romantic feelings' },
-  { field: 'romantic_level', threshold: 75, label: 'deep romantic bond' },
+  { field: 'friendship_level', threshold: 25, label: 'a budding friendship' },
+  { field: 'friendship_level', threshold: 50, label: 'a genuine friendship' },
+  { field: 'friendship_level', threshold: 75, label: 'a deep friendship' },
+  { field: 'romantic_level', threshold: 25, label: 'a romantic spark' },
+  { field: 'romantic_level', threshold: 50, label: 'real romantic feelings' },
+  { field: 'romantic_level', threshold: 75, label: 'a deep romantic bond' },
   { field: 'chosen_family_level', threshold: 25, label: 'feeling like family' },
-  { field: 'chosen_family_level', threshold: 50, label: 'chosen family bond' },
-  { field: 'chosen_family_level', threshold: 75, label: 'unbreakable family bond' },
+  { field: 'chosen_family_level', threshold: 50, label: 'a chosen family bond' },
+  { field: 'chosen_family_level', threshold: 75, label: 'an unbreakable family bond' },
   { field: 'attraction_level', threshold: 30, label: 'noticeable attraction' },
   { field: 'attraction_level', threshold: 60, label: 'strong attraction' },
   { field: 'trust_level', threshold: 50, label: 'genuine trust' },
@@ -18,58 +158,36 @@ const MILESTONES = [
 ];
 
 // ── ATTRACTION ORIENTATION MULTIPLIER ────────────────────────────────────────
-function getAttractionSpeedMultiplier(characterOrientation, characterGender, otherGender) {
-  const orientation = (characterOrientation || 'not specified').toLowerCase();
-  const charGender = (characterGender || '').toLowerCase();
-  const targetGender = (otherGender || 'unknown').toLowerCase();
-  const isSameGender = charGender && targetGender && charGender === targetGender;
-  const isOppositeGender = (charGender === 'male' && targetGender === 'female') || (charGender === 'female' && targetGender === 'male');
-  const isNonBinary = targetGender === 'non-binary' || targetGender === 'other' || targetGender === 'non_binary';
-  if (orientation === 'straight') { if (isNonBinary) return 0.15; if (isSameGender) return 0.1; return 1.0; }
-  if (orientation === 'gay' || orientation === 'gay (dl)') { if (isOppositeGender) return 0.1; if (isNonBinary) return 0.5; return 1.0; }
-  if (orientation === 'lesbian') { if (isOppositeGender) return 0.1; return 1.0; }
+function getAttractionMultiplier(orientation, charGender, targetGender) {
+  const o = (orientation || '').toLowerCase();
+  const cg = (charGender || '').toLowerCase();
+  const tg = (targetGender || 'unknown').toLowerCase();
+  const same = cg && tg && cg === tg;
+  const opposite = (cg === 'male' && tg === 'female') || (cg === 'female' && tg === 'male');
+  const nb = tg === 'non-binary' || tg === 'other';
+  if (o === 'straight') { if (nb) return 0.15; if (same) return 0.1; return 1.0; }
+  if (o === 'gay' || o === 'gay (dl)') { if (opposite) return 0.1; if (nb) return 0.5; return 1.0; }
+  if (o === 'lesbian') { if (opposite) return 0.1; return 1.0; }
   return 1.0;
 }
 
 // ── ORIENTATION SHIFT ─────────────────────────────────────────────────────────
-function checkOrientationShift(currentOrientation, currentAttractionLevel, characterGender, targetGender) {
-  const orientation = (currentOrientation || '').toLowerCase();
-  const charGender = (characterGender || '').toLowerCase();
-  const tgtGender = (targetGender || '').toLowerCase();
-  if (currentAttractionLevel < 30) return null;
-  const isSameGender = charGender && tgtGender && charGender === tgtGender;
-  const isNonBinary = tgtGender === 'non-binary' || tgtGender === 'other' || tgtGender === 'non_binary';
-  if (orientation === 'straight') {
-    if (isNonBinary) return 'pansexual';
-    if (isSameGender) { const isDLCandidate = charGender === 'male' && currentAttractionLevel >= 50; if (isDLCandidate && Math.random() > 0.6) return 'gay (dl)'; return Math.random() > 0.5 ? 'bisexual' : 'prefer not to say'; }
+function checkOrientationShift(orientation, attractionLevel, charGender, targetGender) {
+  const o = (orientation || '').toLowerCase();
+  const cg = (charGender || '').toLowerCase();
+  const tg = (targetGender || '').toLowerCase();
+  if (attractionLevel < 30) return null;
+  const same = cg && tg && cg === tg;
+  const nb = tg === 'non-binary' || tg === 'other';
+  const opposite = (cg === 'male' && tg === 'female') || (cg === 'female' && tg === 'male');
+  if (o === 'straight') {
+    if (nb) return 'pansexual';
+    if (same) return (cg === 'male' && attractionLevel >= 50 && Math.random() > 0.6) ? 'gay (dl)' : (Math.random() > 0.5 ? 'bisexual' : 'prefer not to say');
   }
-  if (orientation === 'gay' || orientation === 'gay (dl)' || orientation === 'lesbian') {
-    const isOppositeGender = (charGender === 'male' && tgtGender === 'female') || (charGender === 'female' && tgtGender === 'male');
-    if (isOppositeGender) return 'bisexual';
+  if (o === 'gay' || o === 'gay (dl)' || o === 'lesbian') {
+    if (opposite) return 'bisexual';
   }
   return null;
-}
-
-// ── TRUST → RELATIONAL JEALOUSY MODULATION ───────────────────────────────────
-// High trust dampens insecurity-driven relational jealousy.
-// Low trust amplifies it. Does NOT affect envy jealousy.
-function modulateRelationalJealousy(rawRelationalJealousy, trustLevel, romanticLevel) {
-  // Only applies meaningfully in romantic/attached dynamics
-  const isRomantic = romanticLevel >= 20;
-  if (!isRomantic) return rawRelationalJealousy;
-  // Trust modifier: 0–100 trust maps to +20% to -20% jealousy intensity
-  const trustMod = (50 - trustLevel) / 250; // -0.2 at trust=100, +0.2 at trust=0
-  const modulated = rawRelationalJealousy * (1 + trustMod);
-  return Math.min(100, Math.max(0, Math.round(modulated)));
-}
-
-// ── DERIVED INFIDELITY RISK (not stored, returned for LLM context only) ──────
-function computeInfidelityRisk(respect, trust, romantic, commitment, resentment) {
-  if (respect >= 70 && trust >= 70) return 'low';
-  const riskScore = (100 - respect) * 0.35 + (100 - trust) * 0.30 + resentment * 0.20 + (100 - commitment) * 0.15;
-  if (riskScore > 70) return 'elevated';
-  if (riskScore > 45) return 'moderate';
-  return 'low';
 }
 
 Deno.serve(async (req) => {
@@ -115,6 +233,18 @@ Deno.serve(async (req) => {
       envy_jealousy: character.envy_jealousy ?? 0,
     };
 
+    // ── BUILD BAND LABELS for LLM context ────────────────────────────────────
+    const bandContext = `
+CURRENT STATE WITH SEMANTIC MEANING (use this to prevent contradictions):
+- Respect: ${current.user_respect_level}/100 → "${getBandLabel('respect', current.user_respect_level)}"
+- Trust: ${current.trust_level}/100 → "${getBandLabel('trust', current.trust_level)}"
+- Friendship: ${current.friendship_level}/100 → "${getBandLabel('friendship', current.friendship_level)}"
+- Romantic: ${current.romantic_level}/100 → "${getBandLabel('romance', current.romantic_level)}"
+- Attraction: ${current.attraction_level}/100 → "${getBandLabel('attraction', current.attraction_level)}"
+- Relational Jealousy: ${current.relational_jealousy}/100 → "${getBandLabel('relational_jealousy', current.relational_jealousy)}"
+- Envy Jealousy: ${current.envy_jealousy}/100 → "${getBandLabel('envy_jealousy', current.envy_jealousy)}"
+- Chosen Family: ${current.chosen_family_level}/100 → "${getBandLabel('chosen_family', current.chosen_family_level)}"`;
+
     const senderLabel = playingAsCharacter ? playingAsCharacter.name : 'User';
     const conversationSummary = (recentMessages || [])
       .slice(-10)
@@ -123,53 +253,74 @@ Deno.serve(async (req) => {
 
     let interactionSection = '';
     if (emojiReaction) {
-      const reactorLabel = reactedMessageSenderType === 'user' ? (playingAsCharacter ? playingAsCharacter.name : 'the User') : `${character.name} (the character)`;
       interactionSection = `
 EMOJI REACTION EVENT:
-The user reacted with "${emojiReaction}" to a message sent by ${reactorLabel}.
-The reacted-to message content was: "${reactedMessageContent || '(image or unknown content)'}"
+Reactor reacted with "${emojiReaction}" to: "${reactedMessageContent || '(image)'}" (sent by ${reactedMessageSenderType === 'user' ? senderLabel : character.name})
 
-EMOJI REACTION RULES:
-- ❤️: romantic (+2 to +4) if romantic_level > 40, else platonic warmth (+2 to +3 friendship). Trust slightly up (+1).
-- 😂: friendship (+1 to +3), attraction (+1 to +2) if character values humor.
-- 😮: respect (+1 to +3) if message was impressive.
-- 😢: friendship (+2 to +4) via empathy. Trust slightly up (+1 to +2) — opening up signals safety.
-- 😡: friendship (-2 to -4), respect (-1 to -3) unless protectiveness context.
-- 👍: friendship (+1 to +2) or respect (+1).
-- If emoji is on a photo the character sent of themselves, DOUBLE attraction/romantic impact.`;
+EMOJI CHANGE RULES (small interactions — ±1 to ±3 max each):
+- ❤️: +Trust 1–3, +Romance 2–4 if romance>40 else +Friendship 2–3
+- 😂: +Friendship 1–3, +Attraction 1–2 if character values humor
+- 😮: +Respect 1–3 if message was impressive/competent
+- 😢: +Friendship 2–4 (empathy), +Trust 1–2 (opening up)
+- 😡: -Friendship 2–4, -Respect 1–3
+- 👍: +Friendship 1–2 or +Respect 1`;
     } else {
       interactionSection = `
 LATEST USER MESSAGE: "${userMessage}"
 CHARACTER'S REPLY: "${characterReply || ''}"
 
+CHANGE MAGNITUDE RULES (strict — enforced by post-processing):
+- Small interaction: ±1 to ±3
+- Meaningful interaction: ±4 to ±8
+- Major event (betrayal, deep confession, defense): ±9 to ±15
+- Defining event (only rare, life-altering): ±16 to ±25
+- HARD CAP: No single field may change more than ±25 in one turn. No 0→100 in one event.
+
+TRIGGER TABLE (approximate values per event type):
+POSITIVE:
+  Emotional support → +Trust 5–10, +Friendship 4–8
+  Deep conversation → +Trust 6–12, +Respect 3–6
+  Consistent behavior → +Trust 2–5
+  Showing competence → +Respect 4–10
+  Defending them → +Respect 6–12, +Trust 5–8
+  Loyalty moment → +Trust 8–15, +Respect 5–10
+  Shared joy → +Friendship 5–10
+  Romantic moment → +Romance 6–12, +Attraction 4–8
+  Physical chemistry → +Attraction 6–12
+  Reassurance → -Relational Jealousy 5–10, +Trust 4–8
+
+NEGATIVE:
+  Lying → -Trust 10–20
+  Broken promise → -Trust 6–12
+  Disrespect → -Respect 8–18
+  Embarrassment (them) → -Respect 5–12, -Trust 3–6
+  Ignoring → -Friendship 4–8, +Relational Jealousy 3–6
+  Flirting with others → +Relational Jealousy 6–15, -Trust 4–10
+  Emotional distance → -Romance 5–10, -Trust 3–6
+  Betrayal → -Trust 15–30, -Respect 10–20 (capped at ±25)
+  Comparison trigger → +Envy Jealousy 6–12
+  Rival appears → +Relational Jealousy 8–18
+
+COMPLEX:
+  Trust ↓ → Relational Jealousy ↑ (system handles this automatically)
+  Reassurance → Trust ↑, Jealousy ↓, Romance stabilizes
+  Respect < 30 → Loyalty risk increases sharply (system derives this)
+
 NON-PHYSICAL ATTRACTION TRAIT DETECTION:
-KINDNESS: Genuine warmth, empathy, or care without being asked?
-HUMOR: Made the character laugh, showed wit, or playful banter?
-INTEGRITY: Demonstrated honesty, moral backbone, stood by values when hard?
-VULNERABILITY: Opened up emotionally, admitted something difficult?
-INTELLECTUAL GROWTH: Shared something learned, engaged meaningfully with ideas?
-RELIABILITY: Did they follow through on something, keep a promise, show consistency?
-EMOTIONAL SAFETY: Did they make the character feel safe, unjudged, supported?
-
-For attraction: only award boosts for traits this specific character would respond to based on their archetype.
-For trust: RELIABILITY and EMOTIONAL SAFETY are primary trust signals. Honesty, consistency, vulnerability met with care all build trust.
-For jealousy: scan for any mention of other people, rival attention, or comparison that might trigger relational or envy jealousy.`;
+  KINDNESS, HUMOR, INTEGRITY, VULNERABILITY, INTELLECTUAL_GROWTH, RELIABILITY, EMOTIONAL_SAFETY
+  Only boost attraction for traits this character archetype responds to.`;
     }
-
-    const WORLD_CONTEXT = `WORLD CONTEXT: The average American sleeps ~9 hours, spends ~5 hours on leisure, works 3.5–8 hours, checks their phone ~58 times/day. ~1 in 5 Americans has an STI at any given time. Religion functions as a coping mechanism under systemic stress. Youth gang involvement is driven by poverty, instability, and the pull of belonging.`;
 
     const interactingPartyDesc = playingAsCharacter
       ? `INTERACTING PARTY: ${playingAsCharacter.name} (another character — ${playingAsCharacter.age_range || ''} ${playingAsCharacter.gender || ''}, personality: ${playingAsCharacter.personality_summary || ''}, archetype: ${playingAsCharacter.archetype || ''}, orientation: ${playingAsCharacter.sexual_orientation || ''})`
       : `INTERACTING PARTY: The user (unknown gender)`;
 
-    const prompt = `You are a relationship dynamics analyzer. Analyze this interaction and update all relationship dimensions.
-
-${WORLD_CONTEXT}
+    const prompt = `You are a relationship dynamics engine. Output ONLY updated numeric values for all relationship dimensions.
 
 CHARACTER: ${character.name}
 ARCHETYPE: ${character.archetype || 'unknown'}
 PERSONALITY: ${character.personality_summary || ''}
-PERSONALITY TRAITS: ${(character.personality_traits || []).join(', ') || 'none'}
+TRAITS: ${(character.personality_traits || []).join(', ') || 'none'}
 EMOTIONAL TRIGGERS: ${(character.emotional_triggers_deep || []).join(', ') || 'none'}
 COMMUNICATION STYLE: ${character.communication_style || 'unknown'}
 EMOTIONAL BAGGAGE: ${character.emotional_baggage || 'none'}
@@ -179,89 +330,67 @@ LOYALTY VIEW: ${character.loyalty_view || 'not specified'}
 
 ${interactingPartyDesc}
 
-CURRENT CANONICAL RELATIONSHIP STATE (0-100):
-- Respect: ${current.user_respect_level} — "How much do I value who you are?"
-- Friendship: ${current.friendship_level}
-- Romantic: ${current.romantic_level}
-- Attraction: ${current.attraction_level}
-- Chosen Family: ${current.chosen_family_level}
-- Trust: ${current.trust_level} — "How safe and reliable do you feel to me?"
-- Relational Jealousy: ${current.relational_jealousy} — "I fear losing your attention/closeness to someone else"
-- Envy Jealousy: ${current.envy_jealousy} — "You have something I want / I feel compared"
+${bandContext}
 
 RECENT CONVERSATION:
 ${conversationSummary || 'No prior context.'}
 ${interactionSection}
 
 ═══════════════════════════════════
-RELATIONSHIP RULES — apply ALL of these:
+RELATIONSHIP RULES:
 ═══════════════════════════════════
 
---- RESPECT (what do I value about who you ARE?) ---
-POSITIVE (+2 to +6): Good advice, demonstrated competence, integrity, keeps promises, active listening, stands up for values.
-NEGATIVE (-3 to -8): Dismissive, rude, mocking, caught lying, careless advice, disregards character's feelings.
-Respect is NOT the same as attraction. A character can be attracted to someone they don't respect.
+RESPECT — "How much do I value who you ARE?"
+  Positive: competence, integrity, keeping promises, active listening, standing by values → +Respect
+  Negative: rudeness, mocking, lying, careless advice → -Respect
+  Respect is NOT the same as attraction. Can be attracted to someone you don't respect.
 
---- TRUST (how SAFE and RELIABLE do you feel?) ---
-POSITIVE (+2 to +6): Kept a promise, showed consistency, made character feel emotionally safe, honored vulnerability, was honest when hard.
-NEGATIVE (-4 to -10): Betrayal, lie caught, broke promise, dismissed shared vulnerability, was unreliable in a meaningful moment.
-Trust is NOT the same as respect. A character can trust someone's honesty but not admire their character.
-Trust is slow to rebuild: after a betrayal, recovery should be gradual (max +3/turn until fully repaired).
+TRUST — "How SAFE and RELIABLE do you feel?"
+  Positive: kept promise, consistency, emotional safety, honoring vulnerability, honesty when hard → +Trust
+  Negative: betrayal, caught lying, broke promise, dismissed vulnerability, unreliable → -Trust
+  Trust is slow to rebuild after betrayal (max +3/turn when current < 30).
+  Trust is NOT the same as respect.
 
---- FRIENDSHIP ---
-POSITIVE (+1 to +4): Shares personal story, warm conversation, offers support, remembers details.
-NEGATIVE (-2 to -6): Betrays trust, goes cold, consistently dismisses feelings.
-Friendship drops slowly IF respect >= 50.
+FRIENDSHIP — Positive: warm exchanges, remembers details, genuine support. Negative: betrayal, coldness.
+ROMANCE — Positive: tailored flirting, specific admiration, vulnerable moments. Negative: generic/pushy, clashes with values.
+ATTRACTION — Based on personality archetype fit (see trait detection above).
+CHOSEN FAMILY — Only increases if friendship_level >= 70.
 
---- ROMANTIC ---
-POSITIVE: Tailored flirting, specific admiration, playful vulnerability.
-NEGATIVE: Generic flirting, overtures that clash with values, pushing when character signals discomfort.
-Romantic stays stable if chosen_family_level >= 60.
+RELATIONAL JEALOUSY — "I fear losing your attention to someone else."
+  Increases: rival appears, attention shifts, exclusivity threatened, inconsistency.
+  Decreases: reassurance, loyalty shown, clarity given.
+  Modulated by trust: high trust dampens; low trust amplifies.
 
---- ATTRACTION (non-physical trait detection) ---
-Apply based on archetype: CONFIDENT/DOMINANT → boldness, WOUNDED → softness, CHAOTIC → may be pulled by rudeness, INTELLECTUAL/GUARDED → wit/depth, NURTURING → emotional openness.
-Only boost attraction for traits this specific character responds to.
+ENVY JEALOUSY — "You have something I want / comparison triggered."
+  Increases: user mentions achievements, advantages, recognition they lack.
+  Decreases: character's confidence improves, resentment resolves.
+  NOT about romantic attention — about status/comparison.
 
---- CHOSEN FAMILY ---
-Only increases if friendship_level >= 70.
-Boosted by: advice, checking in, letting character vent, deep loyalty during hard moment.
-Reduced by: breaking significant promise, disappearing after vulnerable moment.
+GRIEF GATING:
+  Only assign grief to ${character.name} for deaths they had a DIRECT relationship with.
+  For indirect sad news: show concern/empathy only, slight +Friendship boost if supportive.
+  Do NOT reduce relationship levels from indirect sad news.
 
---- RELATIONAL JEALOUSY (fear of losing their closeness to someone else) ---
-INCREASES when: user mentions spending time with others, rival appears, attention feels inconsistent, exclusivity threatened, commitment uncertain.
-DECREASES when: user gives reassurance, shows loyalty, demonstrates exclusivity, relationship clarity improves.
-MODULATED by trust: high trust dampens reactive jealousy; low trust amplifies it.
-This is NOT envy — it's attachment fear.
-
---- ENVY JEALOUSY (comparison — they have something I want) ---
-INCREASES when: user mentions achievements, advantages, recognition, beauty, money, or opportunities the character lacks; character feels overlooked or passed over.
-DECREASES when: character's own confidence improves, resentment resolves, fairness is acknowledged.
-This is NOT relational jealousy — it's not about romantic attention.
-
---- GRIEF GATING ---
-If user mentioned death/loss: only assign grief to ${character.name} if they had a DIRECT relationship with the person who died.
-Otherwise, ${character.name}'s role is supportive — concern and empathy only, NOT grief.
-DO NOT reduce relationship levels because of indirect sad news.
-DO slightly boost friendship/chosen_family (+1 to +3) if character responds supportively.
-
-Also detect:
-- EMOTIONAL MILESTONE: vulnerable confession, shared grief/joy, deeply personal revelation
-- SHARED SECRET: explicit confidential information shared
+SAFETY RULES:
+  1. No single field changes more than ±25 in one turn (will be clamped anyway).
+  2. Recent events > old events in weighting.
+  3. Jealous archetypes can amplify jealousy gains; avoidant archetypes reduce romance gains.
 
 Respond with ONLY valid JSON:
 {
-  "user_respect_level": <number 0-100>,
-  "friendship_level": <number 0-100>,
-  "romantic_level": <number 0-100>,
-  "attraction_level": <number 0-100>,
-  "chosen_family_level": <number 0-100>,
-  "trust_level": <number 0-100>,
-  "relational_jealousy": <number 0-100>,
-  "envy_jealousy": <number 0-100>,
-  "reason": "<one sentence explaining the most significant change and why>",
-  "detected_traits": ["kindness"|"humor"|"integrity"|"vulnerability"|"intellectual_growth"|"reliability"|"emotional_safety"],
-  "emotional_milestone": "<description or null>",
-  "shared_secret": "<description or null>"
+  "user_respect_level": <0-100>,
+  "friendship_level": <0-100>,
+  "romantic_level": <0-100>,
+  "attraction_level": <0-100>,
+  "chosen_family_level": <0-100>,
+  "trust_level": <0-100>,
+  "relational_jealousy": <0-100>,
+  "envy_jealousy": <0-100>,
+  "reason": "<one sentence — most significant change and why>",
+  "event_size": "small|meaningful|major|defining",
+  "detected_traits": [],
+  "emotional_milestone": null,
+  "shared_secret": null
 }`;
 
     const result = await base44.asServiceRole.integrations.Core.InvokeLLM({
@@ -278,67 +407,85 @@ Respond with ONLY valid JSON:
           relational_jealousy: { type: "number" },
           envy_jealousy: { type: "number" },
           reason: { type: "string" },
+          event_size: { type: "string" },
           detected_traits: { type: "array", items: { type: "string" } },
           emotional_milestone: {},
           shared_secret: {}
         },
-        required: ["user_respect_level", "friendship_level", "romantic_level", "attraction_level", "chosen_family_level", "trust_level", "relational_jealousy", "envy_jealousy", "reason"]
+        required: ["user_respect_level","friendship_level","romantic_level","attraction_level","chosen_family_level","trust_level","relational_jealousy","envy_jealousy","reason"]
       }
     });
 
-    // ── APPLY ORIENTATION MULTIPLIER TO ATTRACTION ────────────────────────────
-    const orientation = (character.sexual_orientation || '').toLowerCase();
-    let attractionMultiplier = 1.0;
-    if (orientation === 'straight' || orientation === 'gay' || orientation === 'lesbian') {
-      attractionMultiplier = 0.7; // unknown user gender dampener
-    }
-    const rawAttractionDelta = result.attraction_level - current.attraction_level;
-    const adjustedAttractionDelta = rawAttractionDelta > 0 ? rawAttractionDelta * attractionMultiplier : rawAttractionDelta;
-    const adjustedAttraction = Math.min(100, Math.max(0, Math.round(current.attraction_level + adjustedAttractionDelta)));
+    // ── POST-PROCESSING: ENFORCE ALL SAFETY RULES ────────────────────────────
+    // 1. Map event_size → max allowed delta per field
+    const eventSize = result.event_size || 'meaningful';
+    const maxDelta = { small: 3, meaningful: 8, major: 15, defining: 25 }[eventSize] || 8;
 
-    // ── CHOSEN FAMILY GATE ────────────────────────────────────────────────────
-    const newFriendship = Math.min(100, Math.max(0, Math.round(result.friendship_level)));
-    const newChosenFamily = Math.min(100, Math.max(0, Math.round(result.chosen_family_level)));
-    const clampedChosenFamily = newFriendship >= 70 ? newChosenFamily : Math.min(current.chosen_family_level, newChosenFamily);
-
-    // ── TRUST SLOW-REBUILD GATE ───────────────────────────────────────────────
-    // If trust was previously very low (betrayal state), cap single-turn recovery
-    const rawTrustDelta = result.trust_level - current.trust_level;
-    const cappedTrustDelta = (current.trust_level < 30 && rawTrustDelta > 3) ? 3 : rawTrustDelta;
-    const newTrust = Math.min(100, Math.max(0, Math.round(current.trust_level + cappedTrustDelta)));
-
-    // ── TRUST → RELATIONAL JEALOUSY MODULATION ───────────────────────────────
-    // Apply trust-based modulation AFTER LLM sets the raw relational jealousy value
-    const rawRelationalJealousy = Math.min(100, Math.max(0, Math.round(result.relational_jealousy)));
-    const modulatedRelationalJealousy = modulateRelationalJealousy(rawRelationalJealousy, newTrust, result.romantic_level);
-    const newEnvyJealousy = Math.min(100, Math.max(0, Math.round(result.envy_jealousy)));
-
+    // 2. Apply clamped deltas (no 0→100 jumps, ever)
     const updated = {
-      user_respect_level: Math.min(100, Math.max(0, Math.round(result.user_respect_level))),
-      friendship_level: newFriendship,
-      romantic_level: Math.min(100, Math.max(0, Math.round(result.romantic_level))),
-      attraction_level: adjustedAttraction,
-      chosen_family_level: clampedChosenFamily,
-      trust_level: newTrust,
-      relational_jealousy: modulatedRelationalJealousy,
-      envy_jealousy: newEnvyJealousy,
+      user_respect_level: clampDelta(result.user_respect_level, current.user_respect_level, maxDelta),
+      friendship_level: clampDelta(result.friendship_level, current.friendship_level, maxDelta),
+      romantic_level: clampDelta(result.romantic_level, current.romantic_level, maxDelta),
+      attraction_level: clampDelta(result.attraction_level, current.attraction_level, maxDelta),
+      chosen_family_level: clampDelta(result.chosen_family_level, current.chosen_family_level, maxDelta),
+      trust_level: clampTrustRebuild(result.trust_level, current.trust_level),
+      relational_jealousy: clampDelta(result.relational_jealousy, current.relational_jealousy, maxDelta),
+      envy_jealousy: clampDelta(result.envy_jealousy, current.envy_jealousy, maxDelta),
     };
 
-    // ── ORIENTATION SHIFT (inter-character only) ──────────────────────────────
+    // 3. Orientation multiplier on attraction delta
+    const orientationMult = getAttractionMultiplier(character.sexual_orientation, character.gender, playingAsCharacter?.gender);
+    const attractionDelta = updated.attraction_level - current.attraction_level;
+    if (attractionDelta > 0 && orientationMult < 1.0) {
+      updated.attraction_level = Math.min(100, Math.max(0, Math.round(current.attraction_level + attractionDelta * orientationMult)));
+    }
+
+    // 4. Chosen family gate: only increases if friendship >= 70
+    if (updated.chosen_family_level > current.chosen_family_level && updated.friendship_level < 70) {
+      updated.chosen_family_level = current.chosen_family_level;
+    }
+
+    // 5. Trust → Relational Jealousy modulation (after clamping)
+    updated.relational_jealousy = modulateRelationalJealousy(
+      updated.relational_jealousy, updated.trust_level, updated.romantic_level
+    );
+
+    // 6. Trust damage → automatic relational jealousy spike
+    const trustDrop = current.trust_level - updated.trust_level;
+    if (trustDrop >= 10 && updated.romantic_level >= 20) {
+      const jealousySpike = Math.min(maxDelta, Math.round(trustDrop * 0.4));
+      updated.relational_jealousy = Math.min(100, updated.relational_jealousy + jealousySpike);
+    }
+
+    // 7. Derive infidelity risk (for context — not stored)
+    const infidelityRisk = computeInfidelityRisk(
+      updated.user_respect_level,
+      updated.trust_level,
+      updated.attraction_level > 70 ? updated.attraction_level - 70 : 0
+    );
+
+    // ── ORIENTATION SHIFT CHECK ───────────────────────────────────────────────
     let orientationShift = null;
-    if (playingAsCharacter && adjustedAttraction >= 55) {
-      const potentialShift = checkOrientationShift(character.sexual_orientation, updated.attraction_level, character.gender, playingAsCharacter.gender);
-      if (potentialShift && potentialShift !== (character.sexual_orientation || '').toLowerCase()) {
-        orientationShift = potentialShift;
+    if (playingAsCharacter && updated.attraction_level >= 55) {
+      const shift = checkOrientationShift(character.sexual_orientation, updated.attraction_level, character.gender, playingAsCharacter.gender);
+      if (shift && shift !== (character.sexual_orientation || '').toLowerCase()) {
+        orientationShift = shift;
       }
     }
 
     // ── MILESTONES ────────────────────────────────────────────────────────────
+    const fieldMap = {
+      friendship_level: 'friendship_level',
+      romantic_level: 'romantic_level',
+      chosen_family_level: 'chosen_family_level',
+      attraction_level: 'attraction_level',
+      trust_level: 'trust_level',
+    };
     const milestonesTriggered = [];
-    const triggeredMilestoneKeys = character.triggered_milestones || [];
+    const triggeredKeys = character.triggered_milestones || [];
     for (const milestone of MILESTONES) {
       const key = `${milestone.field}_${milestone.threshold}`;
-      if (triggeredMilestoneKeys.includes(key)) continue;
+      if (triggeredKeys.includes(key)) continue;
       const before = current[milestone.field];
       const after = updated[milestone.field];
       if (before !== undefined && after !== undefined && before < milestone.threshold && after >= milestone.threshold) {
@@ -347,14 +494,14 @@ Respond with ONLY valid JSON:
     }
     const milestoneMessages = [];
     for (const milestone of milestonesTriggered) {
-      const milestoneText = await base44.asServiceRole.integrations.Core.InvokeLLM({
-        prompt: `Generate a short, poetic narrative event message (1-2 sentences, no dialogue, third-person, emotionally resonant) marking the moment a ${milestone.label} was reached between ${character.name} and the user. Character personality: ${character.personality_summary || ''}. Meaningful but understated.`
+      const text = await base44.asServiceRole.integrations.Core.InvokeLLM({
+        prompt: `Write a short narrative event (1–2 sentences, third-person, no dialogue, emotionally resonant) marking the moment "${milestone.label}" was reached between ${character.name} and the user. Character personality: ${character.personality_summary || ''}. Understated, not melodramatic.`
       });
-      milestoneMessages.push({ key: milestone.key, text: milestoneText.trim() });
+      milestoneMessages.push({ key: milestone.key, text: text.trim() });
     }
-    const newTriggeredKeys = [...triggeredMilestoneKeys, ...milestonesTriggered.map(m => m.key)];
+    const newTriggeredKeys = [...triggeredKeys, ...milestonesTriggered.map(m => m.key)];
 
-    // ── PERSIST ORIENTATION SHIFT MEMORY ─────────────────────────────────────
+    // ── MEMORY: orientation shift ─────────────────────────────────────────────
     if (orientationShift) {
       base44.asServiceRole.entities.Memory.create({
         character_id: characterId,
@@ -366,7 +513,7 @@ Respond with ONLY valid JSON:
       }).catch(() => {});
     }
 
-    // ── BUILD CHARACTER UPDATE PAYLOAD ────────────────────────────────────────
+    // ── BUILD UPDATE PAYLOAD ──────────────────────────────────────────────────
     let characterUpdatePayload;
     if (playingAsCharacter && charRelEntry) {
       const updatedFictionalRels = (character.fictional_relationships || []).map(r =>
@@ -386,27 +533,27 @@ Respond with ONLY valid JSON:
 
     await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
 
-    // ── STORE MILESTONES + SECRETS IN MEMORY ──────────────────────────────────
-    const memoryPromises = [];
+    // ── MEMORY: milestones + secrets ──────────────────────────────────────────
+    const memPromises = [];
     if (result.emotional_milestone) {
-      memoryPromises.push(base44.asServiceRole.entities.Memory.create({
-        character_id: characterId, title: `Emotional milestone with user`,
+      memPromises.push(base44.asServiceRole.entities.Memory.create({
+        character_id: characterId, title: 'Emotional milestone with user',
         description: result.emotional_milestone, emotional_impact: 'meaningful',
         timestamp: new Date().toISOString(), source_context: 'user conversation',
       }));
     }
     if (result.shared_secret) {
-      memoryPromises.push(base44.asServiceRole.entities.Memory.create({
-        character_id: characterId, title: `Secret shared by user`,
+      memPromises.push(base44.asServiceRole.entities.Memory.create({
+        character_id: characterId, title: 'Secret shared by user',
         description: result.shared_secret, emotional_impact: 'significant',
         timestamp: new Date().toISOString(), source_context: 'user conversation - confidential',
       }));
     }
-    if (memoryPromises.length > 0) await Promise.all(memoryPromises);
+    if (memPromises.length > 0) await Promise.all(memPromises);
 
     // ── RELATIONSHIP TITLE CHANGE CHECK ──────────────────────────────────────
-    const CHANGEABLE_TITLES = ['spouse', 'partner', 'friend', 'best friend', 'romantic interest', 'girlfriend', 'boyfriend', 'lover', 'acquaintance', 'coworker'];
-    const BLOOD_TITLES = ['mother', 'father', 'sister', 'brother', 'cousin', 'aunt', 'uncle', 'grandmother', 'grandfather', 'niece', 'nephew', 'daughter', 'son', 'half-sister', 'half-brother', 'step-mother', 'step-father', 'step-sister', 'step-brother'];
+    const CHANGEABLE_TITLES = ['spouse','partner','friend','best friend','romantic interest','girlfriend','boyfriend','lover','acquaintance','coworker'];
+    const BLOOD_TITLES = ['mother','father','sister','brother','cousin','aunt','uncle','grandmother','grandfather','niece','nephew','daughter','son','half-sister','half-brother','step-mother','step-father','step-sister','step-brother'];
     let relationshipChangeRequest = null;
     if (playingAsCharacter && charRelEntry) {
       const relTitle = (charRelEntry.relationship_type || '').toLowerCase();
@@ -416,9 +563,9 @@ Respond with ONLY valid JSON:
         if (relTitle.includes('spouse') || relTitle.includes('partner')) {
           relationshipChangeRequest = { type: 'separation', message: `${character.name} may want to ask for a divorce or separation.` };
         } else if (relTitle.includes('friend')) {
-          relationshipChangeRequest = { type: 'end_friendship', message: `${character.name} may want to end the friendship with ${playingAsCharacter.name}.` };
+          relationshipChangeRequest = { type: 'end_friendship', message: `${character.name} may want to end the friendship.` };
         } else if (updated.romantic_level <= 5 && (relTitle.includes('romantic') || relTitle.includes('girlfriend') || relTitle.includes('boyfriend') || relTitle.includes('lover'))) {
-          relationshipChangeRequest = { type: 'breakup', message: `${character.name} may want to break up with ${playingAsCharacter.name}.` };
+          relationshipChangeRequest = { type: 'breakup', message: `${character.name} may want to break up.` };
         }
       }
     }
@@ -426,10 +573,13 @@ Respond with ONLY valid JSON:
     return Response.json({
       ...updated,
       reason: result.reason,
+      event_size: eventSize,
+      infidelity_risk: infidelityRisk,
       detected_traits: result.detected_traits || [],
       milestone_messages: milestoneMessages,
       relationship_change_request: relationshipChangeRequest,
     });
+
   } catch (error) {
     if (error.message?.includes('Rate limit') || error.message?.includes('429') || error.status === 429) {
       return Response.json({ skipped: true, reason: 'Rate limit — no changes applied' });
