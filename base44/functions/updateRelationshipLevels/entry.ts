@@ -1,5 +1,80 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── ARC ENGINE (inlined — Deno cannot import local lib files) ─────────────────
+const ARC_STATES = {
+  growing: 'growing', stable: 'stable', volatile: 'volatile',
+  declining: 'declining', fractured: 'fractured', recovering: 'recovering',
+  fragile: 'fragile', strained: 'strained', toxic_pattern: 'toxic_pattern_detected',
+};
+
+function deriveArcState(bars, deltaHistory = []) {
+  const trust = bars.trust_level ?? 50;
+  const respect = bars.user_respect_level ?? 50;
+  const friendship = bars.friendship_level ?? 50;
+  const rj = bars.relational_jealousy ?? 0;
+  const recent = (deltaHistory || []).slice(0, 10);
+  const trustDeltas = recent.filter(d => d.field === 'trust_level');
+  const negativeTrustCount = trustDeltas.filter(d => d.delta < -5).length;
+  const positiveTrustCount = trustDeltas.filter(d => d.delta > 3).length;
+  let repairPattern = false;
+  const allDeltas = recent.map(d => d.delta);
+  for (let i = 0; i < allDeltas.length - 1; i++) {
+    if (allDeltas[i] < -5 && allDeltas[i + 1] > 3) { repairPattern = true; break; }
+  }
+  let toxicLoopScore = 0;
+  for (const d of trustDeltas) {
+    if (d.delta < -8) toxicLoopScore += 2;
+    else if (d.delta > 2 && d.delta < 6) toxicLoopScore += 1;
+  }
+  const meaningfulEvents = recent.filter(d => Math.abs(d.delta) > 3).length;
+  if (toxicLoopScore >= 5 && negativeTrustCount >= 2) return ARC_STATES.toxic_pattern;
+  if (trust < 25 && respect < 30) return ARC_STATES.fractured;
+  if (trust < 40 && negativeTrustCount >= 2 && positiveTrustCount === 0) return ARC_STATES.declining;
+  if (trust < 45 && rj > 55) return ARC_STATES.strained;
+  if (repairPattern && trust >= 40) return ARC_STATES.recovering;
+  if (trust < 45 && meaningfulEvents < 2) return ARC_STATES.fragile;
+  if (positiveTrustCount >= 2 && trust >= 55 && friendship >= 55) return ARC_STATES.growing;
+  if (trustDeltas.length >= 3) {
+    const vals = trustDeltas.map(d => d.delta);
+    if (Math.max(...vals) - Math.min(...vals) > 20) return ARC_STATES.volatile;
+  }
+  return ARC_STATES.stable;
+}
+
+function getArcModifiers(arcState) {
+  const m = { trust_gain: 1.0, trust_loss: 1.0, forgiveness: 0, patience_penalty: 0, rj_floor: 0, respect_repair: 1.0 };
+  switch (arcState) {
+    case ARC_STATES.growing:      m.trust_gain = 1.2; m.forgiveness = 5; m.respect_repair = 1.2; break;
+    case ARC_STATES.recovering:   m.trust_gain = 1.15; m.trust_loss = 1.2; m.forgiveness = 8; break;
+    case ARC_STATES.fragile:      m.trust_loss = 1.3; m.patience_penalty = 10; break;
+    case ARC_STATES.strained:     m.trust_gain = 0.8; m.trust_loss = 1.3; m.rj_floor = 8; m.patience_penalty = 15; break;
+    case ARC_STATES.declining:    m.trust_gain = 0.6; m.trust_loss = 1.4; m.patience_penalty = 20; m.rj_floor = 10; break;
+    case ARC_STATES.fractured:    m.trust_gain = 0.4; m.trust_loss = 1.5; m.patience_penalty = 30; m.rj_floor = 15; m.respect_repair = 0.5; break;
+    case ARC_STATES.volatile:     m.trust_gain = 0.9; m.trust_loss = 1.3; m.patience_penalty = 15; m.rj_floor = 5; break;
+    case ARC_STATES.toxic_pattern: m.trust_gain = 0.3; m.trust_loss = 1.6; m.patience_penalty = 35; m.rj_floor = 20; m.forgiveness = -10; m.respect_repair = 0.3; break;
+  }
+  return m;
+}
+
+function applyArcModifiers(current, proposed, arcState) {
+  const mods = getArcModifiers(arcState);
+  const result = { ...proposed };
+  const trustDelta = proposed.trust_level - current.trust_level;
+  if (trustDelta > 0) {
+    result.trust_level = Math.min(100, Math.max(0, Math.round(current.trust_level + trustDelta * mods.trust_gain + mods.forgiveness)));
+  } else if (trustDelta < 0) {
+    result.trust_level = Math.min(100, Math.max(0, Math.round(current.trust_level + trustDelta * mods.trust_loss)));
+  }
+  const respectDelta = proposed.user_respect_level - current.user_respect_level;
+  if (respectDelta > 0) {
+    result.user_respect_level = Math.min(100, Math.max(0, Math.round(current.user_respect_level + respectDelta * mods.respect_repair)));
+  }
+  if (mods.rj_floor > 0) {
+    result.relational_jealousy = Math.min(100, Math.max(mods.rj_floor, result.relational_jealousy));
+  }
+  return result;
+}
+
 // ── UNIVERSAL SCALE BANDS ─────────────────────────────────────────────────────
 // Range → Behavior label (used in LLM context to prevent semantic drift)
 const SCALE_BANDS = {
@@ -202,6 +277,11 @@ Deno.serve(async (req) => {
 
     const character = await base44.asServiceRole.entities.Character.get(characterId);
     if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
+
+    // ── FETCH MEMORIES FOR ARC STATE DETECTION ────────────────────────────────
+    const recentMemories = await base44.asServiceRole.entities.Memory.filter(
+      { character_id: characterId }, '-timestamp', 20
+    ).catch(() => []);
 
     let playingAsCharacter = null;
     let charRelEntry = null;
@@ -511,6 +591,20 @@ Respond with ONLY valid JSON:
       const jealousySpike = Math.min(maxDelta, Math.round(trustDrop * 0.4));
       updated.relational_jealousy = Math.min(100, updated.relational_jealousy + jealousySpike);
     }
+
+    // 6b. Apply arc modifiers (pattern history shapes how bars change)
+    // Build a minimal delta history from recent memories as a proxy
+    const arcDeltaHistory = recentMemories.slice(0, 10).map((m, i) => ({
+      field: 'trust_level',
+      delta: m.emotional_impact?.includes('betray') || m.emotional_impact?.includes('broke') ? -12
+           : m.emotional_impact?.includes('meaningful') || m.emotional_impact?.includes('support') ? 6
+           : 0,
+      timestamp: m.timestamp,
+    })).filter(d => d.delta !== 0);
+
+    const arcState = deriveArcState(updated, arcDeltaHistory);
+    const updatedWithArc = applyArcModifiers(current, updated, arcState);
+    Object.assign(updated, updatedWithArc);
 
     // 7. Derive infidelity risk (for context — not stored)
     const infidelityRisk = computeInfidelityRisk(

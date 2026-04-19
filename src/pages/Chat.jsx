@@ -1176,10 +1176,10 @@ ${songsInfo}`;
           const promptResponse = await fetch(character.system_prompt_url);
           systemPrompt = await promptResponse.text();
         } catch (err) {
-          systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint });
+          systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint }, memData?.memories || []);
         }
       } else {
-        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint });
+        systemPrompt = buildSystemPrompt(character, [], userDisplayName, { allowNarration: false, outfitHint }, memData?.memories || []);
       }
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";

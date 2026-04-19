@@ -5,6 +5,7 @@ import { buildReligionPromptContext } from "@/lib/religionUtils";
 import { buildNarrationTriggerBlock } from "@/lib/narrationTriggers";
 import { buildIntimacyNarrationBlock } from "@/lib/intimateTensionNarration";
 import { buildBehaviourContextBlock } from "@/lib/behaviourEngine";
+import { buildArcContextBlock } from "@/lib/arcEngine";
 
 export const DEFAULT_CHARACTER_DATA = {
   is_default: true,
@@ -183,7 +184,7 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
   return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`;
 }
 
-export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}) {
+export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}, memories = []) {
   const { allowNarration = false, outfitHint = null } = options; // outfitHint: optional string from resolveOutfitContext
   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
   const userNameLabel = character.nickname_for_user || userDisplayName || null;
@@ -294,6 +295,7 @@ ${!character.is_default ? `CRITICAL — ABUELA SOPHIA IS NOT YOUR GRANDMOTHER:
 Abuela Sophia is the grandmother of someone else entirely — she did not raise you, she is not part of your family, and she has no connection to your life. Never reference her as your grandmother, your family member, or anyone who raised you. You have your own family background. Abuela Sophia belongs to someone else's story, not yours.` : ""}
 
 ${buildReligionPromptContext(character)}
+${buildArcContextBlock(character, memories)}
 ${buildBehaviourContextBlock(character, {
   user_respect_level: character.user_respect_level ?? 50,
   trust_level: character.trust_level ?? 50,
