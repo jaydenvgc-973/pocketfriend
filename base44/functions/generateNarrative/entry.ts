@@ -264,6 +264,116 @@ NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do no
       .map(m => `"${m.sender_type === 'user' ? (worldName || 'You') : characterName}": "${m.content}"`)
       .join('\n');
 
+    // ── LEXICAL REPETITION GUARD ───────────────────────────────────────────────
+    // Extract high-impact descriptive words from recent narrative messages so the
+    // LLM is explicitly told NOT to reuse them. This prevents anchor-word looping.
+    const STOP_WORDS = new Set([
+      'the','a','an','and','or','but','in','on','at','to','of','for','with','is',
+      'are','was','were','be','been','being','have','has','had','do','does','did',
+      'will','would','could','should','may','might','can','shall','it','its','this',
+      'that','these','those','they','them','their','he','she','his','her','his','we',
+      'you','your','i','me','my','us','our','not','no','so','if','as','by','from',
+      'into','out','up','down','over','under','then','than','when','where','who',
+      'which','what','how','there','here','just','like','very','more','some','any',
+      'all','one','two','also','even','still','already','again','back','away','now',
+      'about','after','before','during','while','through','between','each','own',
+    ]);
+
+    // Pull narrative messages from the last 20 chat messages
+    const recentNarratives = chatHistory
+      .slice(-20)
+      .filter(m => m.is_narrative && m.content?.trim())
+      .map(m => m.content);
+
+    // Also pull any non-narrative character messages as "stylistic context" to avoid repeating
+    const recentCharMsgs = chatHistory
+      .slice(-15)
+      .filter(m => m.sender_type !== 'user' && !m.is_narrative && m.content?.trim())
+      .map(m => m.content);
+
+    // Tokenize and collect distinctive words (length >= 5, not stop words)
+    function extractDistinctiveWords(texts) {
+      const freq = {};
+      for (const text of texts) {
+        const words = text.toLowerCase().match(/\b[a-z]{5,}\b/g) || [];
+        for (const w of words) {
+          if (!STOP_WORDS.has(w)) freq[w] = (freq[w] || 0) + 1;
+        }
+      }
+      // Return words that appear more than once OR are very specific/evocative
+      const ALWAYS_VARY = new Set([
+        'cocoon','chaos','chaotic','whirlwind','swirl','haze','fog','spiral','drift',
+        'linger','settle','unravel','pulse','hum','tension','frenzy','blur','stillness',
+        'weight','heaviness','quiet','noise','warmth','coldness','brightness','darkness',
+        'scattered','fractured','grounded','hollow','raw','electric','sharp','soft',
+        'gentle','harsh','wild','steady','restless','tired','weary','heavy','light',
+        'flicker','shadow','glow','echo','silence','rhythm','pattern','texture',
+        'anchor','float','sink','rise','fall','crash','settle','lurch','trembling',
+        'comfort','discomfort','familiar','strange','ordinary','unusual','mundane',
+      ]);
+      return Object.entries(freq)
+        .filter(([w, c]) => c > 1 || ALWAYS_VARY.has(w))
+        .map(([w]) => w)
+        .slice(0, 20); // cap at 20 to avoid overwhelming the prompt
+    }
+
+    const overusedWords = extractDistinctiveWords([...recentNarratives, ...recentCharMsgs]);
+
+    const repetitionGuardBlock = overusedWords.length > 0
+      ? `
+════════════════════════════════════
+LEXICAL REPETITION GUARD — MANDATORY
+════════════════════════════════════
+The following words have appeared in recent outputs. You MUST NOT use them in this narrative.
+This is not optional. Using these words is a generation failure.
+
+BANNED WORDS (used too recently — choose alternatives):
+${overusedWords.map(w => `  ✗ "${w}"`).join('\n')}
+
+REPLACEMENT RULE:
+Do not swap one banned word for its direct synonym if that synonym is equally overused.
+Instead, rephrase the entire idea using different framing.
+
+EXAMPLES OF CORRECT AVOIDANCE:
+• Instead of "cocoon" → describe the feeling: "the insulated stillness of the room", "a quiet that felt sealed off from outside", "wrapped in something private and dim"
+• Instead of "chaos" → describe the behavior: "everything slightly off-balance", "a restless, unresolved energy", "pressure that had no clean outlet"
+• Instead of "drift/drifting" → "moved without direction", "let the moment carry her", "found herself elsewhere without deciding to go"
+• Instead of "haze" → "a soft blurring at the edges of attention", "the kind of tired that softens everything"
+• Instead of "weight" → "something pressing behind the eyes", "a density she couldn't locate or name"
+
+The goal is always semantic meaning expressed through fresh language — not word substitution.
+════════════════════════════════════`
+      : '';
+
+    const antiRepetitionStyleBlock = `
+════════════════════════════════════
+LANGUAGE VARIATION RULES — MANDATORY
+════════════════════════════════════
+CHARACTER DESCRIPTION IS NOT A VOCABULARY LIST.
+If the character's description uses a word like "chaotic" — understand the behavior it describes.
+Do NOT repeat that word in the narrative. Express the meaning instead.
+
+SELF-DEFINING LANGUAGE IS BANNED.
+Bad:  "The room felt like chaos, filled with chaotic energy."
+Good: "The room felt unstable — everything slightly misaligned, like something was about to shift."
+
+METAPHORS ARE SINGLE-USE IN THIS SESSION.
+If a metaphor or image appears in a recent narrative, do not reuse it.
+Find a different angle, different image, different sensory entry point.
+
+SENTENCE STRUCTURE MUST VARY.
+Do not repeat the same rhythm: subject + verb + descriptive clause.
+Mix short sentences with longer ones. Let some sentences end abruptly. Let others breathe.
+
+DESCRIPTIVE FRAMING MUST SHIFT.
+If recent narratives led with sound — try texture, temperature, light, or physical sensation.
+If recent narratives opened with internal state — try environmental observation first.
+If recent narratives used metaphor — try plain precise language.
+
+The goal: each narrative should feel like it was written by a thoughtful person who chose fresh words,
+not by a system reusing its own recent outputs.
+════════════════════════════════════`;
+
     // ── BUILD PROMPT WITH GROUNDED CONTEXT ───────────────────────────────────
     const prompt = `You are a narrator for a realistic life simulation. Your output is a single cohesive narrative passage that continues the character's living timeline. It must feel like a live scene — grounded, specific, and earned.
 
@@ -373,6 +483,8 @@ Behavior should reflect immersion in environment, responsive movement, and shift
 FINAL RULE: If ${characterName} is ASLEEP or the sleep window is active, the narrative MUST reflect rest or sleep at their confirmed location. No active behavior, errands, social engagement, or movement is allowed during a confirmed sleep state.
 
 Do not refer to anyone as "the user" — use their name (${userLabel}) or natural pronouns.
+${repetitionGuardBlock}
+${antiRepetitionStyleBlock}
 
 Chat History:
 ${formattedChatHistory}
