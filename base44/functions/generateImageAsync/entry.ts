@@ -137,6 +137,36 @@ function getDefaultZoneHint(category) {
   return defaults[category] || null;
 }
 
+// ── FUTURE-INTENT STRIPPER ────────────────────────────────────────────────────
+// Removes place references that are future plans, destinations, or conversation topics
+// from any string before it is used for location/zone/outfit keyword matching.
+//
+// RULE: Mentioning a place is NOT being there.
+// "I have to go to the restaurant" → restaurant is a future destination, NOT current scene.
+// "I was at the bar earlier" → bar is a past place, NOT current scene.
+// "I need to stop by the hospital" → hospital is a future plan, NOT current scene.
+//
+// These patterns are stripped so keyword matchers cannot relocate the scene.
+function stripFutureAndPastIntentPhrases(text) {
+  if (!text) return text;
+  // Remove future-intent phrases: "have to go to X", "need to go to X", "heading to X", etc.
+  const stripped = text
+    // Future destination patterns
+    .replace(/\b(have to|need to|gotta|going to|gonna|heading to|heading over to|on my way to|on the way to|stop by|stop at|swinging by|swing by|drop by|drop off at|pick up (from|at)|drive to|walk to|run over to|shoot over to|pop over to|pop by|get to|get over to|rush to|run to)\s+(the\s+)?[a-z '"-]+/gi, '')
+    // "I'll be at X later/soon/tonight/tomorrow"
+    .replace(/\b(i'?ll?\s+be\s+at|i'?m\s+going\s+to)\s+(the\s+)?[a-z '"-]+\s+(later|soon|tonight|tomorrow|after|in a bit|in a minute|shortly)/gi, '')
+    // "before I go to X"
+    .replace(/\bbefore\s+i\s+(go|get|head|leave|run)\s+(to|over to)?\s+(the\s+)?[a-z '"-]+/gi, '')
+    // Past-place patterns: "I was at X", "I came from X", "just left X", "earlier at X"
+    .replace(/\b(was\s+at|came\s+from|just\s+left|left\s+the|earlier\s+at|just\s+came\s+from|been\s+at)\s+(the\s+)?[a-z '"-]+/gi, '')
+    // "deal with X" / "deal with the restaurant/bar/etc."
+    .replace(/\bdeal\s+with\s+(the\s+)?[a-z '"-]+/gi, '')
+    // "at X later", "at the X tonight"
+    .replace(/\bat\s+(the\s+)?[a-z '"-]+\s+(later|soon|tonight|tomorrow|after|in a bit)/gi, '');
+
+  return stripped;
+}
+
 function resolveLocationAndZone(prompt, locations, characterId) {
   if (!prompt || !locations || locations.length === 0) {
     return { locationImages: [], locationName: null, zoneName: null, matchConfidence: "none", confidenceScore: 0 };
@@ -603,6 +633,10 @@ Deno.serve(async (req) => {
     const tagMatch = prompt.match(/^\[(USER|CHARACTER|JOINT)\]/i);
     if (tagMatch) resolvedSubjectType = tagMatch[1].toLowerCase();
     const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
+    // scenePrompt = cleanPrompt with future/past intent phrases stripped.
+    // Used for ALL location/zone/outfit keyword matching so that mentioned places
+    // cannot override the character's actual current scene truth.
+    const scenePrompt = stripFutureAndPastIntentPhrases(cleanPrompt);
 
     // ── STEP 1: BUILD LOCKED SUBJECT RECORDS ────────────────────────────────
     // Always resolve subjects first from their authoritative records.
@@ -615,7 +649,7 @@ Deno.serve(async (req) => {
       try {
         const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
         if (charRecord) {
-          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], cleanPrompt);
+          characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], scenePrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         }
       } catch (err) {
@@ -905,7 +939,7 @@ The environment must feel real, functional, and original.
             if (realTimeLoc) {
               // Use live zone hint (bedroom for sleeping) or derive from prompt
               const zoneHint = liveZoneHint || null;
-              const { zoneImages, zoneName } = resolveZoneImages(cleanPrompt.toLowerCase(), realTimeLoc, zoneHint);
+              const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, zoneHint);
               const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
               if (imgs.length > 0) {
                 locationImages = imgs;
@@ -934,7 +968,9 @@ The environment must feel real, functional, and original.
               }
             } else if (!isHome) {
               // Only attempt text-based location parse when character is NOT forced home
-              const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(cleanPrompt, savedLocations, characterId);
+              // Use scenePrompt (future/past intent stripped) for text-based location parse
+              // so that "I have to go to the restaurant" cannot match the restaurant location.
+              const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(scenePrompt, savedLocations, characterId);
               if (imgs.length > 0 && confidenceScore >= 0.7) {
                 locationImages = imgs;
                 resolvedLocationName = locationName;
