@@ -32,7 +32,7 @@ export const useCharacterAwareness = (characterId) => {
           const now = new Date();
           const hoursSinceRefresh = (now - lastRefresh) / (1000 * 60 * 60);
 
-          if (hoursSinceRefresh < 1) {
+          if (hoursSinceRefresh < 4) {
             setAwarenessContext(profile.cached_awareness_context);
             setIsLoading(false);
             return;

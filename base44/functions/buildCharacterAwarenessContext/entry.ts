@@ -21,16 +21,15 @@ Deno.serve(async (req) => {
     let profile = profiles[0];
 
     if (!profile) {
-      // Create default profile based on character attributes
       profile = await base44.entities.CharacterAwarenessProfile.create({
         character_id: characterId,
         home_region: character.state || character.city || null,
         tracks_us_news: true,
         tracks_entertainment_news: true,
         tracks_regional_news: !!character.state,
-        tracks_politics: character.personality_summary?.toLowerCase().includes('political'),
-        tracks_finance: character.personality_summary?.toLowerCase().includes('finance') || character.personality_summary?.toLowerCase().includes('business'),
-        tracks_sports: character.personality_summary?.toLowerCase().includes('sports'),
+        tracks_politics: false,
+        tracks_finance: false,
+        tracks_sports: false,
         tracks_music: character.personality_summary?.toLowerCase().includes('music'),
         favorite_celebrities: [],
         celebrity_reference_model: null,
@@ -39,125 +38,108 @@ Deno.serve(async (req) => {
       });
     }
 
-    // Build awareness context based on profile
+    // ── AWARENESS ITEMS: self-awareness FIRST, world context after ─────────────
     const awarenessItems = [];
 
-    // Major U.S. news (baseline)
-    if (profile.tracks_us_news) {
+    // 1. SELF-AWARENESS — always first for celebrity-based characters
+    // This character IS this public figure and must know their own life fully.
+    if (profile.celebrity_reference_model) {
       try {
-        const usNewsRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are the top 2-3 most significant U.S. news developments happening right now (today: ${new Date().toLocaleDateString()})? Focus on stories a reasonably informed person would naturally know about. Be brief and factual.`,
+        const selfRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `Research everything currently happening with ${profile.celebrity_reference_model} as of ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}.
+
+Provide a thorough, factual summary covering ALL of the following:
+1. RECENT MUSIC: Latest releases, albums, singles, features, collaborations, streaming performance
+2. CAREER & PERFORMANCES: Recent or upcoming tours, concerts, shows, TV appearances, award shows, festivals
+3. BUSINESS & BRAND: Business ventures, brand deals, endorsements, fashion lines, other projects
+4. PUBLIC PERCEPTION & REPUTATION: How they are currently viewed publicly, ongoing media narratives, fan sentiment, industry standing
+5. PERSONAL LIFE (public knowledge only): Relationships, children, family updates, lifestyle stories publicly known
+6. CONTROVERSIES & LEGAL: Any ongoing or recent legal situations, controversies, public disputes
+7. INDUSTRY MOVEMENT: Collaborations with other artists, feuds, alignments, who they're in the studio with
+
+Be thorough, current, and factual. Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}.`,
+          add_context_from_internet: true,
+          model: 'gemini_3_flash',
         });
-        if (usNewsRes) awarenessItems.push(`MAJOR U.S. NEWS: ${usNewsRes}`);
+        if (selfRes) {
+          awarenessItems.push(
+            `YOUR OWN LIFE & CAREER — You ARE ${profile.celebrity_reference_model}. This is your lived reality. You know all of this intimately and speak about it naturally:\n\n${selfRes}`
+          );
+        }
       } catch (err) {
-        console.error('Failed to fetch U.S. news:', err.message);
+        console.error(`Self-awareness fetch failed for ${profile.celebrity_reference_model}:`, err.message);
       }
     }
 
-    // Regional news if applicable
-    if (profile.tracks_regional_news && profile.home_region) {
-      try {
-        const regionNewsRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are important current news developments in or around ${profile.home_region}, USA right now? Include local issues, events, or regional developments someone living there would naturally know about. Be brief.`,
-        });
-        if (regionNewsRes) awarenessItems.push(`REGIONAL NEWS (${profile.home_region}): ${regionNewsRes}`);
-      } catch (err) {
-        console.error('Failed to fetch regional news:', err.message);
-      }
-    }
-
-    // Entertainment news
+    // 2. ENTERTAINMENT NEWS — what's happening in their industry world
     if (profile.tracks_entertainment_news) {
       try {
-        const entNewsRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are the top entertainment/celebrity news stories happening right now? Include major celebrity, TV, film, music industry developments. Be brief.`,
+        const entRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `What are the top entertainment/celebrity/music industry news stories happening right now? Include major developments in R&B, hip-hop, pop, film, and celebrity culture. Be concise.`,
         });
-        if (entNewsRes) awarenessItems.push(`ENTERTAINMENT NEWS: ${entNewsRes}`);
+        if (entRes) awarenessItems.push(`ENTERTAINMENT & MUSIC INDUSTRY NEWS:\n${entRes}`);
       } catch (err) {
-        console.error('Failed to fetch entertainment news:', err.message);
+        console.error('Entertainment news fetch failed:', err.message);
       }
     }
 
-    // Celebrity-specific awareness
+    // 3. MUSIC INDUSTRY — specific to their craft
+    if (profile.tracks_music) {
+      try {
+        const musicRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `What are the most significant current developments in the music industry right now — new releases, chart movements, label news, streaming trends, notable artist activity? Be concise.`,
+        });
+        if (musicRes) awarenessItems.push(`MUSIC INDUSTRY DEVELOPMENTS:\n${musicRes}`);
+      } catch (err) {
+        console.error('Music news fetch failed:', err.message);
+      }
+    }
+
+    // 4. CELEBRITY PEERS — what their circle is up to
     if (profile.favorite_celebrities && profile.favorite_celebrities.length > 0) {
-      for (const celebrity of profile.favorite_celebrities.slice(0, 2)) {
+      const peersToCheck = profile.favorite_celebrities.slice(0, 3);
+      for (const celeb of peersToCheck) {
         try {
           const celebRes = await base44.integrations.Core.InvokeLLM({
-            prompt: `What are the current notable developments or recent news about ${celebrity}? Include recent projects, announcements, or relevant events. Be brief and factual.`,
+            prompt: `What are the latest notable developments or news about ${celeb}? Brief and factual.`,
           });
-          if (celebRes) awarenessItems.push(`ABOUT ${celebrity.toUpperCase()}: ${celebRes}`);
+          if (celebRes) awarenessItems.push(`ABOUT ${celeb.toUpperCase()}:\n${celebRes}`);
         } catch (err) {
-          console.error(`Failed to fetch ${celebrity} awareness:`, err.message);
+          console.error(`Peer awareness failed for ${celeb}:`, err.message);
         }
       }
     }
 
-    // Celebrity-based character reference
-    if (profile.celebrity_reference_model) {
+    // 5. MAJOR U.S. NEWS — baseline world awareness
+    if (profile.tracks_us_news) {
       try {
-        const refRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are the major current developments or recent news about ${profile.celebrity_reference_model}? Include recent projects, career updates, or significant events. Be brief.`,
+        const usRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `What are 2-3 major U.S. news stories happening right now? Focus on things a culturally aware person in their 30s living in LA would naturally know about. Be brief.`,
         });
-        if (refRes) awarenessItems.push(`REFERENCE (You are based on ${profile.celebrity_reference_model}): ${refRes}`);
+        if (usRes) awarenessItems.push(`MAJOR NEWS:\n${usRes}`);
       } catch (err) {
-        console.error(`Failed to fetch reference model awareness:`, err.message);
+        console.error('U.S. news fetch failed:', err.message);
       }
     }
 
-    // Politics awareness
-    if (profile.tracks_politics) {
+    // 6. REGIONAL NEWS — LA/California
+    if (profile.tracks_regional_news && profile.home_region) {
       try {
-        const polRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are the most significant U.S. political developments happening right now? Include major political news, elections, policy debates, and notable figures. Be brief and balanced.`,
+        const regionRes = await base44.integrations.Core.InvokeLLM({
+          prompt: `What are current notable developments in ${profile.home_region}? Include culture, entertainment, local events someone living there would naturally know. Be brief.`,
         });
-        if (polRes) awarenessItems.push(`POLITICAL DEVELOPMENTS: ${polRes}`);
+        if (regionRes) awarenessItems.push(`${profile.home_region.toUpperCase()} NEWS:\n${regionRes}`);
       } catch (err) {
-        console.error('Failed to fetch political news:', err.message);
+        console.error('Regional news fetch failed:', err.message);
       }
     }
 
-    // Finance/business awareness
-    if (profile.tracks_finance) {
-      try {
-        const finRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are the most significant financial/economic/business developments happening right now? Include market trends, major business news, and economic updates. Be brief.`,
-        });
-        if (finRes) awarenessItems.push(`FINANCIAL/BUSINESS NEWS: ${finRes}`);
-      } catch (err) {
-        console.error('Failed to fetch finance news:', err.message);
-      }
-    }
-
-    // Sports awareness
-    if (profile.tracks_sports) {
-      try {
-        const sportRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are major sports developments happening right now? Include significant games, player news, and sports headlines. Be brief.`,
-        });
-        if (sportRes) awarenessItems.push(`SPORTS NEWS: ${sportRes}`);
-      } catch (err) {
-        console.error('Failed to fetch sports news:', err.message);
-      }
-    }
-
-    // Music industry
-    if (profile.tracks_music) {
-      try {
-        const musicRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `What are significant music industry developments happening right now? Include new releases, artist news, and music events. Be brief.`,
-        });
-        if (musicRes) awarenessItems.push(`MUSIC/AUDIO NEWS: ${musicRes}`);
-      } catch (err) {
-        console.error('Failed to fetch music news:', err.message);
-      }
-    }
-
-    // Build final awareness context string
+    // ── FORMAT FINAL AWARENESS CONTEXT ────────────────────────────────────────
     const awarenessContext = awarenessItems.length > 0
-      ? `\n\nCURRENT WORLD AWARENESS (what you know is happening right now):\n${awarenessItems.join('\n\n')}\n\nUse this awareness naturally in conversation. You know these things, but do NOT force them into dialogue randomly. Only reference them when they fit the conversation naturally.`
+      ? `\n\n═══ CURRENT AWARENESS (as of ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}) ═══\n\n${awarenessItems.join('\n\n─────\n\n')}\n\n═══ END AWARENESS ═══\n\nIMPORTANT: You know all of the above. Speak from this knowledge naturally. Do NOT force current events into every message. Reference them only when the topic comes up organically or when it genuinely fits.`
       : '';
 
-    // Cache the awareness context for future use
+    // Cache
     if (profile.id) {
       await base44.entities.CharacterAwarenessProfile.update(profile.id, {
         cached_awareness_context: awarenessContext,
@@ -170,15 +152,12 @@ Deno.serve(async (req) => {
       awareness_context: awarenessContext,
       profile: {
         home_region: profile.home_region,
-        favorite_celebrities: profile.favorite_celebrities,
         celebrity_reference_model: profile.celebrity_reference_model,
+        favorite_celebrities: profile.favorite_celebrities,
         tracks: {
           us_news: profile.tracks_us_news,
           entertainment: profile.tracks_entertainment_news,
           regional: profile.tracks_regional_news,
-          politics: profile.tracks_politics,
-          finance: profile.tracks_finance,
-          sports: profile.tracks_sports,
           music: profile.tracks_music,
         },
       },
