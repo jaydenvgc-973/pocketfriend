@@ -260,8 +260,25 @@ NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do no
     const worldName = settingsList?.[0]?.fictional_world_name || null;
     const userLabel = worldName || 'them';
 
+    // ── RESOLVE ACTIVE CHARACTER IDENTITY (who is the user acting as?) ──────
+    // If the most recent user messages reference a played_as_character_name, use that.
+    // Otherwise fall back to world name or pronoun.
+    const recentUserMsgs = chatHistory.filter(m => m.sender_type === 'user').slice(-5);
+    const playedAsName = recentUserMsgs
+      .map(m => m.played_as_character_name)
+      .filter(Boolean)
+      .pop() || null;
+    // The label to use for the user-side actor in this conversation
+    const actorLabel = playedAsName || worldName || 'them';
+
     const formattedChatHistory = chatHistory
-      .map(m => `"${m.sender_type === 'user' ? (worldName || 'You') : characterName}": "${m.content}"`)
+      .map(m => {
+        if (m.sender_type === 'user') {
+          const label = m.played_as_character_name || worldName || 'You';
+          return `"${label}": "${m.content}"`;
+        }
+        return `"${characterName}": "${m.content}"`;
+      })
       .join('\n');
 
     // ── LEXICAL REPETITION GUARD ───────────────────────────────────────────────
@@ -722,7 +739,16 @@ HOME SPACE AWARENESS — match activity to room context:
 
 FINAL RULE: If ${characterName} is ASLEEP or the sleep window is active, the narrative MUST reflect rest or sleep at their confirmed location. No active behavior, errands, social engagement, or movement is allowed during a confirmed sleep state.
 
-Do not refer to anyone as "the user" — use their name (${userLabel}) or natural pronouns.
+════════════════════════════════════
+IDENTITY AND POV RULE — MANDATORY
+════════════════════════════════════
+The person interacting with ${characterName} is: ${actorLabel}
+${playedAsName ? `They are currently playing as the character "${playedAsName}" — use that character's name in the narrative, NOT "the user".` : `Use "${actorLabel}" or natural pronouns — NEVER "the user", "the player", or "the account holder".`}
+These are system-level labels and must NEVER appear in narrative output. They break immersion and are always invalid.
+IF the output contains "the user" → it must be replaced with "${actorLabel}" before rendering.
+════════════════════════════════════
+
+Do not refer to anyone as "the user" — use their name (${actorLabel}) or natural pronouns.
 ${sceneReactionBlock}
 ${homeActivityGuardBlock}
 ${repetitionGuardBlock}
