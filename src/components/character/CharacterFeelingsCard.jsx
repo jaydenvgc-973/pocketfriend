@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { Loader2, Heart } from "lucide-react";
 
-export default function CharacterFeelingsCard({ character }) {
+export default function CharacterFeelingsCard({ character, onRespectCorrected }) {
   const [feelings, setFeelings] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -11,7 +11,13 @@ export default function CharacterFeelingsCard({ character }) {
     setLoading(true);
     setFeelings(null);
     base44.functions.invoke("generateCharacterFeelings", { characterId: character.id })
-      .then(res => setFeelings(res?.data?.feelings || null))
+      .then(res => {
+        setFeelings(res?.data?.feelings || null);
+        // If the backend corrected a stale respect value, notify parent to refetch bars
+        if (res?.data?.respect_used !== undefined && res.data.respect_used !== (character.user_respect_level ?? 50)) {
+          onRespectCorrected?.();
+        }
+      })
       .catch(() => setFeelings(null))
       .finally(() => setLoading(false));
   }, [character?.id]);
