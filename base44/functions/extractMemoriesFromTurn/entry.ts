@@ -21,19 +21,21 @@ Deno.serve(async (req) => {
       }
     }
 
-    const targetChar = await base44.entities.Character.filter({ id: characterId }).then(r => r[0]);
-    const playingAsChar = playingAsCharacterId
-      ? await base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
-      : null;
+    const [targetChar, playingAsChar] = await Promise.all([
+      base44.entities.Character.filter({ id: characterId }).then(r => r[0]),
+      playingAsCharacterId
+        ? base44.entities.Character.filter({ id: playingAsCharacterId }).then(r => r[0])
+        : Promise.resolve(null),
+    ]);
 
     let newPeopleDetected = [];
 
-    // Create memory for target character about this interaction
+    // ── TARGET CHARACTER: basic memory + new people detection ─────────────────
     if (targetChar && characterReply) {
-      const targetMemory = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${targetChar.name}. Someone just said: "${userMessage}" and you replied: "${characterReply}". 
+      const targetMemoryResult = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are ${targetChar.name}. Someone just said: "${userMessage}" and you replied: "${characterReply}".
 
-Extract any NEW people names mentioned (NPCs not yet in your world) from the user's message or your response. List them as JSON: [{"name": "Name", "relationship_type": "friend/family/etc", "context": "brief context"}] or empty [] if none.`,
+Extract any NEW people names mentioned (not yet in your world) from the exchange. Return JSON only.`,
         response_json_schema: {
           type: "object",
           properties: {
@@ -52,9 +54,8 @@ Extract any NEW people names mentioned (NPCs not yet in your world) from the use
         }
       });
 
-      newPeopleDetected = targetMemory?.people || [];
+      newPeopleDetected = targetMemoryResult?.people || [];
 
-      // Store memory for target character
       await base44.entities.Memory.create({
         character_id: characterId,
         title: `Conversation moment`,
@@ -65,45 +66,134 @@ Extract any NEW people names mentioned (NPCs not yet in your world) from the use
       });
     }
 
-    // If user was playing as a character, create a simple emotional journal entry
-    if (playingAsChar && targetChar) {
-      const emotionalReflection = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${playingAsChar.name}. Personality: ${playingAsChar.personality_summary || 'unknown'}. You just talked with ${targetChar.name}.
+    // ── PLAYED CHARACTER: full multi-dimensional memory extraction ─────────────
+    // This is the core fix: the played character retains meaningful outcomes
+    // from the interaction as if they lived through it — because they did.
+    if (playingAsChar && targetChar && (userMessage || characterReply)) {
+      const extraction = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are analyzing a real interaction that ${playingAsChar.name} just had with ${targetChar.name}.
 
-What you said: "${userMessage}"
-How they responded: "${characterReply?.substring(0, 150)}"
+${playingAsChar.name}'s personality: ${playingAsChar.personality_summary || 'unknown'}
+${playingAsChar.name}'s emotional state going in: ${playingAsChar.emotional_state || 'calm'}
 
-Write ONE sentence about how this interaction made you feel. Be authentic to your personality and what you just learned about them.`,
+What ${playingAsChar.name} said/did: "${userMessage}"
+How ${targetChar.name} responded: "${characterReply?.substring(0, 300) || '(no response)'}"
+
+This interaction HAPPENED to ${playingAsChar.name}. Even though the user was guiding them, ${playingAsChar.name} experienced it.
+
+Extract memory-worthy outcomes. Only populate a field if something real and meaningful occurred. Leave null if nothing significant happened for that category.
+
+MEMORY THRESHOLD — only extract if the exchange contained:
+emotional weight, conflict, affection, comfort, important news, planning, promises, revelations, intimacy, argument, apology, fear, grief-support, decisions, or changed relationships.
+
+Return JSON.`,
+        response_json_schema: {
+          type: "object",
+          properties: {
+            has_meaningful_content: { type: "boolean" },
+            emotional_takeaway: {
+              type: "string",
+              description: "How ${playingAsChar.name} feels now as a result. null if nothing emotional happened."
+            },
+            factual_takeaway: {
+              type: "string",
+              description: "Important information or facts learned. null if nothing new was revealed."
+            },
+            relational_takeaway: {
+              type: "string",
+              description: "How trust, closeness, tension, or bond with this person changed. null if unchanged."
+            },
+            unresolved_thread: {
+              type: "string",
+              description: "Anything left open, unfinished, or that may need follow-up. null if nothing."
+            },
+            life_journal_entry: {
+              type: "string",
+              description: "A 2-3 sentence first-person journal entry from the played character's perspective about what happened and why it mattered. Only if has_meaningful_content is true. null otherwise."
+            },
+            new_emotional_state: {
+              type: "string",
+              description: "If this interaction should change the played character's emotional state, what it should be now. Use one of: calm, content, happy, sad, anxious, excited, irritated, frustrated, defensive, reflective, closed-off, hopeful, hurt, empathy, love, gratitude, longing, guilt, shame, pride, confusion, trust, suspicion, relief. null if no change needed."
+            },
+            relationship_shift: {
+              type: "string",
+              enum: ["positive", "negative", "neutral", null],
+              description: "Whether this interaction moved the relationship positively, negatively, or not at all."
+            }
+          },
+          required: ["has_meaningful_content"]
+        }
       });
 
-      await base44.entities.Memory.create({
-        character_id: playingAsCharacterId,
-        title: `Talked with ${targetChar.name}`,
-        description: emotionalReflection,
-        emotional_impact: 'neutral',
-        timestamp: new Date().toISOString(),
-        source_context: `conversation_${conversationId}_as_${playingAsCharacterId}`,
-      });
+      if (extraction?.has_meaningful_content) {
+        const memoryParts = [
+          extraction.emotional_takeaway,
+          extraction.factual_takeaway,
+          extraction.relational_takeaway,
+          extraction.unresolved_thread,
+        ].filter(Boolean);
 
-      // Create/update fictional relationship
-      const existingRels = await base44.entities.CharacterRelationship.filter({
-        source_character_id: playingAsCharacterId,
-        target_character_id: characterId,
-      });
+        const memoryDescription = extraction.life_journal_entry || memoryParts.join(' ');
 
-      if (existingRels.length === 0) {
-        await base44.entities.CharacterRelationship.create({
-          source_character_id: playingAsCharacterId,
-          target_character_id: characterId,
-          person_name: targetChar.name,
-          relationship_type: 'acquaintance',
-          current_status: 'ongoing',
-          friendship_level: 50,
-          user_respect_level: 50,
-          romantic_level: 0,
-          attraction_level: 0,
-          chosen_family_level: 0,
-        });
+        if (memoryDescription) {
+          await base44.entities.Memory.create({
+            character_id: playingAsCharacterId,
+            title: `Interaction with ${targetChar.name}`,
+            description: memoryDescription,
+            emotional_impact: extraction.relational_takeaway ? 'meaningful' : 'neutral',
+            timestamp: new Date().toISOString(),
+            source_context: `play_as_${conversationId}_with_${characterId}`,
+          });
+        }
+
+        // Update emotional state of the played character if the exchange changed it
+        if (extraction.new_emotional_state) {
+          await base44.entities.Character.update(playingAsCharacterId, {
+            emotional_state: extraction.new_emotional_state,
+          });
+        }
+
+        // Update fictional relationship on the played character toward the target
+        if (extraction.relationship_shift && extraction.relationship_shift !== 'neutral') {
+          const existingFictionalRels = playingAsChar.fictional_relationships || [];
+          const relEntry = existingFictionalRels.find(r => r.related_character_id === characterId);
+          const delta = extraction.relationship_shift === 'positive' ? 3 : -3;
+
+          if (relEntry) {
+            const updatedRels = existingFictionalRels.map(r =>
+              r.related_character_id === characterId
+                ? {
+                    ...r,
+                    friendship_level: Math.min(100, Math.max(0, (r.friendship_level ?? 50) + delta)),
+                    last_interaction_summary: extraction.relational_takeaway || r.last_interaction_summary,
+                  }
+                : r
+            );
+            await base44.entities.Character.update(playingAsCharacterId, {
+              fictional_relationships: updatedRels,
+            });
+          } else {
+            // Create a new fictional relationship entry for this character
+            const newRels = [
+              ...existingFictionalRels,
+              {
+                person_name: targetChar.name,
+                related_character_id: characterId,
+                relationship_type: 'acquaintance',
+                current_status: 'ongoing',
+                friendship_level: 50 + delta,
+                user_respect_level: 50,
+                romantic_level: 0,
+                attraction_level: 0,
+                chosen_family_level: 0,
+                last_interaction_summary: extraction.relational_takeaway || null,
+              },
+            ];
+            await base44.entities.Character.update(playingAsCharacterId, {
+              fictional_relationships: newRels,
+            });
+          }
+        }
       }
     }
 
