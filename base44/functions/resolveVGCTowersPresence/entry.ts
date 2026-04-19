@@ -14,7 +14,8 @@
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-const ELIGIBLE_TYPES = ['npc_family_member', 'npc_fictitious_person'];
+// Correct character_type values from schema
+const ELIGIBLE_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc'];
 const ELIGIBLE_CATEGORIES = ['food_drink', 'gym', 'social', 'outdoor', 'public', 'community', 'religion', 'grocery'];
 const AGE_RESTRICTED_CATEGORIES = ['social']; // bars/clubs within social — filtered by subtype
 const ADULT_ONLY_SUBTYPES = ['bar', 'club', 'nightclub', 'lounge'];
@@ -64,9 +65,10 @@ function isAdultOnlyLocation(loc) {
   return subtypes.some(s => ADULT_ONLY_SUBTYPES.includes(s?.toLowerCase()));
 }
 
-function isEligible(char) {
+function isEligible(char, vgcId) {
   if (!ELIGIBLE_TYPES.includes(char.character_type)) return false;
-  if (char.home_location_name !== 'VGC Towers') return false;
+  // Match against actual ID field (home_location_name is not a real schema field)
+  if (char.current_home_location_id !== vgcId && char.resolved_current_location_id !== vgcId && char.home_location_id !== vgcId) return false;
   if (char.is_homeless) return false;
   if (isAsleep(char)) return false;
   // Respect stronger systems
@@ -88,9 +90,11 @@ Deno.serve(async (req) => {
 
     if (!isWithinTravelWindow(now)) {
       // Outside travel window — send eligible residents home
-      const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active', owner_email: user.email });
+      const allChars = await base44.asServiceRole.entities.Character.filter({ created_by: user.email, status: 'active' });
+      const allVgcLocs = await base44.asServiceRole.entities.LocationReference.filter({ created_by: user.email });
+      const vgcHome = allVgcLocs.find(l => l.name === 'VGC Towers');
       const toReturn = allChars.filter(c =>
-        isEligible(c) &&
+        isEligible(c, vgcHome?.id) &&
         c.current_live_location_id &&
         c.current_live_location_id !== c.home_location_id
       );
@@ -123,8 +127,8 @@ Deno.serve(async (req) => {
     }
 
     // Get all characters scoped to current user
-    const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active', owner_email: user.email });
-    const eligible = allChars.filter(isEligible);
+    const allChars = await base44.asServiceRole.entities.Character.filter({ created_by: user.email, status: 'active' });
+    const eligible = allChars.filter(c => isEligible(c, vgcTowers?.id));
 
     if (eligible.length === 0) {
       return Response.json({ message: 'No eligible VGC Towers NPC residents found' });
