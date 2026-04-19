@@ -7,16 +7,12 @@ import ChatHeader from "@/components/chat/ChatHeader";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ChatInput from "@/components/chat/ChatInput";
 import TypingIndicator from "@/components/chat/TypingIndicator";
-import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import MediaGallery from "@/components/chat/MediaGallery";
-import MusicPreviewPlayer from "@/components/chat/MusicPreviewPlayer";
-import VoiceDiagnosticsPanel from "@/components/chat/VoiceDiagnosticsPanel";
 import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import BottomNav from "@/components/BottomNav";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { resolveCharacterOutfit, buildOutfitNarrativeHint } from "@/lib/resolveOutfitContext";
 import { getCharacterLivePresence, buildLiveLocationContext } from "@/lib/locationResolutionEngine";
-import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 
 import SendMoneyModal from "@/components/chat/SendMoneyModal";
@@ -35,6 +31,7 @@ import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
 import { useNarrativeCorrection } from "@/hooks/useNarrativeCorrection";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -112,12 +109,9 @@ export default function Chat() {
   // Unified behaviour engine — placed after character query to avoid 'cannot access before initialization'
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
 
-  const { data: settings = [] } = useQuery({
-    queryKey: ["userSettings"],
-    queryFn: () => base44.entities.UserSettings.list(),
-  });
-
-  const userSettings = settings?.[0] || {};
+  // ACCOUNT-SCOPED: useUserSettings always filters by created_by: user.email — never reads globally
+  const { settings: userSettings } = useUserSettings();
+  const settings = userSettings ? [userSettings] : [];
 
   // CORE VOICE PLAYBACK FUNCTION - This is the single source of truth for all voice playback
   const playCharacterVoice = async (messageId, text, characterData, userSettings, bypassCache = false) => {
@@ -910,7 +904,7 @@ export default function Chat() {
         _speakerName: m.sender_type === "user" ? (activeCharacter?.name || "User") : character.name,
       }));
 
-      const userSettings = settings?.[0] || {};
+      // userSettings comes from the account-scoped useUserSettings hook above
       // Use unified behaviour tone instead of generic instructions
       const toneFromBehaviour = behaviour?.tone || 'neutral';
       const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];

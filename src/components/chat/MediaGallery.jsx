@@ -52,18 +52,19 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   }, []);
 
   // Load locations, user settings, and unified roster when modal opens
+  // CRITICAL: ALL fetches are scoped to the authenticated userEmail — never use .list() without a filter
   useEffect(() => {
     if (!isOpen || !userEmail) return;
     Promise.all([
       base44.functions.invoke('fetchAllLocationsForUser', {})
         .then(res => setLocations(res?.data?.locations || []))
         .catch(() => {}),
-      base44.entities.UserSettings.list()
-        .then(settings => setUserSettings(settings?.[0] || null))
+      // ACCOUNT-SCOPED: filter by created_by so we never read another user's settings
+      base44.entities.UserSettings.filter({ created_by: userEmail })
+        .then(settingsList => setUserSettings(settingsList?.[0] || null))
         .catch(() => {}),
       fetchUnifiedRoster(base44, userEmail)
         .then(roster => {
-          // Include ALL active characters in the list for selection
           setAllCharacters(roster || []);
         })
         .catch(() => {}),
