@@ -1132,15 +1132,18 @@
           },
           "trust_level": {
             "type": "number",
-            "default": 50
+            "default": 50,
+            "description": "How safe, reliable, and honest this person feels (0-100)"
           },
           "relational_jealousy": {
             "type": "number",
-            "default": 0
+            "default": 0,
+            "description": "Fear of losing their attention/closeness to someone else (0-100)"
           },
           "envy_jealousy": {
             "type": "number",
-            "default": 0
+            "default": 0,
+            "description": "Comparison-driven envy \u2014 they have something I want (0-100)"
           }
         }
       }
@@ -1498,7 +1501,8 @@
     },
     "user_respect_level": {
       "type": "number",
-      "default": 50
+      "default": 50,
+      "description": "How much this character values the user's character, judgment, dignity, and worth (0-100)"
     },
     "friendship_level": {
       "type": "number",
@@ -1519,17 +1523,17 @@
     "trust_level": {
       "type": "number",
       "default": 50,
-      "description": "How safe, reliable, and honest this character perceives the user to be (0-100). Distinct from respect. Modulates jealousy and betrayal vulnerability."
+      "description": "How safe, reliable, and honest the user feels to this character \u2014 separate from respect (0-100)"
     },
     "relational_jealousy": {
       "type": "number",
       "default": 0,
-      "description": "Fear of losing the user's attention, closeness, or exclusive place. Tied to attachment and romantic/intimate dynamics. Reduced by high trust."
+      "description": "Fear of losing the user's attention or closeness to someone else \u2014 modulated by trust (0-100)"
     },
     "envy_jealousy": {
       "type": "number",
       "default": 0,
-      "description": "Comparative envy \u2014 wanting something the user has (status, attention, resources, opportunity). Not inherently romantic. Tied to self-worth and perceived fairness."
+      "description": "Comparison-driven envy \u2014 the user has something this character wants (0-100)"
     },
     "is_active_character": {
       "type": "boolean",
