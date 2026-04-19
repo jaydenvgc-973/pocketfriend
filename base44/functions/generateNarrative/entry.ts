@@ -493,10 +493,84 @@ Generate a narrative of 2 to 4 sentences. It must feel like a live continuation 
 
 Narrative:`;
 
-    const response = await base44.integrations.Core.InvokeLLM({
-      prompt,
+    // ── PRE-GENERATION SLEEP GATE ─────────────────────────────────────────────
+    // If character is asleep, enforce a sleep-only prompt variant that hard-blocks
+    // all active behaviors BEFORE the LLM generates anything.
+    // This prevents "coffee at 3am" type violations at the source.
+    const sleepGatedPrompt = isAsleep
+      ? prompt + `
+
+════════════════════════════════════
+⛔ SLEEP STATE HARD GATE — HIGHEST PRIORITY — OVERRIDES ALL OTHER INSTRUCTIONS
+════════════════════════════════════
+${characterName} IS CURRENTLY ASLEEP. This is a locked state. It cannot be overridden by personality, schedule, or emotional state.
+
+ALLOWED IN THIS NARRATIVE (EXHAUSTIVE LIST — nothing outside this list is permitted):
+  ✓ Describing the room, ambient environment (light quality, temperature, sound)
+  ✓ Stillness, breathing, physical rest
+  ✓ Dreams or half-conscious impressions (1 clause maximum, clearly framed as sleep)
+  ✓ Environmental atmosphere matching the current daypart (${timeOfDayDesc})
+
+HARD BLOCKED — ANY OF THESE INVALIDATES THE NARRATIVE AND REQUIRES REGENERATION:
+  ✗ Eating, drinking, making coffee, making tea, getting a glass of water
+  ✗ Moving between rooms or leaving the bed
+  ✗ Looking out windows as an intentional act
+  ✗ Picking up or interacting with any object (phone, remote, keys, etc.)
+  ✗ Having a conversation or responding to anyone
+  ✗ Any physical activity: stretching, exercising, going anywhere
+  ✗ Arriving somewhere, leaving somewhere, traveling
+  ✗ Thinking about future plans as if awake and deciding
+  ✗ Any sentence implying the character is awake and acting
+
+IF YOU CANNOT WRITE A VALID NARRATIVE WITHIN THESE CONSTRAINTS,
+write a single sentence describing the ambient environment of the room and the character's stillness.
+That is always valid. That is always correct.
+
+DO NOT GENERATE: coffee, tea, window, phone, kitchen, bathroom trip, getting up, stretching, stepping outside.
+════════════════════════════════════`
+      : prompt;
+
+    let response = await base44.integrations.Core.InvokeLLM({
+      prompt: sleepGatedPrompt,
       model: 'gemini_3_flash',
     });
+
+    // ── POST-GENERATION SLEEP VALIDATOR ───────────────────────────────────────
+    // After generation, scan the output for sleep-violating terms.
+    // If found, regenerate once with an even stricter prompt.
+    if (isAsleep && response) {
+      const SLEEP_VIOLATION_TERMS = [
+        'coffee', 'tea', 'drink', 'drank', 'sip', 'sipping',
+        'kitchen', 'stove', 'kettle', 'mug', 'cup of',
+        'window', 'looks out', 'looked out', 'gazes out', 'stares out',
+        'gets up', 'got up', 'stands up', 'stood up', 'sits up', 'sat up',
+        'walks to', 'walked to', 'steps into', 'stepped into', 'moves to', 'moved to',
+        'bathroom', 'stretches', 'stretching', 'shower', 'brushes', 'brush',
+        'phone', 'checks', 'scrolls', 'opens', 'picks up',
+        'leaves', 'heads out', 'goes to', 'went to',
+        'eats', 'eating', 'food', 'breakfast', 'snack',
+      ];
+      const respLower = response.toLowerCase();
+      const hasViolation = SLEEP_VIOLATION_TERMS.some(term => respLower.includes(term));
+
+      if (hasViolation) {
+        console.warn(`[generateNarrative] Sleep violation detected in first pass — regenerating with fallback prompt`);
+        response = await base44.integrations.Core.InvokeLLM({
+          prompt: `${characterName} is fully asleep at ${timeStr} (${timeOfDayDesc}).
+
+Write 1-2 sentences describing ONLY the ambient environment of the room and the character's physical stillness while sleeping.
+No movement. No objects. No actions. No dialogue. Just the room and the quiet.
+
+Valid examples:
+- "The room held its breath in the pre-dawn dark, the only sound her slow, steady breathing."
+- "Pale morning light pushed at the edges of the curtains, but he didn't stir — still deep in sleep."
+- "The apartment was quiet at this hour, the city outside a low murmur beneath the silence of the room."
+
+Now write one for ${characterName} at their current location (${resolvedLocationName || 'home'}):`,
+          model: 'gemini_3_flash',
+        });
+      }
+    }
 
     return Response.json({ success: true, narrative: response });
 
