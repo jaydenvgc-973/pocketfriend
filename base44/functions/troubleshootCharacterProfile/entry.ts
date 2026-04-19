@@ -21,17 +21,12 @@ Deno.serve(async (req) => {
       issues_found: [],
     };
 
-    // Fetch the target character — must belong to this user
-    const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+    // Fetch the target character — scoped to this user to prevent cross-account access
+    const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: user.email });
     if (chars.length === 0) {
-      return Response.json({ success: false, data: { summary: 'Character not found', checks: [], fixes_applied: [], issues_found: ['Character record missing'] } });
+      return Response.json({ success: false, data: { summary: 'Character not found or access denied', checks: [], fixes_applied: [], issues_found: ['Character record missing or not owned by this account'] } });
     }
     const character = chars[0];
-
-    // SAFETY: ensure this character belongs to the requesting user
-    if (character.created_by && character.created_by !== user.email) {
-      return Response.json({ success: false, data: { summary: 'Access denied — character not owned by this account', checks: [], fixes_applied: [], issues_found: ['Character ownership mismatch — cannot diagnose or repair characters from other accounts'] } });
-    }
 
     // Fetch all characters for this user (scoped strictly by created_by)
     const allChars = await base44.asServiceRole.entities.Character.filter({ created_by: user.email });
@@ -97,7 +92,7 @@ Deno.serve(async (req) => {
     if (selectedIssues.includes('status_location')) {
       const now = new Date();
       const recentEvents = await base44.asServiceRole.entities.ScheduledEvent.filter(
-        { character_ids: [characterId] }, '-trigger_time', 20
+        { character_ids: [characterId], created_by: user.email }, '-trigger_time', 20
       );
       const activeEvent = recentEvents.find(ev => {
         if (ev.status !== 'completed') return false;
@@ -143,7 +138,7 @@ Deno.serve(async (req) => {
         results.checks.push({ name: 'Duplicate Character Records', status: 'passed', message: `No other characters with name "${character.name}" found in this account` });
       }
 
-      const charConvos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [characterId] }, '-updated_date', 30);
+      const charConvos = await base44.asServiceRole.entities.Conversation.filter({ character_ids: [characterId], created_by: user.email }, '-updated_date', 30);
       const crossLinked = charConvos.filter(c => c.character_ids && c.character_ids.length > 1 && c.type !== 'group' && c.type !== 'npc');
       if (crossLinked.length > 0) {
         results.issues_found.push(`Found ${crossLinked.length} non-group conversation(s) where ${character.name} is linked with another character — may cause cross-routing.`);
@@ -212,7 +207,7 @@ Deno.serve(async (req) => {
       if (!worldName) {
         results.checks.push({ name: 'World Name Enforcement', status: 'warning', message: 'No world name set in Settings. Set one in Settings > Your Name (In-World). Characters will use pronouns until then.' });
       } else {
-        const memories = await base44.asServiceRole.entities.Memory.filter({ character_id: characterId }, '-timestamp', 300);
+        const memories = await base44.asServiceRole.entities.Memory.filter({ character_id: characterId, created_by: user.email }, '-timestamp', 300);
         const staleMemories = memories.filter(m => PLACEHOLDER_PATTERNS.some(p => p.test(m.title || '') || p.test(m.description || '')));
         if (staleMemories.length > 0) {
           let corrected = 0;
