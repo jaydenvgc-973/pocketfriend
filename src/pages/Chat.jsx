@@ -44,6 +44,7 @@ import { filterDashes } from "@/lib/dashFilter";
 import { stripCharacterNamePrefix, stripSelfReferenceName } from "@/lib/nameFilterUtils";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
+import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
@@ -911,9 +912,13 @@ export default function Chat() {
       const toneContext = toneFromBehaviour !== 'neutral' ? `\n\nTONE FILTER: Based on your current state (${toneFromBehaviour}), adjust your response tone accordingly. If tired, be brief. If stressed, be clipped. If warm, be open.` : '';
       const intensityInstruction = { low: "React with mild emotional responses.", medium: "React naturally with moderate emotional responses.", high: "React with strong, intense emotional responses." }[userSettings.emotional_intensity || "medium"];
 
-      const nowISO = new Date().toISOString();
-      const nowDisplay = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' });
-      const timeContext = `\n\nCURRENT DATE & TIME: ${nowDisplay}\nYou are aware of the current time. If the user or you mention plans, events, or actions at a specific time (e.g. "I'll pick you up at 1pm", "see you tonight at 8"), you naturally reference the actual time and treat those plans as real commitments that will happen.`;
+      // ── UNIFIED TEMPORAL STATE — single source of truth for time/daypart/continuity ──
+      // Pull the last message timestamp from the thread for elapsed-time calculation
+      const lastThreadMsg = recentMsgs.length > 0 ? recentMsgs[recentMsgs.length - 2] : null; // -2 because userMsg is already appended
+      const lastThreadTimestamp = lastThreadMsg?.timestamp || lastThreadMsg?.created_date || null;
+      const temporalState = buildTemporalState(character, lastThreadTimestamp);
+      const timeContext = buildTemporalContextBlock(temporalState) +
+        `\n\nYou are aware of the current time (${temporalState.currentTime}). If plans or commitments are mentioned at specific times, treat them as real.`;
 
       let educationContext = "";
       if (character.current_education_activity && character.current_education_activity !== "none") {

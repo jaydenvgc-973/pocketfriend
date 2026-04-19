@@ -1,5 +1,121 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// ── INLINE TEMPORAL STATE ENGINE (mirrors lib/temporalStateEngine.js) ─────────
+// Deno functions cannot import local lib files, so we inline the critical logic.
+
+function getDaypartLabel(hourET) {
+  const h = ((hourET % 24) + 24) % 24;
+  if (h < 4)  return { id: 'deep_night',    label: 'deep night' };
+  if (h < 6)  return { id: 'pre_dawn',      label: 'pre-dawn' };
+  if (h < 8)  return { id: 'early_morning', label: 'early morning' };
+  if (h < 12) return { id: 'morning',       label: 'morning' };
+  if (h < 14) return { id: 'midday',        label: 'midday' };
+  if (h < 17) return { id: 'afternoon',     label: 'afternoon' };
+  if (h < 20) return { id: 'evening',       label: 'evening' };
+  if (h < 22) return { id: 'night',         label: 'night' };
+  return { id: 'late_night', label: 'late night' };
+}
+
+const DAYPART_ENV = {
+  deep_night:    { awake: 'The space is dark and quiet, well past midnight. The world is fully still.',    asleep: 'Deep night. The room is dark and still — the hours between midnight and dawn.' },
+  pre_dawn:      { awake: 'Pre-dawn quiet. The sky is still dark but the night is winding toward its end.', asleep: 'Pre-dawn stillness. Still dark, but a different quiet than midnight — the night is almost over.' },
+  early_morning: { awake: 'Early morning. The first soft gray-blue light is gathering outside.',            asleep: 'Early morning, though they are still asleep. The curtains are catching the first dim light of dawn.' },
+  morning:       { awake: 'Morning. Natural light is filling the space and the day is underway.',           asleep: 'Morning now, though they are still asleep. Daylight is pressing at the curtains.' },
+  midday:        { awake: 'Midday. The sun is at its peak.',                                               asleep: 'Well into midday. Bright light through the curtains, the world fully active outside.' },
+  afternoon:     { awake: 'Mid-afternoon. Warm light, the day in full stride.',                            asleep: 'Afternoon. Golden light through the window — the day is already half-spent.' },
+  evening:       { awake: 'Evening. The light is fading, the day winding down.',                           asleep: 'Early evening. The daylight has gone soft outside, fading toward night.' },
+  night:         { awake: 'Night. The day is over, the city in its evening rhythm.',                       asleep: 'Night. The room is dim, the world outside in its nighttime pace.' },
+  late_night:    { awake: 'Late night. Quiet streets, the hours running toward midnight.',                 asleep: 'Late night. The room is still and dark — well past midnight, deep into the night hours.' },
+};
+
+function buildTemporalBlock(char, lastMsgTimestamp) {
+  const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hourET   = nowET.getHours();
+  const minET    = nowET.getMinutes();
+  const timeStr  = `${hourET % 12 || 12}:${String(minET).padStart(2, '0')} ${hourET >= 12 ? 'PM' : 'AM'}`;
+  const dayOfWeek = nowET.toLocaleDateString('en-US', { weekday: 'long' });
+  const dateStr  = nowET.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const dp       = getDaypartLabel(hourET);
+  const envCues  = DAYPART_ENV[dp.id] || DAYPART_ENV.deep_night;
+
+  // Sleep state
+  const rp = char?.resolved_presence_status;
+  let isAsleep = rp === 'sleeping' || rp === 'napping';
+  if (!isAsleep && char?.sleep_start_time && char?.wake_up_time) {
+    const sH = parseInt(char.sleep_start_time.split(':')[0], 10);
+    const wH = parseInt(char.wake_up_time.split(':')[0], 10);
+    isAsleep = sH > wH ? (hourET >= sH || hourET < wH) : (hourET >= sH && hourET < wH);
+  }
+  const envCue = isAsleep ? envCues.asleep : envCues.awake;
+
+  // Elapsed + continuity
+  let elapsedLabel = null;
+  let continuityMode = 'immediate';
+  let dayChanged = false;
+  let sleepOccurred = false;
+
+  if (lastMsgTimestamp) {
+    const lastMs = new Date(lastMsgTimestamp).getTime();
+    const elapsedMs = Date.now() - lastMs;
+    const mins = Math.floor(elapsedMs / 60000);
+    const hrs  = Math.floor(elapsedMs / 3600000);
+    const days = Math.floor(elapsedMs / 86400000);
+
+    if (elapsedMs < 90000)      elapsedLabel = 'just now';
+    else if (mins < 60)         elapsedLabel = `${mins} minutes ago`;
+    else if (hrs < 24)          elapsedLabel = `${hrs} hour${hrs !== 1 ? 's' : ''} ago`;
+    else if (days === 1)        elapsedLabel = 'yesterday';
+    else                        elapsedLabel = `${days} days ago`;
+
+    const lastET = new Date(new Date(lastMsgTimestamp).toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    dayChanged = lastET.getDate() !== nowET.getDate() || lastET.getMonth() !== nowET.getMonth();
+    sleepOccurred = elapsedMs > 5 * 3600 * 1000 || (dayChanged && elapsedMs > 2 * 3600 * 1000);
+
+    if (dayChanged && elapsedMs > 86400000 * 1.5) continuityMode = 'long_absence';
+    else if (dayChanged)        continuityMode = 'next_day';
+    else if (sleepOccurred)     continuityMode = 'resumed_after_sleep';
+    else if (elapsedMs < 300000) continuityMode = 'immediate';
+    else if (elapsedMs < 3600000) continuityMode = 'recent';
+    else if (elapsedMs < 21600000) continuityMode = 'same_day_gap';
+    else                        continuityMode = 'resumed_after_gap';
+  }
+
+  const continuityDesc = {
+    immediate:           'Immediate continuation — last exchange was moments ago.',
+    recent:              'Recent exchange — under an hour ago, conversation has natural momentum.',
+    same_day_gap:        'A few hours have passed — same day but resumed, not continuous.',
+    resumed_after_gap:   'Several hours have passed — interaction is resumed, not continued.',
+    resumed_after_sleep: 'Sleep occurred since last interaction — this is a new-day resumption.',
+    next_day:            "Next day. Yesterday's conversation is memory, not an ongoing moment.",
+    long_absence:        'Multiple days have passed. Prior topics are background only.',
+  }[continuityMode] || '';
+
+  const sleepLine = isAsleep
+    ? `Sleep state: ASLEEP — but the WORLD CLOCK has NOT FROZEN. The current daypart is "${dp.label.toUpperCase()}". Environmental descriptions MUST match this. Do NOT write generic night language if real time is morning.`
+    : `Sleep state: AWAKE`;
+
+  return `
+════════════════════════════════════
+TEMPORAL STATE — AUTHORITATIVE (recalculated from live clock — cannot be overridden)
+════════════════════════════════════
+Current time:  ${timeStr}
+Current day:   ${dayOfWeek}, ${dateStr}
+Daypart:       ${dp.label.toUpperCase()}
+${sleepLine}
+${elapsedLabel ? `Last interaction: ${elapsedLabel}\n` : ''}Continuity:    ${continuityMode.replace(/_/g, ' ')} — ${continuityDesc}
+
+ENVIRONMENT CUE (match this — do not use stale night/morning language from a prior scene):
+"${envCue}"
+
+HARD RULES FOR THIS NARRATIVE:
+• 5:00 AM is early morning — NOT midnight. Never write "night sky" language if the clock shows morning.
+• If the clock shows morning, use morning atmosphere even if the character is still asleep.
+• If hours have elapsed, the prior topic is NOT immediate — it is remembered or resumed.
+• Day rollover is a real state transition. Do not blend yesterday and today.
+• The daypart above is final. Lighting, atmosphere, tone, and character alertness must match it exactly.
+════════════════════════════════════`;
+}
+
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
@@ -44,34 +160,25 @@ Deno.serve(async (req) => {
       console.warn('[generateNarrative] Could not resolve location:', locErr.message);
     }
 
-    // ── DETERMINE SLEEP STATE ─────────────────────────────────────────────────
-    const isAsleep = (() => {
-      // If character has a resolved presence status that indicates sleeping
-      if (resolvedPresenceStatus === 'sleeping' || resolvedPresenceStatus === 'napping') return true;
+    // ── UNIFIED TEMPORAL STATE (single source of truth) ──────────────────────
+    // Get the last message timestamp for elapsed-time + continuity calculation
+    const lastMsg = chatHistory?.length > 0 ? chatHistory[chatHistory.length - 1] : null;
+    const lastMsgTimestamp = lastMsg?.timestamp || lastMsg?.created_date || null;
+    const temporalBlock = buildTemporalBlock(char, lastMsgTimestamp);
 
-      if (!char.sleep_start_time || !char.wake_up_time) return false;
-      const now = new Date();
-      const hour = now.getHours();
-      const sleepStart = parseInt(char.sleep_start_time.split(':')[0]);
-      const wakeUp = parseInt(char.wake_up_time.split(':')[0]);
-      if (sleepStart > wakeUp) {
-        return hour >= sleepStart || hour < wakeUp;
-      }
-      return hour >= sleepStart && hour < wakeUp;
-    })();
-
-    // ── DETERMINE CURRENT TIME CONTEXT ───────────────────────────────────────
+    // Derive isAsleep and time string from the same logic used in buildTemporalBlock
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hourET = nowET.getHours();
     const minET = nowET.getMinutes();
     const timeStr = `${hourET % 12 || 12}:${String(minET).padStart(2, '0')} ${hourET >= 12 ? 'PM' : 'AM'}`;
-    let timeOfDayDesc = 'daytime';
-    if (hourET >= 22 || hourET < 5) timeOfDayDesc = 'late night / deep night';
-    else if (hourET >= 5 && hourET < 8) timeOfDayDesc = 'early morning';
-    else if (hourET >= 8 && hourET < 12) timeOfDayDesc = 'morning';
-    else if (hourET >= 12 && hourET < 17) timeOfDayDesc = 'afternoon';
-    else if (hourET >= 17 && hourET < 20) timeOfDayDesc = 'evening';
-    else if (hourET >= 20) timeOfDayDesc = 'night';
+    const timeOfDayDesc = getDaypartLabel(hourET).label;
+    const isAsleep = (() => {
+      if (resolvedPresenceStatus === 'sleeping' || resolvedPresenceStatus === 'napping') return true;
+      if (!char.sleep_start_time || !char.wake_up_time) return false;
+      const sH = parseInt(char.sleep_start_time.split(':')[0], 10);
+      const wH = parseInt(char.wake_up_time.split(':')[0], 10);
+      return sH > wH ? (hourET >= sH || hourET < wH) : (hourET >= sH && hourET < wH);
+    })();
 
     // ── BUILD LIVE NEEDS STATE BLOCK ──────────────────────────────────────────
     const BANDS = [
@@ -148,8 +255,8 @@ NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do no
       ? `Current activity: ${char.current_activity}`
       : '';
 
-    // ── RESOLVE USER LABEL ────────────────────────────────────────────────────
-    const settingsList = await base44.entities.UserSettings.list().catch(() => []);
+    // ── RESOLVE USER LABEL (account-scoped — never global list) ──────────────
+    const settingsList = await base44.entities.UserSettings.filter({ created_by: user.email }).catch(() => []);
     const worldName = settingsList?.[0]?.fictional_world_name || null;
     const userLabel = worldName || 'them';
 
@@ -171,6 +278,7 @@ ${locationContext}
 ${sleepContext}
 ${presenceContext ? presenceContext + '\n' : ''}${activityContext ? activityContext + '\n' : ''}Current time: ${timeStr} (${timeOfDayDesc})
 ════════════════════════════════════
+${temporalBlock}
 
 ════════════════════════════════════
 IDENTITY AND PRONOUN RULES

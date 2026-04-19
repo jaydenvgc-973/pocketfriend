@@ -205,11 +205,26 @@ export function buildSleepInterruptionContext(character) {
   const isIrritable = ['irritated', 'frustrated', 'defensive'].includes(mood);
   const isClose = friendship >= 70;
 
-  return `\n\nSLEEP INTERRUPTION: You were just woken up by this message. Your response must reflect being woken up — vary your tone based on personality, mood, and relationship.
-- If irritable or low friendship: be cranky, short, maybe annoyed ("ugh", "why are you texting me rn", "it's late")
+  // Derive the real current hour so the character references the correct time of day
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hourET = nowET.getHours();
+  const minET = nowET.getMinutes();
+  const timeStr = `${hourET % 12 || 12}:${String(minET).padStart(2, '0')} ${hourET >= 12 ? 'PM' : 'AM'}`;
+  let daypartHint = '';
+  if (hourET < 4)       daypartHint = 'This is deep night (past midnight). Being woken up now is genuinely disruptive.';
+  else if (hourET < 6)  daypartHint = 'This is pre-dawn — still very dark and very early. Being woken up now is unusual.';
+  else if (hourET < 8)  daypartHint = 'This is early morning — barely light outside. They may or may not have been planning to wake soon.';
+  else if (hourET < 10) daypartHint = 'Morning. If their alarm was soon anyway, the reaction is milder.';
+  else                  daypartHint = 'It is now morning or later — the wakeup is less disruptive.';
+
+  return `\n\nSLEEP INTERRUPTION: You were just woken up by this message. The actual time is ${timeStr}.
+${daypartHint}
+Your response must reflect being woken up — vary your tone based on personality, mood, and relationship.
+- If irritable or low friendship: be cranky, short, maybe annoyed ("ugh", "why are you texting me rn", "it's ${hourET < 6 ? 'like 4am' : 'still early'}")
 - If close relationship and normally easygoing: confused but not hostile ("wait what time is it", "I was literally asleep lol")
 - If very close: brief and warm ("I was sleeping 😅 what's up")
-- Do NOT be identical to other characters. Your personality shapes your reaction.
+- Reference the REAL time if it fits naturally (e.g. "it's ${timeStr}??")
+- Do NOT say "it's late at night" if the real time is morning.
 - Keep it SHORT — you just woke up.
 - Current mood: ${mood} | Friendship: ${friendship}/100 | Personality: ${personality.substring(0, 100)}
 ${isIrritable ? "You are already irritable — being woken up makes you more so." : ""}
