@@ -1,160 +1,135 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+// Current valid status values per schema
+const ACTIVE_STATUSES = ['active'];
+const TERMINAL_STATUSES = ['deleted', 'soft_deleted', 'merged'];
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const checks = [];
     const fixes = [];
     const issuesFound = [];
 
-    // ====== DEEP DIAGNOSTIC LEVEL 1: Database Query ======
-    console.log(`[DIAGNOSTIC] Finding all characters for user: ${user.email}`);
-    const allCharactersDB = await base44.asServiceRole.entities.Character.list('-created_date', 1000);
-    console.log(`[DIAGNOSTIC] Found ${allCharactersDB.length} total characters in database`);
+    // SAFETY: Always query by created_by — never load all characters globally then filter
+    const userCharacters = await base44.asServiceRole.entities.Character.filter(
+      { created_by: user.email }, '-created_date', 500
+    );
 
-    // ====== DEEP DIAGNOSTIC LEVEL 2: User-Owned Filter ======
-    const userCharacters = allCharactersDB.filter(c => c.created_by === user.email);
-    console.log(`[DIAGNOSTIC] Found ${userCharacters.length} characters with correct created_by: ${user.email}`);
     checks.push({
       name: 'Database query for user characters',
       status: userCharacters.length > 0 ? 'passed' : 'warning',
-      message: `Retrieved ${userCharacters.length} characters from database with created_by=${user.email}`
+      message: `Retrieved ${userCharacters.length} characters for ${user.email}`
     });
 
-    // ====== DEEP DIAGNOSTIC LEVEL 3: Orphaned/Misattributed ======
-    const orphanedChars = allCharactersDB.filter(c => {
-      // Characters with service role email or weird ownership
-      return (c.created_by && (c.created_by.includes('service+') || !c.created_by.includes('@'))) || !c.created_by;
-    });
-    if (orphanedChars.length > 0) {
-      issuesFound.push(`Found ${orphanedChars.length} orphaned characters with incorrect created_by`);
-    }
-    checks.push({
-      name: 'Orphaned character scan',
-      status: orphanedChars.length > 0 ? 'warning' : 'passed',
-      message: orphanedChars.length > 0 ? `Found ${orphanedChars.length} orphaned records` : 'No orphaned records'
-    });
-
-    // ====== DEEP DIAGNOSTIC LEVEL 4: Status States ======
-    const activeCount = userCharacters.filter(c => c.status === 'active' || !c.status).length;
+    // Status distribution (diagnostic only — never auto-change terminal statuses)
+    const activeCount = userCharacters.filter(c => !c.status || c.status === 'active').length;
     const movedAwayCount = userCharacters.filter(c => c.status === 'moved_away').length;
+    const softDeletedCount = userCharacters.filter(c => c.status === 'soft_deleted').length;
+    const mergedCount = userCharacters.filter(c => c.status === 'merged').length;
     const deletedCount = userCharacters.filter(c => c.status === 'deleted').length;
-    const unknownStatus = userCharacters.filter(c => c.status && !['active', 'moved_away', 'deleted'].includes(c.status)).length;
+    const unknownStatus = userCharacters.filter(c => c.status && !['active', 'moved_away', 'deleted', 'soft_deleted', 'merged'].includes(c.status)).length;
 
-    if (unknownStatus > 0) {
-      issuesFound.push(`Found ${unknownStatus} characters with unknown status values`);
-    }
     checks.push({
       name: 'Character status distribution',
       status: unknownStatus > 0 ? 'warning' : 'passed',
-      message: `Active: ${activeCount}, Moved: ${movedAwayCount}, Deleted: ${deletedCount}${unknownStatus > 0 ? `, Unknown: ${unknownStatus}` : ''}`
+      message: `Active: ${activeCount} | Moved Away: ${movedAwayCount} | Soft Deleted: ${softDeletedCount} | Merged: ${mergedCount} | Deleted: ${deletedCount}${unknownStatus > 0 ? ` | Unknown: ${unknownStatus}` : ''}`
     });
 
-    // ====== DEEP DIAGNOSTIC LEVEL 5: Field Completeness ======
-    const incomplete = userCharacters.filter(c => {
+    if (unknownStatus > 0) {
+      issuesFound.push(`${unknownStatus} character(s) have unrecognized status values`);
+    }
+
+    // Field completeness check for active characters
+    const activeChars = userCharacters.filter(c => !c.status || c.status === 'active');
+    const incomplete = activeChars.filter(c => {
       const missing = [];
       if (!c.name || !c.name.trim()) missing.push('name');
-      if (!c.avatar_url && !c.reference_image_urls?.length) missing.push('avatar');
-      if (!c.personality_summary) missing.push('personality');
+      if (!c.character_type) missing.push('character_type');
       if (!c.emotional_state) missing.push('emotional_state');
       return missing.length > 0;
     });
 
     if (incomplete.length > 0) {
-      issuesFound.push(`Found ${incomplete.length} characters with incomplete core fields`);
+      issuesFound.push(`${incomplete.length} active character(s) have incomplete required fields`);
+      incomplete.forEach(c => {
+        const missing = [];
+        if (!c.name?.trim()) missing.push('name');
+        if (!c.character_type) missing.push('character_type');
+        if (!c.emotional_state) missing.push('emotional_state');
+        issuesFound.push(`  → "${c.name || c.id}": missing ${missing.join(', ')}`);
+      });
     }
     checks.push({
       name: 'Character field completeness',
       status: incomplete.length > 0 ? 'warning' : 'passed',
-      message: incomplete.length > 0 ? `${incomplete.length} characters missing core fields` : 'All characters have required fields'
+      message: incomplete.length > 0
+        ? `${incomplete.length} active character(s) missing required fields — may be excluded from lists`
+        : `All ${activeChars.length} active characters have required fields`
     });
 
-    // ====== DEEP DIAGNOSTIC LEVEL 6: Default Character ======
-    const defaultChar = userCharacters.find(c => c.is_default);
-    if (!defaultChar && userCharacters.length > 0) {
-      issuesFound.push('No default character set');
-    }
+    // Default character check
+    const defaultChar = activeChars.find(c => c.is_default);
     checks.push({
       name: 'Default character check',
       status: defaultChar ? 'passed' : 'warning',
-      message: defaultChar ? `Default character set: ${defaultChar.name}` : 'No default character configured'
+      message: defaultChar ? `Default character: ${defaultChar.name}` : 'No default character configured'
     });
 
-    // ====== APPLY FIXES ======
-    console.log(`[FIXES] Starting repair process for ${userCharacters.length} characters`);
-
-    // FIX 1: Ensure all user characters have correct created_by
-    for (const char of userCharacters) {
-      if (char.created_by !== user.email) {
-        console.log(`[FIX] Correcting created_by for ${char.name} (${char.id})`);
-        await base44.asServiceRole.entities.Character.update(char.id, {
-          created_by: user.email
-        });
-        fixes.push(`Corrected ownership: ${char.name}`);
-      }
+    if (!defaultChar && activeChars.length > 0) {
+      issuesFound.push('No default character set — some features may not work correctly');
     }
 
-    // FIX 2: Ensure all active/custom characters have status = 'active'
-    for (const char of userCharacters) {
-      if (char.status === 'deleted' || !char.status || (char.status && !['active', 'moved_away'].includes(char.status))) {
-        const newStatus = char.is_default ? 'active' : 'active';
-        console.log(`[FIX] Setting status to ${newStatus} for ${char.name} (was: ${char.status})`);
-        await base44.asServiceRole.entities.Character.update(char.id, {
-          status: newStatus
-        });
-        fixes.push(`Set status to active: ${char.name}`);
-      }
+    // exclude_from_homepage check — informational only
+    const hiddenChars = activeChars.filter(c => c.exclude_from_homepage === true);
+    if (hiddenChars.length > 0) {
+      issuesFound.push(`${hiddenChars.length} character(s) have exclude_from_homepage=true: ${hiddenChars.map(c => c.name).join(', ')}`);
+      checks.push({
+        name: 'Homepage visibility',
+        status: 'warning',
+        message: `${hiddenChars.length} character(s) are intentionally hidden from homepage`
+      });
     }
 
-    // FIX 3: Ensure all characters have required system fields
-    for (const char of userCharacters) {
+    // SAFE FIXES — only fix missing defaults for active characters
+    // NEVER touch status, created_by, or other ownership fields
+    for (const char of activeChars) {
       const update = {};
       if (!char.emotional_state) update.emotional_state = 'calm';
-      if (!char.user_respect_level) update.user_respect_level = 50;
-      if (!char.friendship_level) update.friendship_level = 75;
-      if (!char.romantic_level) update.romantic_level = 0;
-      if (!char.attraction_level) update.attraction_level = 0;
-      if (!char.chosen_family_level) update.chosen_family_level = 0;
+      // Only set relationship defaults if truly unset (0 is valid)
+      if (char.user_respect_level === undefined || char.user_respect_level === null) update.user_respect_level = 50;
+      if (char.friendship_level === undefined || char.friendship_level === null) update.friendship_level = 75;
+      if (char.romantic_level === undefined || char.romantic_level === null) update.romantic_level = 0;
+      if (char.attraction_level === undefined || char.attraction_level === null) update.attraction_level = 0;
+      if (char.chosen_family_level === undefined || char.chosen_family_level === null) update.chosen_family_level = 0;
 
       if (Object.keys(update).length > 0) {
-        console.log(`[FIX] Adding missing default fields to ${char.name}`);
         await base44.asServiceRole.entities.Character.update(char.id, update);
-        fixes.push(`Added default fields: ${char.name}`);
+        fixes.push(`Filled missing default fields for: ${char.name}`);
       }
     }
 
-    // ====== FINAL VERIFICATION ======
-    console.log(`[DIAGNOSTIC] Running final verification...`);
-    const finalCheck = await base44.asServiceRole.entities.Character.filter({ created_by: user.email }, '-created_date');
-    const finalActive = finalCheck.filter(c => c.status === 'active' || !c.status).length;
-
+    // Final verification
+    const finalCheck = await base44.asServiceRole.entities.Character.filter({ created_by: user.email, status: 'active' }, '-created_date');
     checks.push({
-      name: 'Final verification scan',
-      status: finalActive === activeCount + unknownStatus ? 'passed' : 'fixed',
-      message: `Final count: ${finalActive} active characters (was: ${activeCount})`
+      name: 'Final verification',
+      status: 'passed',
+      message: `${finalCheck.length} active characters visible for ${user.email}`
     });
 
     const summary = fixes.length > 0
-      ? `Found ${userCharacters.length} character(s). Applied ${fixes.length} repair(s) to ensure they appear on your homepage and throughout the app.`
-      : `Found ${userCharacters.length} character(s). All systems healthy — no repairs needed.`;
+      ? `Found ${userCharacters.length} total character(s). Applied ${fixes.length} safe repair(s) to fill missing default fields. No status or ownership changes were made.`
+      : `Found ${userCharacters.length} total character(s) (${activeChars.length} active). No repairs needed.`;
 
     return Response.json({
       success: true,
-      data: {
-        summary,
-        fixes_applied: fixes,
-        issues_found: issuesFound,
-        checks
-      }
+      data: { summary, fixes_applied: fixes, issues_found: issuesFound, checks }
     });
   } catch (error) {
-    console.error('[ERROR] Deep diagnostic failed:', error);
+    console.error('[findMissingCharacters]', error);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
