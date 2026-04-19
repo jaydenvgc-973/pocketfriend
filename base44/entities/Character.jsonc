@@ -51,8 +51,7 @@
   },
   "properties": {
     "owner_user_id": {
-      "type": "string",
-      "description": "ID of the User record who owns this character (Phase 1 addition)"
+      "type": "string"
     },
     "data_scope": {
       "type": "string",
@@ -61,12 +60,10 @@
         "shared",
         "system_global"
       ],
-      "default": "private_user",
-      "description": "Ownership scope: private_user = user-specific, shared = explicit sharing, system_global = system-level"
+      "default": "private_user"
     },
     "name": {
-      "type": "string",
-      "description": "Character display name"
+      "type": "string"
     },
     "primary_name": {
       "type": "string"
@@ -78,12 +75,10 @@
       "type": "string"
     },
     "owner_user_id_legacy": {
-      "type": "string",
-      "description": "The ID of the User record who owns this character."
+      "type": "string"
     },
     "owner_email": {
-      "type": "string",
-      "description": "Email of the owning user \u2014 mirrors created_by for legacy compatibility but is explicitly set on creation"
+      "type": "string"
     },
     "created_by_role": {
       "type": "string",
@@ -103,28 +98,23 @@
     },
     "is_test_character": {
       "type": "boolean",
-      "default": false,
-      "description": "Marks a character as a test/diagnostic entity. Excluded from all normal user-facing queries."
+      "default": false
     },
     "diagnostic_only": {
       "type": "boolean",
-      "default": false,
-      "description": "If true, this character must be excluded from homepage, scene, roster, and all normal simulation queries."
+      "default": false
     },
     "exclude_from_homepage": {
       "type": "boolean",
-      "default": false,
-      "description": "Explicitly excluded from homepage character cards."
+      "default": false
     },
     "exclude_from_default_scene_queries": {
       "type": "boolean",
-      "default": false,
-      "description": "Excluded from scene page auto-roster and presence queries."
+      "default": false
     },
     "exclude_from_roster": {
       "type": "boolean",
-      "default": false,
-      "description": "Excluded from unified character roster queries."
+      "default": false
     },
     "aliases": {
       "type": "array",
@@ -223,13 +213,11 @@
     },
     "quirks": {
       "type": "array",
-      "description": "Active behavior quirks that influence spending, emotions, health, location, and dialogue.",
       "items": {
         "type": "object",
         "properties": {
           "quirk_id": {
-            "type": "string",
-            "description": "e.g. shopaholic, smoker, fitness_guru"
+            "type": "string"
           },
           "label": {
             "type": "string"
@@ -279,7 +267,6 @@
     },
     "character_closet": {
       "type": "array",
-      "description": "Saved outfits for this character, organized by category.",
       "items": {
         "type": "object",
         "properties": {
@@ -287,8 +274,7 @@
             "type": "string"
           },
           "label": {
-            "type": "string",
-            "description": "e.g. 'Sunday Fit', 'Work Drip'"
+            "type": "string"
           },
           "category": {
             "type": "string",
@@ -325,8 +311,7 @@
             "type": "string"
           },
           "full_description": {
-            "type": "string",
-            "description": "Full outfit prompt used for image generation"
+            "type": "string"
           },
           "image_url": {
             "type": "string"
@@ -350,11 +335,9 @@
     },
     "current_outfit": {
       "type": "object",
-      "description": "The character's currently active outfit state. Persists until a valid change occurs.",
       "properties": {
         "outfit_id": {
-          "type": "string",
-          "description": "Reference to closet outfit if from closet"
+          "type": "string"
         },
         "label": {
           "type": "string"
@@ -388,14 +371,12 @@
           "format": "date-time"
         },
         "change_reason": {
-          "type": "string",
-          "description": "Why it changed: location_change, explicit_statement, new_day, event"
+          "type": "string"
         }
       }
     },
     "style_identity": {
-      "type": "string",
-      "description": "e.g. streetwear, luxury, athletic, clean workwear, trendy"
+      "type": "string"
     },
     "current_home_location_id": {
       "type": "string"
@@ -1148,6 +1129,18 @@
           "chosen_family_level": {
             "type": "number",
             "default": 0
+          },
+          "trust_level": {
+            "type": "number",
+            "default": 50
+          },
+          "relational_jealousy": {
+            "type": "number",
+            "default": 0
+          },
+          "envy_jealousy": {
+            "type": "number",
+            "default": 0
           }
         }
       }
@@ -1522,6 +1515,21 @@
     "chosen_family_level": {
       "type": "number",
       "default": 0
+    },
+    "trust_level": {
+      "type": "number",
+      "default": 50,
+      "description": "How safe, reliable, and honest this character perceives the user to be (0-100). Distinct from respect. Modulates jealousy and betrayal vulnerability."
+    },
+    "relational_jealousy": {
+      "type": "number",
+      "default": 0,
+      "description": "Fear of losing the user's attention, closeness, or exclusive place. Tied to attachment and romantic/intimate dynamics. Reduced by high trust."
+    },
+    "envy_jealousy": {
+      "type": "number",
+      "default": 0,
+      "description": "Comparative envy \u2014 wanting something the user has (status, attention, resources, opportunity). Not inherently romantic. Tied to self-worth and perceived fairness."
     },
     "is_active_character": {
       "type": "boolean",

@@ -51,6 +51,9 @@ Deno.serve(async (req) => {
     const romantic = character.romantic_level ?? 0;
     const attraction = character.attraction_level ?? 0;
     const chosenFamily = character.chosen_family_level ?? 0;
+    const trust = character.trust_level ?? 50;
+    const relationalJealousy = character.relational_jealousy ?? 0;
+    const envyJealousy = character.envy_jealousy ?? 0;
     const emotionalState = character.emotional_state || "calm";
 
     const recentMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 8);
@@ -138,11 +141,14 @@ RIGHT (first person — correct):
 YOUR PERSONALITY: ${character.personality_summary || ""}
 YOUR EMOTIONAL STATE RIGHT NOW: ${emotionalState}
 YOUR FEELINGS TOWARD ${nickname.toUpperCase()} (CANONICAL — your text MUST reflect these values):
-- Respect: ${respect}/100 ${respect >= 70 ? '← HIGH — text must reflect genuine respect, admiration, or regard' : respect <= 25 ? '← LOW — text must reflect dismissal, contempt, or not taking them seriously' : '← MODERATE'}
+- Respect: ${respect}/100 ${respect >= 70 ? '← HIGH — reflect genuine respect, admiration, regard' : respect <= 25 ? '← LOW — reflect dismissal, contempt, not taking seriously' : '← MODERATE'}
+- Trust: ${trust}/100 ${trust >= 70 ? '← HIGH — reflect feeling safe, believing them, emotional security' : trust <= 25 ? '← LOW — reflect suspicion, guardedness, fear of betrayal' : '← MODERATE'}
 - Friendship: ${friendship}/100
 - Romantic: ${romantic}/100
 - Attraction: ${attraction}/100
 - Chosen family: ${chosenFamily}/100
+${relationalJealousy > 30 ? `- Relational Jealousy: ${relationalJealousy}/100 ← Notable — you fear losing their attention/closeness to someone else` : ''}
+${envyJealousy > 30 ? `- Envy: ${envyJealousy}/100 ← Notable — you envy something about their life, status, or what they have` : ''}
 RECENT MEMORIES: ${memorySummary}
 EMOTIONAL BAGGAGE (only as it relates to ${nickname}): ${character.emotional_baggage || "none"}
 

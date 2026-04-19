@@ -372,16 +372,21 @@ export default function CharacterProfile() {
           <div className="space-y-3">
             {[
               { label: "Respect", value: character.user_respect_level ?? 50 },
+              { label: "Trust", value: character.trust_level ?? 50 },
               { label: "Friendship", value: character.friendship_level ?? 75 },
               { label: "Romantic", value: character.romantic_level ?? 0 },
               { label: "Attraction", value: character.attraction_level ?? 0 },
-              { label: "Chosen Family", value: character.chosen_family_level ?? 0 }
-            ].map(({ label, value }) => (
+              { label: "Chosen Family", value: character.chosen_family_level ?? 0 },
+              ...(((character.relational_jealousy ?? 0) > 5 || (character.envy_jealousy ?? 0) > 5) ? [
+                { label: "Jealousy", value: Math.round(((character.relational_jealousy ?? 0) + (character.envy_jealousy ?? 0)) / 2), sublabel: `relational ${character.relational_jealousy ?? 0}% · envy ${character.envy_jealousy ?? 0}%` }
+              ] : [])
+            ].map(({ label, value, sublabel }) => (
               <div key={label}>
                 <div className="flex justify-between mb-1">
                   <span className="text-xs font-medium text-foreground">{label}</span>
                   <span className="text-xs text-muted-foreground">{value}%</span>
                 </div>
+                {sublabel && <p className="text-[10px] text-muted-foreground/60 mb-1">{sublabel}</p>}
                 <div className="h-2 bg-secondary rounded-full overflow-hidden">
                   <div 
                     className="h-full bg-primary transition-all"
@@ -389,7 +394,7 @@ export default function CharacterProfile() {
                   />
                 </div>
               </div>
-            ))}
+              ))}
             <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
           </div>
         </div>
