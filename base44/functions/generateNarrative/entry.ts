@@ -374,6 +374,104 @@ The goal: each narrative should feel like it was written by a thoughtful person 
 not by a system reusing its own recent outputs.
 ════════════════════════════════════`;
 
+    // ── BUILD SCENE REACTION BLOCK (inlined — cannot import local lib) ───────
+    const bars = {
+      user_respect_level: char.user_respect_level ?? 50,
+      trust_level: char.trust_level ?? 50,
+      friendship_level: char.friendship_level ?? 75,
+      romantic_level: char.romantic_level ?? 0,
+      attraction_level: char.attraction_level ?? 0,
+      relational_jealousy: char.relational_jealousy ?? 0,
+      envy_jealousy: char.envy_jealousy ?? 0,
+      chosen_family_level: char.chosen_family_level ?? 0,
+    };
+    const emotionalState = char.emotional_state || 'calm';
+
+    // Body language
+    const bodyLangCues = [];
+    if (bars.trust_level >= 70) bodyLangCues.push('posture is open and relaxed — no defensive tension');
+    else if (bars.trust_level <= 30) bodyLangCues.push('posture stays guarded — arms close, movements measured, nothing fully released');
+    else bodyLangCues.push('posture is neutral — present but not fully open');
+
+    if (bars.romantic_level >= 65 || bars.attraction_level >= 65) {
+      bodyLangCues.push('shifts closer without thinking about it — proximity feels natural, not deliberate');
+    } else if (bars.romantic_level <= 20 && bars.attraction_level <= 20) {
+      bodyLangCues.push('no pull toward closeness — body stays at comfortable, neutral distance');
+    }
+    if (bars.relational_jealousy >= 65) bodyLangCues.push('eyes track subtle shifts — reactive posture, harder to settle');
+    else if (bars.relational_jealousy >= 40) bodyLangCues.push('awareness sharpens — noticing more than they let on');
+    if (bars.user_respect_level <= 30) bodyLangCues.push('attention drifts — barely looks up when they speak');
+    else if (bars.user_respect_level >= 75) bodyLangCues.push('turns toward them when they speak — body follows attention');
+    const emotionBodyMap = {
+      anxious: "small movements — tapping, adjusting things nearby — can't fully settle",
+      defensive: 'weight shifts back slightly — body language closes',
+      irritated: 'jaw tightens almost imperceptibly — stillness with edge in it',
+      reflective: 'quieter in the body — slower movements, less reactive',
+      'closed-off': 'physically present but the energy has pulled back',
+      flirtatious: 'deliberate proximity — eye contact held a beat longer than necessary',
+      overwhelmed: 'movements lose their usual precision — something is spilling',
+      sad: 'posture carries weight — gravity feels different',
+      excited: 'energy is in the body — harder to stay still',
+    };
+    if (emotionBodyMap[emotionalState]) bodyLangCues.push(emotionBodyMap[emotionalState]);
+
+    // Pacing
+    let pacingDirective = 'pacing is natural — no urgency, no excessive hesitation';
+    const fastStates = ['irritated', 'excited', 'anxious', 'defensive', 'overwhelmed'];
+    const slowStates = ['reflective', 'sad', 'closed-off', 'calm'];
+    if (fastStates.includes(emotionalState) || bars.relational_jealousy >= 65) {
+      pacingDirective = "responds quickly — thoughts arrive before they're fully formed — urgency underneath even casual exchanges";
+    } else if (slowStates.includes(emotionalState) || bars.trust_level <= 30) {
+      pacingDirective = 'takes a beat before answering — pauses carry weight — responses arrive fully considered';
+    }
+
+    // Silence mode
+    let silenceMode = null;
+    const highEmotionStates = ['overwhelmed', 'sad', 'grief', 'defensive', 'reflective'];
+    if (highEmotionStates.includes(emotionalState)) silenceMode = 'silence is active — lets the moment sit before responding — the gap means something';
+    else if (bars.trust_level <= 25) silenceMode = 'chooses words carefully — pauses before answering — not withholding, but not rushing either';
+    else if (bars.user_respect_level <= 25) silenceMode = 'no urgency to fill silence — does not feel compelled to respond quickly';
+    else if (bars.user_respect_level >= 75) silenceMode = 'gives full space before responding — takes in what was said';
+    else if (bars.romantic_level >= 70 && bars.trust_level >= 70) silenceMode = 'comfortable with silence between them — it does not need to be filled';
+
+    // Positioning
+    let positioning = 'neutral distance — neither closing nor creating space — just present';
+    if ((bars.romantic_level >= 65 || bars.attraction_level >= 65) && bars.trust_level >= 55) {
+      positioning = "close proximity — stays within their space — doesn't create distance";
+    } else if (bars.trust_level <= 30 || ['defensive', 'closed-off'].includes(emotionalState)) {
+      positioning = 'creates space — distance is chosen, not accidental';
+    } else if (emotionalState === 'irritated') {
+      positioning = "shifts slightly back — body creates the distance that words haven't said yet";
+    }
+
+    // Environment
+    let envMode = 'present in the environment — neither absorbed by it nor ignoring it';
+    if (bars.romantic_level >= 70 && bars.trust_level >= 65) {
+      envMode = 'surroundings become secondary — environment fades — the space narrows to this';
+    } else if (bars.relational_jealousy >= 60 || ['anxious', 'defensive', 'irritated'].includes(emotionalState)) {
+      envMode = 'attention fragments — surroundings pull focus — harder to stay fully in the moment';
+    } else if (bars.user_respect_level <= 25 || emotionalState === 'bored') {
+      envMode = 'environment becomes background noise — attention is somewhere else entirely';
+    } else if (['calm', 'content', 'reflective'].includes(emotionalState) && bars.trust_level >= 55) {
+      envMode = 'settles into surroundings naturally — occupies the space without tension';
+    }
+
+    const sceneReactionBlock = `
+════════════════════════════════════
+SCENE REACTION ENGINE — AUTHORITATIVE
+All physical behavior in this narrative MUST match the following derived from current relationship state.
+════════════════════════════════════
+BODY LANGUAGE:
+${bodyLangCues.map(c => `  • ${c}`).join('\n')}
+
+PACING: ${pacingDirective}
+${silenceMode ? `SILENCE MODE: ${silenceMode}` : ''}
+POSITIONING: ${positioning}
+ENVIRONMENT: ${envMode}
+
+RULE: Show emotion through physical behavior above. Do NOT state it directly. Do NOT reuse the same gesture twice in one scene.
+════════════════════════════════════`;
+
     // ── BUILD PROMPT WITH GROUNDED CONTEXT ───────────────────────────────────
     const prompt = `You are a narrator for a realistic life simulation. Your output is a single cohesive narrative passage that continues the character's living timeline. It must feel like a live scene — grounded, specific, and earned.
 
@@ -509,6 +607,7 @@ Behavior should reflect immersion in environment, responsive movement, and shift
 FINAL RULE: If ${characterName} is ASLEEP or the sleep window is active, the narrative MUST reflect rest or sleep at their confirmed location. No active behavior, errands, social engagement, or movement is allowed during a confirmed sleep state.
 
 Do not refer to anyone as "the user" — use their name (${userLabel}) or natural pronouns.
+${sceneReactionBlock}
 ${repetitionGuardBlock}
 ${antiRepetitionStyleBlock}
 
