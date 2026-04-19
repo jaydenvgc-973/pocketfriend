@@ -390,7 +390,7 @@ export default function CharacterProfile() {
                 </div>
               </div>
             ))}
-            <CharacterFeelingsCard character={character} />
+            <CharacterFeelingsCard character={character} onRespectCorrected={refetch} />
           </div>
         </div>
 
