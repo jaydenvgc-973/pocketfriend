@@ -255,6 +255,22 @@ RELATIONSHIP RULES — apply these carefully:
 7. Changes should be small and realistic — max ±10 per interaction unless something dramatically significant happened.
 8. Levels are clamped between 0 and 100.
 
+GRIEF GATING RULE (CRITICAL — apply before determining emotional state changes):
+If the user mentioned a death, loss, or grief-related topic:
+  • First determine: does ${character.name} have a DIRECT relationship with the person who was lost?
+  • If YES (they knew them personally, shared home, close bond) → grief response and friendship/chosen_family boost for support are valid
+  • If NO (user is grieving but ${character.name} didn't know the person) → ${character.name}'s correct state is SUPPORTIVE / EMPATHETIC, NOT grief
+  • Do NOT assign grief to ${character.name} just because the user is grieving
+  • Do NOT reduce any relationship level because of indirect sad news
+  • DO increase friendship/chosen_family slightly (+1 to +3) if the character responds with support and the user opened up
+  • The character's role is support provider — not co-sufferer
+
+EMOTIONAL PROXIMITY RULE:
+  Direct loss → grief valid
+  Close connection, not in character's household → sadness/heaviness only
+  Heard through user → concern/empathy only — no grief state
+  Abstract/distant topic → neutral caring awareness
+
 Also detect if this interaction contained:
 - An EMOTIONAL MILESTONE: a vulnerable confession, shared grief/joy, a deeply personal revelation
 - A SHARED SECRET: explicit confidential information shared by the user
