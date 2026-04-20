@@ -50,31 +50,29 @@
     }
   },
   "properties": {
-    "owner_user_id": {
-      "type": "string"
-    },
-    "data_scope": {
+    "character_type": {
       "type": "string",
       "enum": [
-        "private_user",
-        "shared",
-        "system_global"
+        "active_created_character",
+        "npc_regular",
+        "npc_family_member",
+        "npc_fictitious"
       ],
-      "default": "private_user"
+      "default": "active_created_character",
+      "description": "World-behavior and system-routing class. Determines visibility, lists, presence rules, and housing."
     },
-    "name": {
-      "type": "string"
+    "status": {
+      "type": "string",
+      "enum": [
+        "active",
+        "moved_away",
+        "deleted",
+        "soft_deleted",
+        "merged"
+      ],
+      "default": "active"
     },
-    "primary_name": {
-      "type": "string"
-    },
-    "display_name": {
-      "type": "string"
-    },
-    "full_name": {
-      "type": "string"
-    },
-    "owner_user_id_legacy": {
+    "owner_user_id": {
       "type": "string"
     },
     "owner_email": {
@@ -87,6 +85,15 @@
         "user"
       ]
     },
+    "data_scope": {
+      "type": "string",
+      "enum": [
+        "private_user",
+        "shared",
+        "system_global"
+      ],
+      "default": "private_user"
+    },
     "visibility_scope": {
       "type": "string",
       "enum": [
@@ -95,6 +102,18 @@
         "admin_global"
       ],
       "default": "account_private"
+    },
+    "name": {
+      "type": "string"
+    },
+    "primary_name": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "full_name": {
+      "type": "string"
     },
     "is_test_character": {
       "type": "boolean",
@@ -168,383 +187,57 @@
       },
       "default": []
     },
-    "character_type": {
-      "type": "string",
-      "enum": [
-        "active",
-        "npc",
-        "family_npc",
-        "background",
-        "promoted_npc"
-      ],
-      "default": "active"
-    },
-    "status": {
-      "type": "string",
-      "enum": [
-        "active",
-        "moved_away",
-        "deleted",
-        "soft_deleted",
-        "merged"
-      ],
-      "default": "active"
-    },
     "age": {
       "type": "number"
     },
     "birth_year": {
       "type": "number"
     },
+    "birthday": {
+      "type": "string",
+      "format": "date"
+    },
     "zodiac_sign": {
-      "type": "string"
-    },
-    "profile_summary": {
-      "type": "string"
-    },
-    "backstory": {
-      "type": "string"
-    },
-    "occupation": {
-      "type": "string"
-    },
-    "education": {
-      "type": "string"
-    },
-    "quirks": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "quirk_id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "spending",
-              "addiction",
-              "lifestyle",
-              "emotional",
-              "work"
-            ]
-          },
-          "intensity": {
-            "type": "string",
-            "enum": [
-              "mild",
-              "moderate",
-              "strong"
-            ],
-            "default": "moderate"
-          },
-          "active": {
-            "type": "boolean",
-            "default": true
-          },
-          "last_triggered_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "trigger_count": {
-            "type": "integer",
-            "default": 0
-          },
-          "notes": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "quirk_id",
-          "label",
-          "category"
-        ]
-      },
-      "default": []
-    },
-    "character_closet": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "outfit_id": {
-            "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "category": {
-            "type": "string",
-            "enum": [
-              "daily_casual",
-              "work",
-              "gym",
-              "church",
-              "nightlife",
-              "formal",
-              "sleepwear",
-              "lounge",
-              "outdoor",
-              "special"
-            ],
-            "default": "daily_casual"
-          },
-          "top": {
-            "type": "string"
-          },
-          "bottom": {
-            "type": "string"
-          },
-          "shoes": {
-            "type": "string"
-          },
-          "outerwear": {
-            "type": "string"
-          },
-          "accessories": {
-            "type": "string"
-          },
-          "hair_state": {
-            "type": "string"
-          },
-          "full_description": {
-            "type": "string"
-          },
-          "image_url": {
-            "type": "string"
-          },
-          "is_favorite": {
-            "type": "boolean",
-            "default": false
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "outfit_id",
-          "label",
-          "category"
-        ]
-      },
-      "default": []
-    },
-    "current_outfit": {
-      "type": "object",
-      "properties": {
-        "outfit_id": {
-          "type": "string"
-        },
-        "label": {
-          "type": "string"
-        },
-        "category": {
-          "type": "string"
-        },
-        "top": {
-          "type": "string"
-        },
-        "bottom": {
-          "type": "string"
-        },
-        "shoes": {
-          "type": "string"
-        },
-        "outerwear": {
-          "type": "string"
-        },
-        "accessories": {
-          "type": "string"
-        },
-        "hair_state": {
-          "type": "string"
-        },
-        "full_description": {
-          "type": "string"
-        },
-        "last_changed_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "change_reason": {
-          "type": "string"
-        }
-      }
-    },
-    "style_identity": {
-      "type": "string"
-    },
-    "current_home_location_id": {
-      "type": "string"
-    },
-    "current_work_location_id": {
-      "type": "string"
-    },
-    "current_school_location_id": {
-      "type": "string"
-    },
-    "resolved_current_location_id": {
-      "type": "string"
-    },
-    "resolved_current_location_name": {
-      "type": "string"
-    },
-    "resolved_location_type": {
-      "type": "string",
-      "enum": [
-        "home",
-        "work",
-        "school",
-        "visit",
-        "traveling",
-        "supervision_home",
-        "recovery_nap"
-      ]
-    },
-    "resolved_presence_status": {
-      "type": "string",
-      "enum": [
-        "home",
-        "at_work",
-        "at_school",
-        "visiting",
-        "traveling",
-        "under_supervision",
-        "sleeping",
-        "napping"
-      ]
-    },
-    "resolved_source_reason": {
-      "type": "string"
-    },
-    "resolved_last_updated_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "traveling_to_location_id": {
-      "type": "string"
-    },
-    "traveling_to_location_name": {
-      "type": "string"
-    },
-    "location_status": {
-      "type": "string",
-      "enum": [
-        "at_location",
-        "traveling",
-        "home",
-        "unavailable"
-      ],
-      "default": "home"
-    },
-    "last_location_update_time": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "last_arrived_time": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "location_visibility_state": {
-      "type": "string",
-      "enum": [
-        "visible",
-        "hidden",
-        "in_scene",
-        "unreachable"
-      ],
-      "default": "visible"
-    },
-    "pending_invite_id": {
-      "type": "string"
-    },
-    "schedule_override_active": {
-      "type": "boolean",
-      "default": false
-    },
-    "return_to_schedule_after_outing": {
-      "type": "string"
-    },
-    "recent_location_history": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "location_id": {
-            "type": "string"
-          },
-          "location_name": {
-            "type": "string"
-          },
-          "arrived_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "left_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "default": []
-    },
-    "travel_status": {
-      "type": "string",
-      "enum": [
-        "not_traveling",
-        "traveling_to_work",
-        "traveling_to_school",
-        "traveling_to_destination"
-      ],
-      "default": "not_traveling"
-    },
-    "travel_destination_location_id": {
-      "type": "string"
-    },
-    "sleep_debt_hours": {
-      "type": "number",
-      "default": 0
-    },
-    "last_sleep_start": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "last_nap_time": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "image_avatar_url": {
-      "type": "string"
-    },
-    "alias_count": {
-      "type": "integer",
-      "default": 0
-    },
-    "relationship_count": {
-      "type": "integer",
-      "default": 0
-    },
-    "is_protected": {
-      "type": "boolean",
-      "default": false
-    },
-    "created_by_user": {
-      "type": "boolean",
-      "default": true
-    },
-    "protected_active": {
-      "type": "boolean",
-      "default": false
-    },
-    "nickname_for_user": {
       "type": "string"
     },
     "appearance_age": {
       "type": "number"
+    },
+    "gender": {
+      "type": "string",
+      "enum": [
+        "male",
+        "female",
+        "non-binary",
+        "other"
+      ]
+    },
+    "ethnicities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "avatar_url": {
+      "type": "string"
+    },
+    "image_avatar_url": {
+      "type": "string"
+    },
+    "reference_image_urls": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "avatar_description_text": {
+      "type": "string"
+    },
+    "avatar_generation_prompt": {
+      "type": "string"
+    },
+    "appearance_notes": {
+      "type": "string"
     },
     "appearance_lock": {
       "type": "object",
@@ -582,171 +275,6 @@
         }
       }
     },
-    "family_list_locked": {
-      "type": "boolean",
-      "default": false
-    },
-    "family_locked_members": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      },
-      "default": []
-    },
-    "is_default": {
-      "type": "boolean",
-      "default": false
-    },
-    "is_finalized": {
-      "type": "boolean",
-      "default": false
-    },
-    "is_photogenic": {
-      "type": "boolean",
-      "default": false
-    },
-    "is_sitter": {
-      "type": "boolean",
-      "default": false
-    },
-    "sitter_assigned_to_location_id": {
-      "type": "string"
-    },
-    "trait_oversharer": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_dry_humor": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_night_owl": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_hot_and_cold": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_flirty": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_overcorrects": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_blunt": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_easily_distracted": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_romanticizes": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_hard_to_read": {
-      "type": "boolean",
-      "default": false
-    },
-    "trait_competitive": {
-      "type": "boolean",
-      "default": false
-    },
-    "lives_alone": {
-      "type": "boolean",
-      "default": false
-    },
-    "birthday": {
-      "type": "string",
-      "format": "date"
-    },
-    "religion": {
-      "type": "string",
-      "default": "None"
-    },
-    "belief_level": {
-      "type": "string",
-      "enum": [
-        "in_name_only",
-        "moderate",
-        "devout"
-      ],
-      "default": "moderate"
-    },
-    "religion_custom": {
-      "type": "string"
-    },
-    "sleep_start_time": {
-      "type": "string"
-    },
-    "wake_up_time": {
-      "type": "string"
-    },
-    "work_start_time": {
-      "type": "string"
-    },
-    "work_end_time": {
-      "type": "string"
-    },
-    "work_days": {
-      "type": "array",
-      "items": {
-        "type": "integer",
-        "minimum": 0,
-        "maximum": 6
-      }
-    },
-    "current_activity": {
-      "type": "string"
-    },
-    "weather_summary": {
-      "type": "string"
-    },
-    "weather_last_updated": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "voice_enabled": {
-      "type": "boolean",
-      "default": true
-    },
-    "voice_name": {
-      "type": "string",
-      "default": "alloy"
-    },
-    "voice_style_note": {
-      "type": "string"
-    },
-    "student_status": {
-      "type": "string",
-      "enum": [
-        "not_student",
-        "enrolled",
-        "on_break",
-        "graduated",
-        "dropped"
-      ],
-      "default": "not_student"
-    },
-    "avatar_url": {
-      "type": "string"
-    },
-    "reference_image_urls": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "avatar_description_text": {
-      "type": "string"
-    },
-    "avatar_generation_prompt": {
-      "type": "string"
-    },
     "fictional_entity_images": {
       "type": "object",
       "additionalProperties": {
@@ -759,31 +287,28 @@
         "type": "string"
       }
     },
-    "appearance_notes": {
+    "profile_summary": {
       "type": "string"
     },
-    "gender": {
-      "type": "string",
-      "enum": [
-        "male",
-        "female",
-        "non-binary",
-        "other"
-      ]
-    },
-    "age_range": {
+    "backstory": {
       "type": "string"
     },
-    "ethnicities": {
+    "background_story": {
+      "type": "string"
+    },
+    "current_situation": {
+      "type": "string"
+    },
+    "personality_summary": {
+      "type": "string"
+    },
+    "personality_traits": {
       "type": "array",
       "items": {
         "type": "string"
       }
     },
-    "city": {
-      "type": "string"
-    },
-    "state": {
+    "communication_style": {
       "type": "string"
     },
     "archetype": {
@@ -800,18 +325,6 @@
       ]
     },
     "sexual_orientation": {
-      "type": "string"
-    },
-    "personality_summary": {
-      "type": "string"
-    },
-    "personality_traits": {
-      "type": "array",
-      "items": {
-        "type": "string"
-      }
-    },
-    "communication_style": {
       "type": "string"
     },
     "emotional_triggers_high": {
@@ -831,48 +344,6 @@
       "items": {
         "type": "string"
       }
-    },
-    "background_story": {
-      "type": "string"
-    },
-    "current_situation": {
-      "type": "string"
-    },
-    "family_history": {
-      "type": "string"
-    },
-    "family_members": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string"
-          },
-          "relationship_type": {
-            "type": "string"
-          },
-          "photo_url": {
-            "type": "string"
-          },
-          "age_at_creation": {
-            "type": "number"
-          },
-          "age_set_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      }
-    },
-    "loyalty_view": {
-      "type": "string"
-    },
-    "upset_reaction": {
-      "type": "string"
-    },
-    "emotional_baggage": {
-      "type": "string"
     },
     "emotional_state": {
       "type": "string",
@@ -955,6 +426,48 @@
       ],
       "default": "calm"
     },
+    "loyalty_view": {
+      "type": "string"
+    },
+    "upset_reaction": {
+      "type": "string"
+    },
+    "emotional_baggage": {
+      "type": "string"
+    },
+    "occupation": {
+      "type": "string"
+    },
+    "education": {
+      "type": "string"
+    },
+    "student_status": {
+      "type": "string",
+      "enum": [
+        "not_student",
+        "enrolled",
+        "on_break",
+        "graduated",
+        "dropped"
+      ],
+      "default": "not_student"
+    },
+    "religion": {
+      "type": "string",
+      "default": "None"
+    },
+    "religion_custom": {
+      "type": "string"
+    },
+    "belief_level": {
+      "type": "string",
+      "enum": [
+        "in_name_only",
+        "moderate",
+        "devout"
+      ],
+      "default": "moderate"
+    },
     "health_status": {
       "type": "string"
     },
@@ -964,7 +477,360 @@
     "criminal_record": {
       "type": "string"
     },
-    "system_prompt_url": {
+    "quirks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "quirk_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "spending",
+              "addiction",
+              "lifestyle",
+              "emotional",
+              "work"
+            ]
+          },
+          "intensity": {
+            "type": "string",
+            "enum": [
+              "mild",
+              "moderate",
+              "strong"
+            ],
+            "default": "moderate"
+          },
+          "active": {
+            "type": "boolean",
+            "default": true
+          },
+          "last_triggered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "trigger_count": {
+            "type": "integer",
+            "default": 0
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "quirk_id",
+          "label",
+          "category"
+        ]
+      },
+      "default": []
+    },
+    "city": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "age_range": {
+      "type": "string"
+    },
+    "style_identity": {
+      "type": "string"
+    },
+    "current_outfit": {
+      "type": "object",
+      "properties": {
+        "outfit_id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "top": {
+          "type": "string"
+        },
+        "bottom": {
+          "type": "string"
+        },
+        "shoes": {
+          "type": "string"
+        },
+        "outerwear": {
+          "type": "string"
+        },
+        "accessories": {
+          "type": "string"
+        },
+        "hair_state": {
+          "type": "string"
+        },
+        "full_description": {
+          "type": "string"
+        },
+        "last_changed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "change_reason": {
+          "type": "string"
+        }
+      }
+    },
+    "character_closet": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "outfit_id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "daily_casual",
+              "work",
+              "gym",
+              "church",
+              "nightlife",
+              "formal",
+              "sleepwear",
+              "lounge",
+              "outdoor",
+              "special"
+            ],
+            "default": "daily_casual"
+          },
+          "top": {
+            "type": "string"
+          },
+          "bottom": {
+            "type": "string"
+          },
+          "shoes": {
+            "type": "string"
+          },
+          "outerwear": {
+            "type": "string"
+          },
+          "accessories": {
+            "type": "string"
+          },
+          "hair_state": {
+            "type": "string"
+          },
+          "full_description": {
+            "type": "string"
+          },
+          "image_url": {
+            "type": "string"
+          },
+          "is_favorite": {
+            "type": "boolean",
+            "default": false
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "outfit_id",
+          "label",
+          "category"
+        ]
+      },
+      "default": []
+    },
+    "current_home_location_id": {
+      "type": "string"
+    },
+    "current_work_location_id": {
+      "type": "string"
+    },
+    "current_school_location_id": {
+      "type": "string"
+    },
+    "resolved_current_location_id": {
+      "type": "string"
+    },
+    "resolved_current_location_name": {
+      "type": "string"
+    },
+    "resolved_location_type": {
+      "type": "string",
+      "enum": [
+        "home",
+        "work",
+        "school",
+        "visit",
+        "traveling",
+        "supervision_home",
+        "recovery_nap"
+      ]
+    },
+    "resolved_presence_status": {
+      "type": "string",
+      "enum": [
+        "home",
+        "at_work",
+        "at_school",
+        "visiting",
+        "traveling",
+        "under_supervision",
+        "sleeping",
+        "napping"
+      ]
+    },
+    "resolved_source_reason": {
+      "type": "string"
+    },
+    "resolved_last_updated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "traveling_to_location_id": {
+      "type": "string"
+    },
+    "traveling_to_location_name": {
+      "type": "string"
+    },
+    "location_status": {
+      "type": "string",
+      "enum": [
+        "at_location",
+        "traveling",
+        "home",
+        "unavailable"
+      ],
+      "default": "home"
+    },
+    "travel_status": {
+      "type": "string",
+      "enum": [
+        "not_traveling",
+        "traveling_to_work",
+        "traveling_to_school",
+        "traveling_to_destination"
+      ],
+      "default": "not_traveling"
+    },
+    "travel_destination_location_id": {
+      "type": "string"
+    },
+    "last_location_update_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_arrived_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "location_visibility_state": {
+      "type": "string",
+      "enum": [
+        "visible",
+        "hidden",
+        "in_scene",
+        "unreachable"
+      ],
+      "default": "visible"
+    },
+    "recent_location_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location_id": {
+            "type": "string"
+          },
+          "location_name": {
+            "type": "string"
+          },
+          "arrived_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "left_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "default": []
+    },
+    "pending_invite_id": {
+      "type": "string"
+    },
+    "schedule_override_active": {
+      "type": "boolean",
+      "default": false
+    },
+    "return_to_schedule_after_outing": {
+      "type": "string"
+    },
+    "sleep_debt_hours": {
+      "type": "number",
+      "default": 0
+    },
+    "last_sleep_start": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "last_nap_time": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sleep_start_time": {
+      "type": "string"
+    },
+    "wake_up_time": {
+      "type": "string"
+    },
+    "work_start_time": {
+      "type": "string"
+    },
+    "work_end_time": {
+      "type": "string"
+    },
+    "work_days": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 6
+      }
+    },
+    "current_activity": {
+      "type": "string"
+    },
+    "weather_summary": {
+      "type": "string"
+    },
+    "weather_last_updated": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "voice_enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "voice_name": {
+      "type": "string",
+      "default": "alloy"
+    },
+    "voice_style_note": {
       "type": "string"
     },
     "work_details": {
@@ -1069,11 +935,150 @@
       },
       "default": []
     },
+    "current_education_activity": {
+      "type": "string",
+      "default": "none"
+    },
+    "education_start_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "education_expected_completion_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "education_details": {
+      "type": "object",
+      "properties": {
+        "course_name": {
+          "type": "string"
+        },
+        "institution": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "duration_days": {
+          "type": "number"
+        }
+      }
+    },
+    "current_job_training_activity": {
+      "type": "string",
+      "default": "none"
+    },
+    "job_training_start_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "job_training_expected_completion_date": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "job_training_details": {
+      "type": "object",
+      "properties": {
+        "training_name": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "position_title": {
+          "type": "string"
+        },
+        "duration_days": {
+          "type": "number"
+        }
+      }
+    },
+    "completed_education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "course_name": {
+            "type": "string"
+          },
+          "institution": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "completion_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "completed_job_training": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "training_name": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "position_title": {
+            "type": "string"
+          },
+          "completion_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
     "frequented_places": {
       "type": "array",
       "items": {
         "type": "string"
       }
+    },
+    "family_history": {
+      "type": "string"
+    },
+    "family_members": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "relationship_type": {
+            "type": "string"
+          },
+          "photo_url": {
+            "type": "string"
+          },
+          "age_at_creation": {
+            "type": "number"
+          },
+          "age_set_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "family_list_locked": {
+      "type": "boolean",
+      "default": false
+    },
+    "family_locked_members": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
     },
     "fictional_relationships": {
       "type": "array",
@@ -1280,107 +1285,6 @@
       },
       "default": []
     },
-    "current_education_activity": {
-      "type": "string",
-      "default": "none"
-    },
-    "education_start_date": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "education_expected_completion_date": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "education_details": {
-      "type": "object",
-      "properties": {
-        "course_name": {
-          "type": "string"
-        },
-        "institution": {
-          "type": "string"
-        },
-        "location": {
-          "type": "string"
-        },
-        "duration_days": {
-          "type": "number"
-        }
-      }
-    },
-    "current_job_training_activity": {
-      "type": "string",
-      "default": "none"
-    },
-    "job_training_start_date": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "job_training_expected_completion_date": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "job_training_details": {
-      "type": "object",
-      "properties": {
-        "training_name": {
-          "type": "string"
-        },
-        "company": {
-          "type": "string"
-        },
-        "position_title": {
-          "type": "string"
-        },
-        "duration_days": {
-          "type": "number"
-        }
-      }
-    },
-    "completed_education": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "course_name": {
-            "type": "string"
-          },
-          "institution": {
-            "type": "string"
-          },
-          "start_date": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "completion_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      }
-    },
-    "completed_job_training": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "training_name": {
-            "type": "string"
-          },
-          "company": {
-            "type": "string"
-          },
-          "position_title": {
-            "type": "string"
-          },
-          "completion_date": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      }
-    },
     "songs_heard": {
       "type": "array",
       "items": {
@@ -1539,6 +1443,96 @@
       "type": "boolean",
       "default": false
     },
+    "is_protected": {
+      "type": "boolean",
+      "default": false
+    },
+    "protected_active": {
+      "type": "boolean",
+      "default": false
+    },
+    "created_by_user": {
+      "type": "boolean",
+      "default": true
+    },
+    "is_default": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_finalized": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_photogenic": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_sitter": {
+      "type": "boolean",
+      "default": false
+    },
+    "sitter_assigned_to_location_id": {
+      "type": "string"
+    },
+    "lives_alone": {
+      "type": "boolean",
+      "default": false
+    },
+    "nickname_for_user": {
+      "type": "string"
+    },
+    "alias_count": {
+      "type": "integer",
+      "default": 0
+    },
+    "relationship_count": {
+      "type": "integer",
+      "default": 0
+    },
+    "trait_oversharer": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_dry_humor": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_night_owl": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_hot_and_cold": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_flirty": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_overcorrects": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_blunt": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_easily_distracted": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_romanticizes": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_hard_to_read": {
+      "type": "boolean",
+      "default": false
+    },
+    "trait_competitive": {
+      "type": "boolean",
+      "default": false
+    },
     "merged_into_character_id": {
       "type": "string"
     },
@@ -1549,6 +1543,9 @@
       "type": "string"
     },
     "relationship_state_id": {
+      "type": "string"
+    },
+    "system_prompt_url": {
       "type": "string"
     },
     "hunger_value": {
@@ -1606,6 +1603,9 @@
     "jailed_at": {
       "type": "string",
       "format": "date-time"
+    },
+    "owner_user_id_legacy": {
+      "type": "string"
     }
   },
   "required": [
