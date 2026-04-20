@@ -154,6 +154,7 @@ const ACTION_LIBRARY_BY_SUBTYPE = {
 /**
  * Generate contextually relevant actions for a location
  * Returns 12-20 actions, rotated and varied
+ * Filters out coffee-related actions after 1pm ET
  */
 export function generateLocationActions(location, activeZone = null, hour = 12, npcPresent = [], visitCount = 0) {
   if (!location) return DEFAULT_ACTIONS;
@@ -170,7 +171,15 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
     baseActions = DEFAULT_ACTIONS;
   }
 
-  // 2. Filter and shuffle
+  // 2. Filter out coffee actions after 1pm ET (hour >= 13)
+  if (hour >= 13) {
+    baseActions = baseActions.filter(action => 
+      !action.id.includes('coffee') && 
+      action.label.toLowerCase() !== 'ask for refill' // refill often implies coffee
+    );
+  }
+
+  // 3. Filter and shuffle
   return shuffle(baseActions).slice(0, Math.min(baseActions.length, 12 + Math.floor(Math.random() * 8)));
 }
 
