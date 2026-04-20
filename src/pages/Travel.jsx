@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
@@ -23,6 +24,7 @@ const NPC_CHARACTER_TYPES = ["npc", "family_npc", "background", "promoted_npc", 
 
 export default function Travel() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [selectedLocation, setSelectedLocation] = useState(null);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
   const [convincedCharacterIds, setConvincedCharacterIds] = useState([]);
@@ -587,6 +589,9 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     try {
                       const res = await base44.functions.invoke('distributeVGCTowersNPCs', {});
                       setDistributeResult(res?.data || { error: 'No response' });
+                      // Refetch characters so UI reflects new locations immediately
+                      await queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser?.email] });
+                      await queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser?.email] });
                     } catch (e) {
                       setDistributeResult({ error: e.message });
                     } finally {
@@ -608,12 +613,14 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   <p className="text-destructive font-medium">Error: {distributeResult.error}</p>
                 ) : (
                   <>
-                    <p className="text-green-400 font-semibold">✓ {distributeResult.distributed}/{distributeResult.totalVGCResidents} NPCs distributed ({distributeResult.mode})</p>
+                    <p className="text-green-400 font-semibold">✓ {distributeResult.distributed}/{distributeResult.totalVGCResidents} NPCs moved — UI refreshed</p>
                     {distributeResult.finalNPCStates?.map((s, i) => (
-                      <p key={i} className="text-muted-foreground truncate">• {s.name} → {s.location}</p>
+                      <p key={i} className={`truncate ${s.flag === 'NOWHERE_FIX' ? 'text-amber-400' : 'text-muted-foreground'}`}>
+                        • {s.name} → <span className="text-blue-400">{s.location}</span>
+                      </p>
                     ))}
                     {distributeResult.ineligible?.length > 0 && (
-                      <p className="text-amber-400">Ineligible: {distributeResult.ineligible.map(x => x.name).join(', ')}</p>
+                      <p className="text-amber-400 mt-1">Ineligible: {distributeResult.ineligible.map(x => `${x.name} (${x.reason})`).join(', ')}</p>
                     )}
                   </>
                 )}

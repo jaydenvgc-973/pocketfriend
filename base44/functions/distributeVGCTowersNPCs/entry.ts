@@ -65,8 +65,10 @@ Deno.serve(async (req) => {
           return base44.entities.Character.update(npc.id, {
             resolved_current_location_id: VGC_ID,
             resolved_current_location_name: 'VGC Towers',
+            resolved_presence_status: 'home',
+            resolved_location_type: 'home',
+            resolved_source_reason: 'lockdown',
             presence_state: 'home',
-            presence_reason: 'lockdown',
             source_of_move: 'system',
             valid_from: now.toISOString(),
             valid_until: null,
@@ -170,6 +172,9 @@ Deno.serve(async (req) => {
         data: {
           resolved_current_location_id: selectedLoc.id,
           resolved_current_location_name: selectedLoc.name,
+          resolved_presence_status: 'visiting',
+          resolved_location_type: 'visit',
+          resolved_source_reason: reason,
           presence_state: 'social_visit',
           presence_reason: reason,
           source_of_move: 'system',
@@ -205,8 +210,10 @@ Deno.serve(async (req) => {
         nowhereFixUpdates.push(base44.entities.Character.update(npc.id, {
           resolved_current_location_id: VGC_ID,
           resolved_current_location_name: 'VGC Towers',
+          resolved_presence_status: 'home',
+          resolved_location_type: 'home',
+          resolved_source_reason: 'nowhere_fallback',
           presence_state: 'home',
-          presence_reason: 'nowhere_fallback',
           source_of_move: 'system',
           valid_from: now.toISOString(),
         }));
