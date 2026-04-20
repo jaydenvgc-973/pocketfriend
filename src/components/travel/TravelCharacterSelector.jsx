@@ -14,11 +14,19 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
   const avatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
 
   // Sort: active created characters → NPC fictitious → NPC family members
+  // Debug: log actual character types to diagnose filtering
+  console.log('[TravelCharacterSelector Debug]', {
+    totalCharacters: characters.length,
+    types: characters.map(c => ({ name: c.name, type: c.character_type })),
+  });
+  
   const sortedCharacters = [
     ...characters.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
     ...characters.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
     ...characters.filter(c => c.character_type === 'npc_family_member').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
   ];
+  
+  console.log('[TravelCharacterSelector Debug]', { activeCreated: characters.filter(c => c.character_type === 'active_created_character').length, npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious').length, npcFamily: characters.filter(c => c.character_type === 'npc_family_member').length, sortedTotal: sortedCharacters.length });
 
   return (
     <div className="space-y-2">
