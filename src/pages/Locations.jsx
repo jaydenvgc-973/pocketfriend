@@ -337,19 +337,61 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
 }
 
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
-  // Build a consolidated list of characters and NPCs, with aggressive deduplication
+  // Fetch real NPC character entities
+  const { data: npcCharacterEntities = [] } = useQuery({
+    queryKey: ['npcCharacters', currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const [byCreatedBy, byOwnerEmail] = await Promise.all([
+        base44.entities.Character.filter({
+          created_by: currentUser.email,
+          character_type: { $in: ['npc_fictitious', 'npc_regular', 'npc_family_member'] },
+        }),
+        base44.entities.Character.filter({
+          owner_email: currentUser.email,
+          character_type: { $in: ['npc_fictitious', 'npc_regular', 'npc_family_member'] },
+        }),
+      ]);
+      const seen = new Set();
+      return [...byCreatedBy, ...byOwnerEmail].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return c.status !== 'deleted' && c.status !== 'moved_away';
+      });
+    },
+    enabled: !!currentUser?.email,
+  });
+
+  // Build a consolidated list: real NPC entities first (sorted by type), then fictional relationships
   const existingCharacterNames = new Set(characters.map(c => (c.display_name || c.name || '').toLowerCase()));
+  const existingNPCNames = new Set(npcCharacterEntities.map(n => (n.display_name || n.name || '').toLowerCase()));
   
-  const allNPCs = [];
-  const seenNames = new Set();
+  // Sorted by type priority: fictitious, family, regular
+  const npcsByType = {
+    npc_fictitious: [],
+    npc_family_member: [],
+    npc_regular: [],
+  };
+  
+  npcCharacterEntities.forEach(npc => {
+    const type = npc.character_type;
+    if (npcsByType[type]) {
+      npcsByType[type].push(npc);
+    }
+  });
+  
+  // Flatten in priority order
+  const allNPCs = [...npcsByType.npc_fictitious, ...npcsByType.npc_family_member, ...npcsByType.npc_regular];
+  
+  // Add fictional relationships (ghost NPCs) that aren't already in the character list
+  const seenNames = new Set([...existingCharacterNames, ...existingNPCNames]);
   characters.forEach(char => {
     (char.fictional_relationships || []).forEach(rel => {
       if (!rel.related_character_id && rel.person_name) {
         const normalizedName = rel.person_name.toLowerCase();
-        // Skip if already a real Character entity or already added
-        if (!existingCharacterNames.has(normalizedName) && !seenNames.has(normalizedName)) {
+        if (!seenNames.has(normalizedName)) {
           seenNames.add(normalizedName);
-          allNPCs.push({ id: `npc__${rel.person_name}`, name: rel.person_name, isNPC: true, relationship_type: rel.relationship_type });
+          allNPCs.push({ id: `npc__${rel.person_name}`, name: rel.person_name, isNPC: true, relationship_type: rel.relationship_type, character_type: 'npc_fictitious' });
         }
       }
     });
@@ -681,8 +723,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   </button>
                 );
               })}
-             {[...allNPCs].filter(npc => !characters.some(c => (c.display_name || c.name || '').toLowerCase() === npc.name.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name)).length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious Characters</p>}
-             {[...allNPCs].filter(npc => !characters.some(c => (c.display_name || c.name || '').toLowerCase() === npc.name.toLowerCase())).sort((a, b) => a.name.localeCompare(b.name)).map(npc => {
+             {allNPCs.filter(npc => npc.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious Characters</p>}
+             {allNPCs.filter(npc => npc.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(npc => {
                 const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
                 return (
                   <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
@@ -696,34 +738,36 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   </button>
                 );
               })}
-             {characters.flatMap(char =>
-               (char.family_members || []).map(fam => {
-                 const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === (fam.name || '').toLowerCase());
-                 return !isRealCharacter ? fam : null;
-               }).filter(Boolean)
-             ).length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>}
-             {characters.flatMap(char =>
-               (char.family_members || []).map((fam, idx) => {
-                 const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === (fam.name || '').toLowerCase());
-                 if (isRealCharacter) return null;
-                 return {
-                   key: `${char.id}__${fam.name}`,
-                   fam,
-                   char,
-                   alreadyResident: form.resident_family_members?.some(f => f.name === fam.name),
-                 };
-               }).filter(Boolean)
-             ).sort((a, b) => a.fam.name.localeCompare(b.fam.name)).map(item => (
-               <button key={item.key} onClick={() => { if (!item.alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: item.fam.name, relationship_type: item.fam.relationship_type, source_character_id: item.char.id }]); }} disabled={item.alreadyResident}
-                 className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${item.alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                 <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">{item.fam.name?.[0]?.toUpperCase() || "?"}</div>
-                 <div className="min-w-0 flex-1">
-                   <p className="text-sm text-foreground font-medium truncate">{item.fam.name}</p>
-                   <p className="text-xs text-muted-foreground/70 capitalize">{item.fam.relationship_type}</p>
-                 </div>
-                 {item.alreadyResident && <span className="text-xs text-primary font-medium">✓</span>}
-               </button>
-             ))}
+             {allNPCs.filter(npc => npc.character_type === 'npc_family_member').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>}
+             {allNPCs.filter(npc => npc.character_type === 'npc_family_member').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(npc => {
+                const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
+                return (
+                  <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
+                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                    <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-foreground font-medium">{npc.name}</p>
+                      {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                    </div>
+                    {alreadyResident ? <span className="text-xs text-primary font-medium">✓ Resident</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
+                  </button>
+                );
+              })}
+             {allNPCs.filter(npc => npc.character_type === 'npc_regular').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Regular Characters</p>}
+             {allNPCs.filter(npc => npc.character_type === 'npc_regular').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(npc => {
+                const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
+                return (
+                  <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
+                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                    <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-foreground font-medium">{npc.name}</p>
+                      {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                    </div>
+                    {alreadyResident ? <span className="text-xs text-primary font-medium">✓ Resident</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
+                  </button>
+                );
+              })}
           </div>
         </div>
       )}
