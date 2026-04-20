@@ -56,14 +56,20 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // Show NPCs - exclude active_created_character and protected_active only
-  const npcCharacters = rawNpcCharacters.filter(c => {
-    if (c.protected_active) return false;
-    // Exclude user's active character, show all other types
-    if (c.character_type === 'active_created_character') return false;
-    if (c.is_default) return false;
-    return true;
-  });
+  // Show NPCs - exclude active_created_character and protected_active only, sorted alphabetically
+  const npcCharacters = rawNpcCharacters
+    .filter(c => {
+      if (c.protected_active) return false;
+      // Exclude user's active character, show all other types
+      if (c.character_type === 'active_created_character') return false;
+      if (c.is_default) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const nameA = (a.display_name || a.name || '').toLowerCase();
+      const nameB = (b.display_name || b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
