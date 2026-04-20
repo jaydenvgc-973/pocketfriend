@@ -19,7 +19,7 @@ import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils"
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
 
-const NPC_CHARACTER_TYPES = ["npc", "family_npc", "background", "promoted_npc"];
+const NPC_CHARACTER_TYPES = ["npc", "family_npc", "background", "promoted_npc", "npc_fictitious_person"];
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -61,15 +61,27 @@ export default function Travel() {
     gcTime: 0,
   });
 
-  // NPC characters (all non-"active" types)
+  // NPC characters — standalone entities with NPC character_type
+  // Fetch by both created_by AND owner_email to match all account-owned NPCs (mirrors NPCContactPanel logic)
   const { data: npcCharacters = [] } = useQuery({
     queryKey: ["npcCharacters", currentUser?.email],
     queryFn: async () => {
-      const all = await base44.entities.Character.filter({
-        created_by: currentUser.email,
-        status: "active",
+      const [byCreatedBy, byOwnerEmail] = await Promise.all([
+        base44.entities.Character.filter({
+          created_by: currentUser.email,
+          character_type: { $in: NPC_CHARACTER_TYPES },
+        }),
+        base44.entities.Character.filter({
+          owner_email: currentUser.email,
+          character_type: { $in: NPC_CHARACTER_TYPES },
+        }),
+      ]);
+      const seen = new Set();
+      return [...byCreatedBy, ...byOwnerEmail].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return c.status !== "deleted" && c.status !== "moved_away";
       });
-      return all.filter(c => NPC_CHARACTER_TYPES.includes(c.character_type));
     },
     enabled: !!currentUser?.email,
     staleTime: 0,
