@@ -132,6 +132,26 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
+  // LAYER 3.5: Social visit — NPC has been explicitly moved away from home by system
+  // This MUST come before sleep/home fallback to prevent home override
+  if (
+    character.presence_state === 'social_visit' &&
+    character.resolved_current_location_id &&
+    character.resolved_current_location_id !== (character.current_home_location_id || character.home_location_id)
+  ) {
+    const socialLocation = locationMap[character.resolved_current_location_id];
+    if (socialLocation) {
+      return {
+        resolved_current_location_id: character.resolved_current_location_id,
+        resolved_current_location_name: socialLocation.name || character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: 'visit',
+        resolved_presence_status: 'visiting',
+        resolved_source_reason: 'social_visit_from_system',
+        resolved_zone: null,
+      };
+    }
+  }
+
   // LAYER 4: Check valid visit/event/supervision state
   // (Placeholder for future visit/event system)
   // For now, skip
