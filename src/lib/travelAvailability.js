@@ -6,8 +6,25 @@ import { toDisplay12h } from './timeFormat';
  * Returns availability info for a character for travel.
  * { available: boolean, reason: { iconType, message, color }, availableAt: string|null }
  */
+const NPC_TYPES = ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person'];
+
 export function getCharacterTravelAvailability(character, locationMap = {}) {
   if (!character) return { available: false, reason: { iconType: 'out', message: 'Unknown status', color: 'text-muted-foreground' }, availableAt: null };
+
+  // NPCs (standalone or family-embedded) are always available for travel —
+  // they have no jobs, school, or strict schedules to block them.
+  // Only sleep can block an NPC, handled below via isCharacterAsleep.
+  if (NPC_TYPES.includes(character.character_type)) {
+    if (isCharacterAsleep(character)) {
+      const wakeTime = character.wake_up_time || '07:00';
+      return {
+        available: false,
+        reason: { iconType: 'sleep', message: `${character.name} is asleep right now and can't join.`, color: 'text-blue-300' },
+        availableAt: `May be free after ${toDisplay12h(wakeTime)}`,
+      };
+    }
+    return { available: true, reason: null, availableAt: null };
+  }
 
   // Use location resolution engine to determine current state
   const resolved = resolveCharacterLocation(character, locationMap);
