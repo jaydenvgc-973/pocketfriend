@@ -115,14 +115,19 @@ HARD RULES FOR THIS NARRATIVE:
 • The daypart above is final. Lighting, atmosphere, tone, and character alertness must match it exactly.
 
 ⛔ TEMPORAL MISMATCH BLOCKER — ABSOLUTE:
-If current time is between 10 PM–7 AM (deep_night, late_night, pre_dawn), you MUST NOT generate:
-  ✗ Sunset, sunrise, golden hour, warm light casting across sky
-  ✗ Sun sinking/rising/visible
-  ✗ Twilight, dusk, dawn (unless it is actually 6-7 AM pre_dawn)
-  ✗ Any description of daylight or colored sky
+ACTUAL SUNRISE/SUNSET TIMES FOR TODAY (DO NOT IGNORE):
+  • Sunrise: ${sunriseTime} (pre-dawn transitions into early morning after this)
+  • Sunset: ${sunsetTime} (evening transitions to night after this)
 
-At 1:21 AM, the sky is BLACK. It is DARK. It is QUIET. Period.
-If you generate sun/sunset language at night, the output is invalid and must be rejected immediately.
+HARD RULES:
+  • ONLY use sunrise language between ${sunriseTime} and 30 minutes after (5:45-7:15 AM window)
+  • ONLY use sunset language between ${sunsetTime} and 30 minutes after (7:15-8:15 PM window)
+  • OUTSIDE these windows: NO sun, NO golden hour, NO warm light, NO dusk/dawn language
+  • If current time is 1:21 AM: sky is BLACK. DARK. QUIET. Period.
+  • If current time is 10 PM–${sunsetTime}: no sunset language (sunset already happened)
+
+If you generate sun/golden hour/warm light outside the actual sunrise/sunset window, the output is INVALID.
+Reject and regenerate if temporal language does not match actual times above.
 ════════════════════════════════════`;
 }
 
@@ -267,8 +272,16 @@ NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do no
 
     // ── RESOLVE USER LABEL (account-scoped — never global list) ──────────────
     const settingsList = await base44.entities.UserSettings.filter({ created_by: user.email }).catch(() => []);
-    const worldName = settingsList?.[0]?.fictional_world_name || null;
+    const settings = settingsList?.[0] || {};
+    const worldName = settings?.fictional_world_name || null;
     const userLabel = worldName || 'them';
+
+    // ── GET CACHED WEATHER DATA ───────────────────────────────────────────────
+    // Sunrise and sunset times are fetched daily at 4 AM ET and cached in UserSettings
+    const cachedWeather = settings?.daily_weather_cache || {};
+    const sunriseTime = cachedWeather.sunrise || '06:15'; // fallback time
+    const sunsetTime = cachedWeather.sunset || '19:45'; // fallback time
+    const weatherConditions = cachedWeather.conditions || 'clear';
 
     // ── RESOLVE ACTIVE CHARACTER IDENTITY (who is the user acting as?) ──────
     // If the most recent user messages reference a played_as_character_name, use that.
