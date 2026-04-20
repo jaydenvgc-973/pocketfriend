@@ -385,7 +385,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
-              className="sticky bottom-20 pb-2"
+              className="sticky bottom-24 pb-2"
             >
               <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
                 <div className="flex items-center gap-3">

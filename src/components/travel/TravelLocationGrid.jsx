@@ -59,7 +59,7 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent pointer-events-none" />
 
             {/* Name */}
-            <div className="absolute bottom-0 left-0 right-0 p-2.5">
+            <div className="absolute bottom-0 left-0 right-0 p-2.5 pointer-events-none">
               <p className="text-xs font-semibold text-white leading-tight truncate">{loc.name}</p>
               {allOccupants.length > 0 ? (
                 <p className="text-[10px] text-white/70 truncate">{allOccupants.slice(0, 2).join(", ")}</p>
