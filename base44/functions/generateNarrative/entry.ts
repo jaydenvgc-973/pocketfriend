@@ -113,6 +113,16 @@ HARD RULES FOR THIS NARRATIVE:
 • If hours have elapsed, the prior topic is NOT immediate — it is remembered or resumed.
 • Day rollover is a real state transition. Do not blend yesterday and today.
 • The daypart above is final. Lighting, atmosphere, tone, and character alertness must match it exactly.
+
+⛔ TEMPORAL MISMATCH BLOCKER — ABSOLUTE:
+If current time is between 10 PM–7 AM (deep_night, late_night, pre_dawn), you MUST NOT generate:
+  ✗ Sunset, sunrise, golden hour, warm light casting across sky
+  ✗ Sun sinking/rising/visible
+  ✗ Twilight, dusk, dawn (unless it is actually 6-7 AM pre_dawn)
+  ✗ Any description of daylight or colored sky
+
+At 1:21 AM, the sky is BLACK. It is DARK. It is QUIET. Period.
+If you generate sun/sunset language at night, the output is invalid and must be rejected immediately.
 ════════════════════════════════════`;
 }
 
