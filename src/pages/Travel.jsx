@@ -654,33 +654,29 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Active Characters: {activeCharacters.length}</p>
-              {activeCharacters.map(c => {
-                const resolved = resolveCharacterLocation(c, locationMap);
-                return (
+              {activeCharacters.map(c => (
                   <div key={c.id} className="text-[10px] text-muted-foreground/70">
-                    • {c.name}: {resolved.resolved_current_location_name || "unknown"}
+                    • {c.name}: {c.resolved_current_location_name || "unknown"}
                   </div>
-                );
-              })}
+                ))}
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">NPC Characters: {npcCharacters.length}</p>
               {npcCharacters.length > 0 ? (
                 npcCharacters.map(c => {
-                  const resolved = resolveCharacterLocation(c, locationMap);
-                  return (
-                    <div key={c.id} className="text-[10px]">
-                      <span className="text-muted-foreground/70">• {c.name} ({c.character_type}):</span>
-                      {resolved.resolved_current_location_name ? (
-                        <span className="text-blue-400"> {resolved.resolved_current_location_name}</span>
-                      ) : c.current_home_location_id ? (
-                        <span className="text-amber-400"> home ({locationMap[c.current_home_location_id]?.name || c.current_home_location_id.slice(0, 8)})</span>
-                      ) : (
-                        <span className="text-red-400"> [NO LOCATION]</span>
-                      )}
-                    </div>
-                  );
-                })
+                    return (
+                      <div key={c.id} className="text-[10px]">
+                        <span className="text-muted-foreground/70">• {c.name} ({c.character_type}):</span>
+                        {c.resolved_current_location_name ? (
+                          <span className="text-blue-400"> {c.resolved_current_location_name}</span>
+                        ) : c.current_home_location_id ? (
+                          <span className="text-amber-400"> home ({locationMap[c.current_home_location_id]?.name || c.current_home_location_id.slice(0, 8)})</span>
+                        ) : (
+                          <span className="text-red-400"> [NO LOCATION]</span>
+                        )}
+                      </div>
+                    );
+                  })
               ) : (
                 <p className="text-[10px] text-muted-foreground/50">No NPC characters found</p>
               )}
