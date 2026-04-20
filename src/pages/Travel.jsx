@@ -20,7 +20,7 @@ import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils"
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
 
-const NPC_CHARACTER_TYPES = ["npc", "family_npc", "background", "promoted_npc", "npc_fictitious_person"];
+const NPC_CHARACTER_TYPES = ["npc_regular", "npc_family_member", "npc_fictitious"];
 
 export default function Travel() {
   const navigate = useNavigate();
@@ -59,7 +59,7 @@ export default function Travel() {
     queryFn: () => base44.entities.Character.filter({
       created_by: currentUser.email,
       status: "active",
-      character_type: "active"
+      character_type: "active_created_character"
     }),
     enabled: !!currentUser?.email,
     staleTime: 0,
