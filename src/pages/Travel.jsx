@@ -654,7 +654,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">Active Characters: {activeCharacters.length}</p>
-              {activeCharacters.map(c => (
+              {[...activeCharacters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => (
                   <div key={c.id} className="text-[10px] text-muted-foreground/70">
                     • {c.name}: {c.resolved_current_location_name || "unknown"}
                   </div>
@@ -663,7 +663,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">NPC Characters: {npcCharacters.length}</p>
               {npcCharacters.length > 0 ? (
-                npcCharacters.map(c => {
+                [...npcCharacters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => {
                     return (
                       <div key={c.id} className="text-[10px]">
                         <span className="text-muted-foreground/70">• {c.name} ({c.character_type}):</span>
