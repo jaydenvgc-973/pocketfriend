@@ -15,10 +15,38 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: rawNpcCharacters = [] } = useQuery({
+  const { data: rawNpcCharacters = [], isLoading: isNpcLoading } = useQuery({
     queryKey: ['npc-characters', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
+      
+      // DIAGNOSTIC: Fetch ALL characters to see what we have
+      const [allByCreatedBy, allByOwnerEmail] = await Promise.all([
+        base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 500),
+        base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500),
+      ]);
+      
+      const allChars = [...allByCreatedBy, ...allByOwnerEmail].reduce((acc, c) => {
+        if (!acc.find(x => x.id === c.id)) acc.push(c);
+        return acc;
+      }, []);
+      
+      console.log('[NPCContactPanel Diagnostic]', {
+        totalChars: allChars.length,
+        byType: allChars.reduce((acc, c) => {
+          acc[c.character_type] = (acc[c.character_type] || 0) + 1;
+          return acc;
+        }, {}),
+        allCharDetails: allChars.map(c => ({
+          id: c.id,
+          name: c.name,
+          character_type: c.character_type,
+          owner_email: c.owner_email,
+          created_by: c.created_by,
+          protected_active: c.protected_active,
+        })),
+      });
+      
       // Fetch by both created_by (legacy) and owner_email (new field) to catch all account-owned NPCs
       const [byCreatedBy, byOwnerEmail] = await Promise.all([
         base44.entities.Character.filter({
@@ -32,21 +60,52 @@ export default function NPCContactPanel() {
       ]);
       // Merge and deduplicate
       const seen = new Set();
-      return [...byCreatedBy, ...byOwnerEmail].filter(c => {
+      const result = [...byCreatedBy, ...byOwnerEmail].filter(c => {
         if (seen.has(c.id)) return false;
         seen.add(c.id);
         return true;
       });
+      
+      console.log('[NPCContactPanel Filtered]', {
+        foundNPCs: result.length,
+        npcIds: result.map(c => ({ id: c.id, name: c.name, type: c.character_type })),
+      });
+      
+      return result;
     },
     enabled: !!currentUser?.email,
   });
 
   // Show NPCs where owner_email matches current user (includes all account-owned NPCs)
   const npcCharacters = rawNpcCharacters.filter(c => {
+    console.log('[NPCContactPanel Filter Check]', {
+      characterId: c.id,
+      characterName: c.name,
+      characterType: c.character_type,
+      protected_active: c.protected_active,
+      owner_email: c.owner_email,
+      currentUserEmail: currentUser?.email,
+      ownerMatch: c.owner_email === currentUser?.email,
+    });
+    
     if (c.protected_active) return false;
     // Include all NPC types: npc_fictitious, npc_family_member, npc_regular
     const isNPC = ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type);
-    return isNPC && c.owner_email === currentUser?.email;
+    const result = isNPC && c.owner_email === currentUser?.email;
+    
+    console.log('[NPCContactPanel Filter Result]', {
+      characterId: c.id,
+      isNPC,
+      ownerMatch: c.owner_email === currentUser?.email,
+      passed: result,
+    });
+    
+    return result;
+  });
+  
+  console.log('[NPCContactPanel Final]', {
+    rawNpcCount: rawNpcCharacters.length,
+    filteredNpcCount: npcCharacters.length,
   });
 
   // Close dropdown when clicking outside
