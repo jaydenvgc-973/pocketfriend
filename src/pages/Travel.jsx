@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
@@ -26,6 +26,7 @@ export default function Travel() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedLocation, setSelectedLocation] = useState(null);
+  const [hasRunDistribution, setHasRunDistribution] = useState(false);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
   const [convincedCharacterIds, setConvincedCharacterIds] = useState([]);
   const [unavailablePopup, setUnavailablePopup] = useState(null);
@@ -106,6 +107,19 @@ export default function Travel() {
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const settings = settingsList[0] || {};
+
+  // Auto-distribute VGC NPCs on page load so UI shows their real locations
+  useEffect(() => {
+    if (!currentUser?.email || hasRunDistribution) return;
+    setHasRunDistribution(true);
+    base44.functions.invoke('distributeVGCTowersNPCs', {})
+      .then(() => {
+        queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser.email] });
+        queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser.email] });
+        queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
+      })
+      .catch(() => {});
+  }, [currentUser?.email, hasRunDistribution]);
   const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const formatOperatingHours = (location) => {
