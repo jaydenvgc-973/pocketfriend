@@ -56,7 +56,7 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
             )}
 
             {/* Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent pointer-events-none" />
 
             {/* Name */}
             <div className="absolute bottom-0 left-0 right-0 p-2.5">
