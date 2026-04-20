@@ -873,30 +873,44 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           <button onClick={() => update("owner_is_npc", true)} className={`py-2 px-3 rounded-xl text-sm border transition-colors ${form.owner_is_npc ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-foreground hover:border-primary/40"}`}>🧑‍🤝‍🧑 NPC</button>
         </div>
         {!form.owner_is_npc ? (
-          <div className="space-y-2 max-h-44 overflow-y-auto">
-            <button onClick={() => update("owner_character_id", "")} className={`w-full flex items-center gap-2 p-2 rounded-xl border text-sm transition-colors ${!form.owner_character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-              <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs">—</span>
-              No owner assigned
-            </button>
-            {currentUser?.id && (
-              <button onClick={() => update("owner_character_id", currentUser.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
-                {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
-                  <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                    <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
-                  </div>
-                )}
-                <span className="text-sm text-foreground">{worldName}</span>
-                <span className="text-xs text-primary/60 ml-auto">Player</span>
-              </button>
-            )}
-            {characters.map(c => (
-              <button key={c.id} onClick={() => update("owner_character_id", c.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
-                <CharacterAvatar character={c} size="sm" />
-                <span className="text-sm text-foreground">{c.name}</span>
-              </button>
-            ))}
-          </div>
-        ) : (
+           <div className="space-y-2 max-h-44 overflow-y-auto">
+             <button onClick={() => update("owner_character_id", "")} className={`w-full flex items-center gap-2 p-2 rounded-xl border text-sm transition-colors ${!form.owner_character_id ? "bg-primary/10 border-primary/40 text-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
+               <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs">—</span>
+               No owner assigned
+             </button>
+             {currentUser?.id && (
+               <button onClick={() => update("owner_character_id", currentUser.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === currentUser.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+                 {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
+                   <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                     <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
+                   </div>
+                 )}
+                 <span className="text-sm text-foreground">{worldName}</span>
+                 <span className="text-xs text-primary/60 ml-auto">Player</span>
+               </button>
+             )}
+             {activeChars.map(c => (
+               <button key={c.id} onClick={() => update("owner_character_id", c.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === c.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+                 <CharacterAvatar character={c} size="sm" />
+                 <span className="text-sm text-foreground">{c.name}</span>
+               </button>
+             ))}
+             {npcFictitious.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious</p>}
+             {npcFictitious.map(npc => (
+               <button key={npc.id} onClick={() => update("owner_character_id", npc.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === npc.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+                 <CharacterAvatar character={npc} size="sm" />
+                 <span className="text-sm text-foreground">{npc.name}</span>
+               </button>
+             ))}
+             {npcFamily.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>}
+             {npcFamily.map(npc => (
+               <button key={npc.id} onClick={() => update("owner_character_id", npc.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === npc.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
+                 <CharacterAvatar character={npc} size="sm" />
+                 <span className="text-sm text-foreground">{npc.name}</span>
+               </button>
+             ))}
+           </div>
+         ) : (
           <Input value={form.owner_npc_name} onChange={e => update("owner_npc_name", e.target.value)} placeholder="NPC name (e.g. Mr. Hassan, The Landlord)" className="h-10 rounded-xl text-sm" />
         )}
         {(form.owner_character_id || (form.owner_is_npc && form.owner_npc_name.trim())) && (
