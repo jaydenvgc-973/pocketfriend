@@ -1,14 +1,18 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * ensureUserVGCTowers
+ * ensureUserVGCTowers (CORRECTED)
  *
- * Guarantees each user has their own private VGC Towers location instance.
- * - If the user already has one (scope=account_global, name='VGC Towers'), returns it.
- * - If not, creates a new private instance for this user.
- * - NEVER returns a shared (scope=shared) VGC Towers — that would be cross-contamination.
+ * CRITICAL RULE: Each user must have EXACTLY ONE personal VGC Towers instance.
+ * 
+ * Logic:
+ * 1. Fetch the template VGC Towers from the original account (adobevgc@gmail.com)
+ * 2. Check if current user already has a personal (non-shared) VGC Towers
+ * 3. If they do, verify it has the correct template data. If blank, update it.
+ * 4. If they don't, create one using the template.
+ * 5. REMOVE any duplicates (multiple VGC Towers for same user)
  *
- * Returns: { vgc_towers_id, vgc_towers_name, created: bool }
+ * Returns: { vgc_towers_id, vgc_towers_name, created: bool, template_source: string }
  */
 Deno.serve(async (req) => {
   try {
@@ -16,24 +20,95 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Search for a user-scoped VGC Towers (created_by this user OR owner_email this user)
-    const [byCreated, byOwner] = await Promise.all([
-      base44.entities.LocationReference.filter({ created_by: user.email, name: 'VGC Towers' }),
-      base44.entities.LocationReference.filter({ owner_email: user.email, name: 'VGC Towers' }),
+    // STEP 1: Fetch the authoritative template from adobevgc@gmail.com
+    const [templateByCreated, templateByOwner] = await Promise.all([
+      base44.asServiceRole.entities.LocationReference.filter({
+        created_by: 'adobevgc@gmail.com',
+        name: 'VGC Towers',
+        scope: { $ne: 'shared' }
+      }),
+      base44.asServiceRole.entities.LocationReference.filter({
+        owner_email: 'adobevgc@gmail.com',
+        name: 'VGC Towers',
+        scope: { $ne: 'shared' }
+      }),
     ]);
 
-    // Deduplicate and filter to only account-private instances (not shared/global)
+    const templateVGC = templateByCreated[0] || templateByOwner[0];
+    if (!templateVGC) {
+      return Response.json({
+        error: 'Template VGC Towers not found on adobevgc@gmail.com account',
+        hint: 'The original VGC Towers must exist before other users can receive copies'
+      }, { status: 400 });
+    }
+
+    const templateData = {
+      image_urls: templateVGC.image_urls || [],
+      zones: templateVGC.zones || [],
+      description: templateVGC.description,
+      bedroom_count: templateVGC.bedroom_count,
+    };
+
+    // STEP 2: Fetch all personal (non-shared) VGC Towers for this user
+    const [userByCreated, userByOwner] = await Promise.all([
+      base44.entities.LocationReference.filter({
+        created_by: user.email,
+        name: 'VGC Towers',
+        scope: { $ne: 'shared' }
+      }),
+      base44.entities.LocationReference.filter({
+        owner_email: user.email,
+        name: 'VGC Towers',
+        scope: { $ne: 'shared' }
+      }),
+    ]);
+
     const seen = new Set();
-    const userInstances = [...byCreated, ...byOwner].filter(l => {
+    const userInstances = [...userByCreated, ...userByOwner].filter(l => {
       if (seen.has(l.id)) return false;
       seen.add(l.id);
-      // Must be user-owned (not a shared admin record)
-      return l.scope !== 'shared';
+      return true;
     });
 
-    if (userInstances.length > 0) {
+    // STEP 3: If multiple instances, delete all but one and update the remaining
+    if (userInstances.length > 1) {
+      const [primary, ...duplicates] = userInstances;
+      const deletePromises = duplicates.map(dup =>
+        base44.entities.LocationReference.delete(dup.id).catch(() => null)
+      );
+      await Promise.all(deletePromises);
+
+      // Update primary with template data if missing
+      if (!primary.image_urls || primary.image_urls.length === 0) {
+        await base44.entities.LocationReference.update(primary.id, templateData);
+      }
+      if (!primary.owner_email || !primary.scope) {
+        await base44.entities.LocationReference.update(primary.id, {
+          owner_email: user.email,
+          scope: 'account_global',
+          created_by_role: 'user',
+        });
+      }
+
+      return Response.json({
+        vgc_towers_id: primary.id,
+        vgc_towers_name: primary.name,
+        created: false,
+        duplicates_removed: duplicates.length,
+        template_source: 'adobevgc@gmail.com',
+      });
+    }
+
+    // STEP 4: If one instance exists, verify it has template data
+    if (userInstances.length === 1) {
       const existing = userInstances[0];
-      // Ensure ownership fields are correct
+      const needsUpdate = !existing.image_urls || existing.image_urls.length === 0;
+
+      if (needsUpdate) {
+        await base44.entities.LocationReference.update(existing.id, templateData);
+      }
+
+      // Ensure ownership is correct
       if (!existing.owner_email || !existing.scope) {
         await base44.entities.LocationReference.update(existing.id, {
           owner_email: user.email,
@@ -41,16 +116,17 @@ Deno.serve(async (req) => {
           created_by_role: 'user',
         });
       }
+
       return Response.json({
         vgc_towers_id: existing.id,
         vgc_towers_name: existing.name,
         created: false,
+        updated_with_template: needsUpdate,
+        template_source: 'adobevgc@gmail.com',
       });
     }
 
-    // No user-scoped VGC Towers found — create one
-    const sharedVGC = await base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared', name: 'VGC Towers' }).then(r => r[0] || null);
-
+    // STEP 5: No instance exists — create one from template
     const newVGC = await base44.entities.LocationReference.create({
       name: 'VGC Towers',
       category: 'home',
@@ -59,21 +135,18 @@ Deno.serve(async (req) => {
       owner_email: user.email,
       created_by_role: 'user',
       is_user_created: true,
-      description: 'Residential complex where NPCs live',
-      bedroom_count: 20,
-      // Copy images from shared instance if available
-      image_urls: sharedVGC?.image_urls || [],
-      zones: sharedVGC?.zones || [],
+      ...templateData,
       resident_character_ids: [],
       resident_character_names: [],
     });
 
-    console.log(`[ensureUserVGCTowers] Created new VGC Towers for ${user.email}: ${newVGC.id}`);
+    console.log(`[ensureUserVGCTowers] Created new VGC Towers for ${user.email} from template: ${newVGC.id}`);
 
     return Response.json({
       vgc_towers_id: newVGC.id,
       vgc_towers_name: newVGC.name,
       created: true,
+      template_source: 'adobevgc@gmail.com',
     });
   } catch (error) {
     console.error('[ensureUserVGCTowers]', error.message);
