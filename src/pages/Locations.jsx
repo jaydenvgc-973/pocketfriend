@@ -753,21 +753,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                   </button>
                 );
               })}
-             {allNPCs.filter(npc => npc.character_type === 'npc_regular').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Regular Characters</p>}
-             {allNPCs.filter(npc => npc.character_type === 'npc_regular').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(npc => {
-                const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
-                return (
-                  <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
-                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                    <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-foreground font-medium">{npc.name}</p>
-                      {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
-                    </div>
-                    {alreadyResident ? <span className="text-xs text-primary font-medium">✓ Resident</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
-                  </button>
-                );
-              })}
+
           </div>
         </div>
       )}
