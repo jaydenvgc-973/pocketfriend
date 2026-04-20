@@ -742,14 +742,38 @@ Deno.serve(async (req) => {
         // ══════════════════════════════════════════════════════════════════════
 
         if (imageMode === 'creative' && !manualLocationId) {
-          // Creative generation with no explicit location selected — use passed location refs if provided
-          if (locationReferenceImages?.length > 0) {
+          // Creative mode STILL REQUIRES location lock if character presence exists
+          // Try to resolve from character presence first before allowing prompt-only generation
+          const charRecord = characterId ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null) : null;
+          const createdBy = charRecord?.created_by;
+          
+          if (charRecord && createdBy) {
+            const savedLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: createdBy }, '-created_date', 100);
+            const livePresence = charRecord?.resolved_presence_status || 'home';
+            const isHome = ['home', 'sleeping', 'napping'].includes(livePresence);
+            
+            // Try to resolve from character presence even in creative mode
+            if (isHome || !['at_work', 'traveling'].includes(livePresence)) {
+              const presenceLocId = charRecord?.current_home_location_id || charRecord?.resolved_current_location_id;
+              if (presenceLocId) {
+                const presenceLoc = await base44.asServiceRole.entities.LocationReference.get(presenceLocId).catch(() => null);
+                if (presenceLoc && presenceLoc.image_urls?.length > 0) {
+                  locationImages = presenceLoc.image_urls.slice(0, 6);
+                  resolvedLocationName = presenceLoc.name;
+                  locationNote = buildRoomLockNote(presenceLoc.name, null);
+                  console.log(`[LOCATION] 🎨 CREATIVE MODE — character presence locked: "${presenceLoc.name}"`);
+                }
+              }
+            }
+          }
+          
+          // Only use passed location refs if NO character presence was available
+          if (locationImages.length === 0 && locationReferenceImages?.length > 0) {
             locationImages = locationReferenceImages.slice(0, 6);
             console.log(`[LOCATION] 🎨 CREATIVE MODE — using passed location reference images: ${locationImages.length}`);
-          } else {
-            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location selected. Generating from prompt only.`);
+          } else if (locationImages.length === 0) {
+            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location resolved. Generating from prompt only.`);
           }
-          // locationNote, resolvedLocationName, resolvedZoneName remain empty — intentional for creative.
         } else {
 
         // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
