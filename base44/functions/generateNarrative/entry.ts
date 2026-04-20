@@ -187,13 +187,29 @@ Deno.serve(async (req) => {
     const minET = nowET.getMinutes();
     const timeStr = `${hourET % 12 || 12}:${String(minET).padStart(2, '0')} ${hourET >= 12 ? 'PM' : 'AM'}`;
     const timeOfDayDesc = getDaypartLabel(hourET).label;
-    const isAsleep = (() => {
-      if (resolvedPresenceStatus === 'sleeping' || resolvedPresenceStatus === 'napping') return true;
-      if (!char.sleep_start_time || !char.wake_up_time) return false;
+    
+    // CRITICAL: Determine sleep state — this is absolute
+    let isAsleep = false;
+    if (resolvedPresenceStatus === 'sleeping' || resolvedPresenceStatus === 'napping') {
+      isAsleep = true;
+    } else if (char.sleep_start_time && char.wake_up_time) {
       const sH = parseInt(char.sleep_start_time.split(':')[0], 10);
       const wH = parseInt(char.wake_up_time.split(':')[0], 10);
-      return sH > wH ? (hourET >= sH || hourET < wH) : (hourET >= sH && hourET < wH);
-    })();
+      // Sleep window crosses midnight (e.g., 23:00 - 07:00)
+      if (sH > wH) {
+        isAsleep = hourET >= sH || hourET < wH;
+      } else {
+        isAsleep = hourET >= sH && hourET < wH;
+      }
+    }
+    
+    // Also check for decided_to_stay_up override
+    if (isAsleep && char.decided_to_stay_up_until) {
+      const stayUpUntil = new Date(char.decided_to_stay_up_until);
+      if (now < stayUpUntil) {
+        isAsleep = false;
+      }
+    }
 
     // ── BUILD LIVE NEEDS STATE BLOCK ──────────────────────────────────────────
     const BANDS = [
@@ -846,7 +862,7 @@ DO NOT GENERATE: coffee, tea, window, phone, kitchen, bathroom trip, getting up,
     // If found, regenerate once with an even stricter prompt.
     if (isAsleep && response) {
       const SLEEP_VIOLATION_TERMS = [
-        'coffee', 'tea', 'drink', 'drank', 'sip', 'sipping',
+        'coffee', 'tea', 'drink', 'drank', 'sip', 'sipping', 'brew', 'brewed',
         'kitchen', 'stove', 'kettle', 'mug', 'cup of',
         'window', 'looks out', 'looked out', 'gazes out', 'stares out',
         'gets up', 'got up', 'stands up', 'stood up', 'sits up', 'sat up',
@@ -855,6 +871,7 @@ DO NOT GENERATE: coffee, tea, window, phone, kitchen, bathroom trip, getting up,
         'phone', 'checks', 'scrolls', 'opens', 'picks up',
         'leaves', 'heads out', 'goes to', 'went to',
         'eats', 'eating', 'food', 'breakfast', 'snack',
+        'last light', 'fading light', 'light faded', 'light of day', 'sunset', 'dusk', 'glow',
       ];
       const respLower = response.toLowerCase();
       const hasViolation = SLEEP_VIOLATION_TERMS.some(term => respLower.includes(term));
@@ -872,7 +889,9 @@ Valid examples:
 - "Pale morning light pushed at the edges of the curtains, but he didn't stir — still deep in sleep."
 - "The apartment was quiet at this hour, the city outside a low murmur beneath the silence of the room."
 
-Now write one for ${characterName} at their current location (${resolvedLocationName || 'home'}):`,
+Current time: ${timeStr} (${timeOfDayDesc}). It is completely dark outside.
+
+Now write one for ${characterName} at their current location (${resolvedLocationName || 'home'}), matching the darkness and stillness of ${timeOfDayDesc}:`,
           model: 'gemini_3_flash',
         });
       }
