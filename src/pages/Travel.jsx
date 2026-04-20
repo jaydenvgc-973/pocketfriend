@@ -113,6 +113,7 @@ export default function Travel() {
     if (!currentUser?.email || hasRunDistribution) return;
     setHasRunDistribution(true);
     base44.functions.invoke('distributeVGCTowersNPCs', {})
+      .then(() => new Promise(r => setTimeout(r, 1000)))
       .then(() => {
         queryClient.invalidateQueries({ queryKey: ['npcCharacters', currentUser.email] });
         queryClient.invalidateQueries({ queryKey: ['activeCharacters', currentUser.email] });
@@ -429,10 +430,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    const charactersAtHome = characters.filter(c => {
-                      const resolved = resolveCharacterLocation(c, locationMap);
-                      return resolved.resolved_current_location_id === selectedLocation.id;
-                    });
+                    // Only show characters actually at this home (resolved_current_location_id matches)
+                    const charactersAtHome = characters.filter(c =>
+                      c.resolved_current_location_id === selectedLocation.id &&
+                      (c.resolved_presence_status === 'home' || c.resolved_presence_status === 'sleeping' || c.resolved_presence_status === 'napping')
+                    );
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
                     characters.filter(c =>
@@ -461,11 +463,15 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       }
                     });
                   } else {
-                    const currentlyAtLocation = characters.filter(c => {
-                      const resolved = resolveCharacterLocation(c, locationMap);
-                      return resolved.resolved_current_location_id === selectedLocation.id;
+                    // Use resolved_current_location_id directly from DB (set by distributeVGCTowersNPCs)
+                    // rather than re-running resolveCharacterLocation which may give stale results
+                    const currentlyAtLocation = characters.filter(c =>
+                      c.resolved_current_location_id === selectedLocation.id
+                    );
+                    currentlyAtLocation.forEach(c => {
+                      const status = c.resolved_presence_status === 'visiting' ? 'visiting' : 'here';
+                      lines.push({ name: c.name, status, color: "text-blue-400" });
                     });
-                    currentlyAtLocation.forEach(c => lines.push({ name: c.name, status: "here", color: "text-blue-400" }));
 
                     characters.forEach(char => {
                       if (!char.fictional_relationships) return;
