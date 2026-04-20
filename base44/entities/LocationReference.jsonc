@@ -253,13 +253,41 @@
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "DEPRECATED: Use residents array instead"
     },
     "resident_character_names": {
       "type": "array",
       "items": {
         "type": "string"
-      }
+      },
+      "description": "DEPRECATED: Use residents array instead"
+    },
+    "residents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "character_name": {
+            "type": "string"
+          },
+          "avatar_url": {
+            "type": "string"
+          },
+          "moved_in_date": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "character_id",
+          "character_name"
+        ]
+      },
+      "default": []
     },
     "resident_family_members": {
       "type": "array",
@@ -485,5 +513,60 @@
   "required": [
     "name",
     "location_type"
-  ]
+  ],
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "read": {
+      "$or": [
+        {
+          "data.scope": "shared"
+        },
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  }
 }
