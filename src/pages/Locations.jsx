@@ -93,12 +93,13 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
               </span>
             )}
             {(location.category === 'home' || location.category === 'generic') && (() => {
-              const activeNames = (location.resident_character_ids || []).map(id => {
+              const residentNames = (location.residents || []).map(r => r.character_name).filter(Boolean);
+              const legacyActiveNames = (location.resident_character_ids || []).map(id => {
                 const found = characters.find(c => c.id === id);
                 return found?.name || null;
               }).filter(Boolean);
               const npcNames = (location.resident_family_members || []).map(f => f.name).filter(Boolean);
-              const allNames = [...activeNames, ...npcNames];
+              const allNames = [...residentNames, ...legacyActiveNames, ...npcNames];
               return allNames.length > 0 ? (
                 <span className="text-xs text-blue-400/80 font-medium">{allNames.join(', ')}</span>
               ) : (
@@ -601,8 +602,18 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                       </div>
                     );
                   })}
+                  {form.residents?.map((res, idx) => (
+                    <div key={`new-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
+                      {res.avatar_url && <img src={res.avatar_url} alt={res.character_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />}
+                      {!res.avatar_url && <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{res.character_name?.[0]?.toUpperCase() || "?"}</div>}
+                      <span className="text-sm text-foreground flex-1">{res.character_name}</span>
+                      <button onClick={() => update("residents", form.residents.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
                   {form.resident_family_members?.map((fam, idx) => (
-                    <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
+                    <div key={`fam-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
                       <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{fam.name?.[0]?.toUpperCase() || "?"}</div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-foreground">{fam.name}</p>
@@ -614,7 +625,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                     </div>
                   ))}
                 </div>
-                {(form.resident_character_ids.length + (form.resident_family_members?.length || 0)) > 1 && (
+                {(form.resident_character_ids.length + (form.residents?.length || 0) + (form.resident_family_members?.length || 0)) > 1 && (
                   <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
                     <label className="text-xs font-semibold text-foreground uppercase">Split costs</label>
                     <div className="flex gap-2">
