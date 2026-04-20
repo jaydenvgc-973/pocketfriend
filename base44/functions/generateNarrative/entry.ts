@@ -737,7 +737,22 @@ HOME SPACE AWARENESS — match activity to room context:
 
 ════════════════════════════════════
 
-FINAL RULE: If ${characterName} is ASLEEP or the sleep window is active, the narrative MUST reflect rest or sleep at their confirmed location. No active behavior, errands, social engagement, or movement is allowed during a confirmed sleep state.
+FINAL RULE: If ${characterName} is ASLEEP or the sleep window is active, the narrative MUST reflect rest or sleep at their confirmed location. 
+
+CRITICAL — SLEEP BLOCKS ALL AWAKE-ONLY ACTIVITIES:
+Characters who are asleep CANNOT perform any of these, no matter the time or context:
+  ✗ Looking out windows
+  ✗ Going for walks or any movement outside the bed
+  ✗ Drinking anything (coffee, tea, water, anything)
+  ✗ Eating or snacking
+  ✗ Using their phone or any device
+  ✗ Showering, grooming, or personal care
+  ✗ Talking to anyone or having a conversation
+  ✗ Being in any room except where they sleep
+  ✗ Any physical activity or stretching
+  ✗ Any form of interaction with the environment
+
+Sleep is a blocked state. If asleep, only valid narratives are: sleeping stillness, ambient environment, breathing, darkness/light changes. That is the complete list. No exceptions.
 
 ════════════════════════════════════
 IDENTITY AND POV RULE — MANDATORY

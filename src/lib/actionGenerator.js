@@ -154,10 +154,16 @@ const ACTION_LIBRARY_BY_SUBTYPE = {
 /**
  * Generate contextually relevant actions for a location
  * Returns 12-20 actions, rotated and varied
- * Filters out coffee-related actions after 1pm ET
+ * Filters out coffee-related actions after 1pm ET and near sleep times
+ * Blocks all awake-only activities if character is asleep
  */
-export function generateLocationActions(location, activeZone = null, hour = 12, npcPresent = [], visitCount = 0) {
+export function generateLocationActions(location, activeZone = null, hour = 12, npcPresent = [], visitCount = 0, isCharacterAsleep = false, sleepStartHour = 23) {
   if (!location) return DEFAULT_ACTIONS;
+
+  // CRITICAL: If character is asleep, return empty array — no activities possible during sleep
+  if (isCharacterAsleep) {
+    return [];
+  }
 
   // 1. Get base action library for this location
   let baseActions = [];
@@ -171,8 +177,11 @@ export function generateLocationActions(location, activeZone = null, hour = 12, 
     baseActions = DEFAULT_ACTIONS;
   }
 
-  // 2. Filter out coffee actions after 1pm ET (hour >= 13)
-  if (hour >= 13) {
+  // 2. Filter out coffee actions after 1pm ET (hour >= 13) and near sleep times (1 hour before bed)
+  const coffeeDeadline = sleepStartHour > 0 ? sleepStartHour - 1 : 22; // 1 hour before sleep
+  const isCoffeeProhibited = hour >= 13 || hour >= coffeeDeadline;
+  
+  if (isCoffeeProhibited) {
     baseActions = baseActions.filter(action => 
       !action.id.includes('coffee') && 
       action.label.toLowerCase() !== 'ask for refill' // refill often implies coffee
