@@ -47,11 +47,19 @@ Deno.serve(async (req) => {
     const VGC_ID = vgcTowers.id;
 
     // ── IDENTIFY VGC TOWERS NPC RESIDENTS ──────────────────────────────────────
-    // CRITICAL: Only characters created by THIS USER with NPC type homed to VGC Towers
+    // TRAVEL ELIGIBILITY HARD RULES:
+    // 1. Must belong to current user (owner_email OR created_by)
+    // 2. character_type must be NPC (NOT active — promoted characters lose travel eligibility)
+    // 3. home/residence must be THIS USER's VGC Towers (not a shared or another user's instance)
+    // 4. Not protected
+    const NPC_ELIGIBLE_TYPES = ['npc', 'background', 'npc_fictitious_person'];
+    // NOTE: 'promoted_npc' and 'family_npc' are excluded — promoted means transitioning to active
     const vgcResidents = allCharacters.filter(c =>
       c.current_home_location_id === VGC_ID &&
-      ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type) &&
-      !c.protected_active
+      NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
+      !c.protected_active &&
+      // Must be owned by this user (strict ownership check)
+      (c.owner_email === user.email || c.created_by === user.email)
     );
 
     const log = [];
