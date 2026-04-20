@@ -117,26 +117,71 @@ ONLY the camera angle and subject placement may change.
     let prompt = '';
 
     if (reason === 'wrong_location' || reason === 'flawed') {
-      // Fix technical errors AND enforce location/zone + character fidelity strictly
-      const scenePrompt = originalPrompt
-        ? originalPrompt
-        : `${charName} in a natural candid scene`;
+      // ── STRICT LOCATION REBUILD FOR WRONG_LOCATION ────────────────────────
+      // When reason === 'wrong_location', the environment MUST be completely rebuilt.
+      // The original prompt is NO LONGER AUTHORITATIVE for scene description.
+      // Only the location and character identity are preserved.
+      let scenePrompt = '';
+      if (reason === 'wrong_location' && hasLocation) {
+        // HARD OVERRIDE: Build scene description EXCLUSIVELY from corrected location
+        scenePrompt = `A scene at ${effectiveLocationName}${effectiveZoneName ? ` in the ${effectiveZoneName}` : ''}.`;
+      } else if (reason === 'wrong_location') {
+        // No location images — use generic description without old environment language
+        scenePrompt = `${charName} in a scene.`;
+      } else {
+        // reason === 'flawed' — preserve original intent but not environment language
+        scenePrompt = originalPrompt
+          ? originalPrompt.replace(/\b(bedroom|home|apartment|house|morning|night|sunrise|sunset|waking|sleeping|bed|couch|sofa|living room|kitchen|bathroom|backyard|patio|lying in|laying in|in bed|at home|at my place|sitting on|standing in a room)\b/gi, '')
+          : `${charName} in a natural candid scene`;
+      }
 
-      // For 'wrong_location', emphasize that the user-selected location is the PRIMARY fix
+      // For 'wrong_location', ABSOLUTELY MANDATE location is the ONLY source for scenery
       const locationEmphasis = (reason === 'wrong_location' && hasLocation)
         ? `
-THE USER SELECTED A CORRECT LOCATION — THIS IS THE PRIMARY FIX:
-The first ${locationRefImages.length} reference image(s) ARE GROUND TRUTH photographs of the exact room the user specified.
-HIGHEST PRIORITY: Match the room/zone perfectly. Study these location reference images with extreme care.
-• Reproduce: flooring, walls, furniture positions, placement, window treatments, lighting, decorative objects, colors
-• This is the most important correction — get the location right
-The character must be placed INSIDE this specific room/zone — not a similar one, not an invented variation.`
+════════════════════════════════════════════════════════════
+⛔ LOCATION OVERRIDE — ABSOLUTE RULE ⛔
+════════════════════════════════════════════════════════════
+THE USER CORRECTED THE LOCATION. THIS IS A HARD ENVIRONMENT RESET.
+
+The first ${locationRefImages.length} reference image(s) ARE GROUND TRUTH photographs of the exact location:
+${effectiveLocationName}${effectiveZoneName ? ` → ${effectiveZoneName}` : ''}
+
+CRITICAL ENFORCEMENT:
+✗ DO NOT use any background, room, or environment from character avatar photos
+✗ DO NOT preserve old scene data from the original wrong location
+✗ DO NOT use generic home/bedroom/indoor language
+✗ DO NOT blend avatar environment into the new location
+
+✓ REBUILD the entire scene from the corrected location reference images
+✓ Match the location's exact spatial context, fixtures, and atmosphere
+✓ The ONLY source for scenery is the location reference images and location type
+
+This is NOT a soft adjustment. This is a complete environment rebuild.
+════════════════════════════════════════════════════════════`
         : '';
 
       prompt = `${scenePrompt}${roomLock}${locationEmphasis}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-REFERENCE PHOTOS ARE THE SOURCE OF TRUTH for both the room and the person.
+
+AVATAR SEPARATION RULE (MANDATORY):
+Character reference images determine ONLY:
+  ✓ Face shape, facial features, skin tone
+  ✓ Hair texture, length, color
+  ✓ Body type and proportions
+  ✓ Age presentation
+
+Character reference images do NOT determine:
+  ✗ Background or room scenery
+  ✗ Environmental context from avatar photo
+  ✗ Any environmental elements
+  
+LOCATION SOURCE RULE:
+The location is determined EXCLUSIVELY by:
+  ✓ Location reference images provided
+  ✓ Location name and zone
+  ✓ Location category and type
+  ✗ NOT by character avatar background
 
 TECHNICAL CORRECTION PASS — fix these issues from the previous render:
 • Perfect human anatomy: correct proportions, exactly 5 fingers per hand, no extra or merged limbs
@@ -150,12 +195,22 @@ CHARACTER HAIR — STRICT:
 
 Ultra high-resolution photorealistic photograph. Real photo, not illustration.${qualityFooter}`;
 
-      // For 'wrong_location', prioritize location refs heavily. For 'flawed', balance.
+      // For 'wrong_location', LOCATION IMAGES MUST COME FIRST AND BE DOMINANT
+      // This ensures the model locks the space before rendering the character
       const isWrongLoc = reason === 'wrong_location';
-      referenceImages = [
-        ...locationRefImages.slice(0, isWrongLoc ? 5 : 4),  // More location refs if user specified wrong location
-        ...charRefImages.slice(0, isWrongLoc ? 2 : 3),      // Fewer char refs to emphasize location fix
-      ].filter(Boolean);
+      if (isWrongLoc && locationRefImages.length > 0) {
+        // LOCATION FIRST: Maximum location images, minimal character refs
+        referenceImages = [
+          ...locationRefImages.slice(0, 6),  // Full location dataset for space lock
+          ...charRefImages.slice(0, 1),      // Minimal char ref after location is locked
+        ].filter(Boolean);
+      } else {
+        // Fallback for 'flawed' or no location
+        referenceImages = [
+          ...locationRefImages.slice(0, isWrongLoc ? 4 : 3),
+          ...charRefImages.slice(0, isWrongLoc ? 3 : 3),
+        ].filter(Boolean);
+      }
 
     } else if (reason === 'no_avatar') {
       // Same scene, same location — push hard on character likeness
@@ -228,6 +283,30 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
     }
 
     console.log(`[regen] reason=${reason} | hasLocation=${hasLocation} | locationLabel="${locationLabel}" | manualLocationId=${manualLocationId || 'none'} | originalPrompt="${(originalPrompt || '').substring(0, 80)}" | refs=${referenceImages.length}`);
+
+    // ── PRE-GENERATION VALIDATION ─────────────────────────────────────────────
+    // CRITICAL: Verify prompt matches resolved location before generation
+    if (reason === 'wrong_location' && hasLocation) {
+      const promptLower = prompt.toLowerCase();
+      const locationLower = (effectiveLocationName || '').toLowerCase();
+      const zoneLower = (effectiveZoneName || '').toLowerCase();
+      
+      // Check for avatar-contamination patterns that indicate wrong environment
+      const avatarEnvPatterns = /\b(my bedroom|lying in bed|morning selfie|waking up|sleeping|bedroom at home|home interior|apartment|house|living room from avatar)\b/i;
+      if (avatarEnvPatterns.test(prompt) && !avatarEnvPatterns.test(originalPrompt)) {
+        console.warn(`[regen] ⚠️ AVATAR CONTAMINATION DETECTED in regenerated prompt — removing environment language`);
+        // Strip avatar-derived environment language
+        prompt = prompt.replace(avatarEnvPatterns, '');
+      }
+      
+      // Verify location name appears in prompt or location images exist
+      if (locationRefImages.length === 0 && !promptLower.includes(locationLower) && !promptLower.includes(zoneLower)) {
+        console.warn(`[regen] ⚠️ LOCATION MISMATCH: Prompt does not reference "${effectiveLocationName}". Force-injecting location context.`);
+        prompt = `At ${effectiveLocationName}${effectiveZoneName ? ` in the ${effectiveZoneName}` : ''}: ${prompt}`;
+      }
+      
+      console.log(`[regen] Pre-generation validation passed for wrong_location correction`);
+    }
 
     // ── GENERATE ──────────────────────────────────────────────────────────────
     let genRes;

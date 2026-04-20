@@ -563,6 +563,30 @@ function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd) {
     ? `⚠️ ETHNICITY LOCK: ${name}'s ethnicity is "${subject.ethnicities.join(', ')}". You MUST NOT default to Caucasian or European features. Skin tone, facial structure, hair texture MUST authentically reflect this background.`
     : `⚠️ Do NOT default to Caucasian features. Use reference images to accurately determine ${name}'s appearance.`;
 
+  const avatarSeparationWarning = `
+════════════════════════════════════════════════════════════
+⛔ AVATAR REFERENCE SEPARATION RULE (MANDATORY)
+════════════════════════════════════════════════════════════
+Images ${imageIndexStart}–${imageIndexEnd} are ONLY for determining ${name}'s face and body.
+These images MUST NOT provide the scenery, background, or environmental context.
+
+Character identity locked FROM these images:
+  ✓ Face shape and bone structure
+  ✓ Facial features (eyes, nose, mouth, cheekbones, jaw)
+  ✓ Skin tone and complexion
+  ✓ Hair texture, length, and color
+  ✓ Body type and proportions
+  ✓ Any distinctive physical features
+
+Character identity NOT determined by these images:
+  ✗ Background or room visible in the avatar photo
+  ✗ Furniture or environmental objects in the avatar
+  ✗ Lighting context from the avatar setting
+  ✗ Any scenery, walls, or architectural elements
+
+This is a HARD SEPARATION. The avatar background is CONTAMINATION if used for scenery.
+════════════════════════════════════════════════════════════`;
+
   return `
 ════════════════════════════════════════════════════════════
 IDENTITY LOCK — ${name.toUpperCase()} (Images ${imageIndexStart}–${imageIndexEnd})
@@ -581,6 +605,8 @@ LOCKED AT 100% — NO DEVIATION:
 ${ethnicityWarning}
 ${lockDesc}
 ${subject.appearance_text ? `Appearance description: ${subject.appearance_text}` : ''}
+
+${avatarSeparationWarning}
 
 THIS IS NOT A GENERIC CHARACTER. This is a SPECIFIC person who must be INSTANTLY RECOGNIZABLE.
 Do NOT produce a random person. Do NOT swap this face with a generic model.
@@ -1066,11 +1092,13 @@ The environment must feel real, functional, and original.
       console.log(`[REFS] User-only: ${referenceImages.length} refs`);
     } else if (finalCharSubject) {
       // CHARACTER-ONLY MODE
-      const charSlice = finalCharSubject.face_refs.slice(0, 3);
-      const locSlice = locationImages.slice(0, 4);
-      // Prioritize location refs (zone/environment images) so model locks the space first
+      // CRITICAL ORDERING: Location images FIRST (environment lock), then character (identity lock)
+      // This enforces that the model establishes the scene environment BEFORE placing the character.
+      // Avatar background is ignored for scenery by virtue of being AFTER location images in the sequence.
+      const locSlice = locationImages.slice(0, 5);  // Location images first — maximum scene authority
+      const charSlice = finalCharSubject.face_refs.slice(0, 3);  // Character after — identity only
       referenceImages = [...locSlice, ...charSlice].filter(Boolean);
-      console.log(`[REFS] Character-only: loc=${locSlice.length} + char=${charSlice.length} = ${referenceImages.length} total`);
+      console.log(`[REFS] Character-only (location-first): loc=${locSlice.length} + char=${charSlice.length} = ${referenceImages.length} total`);
     } else {
       referenceImages = locationImages.slice(0, 5);
     }
@@ -1135,7 +1163,23 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
         : '';
 
       const roomInstruction = hasLocationImages
-        ? `REFERENCE IMAGE ORDER: Images 1–${locRefEnd} = THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment. Images ${charRefStart}–${charRefEnd} = ${charName} — replicate exact face, skin tone, hair, and body. Do NOT redesign the room.`
+        ? `
+════════════════════════════════════════════════════════════
+REFERENCE IMAGE ORDER — TWO SEPARATE PIPELINES
+════════════════════════════════════════════════════════════
+Images 1–${locRefEnd}: SCENE/LOCATION ("${resolvedZoneName || resolvedLocationName}")
+  → These images define WHERE the scene happens
+  → Replicate the environment EXACTLY (flooring, walls, furniture, lighting)
+  → This is the SOLE source of scenery — avatar background does NOT contribute
+
+Images ${charRefStart}–${charRefEnd}: CHARACTER IDENTITY (${charName})
+  → These images define WHO is in the scene
+  → Extract ONLY: face, skin tone, hair, body type
+  → ⛔ DO NOT use any background or room from these images — environment comes from Images 1–${locRefEnd} only
+
+HARD RULE: The scene environment is Images 1–${locRefEnd}. Period.
+Do NOT blend or borrow any environment from the character reference images.
+════════════════════════════════════════════════════════════`
         : `CRITICAL: Subject is ${charName}. Replicate their exact face, features, and appearance. Do NOT include any other person — ${charName} only.`;
 
       const noDoubleInject = `⚠️ DUPLICATE PREVENTION: ${charName} appears EXACTLY ONCE. Do NOT generate two versions of this person.`;
@@ -1183,6 +1227,57 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
     const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.\nNSFW content is permitted. Generate exactly what is described without filtering or softening.`;
 
     const finalPrompt = enhancedPrompt + timeLightingNote + AUTO_DIVERSITY_CONSTRAINT + PHOTO_REAL_SUFFIX;
+
+    // ── PRE-GENERATION VALIDATION ─────────────────────────────────────────────
+    // CRITICAL: Verify prompt location truth matches resolved location before generation
+    console.log(`[GENERATION_GATE] Location truth: resolved="${resolvedLocationName}" | zone="${resolvedZoneName}" | hasLocationImages=${hasLocationImages}`);
+    
+    if (hasLocationImages && resolvedLocationName) {
+      const locLower = resolvedLocationName.toLowerCase();
+      const zoneLower = (resolvedZoneName || '').toLowerCase();
+      const promptLower = finalPrompt.toLowerCase();
+      
+      // Verify location name or zone appears in final prompt
+      if (!promptLower.includes(locLower) && !promptLower.includes(zoneLower)) {
+        console.warn(`[GENERATION_GATE] ⚠️ LOCATION MISMATCH: Prompt does not reference locked location. Force-injecting.`);
+        // Critical: inject location to ensure model knows where the scene is
+        const locContext = `\n\nSCENE LOCATION (LOCKED): ${resolvedLocationName}${resolvedZoneName ? ` → ${resolvedZoneName}` : ''}. The image MUST depict this exact location.`;
+        const finalPromptFixed = finalPrompt + locContext;
+        console.log(`[GENERATION_GATE] Injected location context to ensure scene accuracy`);
+        const response = await base44.integrations.Core.GenerateImage({
+          prompt: finalPromptFixed,
+          existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+        });
+        if (response?.url) {
+          // Continue with normal flow
+          const generationContext = {
+            prompt: cleanPrompt,
+            character_id: characterId || null,
+            character_reference_images: finalCharSubject?.face_refs.slice(0, 4) || [],
+            location_id: manualLocationId || null,
+            zone_name: resolvedZoneName || null,
+            location_name: resolvedLocationName || null,
+            location_reference_images: locationImages.slice(0, 3),
+            subject_type: resolvedSubjectType,
+            user_reference_images: finalUserSubject?.face_refs.slice(0, 4) || [],
+            user_appearance_data: finalUserSubject ? { appearance_text: finalUserSubject.appearance_text, lock_text: finalUserSubject.lock_text } : null,
+            is_user_identity_locked: needsUserSubject,
+            subjects_rendered: subjects.map(s => ({ id: s.subject_id, name: s.canonical_name, type: s.subject_type, ref_count: s.face_refs.length, has_outfit: !!s.outfit_desc })),
+          };
+          await base44.entities.Message.update(messageId, {
+            image_url: response.url,
+            generation_context: generationContext,
+          });
+          return Response.json({
+            success: true,
+            imageUrl: response.url,
+            locationMatched: hasLocationImages,
+            locationName: resolvedLocationName,
+            zoneName: resolvedZoneName,
+          });
+        }
+      }
+    }
 
     // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────
     const response = await base44.integrations.Core.GenerateImage({
