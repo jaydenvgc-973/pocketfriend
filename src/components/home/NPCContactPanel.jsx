@@ -23,11 +23,11 @@ export default function NPCContactPanel() {
       const [byCreatedBy, byOwnerEmail] = await Promise.all([
         base44.entities.Character.filter({
           created_by: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'] }
+          character_type: { $in: ['npc_fictitious', 'npc_family_member', 'npc_regular'] }
         }),
         base44.entities.Character.filter({
           owner_email: currentUser.email,
-          character_type: { $in: ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'] }
+          character_type: { $in: ['npc_fictitious', 'npc_family_member', 'npc_regular'] }
         }),
       ]);
       // Merge and deduplicate
@@ -44,8 +44,8 @@ export default function NPCContactPanel() {
   // Show NPCs where owner_email matches current user (includes all account-owned NPCs)
   const npcCharacters = rawNpcCharacters.filter(c => {
     if (c.protected_active) return false;
-    // Include all NPC types: npc, family_npc, promoted_npc, npc_fictitious_person
-    const isNPC = ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type);
+    // Include all NPC types: npc_fictitious, npc_family_member, npc_regular
+    const isNPC = ['npc_fictitious', 'npc_family_member', 'npc_regular'].includes(c.character_type);
     return isNPC && c.owner_email === currentUser?.email;
   });
 
