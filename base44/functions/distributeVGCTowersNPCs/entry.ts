@@ -7,15 +7,16 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const now = new Date();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
+    // CRITICAL: Use Eastern Time for all time-of-day logic, not server UTC
+    const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = nowET.getHours();
+    const minute = nowET.getMinutes();
     const currentMinutes = hour * 60 + minute;
 
-    // Active window: 10:00 AM (600) to 1:00 AM next day (60 + 1440 = handled via overnight logic)
-    // Overnight: active if hour >= 10 OR hour < 1
+    // Active window: 10:00 AM ET to 1:00 AM ET (overnight wrap)
     const isActiveWindow = hour >= 10 || hour < 1;
 
-    // Lockdown window: 1:00 AM to 10:00 AM → return all NPCs home
+    // Lockdown window: 1:00 AM ET to 10:00 AM ET → return all NPCs home
     const isLockdown = hour >= 1 && hour < 10;
 
     // Load all data
@@ -37,7 +38,7 @@ Deno.serve(async (req) => {
     // NEVER include protected_active characters — user explicitly marked them as active
     const vgcResidents = allCharacters.filter(c =>
       c.current_home_location_id === VGC_ID &&
-      ['npc', 'family_npc', 'background', 'promoted_npc'].includes(c.character_type) &&
+      ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type) &&
       !c.protected_active
     );
 
