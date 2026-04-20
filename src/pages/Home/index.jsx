@@ -199,7 +199,13 @@ export default function Home() {
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
-  const activeCustomChars = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type === "active_created_character" && c.name !== "Leo Parker");
+  const allActiveCreated = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type === "active_created_character" && c.name !== "Leo Parker");
+  // Sort remaining active created characters alphabetically
+  const activeCustomChars = allActiveCreated.sort((a, b) => {
+    const nameA = (a.display_name || a.name || '').toLowerCase();
+    const nameB = (b.display_name || b.name || '').toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;

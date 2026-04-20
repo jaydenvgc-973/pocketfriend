@@ -7,8 +7,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
 export default function CharacterInteractionSimulator({ characters }) {
-  // Filter out NPC characters — only include active characters created by the user
-  const activeCharactersOnly = characters.filter(c => c.character_type !== "npc");
+  // Filter out NPC characters — only include active characters created by the user, sorted alphabetically
+  const activeCharactersOnly = characters
+    .filter(c => c.character_type !== "npc")
+    .sort((a, b) => {
+      const nameA = (a.display_name || a.name || '').toLowerCase();
+      const nameB = (b.display_name || b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
   const [selected, setSelected] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState(null);
