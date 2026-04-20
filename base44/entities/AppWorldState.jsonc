@@ -1,0 +1,147 @@
+{
+  "name": "AppWorldState",
+  "type": "object",
+  "properties": {
+    "current_date": {
+      "type": "string",
+      "format": "date",
+      "description": "The current in-world date (YYYY-MM-DD)"
+    },
+    "weather": {
+      "type": "object",
+      "description": "Current weather data for the world",
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "sunrise": {
+          "type": "string",
+          "description": "HH:MM format"
+        },
+        "sunset": {
+          "type": "string",
+          "description": "HH:MM format"
+        },
+        "conditions": {
+          "type": "string"
+        },
+        "high": {
+          "type": "number"
+        },
+        "low": {
+          "type": "number"
+        },
+        "humidity": {
+          "type": "number"
+        },
+        "wind_speed": {
+          "type": "number"
+        }
+      }
+    },
+    "news": {
+      "type": "object",
+      "description": "Current news headlines and stories",
+      "properties": {
+        "headlines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "politics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "crime": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "economics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "entertainment": {
+      "type": "object",
+      "description": "Current entertainment and cultural trends",
+      "properties": {
+        "trending": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cultural": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "music_trends": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "viral_topics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "society": {
+      "type": "object",
+      "description": "Social statistics: crime rates, addiction trends, health alerts",
+      "properties": {
+        "crime_stats": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "addiction_trends": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "health_alerts": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "economic_indicators": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this world state was last updated"
+    }
+  },
+  "required": [
+    "current_date"
+  ]
+}

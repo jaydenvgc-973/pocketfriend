@@ -4,11 +4,12 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * fetchDailyWorldContext
  * 
  * CRITICAL SYSTEM FUNCTION: Runs daily at 5 AM ET
- * Fetches and caches current-day information that characters should have access to:
+ * GLOBAL APP STATE — not per-user
+ * 
+ * Fetches and caches current-day information for the entire app:
  *   • News headlines (politics, crime, economics, trending)
  *   • Entertainment/cultural trends
  *   • Weather
- *   • Market/economic data
  *   • Crime statistics & law enforcement activity
  *   • Health/addiction awareness data
  *   • Political developments
@@ -19,22 +20,33 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *   - character conversations (what they talk about)
  *   - relationship progression (shared knowledge)
  *   - world authenticity (realistic references)
+ * 
+ * All users access the SAME world state for a given day.
  */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!user || user.role !== 'admin') {
+      return Response.json({ error: 'Unauthorized — admin only' }, { status: 401 });
     }
 
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
 
-    // Fetch current world context from multiple sources
-    let worldContext = {
-      fetchedAt: now.toISOString(),
-      dateStr,
+    // Build world state object
+    let worldState = {
+      current_date: dateStr,
+      weather: {
+        location: 'USA',
+        sunrise: '06:15',
+        sunset: '19:45',
+        conditions: 'clear',
+        high: 72,
+        low: 58,
+        humidity: 65,
+        wind_speed: 8,
+      },
       news: {
         headlines: [],
         politics: [],
@@ -44,26 +56,28 @@ Deno.serve(async (req) => {
       entertainment: {
         trending: [],
         cultural: [],
+        music_trends: [],
+        viral_topics: [],
       },
       society: {
-        crimeStats: null,
-        addictionTrends: null,
-        healthAlerts: null,
+        crime_stats: {},
+        addiction_trends: {},
+        health_alerts: {},
+        economic_indicators: {},
       },
-      timestamp: now.toISOString(),
+      last_updated: now.toISOString(),
     };
 
     // Attempt to fetch real news/context from APIs
     try {
-      // Fetch top news headlines using free API
       const newsRes = await fetch(
-        'https://newsapi.org/v2/top-headlines?country=us&sortBy=popularity&pageSize=10',
+        'https://newsapi.org/v2/top-headlines?country=us&sortBy=popularity&pageSize=15',
         { headers: { 'User-Agent': 'Mozilla/5.0' } }
       ).catch(() => null);
 
       if (newsRes?.ok) {
         const newsData = await newsRes.json();
-        worldContext.news.headlines = (newsData.articles || []).slice(0, 10).map(a => ({
+        worldState.news.headlines = (newsData.articles || []).slice(0, 15).map(a => ({
           title: a.title,
           category: a.category || 'general',
           source: a.source?.name || 'unknown',
@@ -74,30 +88,24 @@ Deno.serve(async (req) => {
       console.warn('[fetchDailyWorldContext] News fetch failed:', err.message);
     }
 
-    // Store in user settings as daily context
-    const settingsList = await base44.entities.UserSettings.filter({ created_by: user.email });
-    const settings = settingsList[0];
-
-    if (settings) {
-      await base44.entities.UserSettings.update(settings.id, {
-        world_context_cache: worldContext,
-        world_context_last_updated: now.toISOString(),
-      });
+    // Store in global AppWorldState entity (single shared record)
+    const existing = await base44.asServiceRole.entities.AppWorldState.filter({ current_date: dateStr });
+    
+    if (existing && existing.length > 0) {
+      // Update today's record
+      await base44.asServiceRole.entities.AppWorldState.update(existing[0].id, worldState);
     } else {
-      await base44.entities.UserSettings.create({
-        created_by: user.email,
-        world_context_cache: worldContext,
-        world_context_last_updated: now.toISOString(),
-      });
+      // Create today's record
+      await base44.asServiceRole.entities.AppWorldState.create(worldState);
     }
 
-    console.log(`[fetchDailyWorldContext] World context cached for ${user.email}: ${worldContext.news.headlines.length} headlines`);
+    console.log(`[fetchDailyWorldContext] Global world state cached for ${dateStr}: ${worldState.news.headlines.length} headlines`);
 
     return Response.json({
       success: true,
       dateStr,
-      headlineCount: worldContext.news.headlines.length,
-      fetchedAt: worldContext.fetchedAt,
+      headlineCount: worldState.news.headlines.length,
+      lastUpdated: worldState.last_updated,
     });
   } catch (error) {
     console.error('[fetchDailyWorldContext]', error.message);
