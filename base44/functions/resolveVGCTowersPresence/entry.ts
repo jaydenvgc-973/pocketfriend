@@ -20,17 +20,16 @@ const ELIGIBLE_CATEGORIES = ['food_drink', 'gym', 'social', 'outdoor', 'public',
 const AGE_RESTRICTED_CATEGORIES = ['social']; // bars/clubs within social — filtered by subtype
 const ADULT_ONLY_SUBTYPES = ['bar', 'club', 'nightclub', 'lounge'];
 
-function isWithinTravelWindow(now) {
-  const hour = now.getHours();
-  // 10:00 AM (10) to 1:00 AM (1) — wraps midnight
+function isWithinTravelWindow(nowET) {
+  const hour = nowET.getHours();
+  // 10:00 AM (10) to 1:00 AM (1) — wraps midnight, Eastern Time
   return hour >= 10 || hour < 1;
 }
 
-function isAsleep(character) {
+function isAsleep(character, nowET) {
   if (character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping') return true;
   if (!character.sleep_start_time || !character.wake_up_time) return false;
-  const now = new Date();
-  const h = now.getHours(), m = now.getMinutes();
+  const h = nowET.getHours(), m = nowET.getMinutes();
   const current = h * 60 + m;
   const [sh, sm] = character.sleep_start_time.split(':').map(Number);
   const [wh, wm] = character.wake_up_time.split(':').map(Number);
@@ -38,6 +37,12 @@ function isAsleep(character) {
   const wake = wh * 60 + wm;
   if (sleep > wake) return current >= sleep || current < wake;
   return current >= sleep && current < wake;
+}
+
+function getNowET() {
+  // Return a Date-like object with hours/minutes in Eastern Time
+  const nowStr = new Date().toLocaleString('en-US', { timeZone: 'America/New_York' });
+  return new Date(nowStr);
 }
 
 function isLocationOpenNow(loc, now) {
@@ -67,16 +72,14 @@ function isAdultOnlyLocation(loc) {
 
 function isEligible(char, vgcId) {
   if (!ELIGIBLE_TYPES.includes(char.character_type)) return false;
-  // Match against actual ID field (home_location_name is not a real schema field)
-  if (char.current_home_location_id !== vgcId && char.resolved_current_location_id !== vgcId && char.home_location_id !== vgcId) return false;
+  // Must be a VGC Towers resident
+  if (!vgcId || String(char.current_home_location_id).trim() !== String(vgcId).trim()) return false;
   if (char.is_homeless) return false;
-  if (isAsleep(char)) return false;
+  if (isAsleep(char, getNowET())) return false;
   // Respect stronger systems
-  if (char.is_at_work || char.resolved_presence_status === 'at_work') return false;
-  if (char.is_at_school || char.resolved_presence_status === 'at_school') return false;
-  if (char.is_in_hospital) return false;
-  if (char.is_in_locked_event) return false;
-  if (char.is_using_user_directed_travel) return false;
+  if (char.resolved_presence_status === 'at_work') return false;
+  if (char.resolved_presence_status === 'at_school') return false;
+  if (char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping') return false;
   return true;
 }
 
@@ -87,8 +90,9 @@ Deno.serve(async (req) => {
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
     const now = new Date();
+    const nowET = getNowET();
 
-    if (!isWithinTravelWindow(now)) {
+    if (!isWithinTravelWindow(nowET)) {
       // Outside travel window — send eligible residents home
       const allChars = await base44.asServiceRole.entities.Character.filter({ created_by: user.email, status: 'active' });
       const allVgcLocs = await base44.asServiceRole.entities.LocationReference.filter({ created_by: user.email });
@@ -109,8 +113,12 @@ Deno.serve(async (req) => {
       return Response.json({ message: 'Outside travel window — residents returned home', returned: toReturn.length });
     }
 
-    // Get all locations scoped to current user
-    const allLocations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: user.email });
+    // Get all locations scoped to current user + shared locations
+    const [userLocations, sharedLocations] = await Promise.all([
+      base44.asServiceRole.entities.LocationReference.filter({ created_by: user.email }),
+      base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }),
+    ]);
+    const allLocations = [...userLocations, ...sharedLocations];
     const vgcTowers = allLocations.find(l => l.name === 'VGC Towers');
 
     // Valid travel destinations: open, non-residential, allowed category
@@ -118,7 +126,7 @@ Deno.serve(async (req) => {
       if (loc.category === 'home') return false;
       if (!ELIGIBLE_CATEGORIES.includes(loc.category)) return false;
       if (loc.id === vgcTowers?.id) return false;
-      if (!isLocationOpenNow(loc, now)) return false;
+      if (!isLocationOpenNow(loc, nowET)) return false;
       return true;
     });
 
@@ -145,7 +153,7 @@ Deno.serve(async (req) => {
         // Keep current location if it's still valid
         if (char.current_live_location_id && char.current_live_location_id !== char.home_location_id) {
           const currentLoc = allLocations.find(l => l.id === char.current_live_location_id);
-          if (currentLoc && isLocationOpenNow(currentLoc, now)) {
+          if (currentLoc && isLocationOpenNow(currentLoc, nowET)) {
             stayedCount++;
             continue;
           }
@@ -174,16 +182,10 @@ Deno.serve(async (req) => {
       }
 
       // Pick a destination, weighted away from current location
-      const choices = ageFilteredDests.filter(l => l.id !== char.current_live_location_id && l.owner_email === user.email);
+      // Allow user-owned + shared locations as valid destinations
+      const choices = ageFilteredDests.filter(l => l.id !== char.current_live_location_id);
       const pool = choices.length > 0 ? choices : ageFilteredDests;
       const dest = pool[Math.floor(Math.random() * pool.length)];
-
-      // CRITICAL: Enforce user data isolation — destination must belong to same user
-      if (dest.owner_email !== user.email) {
-        console.warn(`[DATA_ISOLATION] Blocked cross-user NPC travel: char ${char.id} (user: ${char.owner_email}) → location ${dest.id} (owner: ${dest.owner_email})`);
-        stayedCount++;
-        continue;
-      }
 
       await base44.asServiceRole.entities.Character.update(char.id, {
         current_live_location_id: dest.id,
