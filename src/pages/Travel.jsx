@@ -460,9 +460,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       });
                     });
 
-                    const now = new Date();
-                    const dayOfWeek = now.getDay();
-                    const currentTime = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+                    // CRITICAL: Use Eastern Time for shift checks, never raw UTC
+                    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+                    const dayOfWeek = nowET.getDay();
+                    const currentTime = `${String(nowET.getHours()).padStart(2, '0')}:${String(nowET.getMinutes()).padStart(2, '0')}`;
 
                     characters.forEach(c => {
                       const resolvedC = resolveCharacterLocation(c, locationMap);

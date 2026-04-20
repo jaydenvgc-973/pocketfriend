@@ -16,12 +16,22 @@ Deno.serve(async (req) => {
     const isLockdown = hour >= 1 && hour < 10;
 
     // Load this user's characters + ALL locations (user-owned + shared)
-    // Cross-account contamination prevention: characters are strictly filtered to created_by user
-    const [allCharacters, userLocations, sharedLocations] = await Promise.all([
+    // CRITICAL: Fetch by BOTH created_by AND owner_email — some NPCs are created by service
+    // accounts but owned by this user. Use asServiceRole for owner_email query to bypass RLS.
+    const [byCreatedBy, byOwnerEmail, userLocations, sharedLocations] = await Promise.all([
       base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
+      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
       base44.entities.LocationReference.filter({ created_by: user.email }),
       base44.entities.LocationReference.filter({ scope: 'shared' }),
     ]);
+
+    // Deduplicate characters — merge both sets by id
+    const charSeen = new Set();
+    const allCharacters = [...byCreatedBy, ...byOwnerEmail].filter(c => {
+      if (charSeen.has(c.id)) return false;
+      charSeen.add(c.id);
+      return true;
+    });
 
     // Merge and deduplicate locations — user-owned takes precedence
     const seenIds = new Set();
@@ -174,8 +184,17 @@ Deno.serve(async (req) => {
 
     await Promise.all(updates.map(u => base44.entities.Character.update(u.id, u.data)));
 
-    // FINAL STATE VERIFICATION
-    const allFreshChars = await base44.entities.Character.filter({ created_by: user.email, status: 'active' });
+    // FINAL STATE VERIFICATION — use asServiceRole for owner_email to bypass RLS on service-created NPCs
+    const [freshByCreated, freshByOwner] = await Promise.all([
+      base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
+      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
+    ]);
+    const freshSeen = new Set();
+    const allFreshChars = [...freshByCreated, ...freshByOwner].filter(c => {
+      if (freshSeen.has(c.id)) return false;
+      freshSeen.add(c.id);
+      return true;
+    });
     const finalNPCStates = [];
     const nowhereFixUpdates = [];
 

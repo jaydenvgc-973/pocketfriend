@@ -26,7 +26,9 @@ export function isLocationOpen(location, currentTime = new Date()) {
     return null; // No hours defined = assume always open
   }
 
-  const now = currentTime;
+  // CRITICAL: Always evaluate in Eastern Time (America/New_York), never raw UTC
+  const nowET = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const now = nowET;
   const dayOfWeek = now.getDay();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
