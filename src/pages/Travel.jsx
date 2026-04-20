@@ -103,8 +103,6 @@ export default function Travel() {
       return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
-    staleTime: 0,
-    gcTime: 0,
   });
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
@@ -114,8 +112,6 @@ export default function Travel() {
   useEffect(() => {
     if (!currentUser?.email || hasRunDistribution) return;
     setHasRunDistribution(true);
-    // Hard-clear all location cache first to eliminate stale duplicates
-    queryClient.removeQueries({ queryKey: ['locationReferences', currentUser.email] });
     base44.functions.invoke('distributeVGCTowersNPCs', {})
       .then(() => new Promise(r => setTimeout(r, 1000)))
       .then(() => {
