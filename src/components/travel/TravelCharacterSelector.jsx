@@ -15,9 +15,9 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
 
   // Sort: active created characters → NPC fictitious → NPC family members
   const sortedCharacters = [
-    ...characters.filter(c => c.character_type !== 'npc' && c.character_type !== 'family_npc' && c.character_type !== 'background'),
-    ...characters.filter(c => c.character_type === 'npc' || c.character_type === 'promoted_npc'),
-    ...characters.filter(c => c.character_type === 'family_npc' || c.character_type === 'background'),
+    ...characters.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
+    ...characters.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
+    ...characters.filter(c => c.character_type === 'npc_family_member').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')),
   ];
 
   return (
