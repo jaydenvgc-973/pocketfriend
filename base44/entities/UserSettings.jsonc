@@ -272,6 +272,129 @@
           "format": "date-time"
         }
       }
+    },
+    "daily_weather_cache": {
+      "type": "object",
+      "description": "Cached daily weather data (sunrise, sunset, conditions) fetched at 4 AM ET",
+      "properties": {
+        "location": {
+          "type": "string"
+        },
+        "sunrise": {
+          "type": "string",
+          "description": "HH:MM format"
+        },
+        "sunset": {
+          "type": "string",
+          "description": "HH:MM format"
+        },
+        "conditions": {
+          "type": "string"
+        },
+        "high": {
+          "type": "number"
+        },
+        "low": {
+          "type": "number"
+        },
+        "fetchedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "world_context_cache": {
+      "type": "object",
+      "description": "Cached daily world context: news, entertainment, crime stats, health data, politics. Fetched at 5 AM ET. Used by narratives, character conversations, and world authenticity.",
+      "properties": {
+        "dateStr": {
+          "type": "string",
+          "format": "date"
+        },
+        "news": {
+          "type": "object",
+          "properties": {
+            "headlines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "category": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "politics": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "crime": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "economics": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "entertainment": {
+          "type": "object",
+          "properties": {
+            "trending": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "cultural": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "society": {
+          "type": "object",
+          "properties": {
+            "crimeStats": {
+              "type": "object"
+            },
+            "addictionTrends": {
+              "type": "object"
+            },
+            "healthAlerts": {
+              "type": "object"
+            }
+          }
+        },
+        "fetchedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "world_context_last_updated": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of last world context fetch"
     }
   },
   "required": []
