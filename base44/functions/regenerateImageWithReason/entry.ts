@@ -122,7 +122,18 @@ ONLY the camera angle and subject placement may change.
         ? originalPrompt
         : `${charName} in a natural candid scene`;
 
-      prompt = `${scenePrompt}${roomLock}
+      // For 'wrong_location', emphasize that the user-selected location is the PRIMARY fix
+      const locationEmphasis = (reason === 'wrong_location' && hasLocation)
+        ? `
+THE USER SELECTED A CORRECT LOCATION — THIS IS THE PRIMARY FIX:
+The first ${locationRefImages.length} reference image(s) ARE GROUND TRUTH photographs of the exact room the user specified.
+HIGHEST PRIORITY: Match the room/zone perfectly. Study these location reference images with extreme care.
+• Reproduce: flooring, walls, furniture positions, placement, window treatments, lighting, decorative objects, colors
+• This is the most important correction — get the location right
+The character must be placed INSIDE this specific room/zone — not a similar one, not an invented variation.`
+        : '';
+
+      prompt = `${scenePrompt}${roomLock}${locationEmphasis}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
 REFERENCE PHOTOS ARE THE SOURCE OF TRUTH for both the room and the person.
@@ -133,25 +144,17 @@ TECHNICAL CORRECTION PASS — fix these issues from the previous render:
 • Furniture must not overlap, clip, or block access points (doors, closets, walkways)
 • No floating objects. Physically believable placement of all elements.
 
-LOCATION & ZONE CORRECTION — CRITICAL (this may be the primary flaw):
-${hasLocation
-  ? `The previous image may have failed to correctly represent the location: "${locationLabel}".
-The first ${locationRefImages.length} reference image(s) ARE photographs of this exact room — study them carefully.
-• Match the EXACT zone: "${originalZoneName || originalLocationName}" — do NOT substitute a generic or invented room.
-• Reproduce every visible detail: flooring, wall color, furniture style and placement, lighting, window treatments, decorative objects.
-• The character must be placed INSIDE this specific room — not a similar one, not a reimagined version.
-• If the previous image showed a wrong room or wrong zone, correcting this is the highest priority fix.`
-  : `No specific location was locked — ensure the background/environment matches the scene described in the prompt naturally.`}
-
 CHARACTER HAIR — STRICT:
 • Hair LENGTH must exactly match the reference photos — do NOT shorten or lengthen
 • Hair texture, curl pattern, color, and style must also match the reference precisely
 
 Ultra high-resolution photorealistic photograph. Real photo, not illustration.${qualityFooter}`;
 
+      // For 'wrong_location', prioritize location refs heavily. For 'flawed', balance.
+      const isWrongLoc = reason === 'wrong_location';
       referenceImages = [
-        ...locationRefImages.slice(0, 4),
-        ...charRefImages.slice(0, 3),
+        ...locationRefImages.slice(0, isWrongLoc ? 5 : 4),  // More location refs if user specified wrong location
+        ...charRefImages.slice(0, isWrongLoc ? 2 : 3),      // Fewer char refs to emphasize location fix
       ].filter(Boolean);
 
     } else if (reason === 'no_avatar') {
