@@ -283,8 +283,9 @@ function isCharacterSleeping(character) {
     return false;
   }
 
-  const now = new Date();
-  const hour = now.getHours();
+  // CRITICAL: Use Eastern Time for sleep schedule checks
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hour = nowET.getHours();
 
   const sleepStart = parseInt(character.sleep_start_time.split(':')[0]);
   const wakeUp = parseInt(character.wake_up_time.split(':')[0]);

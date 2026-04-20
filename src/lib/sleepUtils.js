@@ -79,8 +79,9 @@ export function isCharacterAsleep(character) {
   const sleepStart = character?.sleep_start_time || "23:00";
   const wakeUp = character?.wake_up_time || "07:00";
 
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  // CRITICAL: Use Eastern Time for sleep schedule checks — sleep times are ET-based
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
 
   const [sleepH, sleepM] = sleepStart.split(":").map(Number);
   const [wakeH, wakeM] = wakeUp.split(":").map(Number);
