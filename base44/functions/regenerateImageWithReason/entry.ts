@@ -160,6 +160,12 @@ This is NOT a soft adjustment. This is a complete environment rebuild.
 ════════════════════════════════════════════════════════════`
         : '';
 
+      // Verify location images were actually retrieved
+      if ((reason === 'wrong_location' || reason === 'flawed') && hasLocation && locationRefImages.length === 0) {
+        console.warn(`[regen] ⚠️ WARNING: Location marked as having images but none were resolved. Using prompt-only generation.`);
+        hasLocation = false;
+      }
+
       prompt = `${scenePrompt}${roomLock}${locationEmphasis}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
@@ -324,7 +330,9 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
       throw genErr;
     }
 
-    if (!genRes?.url) return Response.json({ success: false, error: 'Generation returned no URL' }, { status: 500 });
+    if (!genRes?.url) {
+      return Response.json({ success: false, error: 'Generation returned no URL' }, { status: 500 });
+    }
 
     await base44.asServiceRole.entities.Message.update(messageId, { image_url: genRes.url });
 
@@ -339,7 +347,7 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
       }).catch(() => {});
     }
 
-    return Response.json({ success: true, image_url: genRes.url });
+    return Response.json({ success: true, image_url: genRes.url, reason });
   } catch (error) {
     console.error('[regenerateImageWithReason]', error);
     return Response.json({ success: false, error: error.message }, { status: 500 });

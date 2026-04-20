@@ -54,13 +54,18 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     let hadError = false;
     try {
       const res = await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
+      if (res?.data?.success === false) {
+        setRegenError(res.data.error || 'Failed to regenerate. Please try again.');
+        hadError = true;
+        return;
+      }
       if (res?.data?.filtered) {
         setRegenError(res.data.error || 'Image was blocked by content filter. Try a different description.');
         hadError = true;
         return;
       }
-    } catch {
-      setRegenError('Failed to regenerate. Please try again.');
+    } catch (err) {
+      setRegenError(err.message || 'Failed to regenerate. Please try again.');
       hadError = true;
     } finally {
       setIsRegenerating(false);
