@@ -199,7 +199,7 @@ export default function Home() {
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
-  const activeCustomChars = customChars.filter(c => (c.status === "active" || !c.status) && !["npc", "npc_fictitious_person", "family_npc", "promoted_npc"].includes(c.character_type) && c.name !== "Leo Parker");
+  const activeCustomChars = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type === "active_created_character" && c.name !== "Leo Parker");
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
