@@ -34,6 +34,8 @@ export default function Travel() {
   const [isWakingUp, setIsWakingUp] = useState(false);
   const [showRealLocationModal, setShowRealLocationModal] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [distributeResult, setDistributeResult] = useState(null);
+  const [isDistributing, setIsDistributing] = useState(false);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -580,16 +582,43 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               <div className="flex items-center gap-2">
                 <button
                   onClick={async () => {
-                    await base44.functions.invoke('populateNPCLocations', {});
-                    setTimeout(() => window.location.reload(), 500);
+                    setIsDistributing(true);
+                    setDistributeResult(null);
+                    try {
+                      const res = await base44.functions.invoke('distributeVGCTowersNPCs', {});
+                      setDistributeResult(res?.data || { error: 'No response' });
+                    } catch (e) {
+                      setDistributeResult({ error: e.message });
+                    } finally {
+                      setIsDistributing(false);
+                    }
                   }}
-                  className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors"
+                  disabled={isDistributing}
+                  className="text-xs px-2 py-1 rounded bg-primary/20 text-primary hover:bg-primary/30 transition-colors disabled:opacity-50"
                 >
-                  Fix NPCs
+                  {isDistributing ? 'Running...' : 'Distribute NPCs'}
                 </button>
                 <button onClick={() => setShowDebug(false)} className="text-muted-foreground hover:text-foreground">✕</button>
               </div>
             </div>
+
+            {distributeResult && (
+              <div className={`text-[10px] rounded-lg p-2 space-y-1 ${distributeResult.error ? 'bg-destructive/10 border border-destructive/30' : 'bg-green-500/10 border border-green-500/30'}`}>
+                {distributeResult.error ? (
+                  <p className="text-destructive font-medium">Error: {distributeResult.error}</p>
+                ) : (
+                  <>
+                    <p className="text-green-400 font-semibold">✓ {distributeResult.distributed}/{distributeResult.totalVGCResidents} NPCs distributed ({distributeResult.mode})</p>
+                    {distributeResult.finalNPCStates?.map((s, i) => (
+                      <p key={i} className="text-muted-foreground truncate">• {s.name} → {s.location}</p>
+                    ))}
+                    {distributeResult.ineligible?.length > 0 && (
+                      <p className="text-amber-400">Ineligible: {distributeResult.ineligible.map(x => x.name).join(', ')}</p>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             <div className="space-y-1 text-xs">
               <p className="font-medium text-muted-foreground">Locations: {locationsData.length}</p>
               {locationsData.map(l => (
