@@ -337,13 +337,20 @@ function getWorkerAvailability(workerId, locations, currentLocationId = null) {
 }
 
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
+  // Build a consolidated list of characters and NPCs, with aggressive deduplication
+  const existingCharacterNames = new Set(characters.map(c => (c.display_name || c.name || '').toLowerCase()));
+  
   const allNPCs = [];
   const seenNames = new Set();
   characters.forEach(char => {
     (char.fictional_relationships || []).forEach(rel => {
-      if (!rel.related_character_id && rel.person_name && !seenNames.has(rel.person_name)) {
-        seenNames.add(rel.person_name);
-        allNPCs.push({ id: `npc__${rel.person_name}`, name: rel.person_name, isNPC: true, relationship_type: rel.relationship_type });
+      if (!rel.related_character_id && rel.person_name) {
+        const normalizedName = rel.person_name.toLowerCase();
+        // Skip if already a real Character entity or already added
+        if (!existingCharacterNames.has(normalizedName) && !seenNames.has(normalizedName)) {
+          seenNames.add(normalizedName);
+          allNPCs.push({ id: `npc__${rel.person_name}`, name: rel.person_name, isNPC: true, relationship_type: rel.relationship_type });
+        }
       }
     });
   });
@@ -676,6 +683,10 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             })}
             {characters.flatMap(char =>
               (char.family_members || []).map((fam, idx) => {
+                // Skip if this family member is actually a real Character entity
+                const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === (fam.name || '').toLowerCase());
+                if (isRealCharacter) return null;
+                
                 const alreadyResident = form.resident_family_members?.some(f => f.name === fam.name);
                 return (
                   <button key={`${char.id}__${fam.name}`} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: fam.name, relationship_type: fam.relationship_type, source_character_id: char.id }]); }} disabled={alreadyResident}
@@ -688,23 +699,27 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                     {alreadyResident && <span className="text-xs text-primary font-medium">✓</span>}
                   </button>
                 );
-              })
+              }).filter(Boolean)
             )}
             {allNPCs.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>}
             {allNPCs.map(npc => {
-              const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
-              return (
-                <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm text-foreground font-medium">{npc.name}</p>
-                    {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
-                  </div>
-                  {alreadyResident ? <span className="text-xs text-primary font-medium">✓ Resident</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
-                </button>
-              );
-            })}
+               // Skip NPCs that are actually real Character entities
+               const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === npc.name.toLowerCase());
+               if (isRealCharacter) return null;
+
+               const alreadyResident = form.resident_family_members?.some(f => f.name === npc.name && f.isNPC);
+               return (
+                 <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: npc.name, relationship_type: npc.relationship_type || "NPC", isNPC: true }]); }} disabled={alreadyResident}
+                   className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                   <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
+                   <div className="flex-1 min-w-0">
+                     <p className="text-sm text-foreground font-medium">{npc.name}</p>
+                     {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                   </div>
+                   {alreadyResident ? <span className="text-xs text-primary font-medium">✓ Resident</span> : <span className="text-xs text-muted-foreground/50">NPC</span>}
+                 </button>
+               );
+             }).filter(Boolean)}
           </div>
         </div>
       )}
@@ -821,28 +836,32 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             })}
             {allNPCs.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>}
             {allNPCs.map(npc => {
-              const alreadyWorker = form.worker_character_ids?.includes(npc.id);
-              const npcAge = getNPCAge(npc.name);
-              let tooYoung = false;
-              if (npcAge !== null) {
-                if (npcAge < 16) tooYoung = true;
-                if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
-              }
-              const avail = getWorkerAvailability(npc.id, allLocations, editingLocation?.id);
-              return (
-                <button key={npc.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker || tooYoung}
-                  className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
-                  <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm text-foreground font-medium">{npc.name}</span>
-                    {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
-                    {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                    {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
-                  </div>
-                  {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
-                </button>
-              );
-            })}
+               // Skip NPCs that are actually real Character entities
+               const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === npc.name.toLowerCase());
+               if (isRealCharacter) return null;
+
+               const alreadyWorker = form.worker_character_ids?.includes(npc.id);
+               const npcAge = getNPCAge(npc.name);
+               let tooYoung = false;
+               if (npcAge !== null) {
+                 if (npcAge < 16) tooYoung = true;
+                 if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
+               }
+               const avail = getWorkerAvailability(npc.id, allLocations, editingLocation?.id);
+               return (
+                 <button key={npc.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker || tooYoung}
+                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
+                   <div className="w-8 h-8 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-muted-foreground">{npc.name[0]?.toUpperCase()}</div>
+                   <div className="flex-1 min-w-0">
+                     <span className="text-sm text-foreground font-medium">{npc.name}</span>
+                     {npc.relationship_type && <p className="text-xs text-muted-foreground/70 capitalize">{npc.relationship_type}</p>}
+                     {tooYoung && <p className="text-xs text-destructive">Too young</p>}
+                     {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                   </div>
+                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
+                 </button>
+               );
+             }).filter(Boolean)}
           </div>
         </div>
       )}
