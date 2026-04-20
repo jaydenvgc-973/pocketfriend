@@ -47,6 +47,11 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
   // Preserve current route across orientation changes and remounts (read-only — no navigate)
   useRoutePreservation();
 
+  // Ensure every authenticated user has VGC Towers
+  useEffect(() => {
+    base44.functions.invoke('ensureUserVGCTowers', {}).catch(() => {});
+  }, []);
+
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-background">
