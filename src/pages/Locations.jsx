@@ -670,39 +670,19 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               );
             })()}
             {characters.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Active Characters</p>}
-            {characters.map(char => {
-              const alreadyResident = form.resident_character_ids?.includes(char.id);
-              return (
-                <button key={char.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), char.id]); }} disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                  <CharacterAvatar character={char} size="sm" />
-                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                </button>
-              );
-            })}
-            {characters.flatMap(char =>
-              (char.family_members || []).map((fam, idx) => {
-                // Skip if this family member is actually a real Character entity
-                const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === (fam.name || '').toLowerCase());
-                if (isRealCharacter) return null;
-                
-                const alreadyResident = form.resident_family_members?.some(f => f.name === fam.name);
-                return (
-                  <button key={`${char.id}__${fam.name}`} onClick={() => { if (!alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: fam.name, relationship_type: fam.relationship_type, source_character_id: char.id }]); }} disabled={alreadyResident}
-                    className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                    <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">{fam.name?.[0]?.toUpperCase() || "?"}</div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm text-foreground font-medium truncate">{fam.name}</p>
-                      <p className="text-xs text-muted-foreground/70 capitalize">{fam.relationship_type} of {char.name}</p>
-                    </div>
-                    {alreadyResident && <span className="text-xs text-primary font-medium">✓</span>}
-                  </button>
-                );
-              }).filter(Boolean)
-            )}
-            {allNPCs.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPCs & Fictional Characters</p>}
-            {allNPCs.map(npc => {
+            {[...characters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(char => {
+               const alreadyResident = form.resident_character_ids?.includes(char.id);
+               return (
+                 <button key={char.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), char.id]); }} disabled={alreadyResident}
+                   className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                   <CharacterAvatar character={char} size="sm" />
+                   <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                   {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                 </button>
+               );
+             })}
+            {allNPCs.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious Characters</p>}
+            {[...allNPCs].sort((a, b) => a.name.localeCompare(b.name)).map(npc => {
                // Skip NPCs that are actually real Character entities
                const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === npc.name.toLowerCase());
                if (isRealCharacter) return null;
@@ -720,6 +700,32 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                  </button>
                );
              }).filter(Boolean)}
+            {characters.some(c => (c.family_members || []).length > 0) && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>}
+            {characters.flatMap(char =>
+              (char.family_members || []).map((fam, idx) => {
+                // Skip if this family member is actually a real Character entity
+                const isRealCharacter = characters.some(c => (c.display_name || c.name || '').toLowerCase() === (fam.name || '').toLowerCase());
+                if (isRealCharacter) return null;
+
+                const alreadyResident = form.resident_family_members?.some(f => f.name === fam.name);
+                return {
+                  key: `${char.id}__${fam.name}`,
+                  fam,
+                  char,
+                  alreadyResident,
+                };
+              }).filter(Boolean)
+            ).sort((a, b) => a.fam.name.localeCompare(b.fam.name)).map(item => (
+              <button key={item.key} onClick={() => { if (!item.alreadyResident) update("resident_family_members", [...(form.resident_family_members || []), { name: item.fam.name, relationship_type: item.fam.relationship_type, source_character_id: item.char.id }]); }} disabled={item.alreadyResident}
+                className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${item.alreadyResident ? "bg-secondary/50 border-l-2 border-border opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                <div className="w-7 h-7 rounded-full bg-secondary/60 flex items-center justify-center flex-shrink-0 text-xs font-semibold">{item.fam.name?.[0]?.toUpperCase() || "?"}</div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-foreground font-medium truncate">{item.fam.name}</p>
+                  <p className="text-xs text-muted-foreground/70 capitalize">{item.fam.relationship_type} of {item.char.name}</p>
+                </div>
+                {item.alreadyResident && <span className="text-xs text-primary font-medium">✓</span>}
+              </button>
+            ))}
           </div>
         </div>
       )}
