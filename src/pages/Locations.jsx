@@ -345,11 +345,11 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       const [byCreatedBy, byOwnerEmail] = await Promise.all([
         base44.entities.Character.filter({
           created_by: currentUser.email,
-          character_type: { $in: ['npc_fictitious', 'npc_regular', 'npc_family_member'] },
+          character_type: { $in: ['npc_fictitious', 'npc_family_member'] },
         }),
         base44.entities.Character.filter({
           owner_email: currentUser.email,
-          character_type: { $in: ['npc_fictitious', 'npc_regular', 'npc_family_member'] },
+          character_type: { $in: ['npc_fictitious', 'npc_family_member'] },
         }),
       ]);
       const seen = new Set();
@@ -362,40 +362,25 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     enabled: !!currentUser?.email,
   });
 
-  // Build a consolidated list: real NPC entities first (sorted by type), then fictional relationships
+  // Build allNPCs: real NPC entities only (no fictional relationships duplicates)
   const existingCharacterNames = new Set(characters.map(c => (c.display_name || c.name || '').toLowerCase()));
-  const existingNPCNames = new Set(npcCharacterEntities.map(n => (n.display_name || n.name || '').toLowerCase()));
   
-  // Sorted by type priority: fictitious, family, regular
   const npcsByType = {
     npc_fictitious: [],
     npc_family_member: [],
-    npc_regular: [],
   };
   
   npcCharacterEntities.forEach(npc => {
     const type = npc.character_type;
-    if (npcsByType[type]) {
+    // Only include if NOT already in active characters (no duplication)
+    const normalizedName = (npc.display_name || npc.name || '').toLowerCase();
+    if (npcsByType[type] && !existingCharacterNames.has(normalizedName)) {
       npcsByType[type].push(npc);
     }
   });
   
-  // Flatten in priority order
-  const allNPCs = [...npcsByType.npc_fictitious, ...npcsByType.npc_family_member, ...npcsByType.npc_regular];
-  
-  // Add fictional relationships (ghost NPCs) that aren't already in the character list
-  const seenNames = new Set([...existingCharacterNames, ...existingNPCNames]);
-  characters.forEach(char => {
-    (char.fictional_relationships || []).forEach(rel => {
-      if (!rel.related_character_id && rel.person_name) {
-        const normalizedName = rel.person_name.toLowerCase();
-        if (!seenNames.has(normalizedName)) {
-          seenNames.add(normalizedName);
-          allNPCs.push({ id: `npc__${rel.person_name}`, name: rel.person_name, isNPC: true, relationship_type: rel.relationship_type, character_type: 'npc_fictitious' });
-        }
-      }
-    });
-  });
+  // Flatten in priority order: fictitious first, then family members
+  const allNPCs = [...npcsByType.npc_fictitious, ...npcsByType.npc_family_member];
 
   const [form, setForm] = useState({
     name: editingLocation?.name || "",
