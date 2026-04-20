@@ -19,6 +19,8 @@ import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils"
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
 
+const NPC_CHARACTER_TYPES = ["npc", "family_npc", "background", "promoted_npc"];
+
 export default function Travel() {
   const navigate = useNavigate();
   const [selectedLocation, setSelectedLocation] = useState(null);
@@ -46,13 +48,36 @@ export default function Travel() {
     enabled: !!currentUser?.email,
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: currentUser.email, status: "active" }),
+  // Active playable characters only
+  const { data: activeCharacters = [] } = useQuery({
+    queryKey: ["activeCharacters", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter({
+      created_by: currentUser.email,
+      status: "active",
+      character_type: "active"
+    }),
     enabled: !!currentUser?.email,
     staleTime: 0,
     gcTime: 0,
   });
+
+  // NPC characters (all non-"active" types)
+  const { data: npcCharacters = [] } = useQuery({
+    queryKey: ["npcCharacters", currentUser?.email],
+    queryFn: async () => {
+      const all = await base44.entities.Character.filter({
+        created_by: currentUser.email,
+        status: "active",
+      });
+      return all.filter(c => NPC_CHARACTER_TYPES.includes(c.character_type));
+    },
+    enabled: !!currentUser?.email,
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+  // Combined for general use (travel companions, location presence, etc.)
+  const characters = [...activeCharacters, ...npcCharacters];
 
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -86,8 +111,6 @@ export default function Travel() {
     const homeResidents = characters.filter(c => c.current_home_location_id === location.id);
     const npcResidents = location.resident_family_members || [];
     const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
-    // Also consider resident_character_ids on the location itself (covers NPC/external characters
-    // assigned as residents that are not in the current user's characters list)
     const hasAssignedResidents = (location.resident_character_ids || []).length > 0;
     const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || hasAssignedResidents || userHasKey;
     if (homeResidents.length === 0 && npcResidents.length === 0 && !hasAssignedResidents) {
@@ -561,8 +584,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               ))}
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
-              <p className="font-medium text-muted-foreground">Characters: {characters.length}</p>
-              {characters.map(c => {
+              <p className="font-medium text-muted-foreground">Active Characters: {activeCharacters.length}</p>
+              {activeCharacters.map(c => {
                 const resolved = resolveCharacterLocation(c, locationMap);
                 return (
                   <div key={c.id} className="text-[10px] text-muted-foreground/70">
@@ -572,24 +595,25 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               })}
             </div>
             <div className="space-y-1 text-xs border-t border-border pt-2">
-              <p className="font-medium text-muted-foreground">All NPCs:</p>
-              {characters.length > 0 ? (
-                characters.flatMap(c =>
-                  (c.fictional_relationships || [])
-                    .filter(rel => !rel.related_character_id && rel.person_name)
-                    .map(rel => (
-                      <div key={`${c.id}_${rel.person_name}`} className="text-[10px]">
-                        <span className="text-muted-foreground/70">• {rel.person_name}:</span>
-                        {rel.current_location_id ? (
-                          <span className="text-blue-400"> {locationMap[rel.current_location_id]?.name || `id: ${rel.current_location_id.slice(0, 8)}`}</span>
-                        ) : (
-                          <span className="text-red-400"> [NO LOCATION]</span>
-                        )}
-                      </div>
-                    ))
-                )
+              <p className="font-medium text-muted-foreground">NPC Characters: {npcCharacters.length}</p>
+              {npcCharacters.length > 0 ? (
+                npcCharacters.map(c => {
+                  const resolved = resolveCharacterLocation(c, locationMap);
+                  return (
+                    <div key={c.id} className="text-[10px]">
+                      <span className="text-muted-foreground/70">• {c.name} ({c.character_type}):</span>
+                      {resolved.resolved_current_location_name ? (
+                        <span className="text-blue-400"> {resolved.resolved_current_location_name}</span>
+                      ) : c.current_home_location_id ? (
+                        <span className="text-amber-400"> home ({locationMap[c.current_home_location_id]?.name || c.current_home_location_id.slice(0, 8)})</span>
+                      ) : (
+                        <span className="text-red-400"> [NO LOCATION]</span>
+                      )}
+                    </div>
+                  );
+                })
               ) : (
-                <p className="text-[10px] text-muted-foreground/50">No NPCs found</p>
+                <p className="text-[10px] text-muted-foreground/50">No NPC characters found</p>
               )}
             </div>
           </motion.div>
