@@ -142,73 +142,103 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   );
 
   const [searchMatches, setSearchMatches] = useState({ strong: [], weak: [] });
+  const [diagnosticData, setDiagnosticData] = useState(null);
 
   // Whenever search query changes, perform a backend-driven search
   useEffect(() => {
     const performSearch = async () => {
-      const debugLog = [];
+      const diag = {
+        timestamp: new Date().toLocaleTimeString(),
+        currentUserEmail: currentUser?.email,
+        currentUserId: currentUser?.id,
+        searchQuery: searchQuery.trim(),
+        steps: []
+      };
 
       if (!searchQuery.trim()) {
         setSearchMatches({ strong: [], weak: [] });
+        setDiagnosticData(null);
         return;
       }
       
-      // Step 1: Verify current user identity
-      debugLog.push(`[EditCharType Search] Current User Email: ${currentUser?.email}`);
-      debugLog.push(`[EditCharType Search] Current User ID: ${currentUser?.id}`);
-      
       if (!currentUser?.email) {
-        debugLog.push(`[EditCharType Search] ERROR: No user email available`);
-        console.log(debugLog.join("\n"));
+        diag.steps.push({ step: 1, status: 'ERROR', message: 'No user email available' });
+        setDiagnosticData(diag);
         setSearchMatches({ strong: [], weak: [] });
         return;
       }
 
-      // Step 2: Fetch ALL characters from backend (no filtering yet)
-      debugLog.push(`[EditCharType Search] Fetching all characters from backend...`);
-      const allCharsRaw = await base44.entities.Character.list("-created_date", 500);
-      debugLog.push(`[EditCharType Search] Total characters fetched: ${allCharsRaw.length}`);
+      diag.steps.push({ step: 1, status: 'OK', message: `User authenticated: ${currentUser.email}` });
 
-      // Step 3: Inspect ownership fields on a sample character
+      // Fetch ALL characters from backend
+      const allCharsRaw = await base44.entities.Character.list("-created_date", 500);
+      diag.steps.push({ step: 2, status: 'OK', message: `Fetched ${allCharsRaw.length} total characters from backend` });
+
+      // Inspect sample record structure
       if (allCharsRaw.length > 0) {
         const sample = allCharsRaw[0];
-        debugLog.push(`[EditCharType Search] Sample record - ID: ${sample.id}, Name: ${sample.name}`);
-        debugLog.push(`[EditCharType Search] Sample owner_email: ${sample.owner_email}`);
-        debugLog.push(`[EditCharType Search] Sample created_by: ${sample.created_by}`);
-        debugLog.push(`[EditCharType Search] Sample status: ${sample.status}`);
+        diag.steps.push({ 
+          step: 3, 
+          status: 'INFO', 
+          message: `Sample record: ${sample.name}`,
+          sample: {
+            id: sample.id,
+            name: sample.name,
+            owner_email: sample.owner_email,
+            created_by: sample.created_by,
+            status: sample.status
+          }
+        });
       }
 
-      // Step 4: Filter by ownership
-      const ownedByUser = allCharsRaw.filter(c => {
+      // Filter by ownership - detailed audit
+      const ownedByUser = [];
+      const notOwned = [];
+      
+      allCharsRaw.forEach(c => {
         const ownerEmailMatch = c.owner_email === currentUser.email;
         const createdByMatch = c.created_by === currentUser.email;
         const statusValid = c.status !== "deleted";
         const isOwned = (ownerEmailMatch || createdByMatch) && statusValid;
         
         if (isOwned) {
-          debugLog.push(`[EditCharType Search] OWNED: ${c.name} (owner_email: ${ownerEmailMatch}, created_by: ${createdByMatch}, status ok: ${statusValid})`);
+          ownedByUser.push(c);
+        } else {
+          notOwned.push({
+            name: c.name,
+            owner_email: c.owner_email,
+            created_by: c.created_by,
+            status: c.status,
+            ownerEmailMatch,
+            createdByMatch,
+            statusValid
+          });
         }
-        
-        return isOwned;
       });
 
-      debugLog.push(`[EditCharType Search] Characters owned by ${currentUser.email}: ${ownedByUser.length}`);
+      diag.steps.push({ 
+        step: 4, 
+        status: 'OK', 
+        message: `Ownership filter: ${ownedByUser.length} owned, ${notOwned.length} excluded`,
+        ownedCharacters: ownedByUser.map(c => ({ id: c.id, name: c.name })),
+        excludedSample: notOwned.slice(0, 5)
+      });
 
-      if (ownedByUser.length === 0) {
-        debugLog.push(`[EditCharType Search] WARNING: No owned characters found. Ownership lookup may be broken.`);
-      }
-
-      // Step 5: Search within owned characters by name
-      debugLog.push(`[EditCharType Search] Searching for: "${searchQuery}"`);
+      // Search within owned characters
       const matches = findMatches(searchQuery, ownedByUser);
-      debugLog.push(`[EditCharType Search] Strong matches: ${matches.strong.length}`);
-      debugLog.push(`[EditCharType Search] Weak matches: ${matches.weak.length}`);
+      
+      diag.steps.push({ 
+        step: 5, 
+        status: 'OK', 
+        message: `Name matching: ${matches.strong.length} strong, ${matches.weak.length} weak`,
+        strongMatches: matches.strong.map(m => m.name),
+        weakMatches: matches.weak.map(m => m.name),
+        ownedCharacterNames: ownedByUser.map(c => c.name)
+      });
 
-      matches.strong.forEach(m => debugLog.push(`  → Strong: ${m.name}`));
-      matches.weak.forEach(m => debugLog.push(`  → Weak: ${m.name}`));
-
-      console.log(debugLog.join("\n"));
+      setDiagnosticData(diag);
       setSearchMatches(matches);
+      console.log(JSON.stringify(diag, null, 2));
     };
 
     performSearch();
@@ -476,6 +506,53 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              {/* Diagnostic Output Panel */}
+              {diagnosticData && searchQuery.trim() && (
+                <motion.div
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-zinc-900/50 border border-zinc-700/50 rounded-xl p-3 space-y-2 text-xs font-mono max-h-96 overflow-y-auto"
+                >
+                  <p className="text-zinc-400">
+                    <span className="text-zinc-500">User:</span> {diagnosticData.currentUserEmail}
+                  </p>
+                  {diagnosticData.steps.map((step, idx) => (
+                    <div key={idx} className={`p-2 rounded border-l-2 ${
+                      step.status === 'ERROR' ? 'border-red-600 bg-red-950/30 text-red-300' :
+                      step.status === 'INFO' ? 'border-blue-600 bg-blue-950/30 text-blue-300' :
+                      'border-green-600 bg-green-950/30 text-green-300'
+                    }`}>
+                      <p className="font-semibold">Step {step.step}: {step.message}</p>
+                      {step.ownedCharacters && (
+                        <p className="mt-1 text-zinc-300">
+                          Owned: {step.ownedCharacters.map(c => c.name).join(', ') || '(none)'}
+                        </p>
+                      )}
+                      {step.strongMatches && (
+                        <p className="mt-1 text-green-300">
+                          Strong matches: {step.strongMatches.join(', ') || '(none)'}
+                        </p>
+                      )}
+                      {step.weakMatches && (
+                        <p className="mt-1 text-yellow-300">
+                          Weak matches: {step.weakMatches.join(', ') || '(none)'}
+                        </p>
+                      )}
+                      {step.ownedCharacterNames && (
+                        <p className="mt-1 text-zinc-300">
+                          All owned names available for search: {step.ownedCharacterNames.join(', ') || '(none)'}
+                        </p>
+                      )}
+                      {step.excludedSample && step.excludedSample.length > 0 && (
+                        <p className="mt-1 text-zinc-400 text-[10px]">
+                          Sample excluded: {step.excludedSample.map(e => `${e.name} (owner_email: ${e.ownerEmailMatch}, created_by: ${e.createdByMatch}, status ok: ${e.statusValid})`).join(' | ')}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </motion.div>
+              )}
 
               {/* Create new mode */}
               {isCreatingNew && (
