@@ -539,79 +539,42 @@ function dedupeSubjects(subjects) {
 function buildSubjectOutfitBlock(subject) {
   if (!subject.outfit_desc) return '';
   const name = subject.canonical_name;
-  return `
-════════════════════════════════════════════════════════════
-OUTFIT LOCK — ${name.toUpperCase()} — ABSOLUTE OVERRIDE — HIGHEST PRIORITY
-════════════════════════════════════════════════════════════
-${name} IS WEARING THIS AND ONLY THIS:
-${subject.outfit_desc}
-
-CRITICAL RULES — NO EXCEPTIONS:
-✗ DO NOT use any clothing visible in reference/avatar photos — those are identity sources ONLY
-✗ DO NOT invent, substitute, or modify any clothing item
-✗ DO NOT apply ${name}'s outfit to any other person
-✗ DO NOT apply any other person's outfit to ${name}
-✓ Reproduce EVERY listed clothing item EXACTLY as described
-✓ This outfit is owned by and belongs exclusively to ${name}
-════════════════════════════════════════════════════════════`;
+  // Sanitize outfit descriptions that could trigger content filters
+  // Replace descriptions of minimal/partial clothing with safe alternatives
+  let outfitDesc = subject.outfit_desc;
+  const sensitivePatterns = [
+    /wearing only\s+/gi,
+    /shirtless/gi,
+    /topless/gi,
+    /no (shirt|top|clothes)/gi,
+    /bare (chest|torso|skin|body)/gi,
+    /slight sheen of moisture on his skin/gi,
+    /slight sheen of moisture on her skin/gi,
+  ];
+  const isSensitive = sensitivePatterns.some(p => p.test(outfitDesc));
+  if (isSensitive) {
+    // Don't inject the outfit block at all — let the user's prompt or reference images handle it
+    return '';
+  }
+  return `\nOutfit for ${name}: ${outfitDesc}. Reproduce this outfit exactly as described. Do not use clothing from the reference photos.\n`;
 }
 
 function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd) {
   const name = subject.canonical_name;
   const lockDesc = subject.lock_text ? `Appearance lock (FIXED — never change): ${subject.lock_text}.` : '';
   const ethnicityWarning = subject.ethnicities?.length > 0
-    ? `⚠️ ETHNICITY LOCK: ${name}'s ethnicity is "${subject.ethnicities.join(', ')}". You MUST NOT default to Caucasian or European features. Skin tone, facial structure, hair texture MUST authentically reflect this background.`
-    : `⚠️ Do NOT default to Caucasian features. Use reference images to accurately determine ${name}'s appearance.`;
+    ? `Ethnicity: ${subject.ethnicities.join(', ')}. Accurately reflect this in skin tone, facial structure, and hair texture.`
+    : `Use reference images to accurately determine ${name}'s appearance.`;
 
-  const avatarSeparationWarning = `
-════════════════════════════════════════════════════════════
-⛔ AVATAR REFERENCE SEPARATION RULE (MANDATORY)
-════════════════════════════════════════════════════════════
-Images ${imageIndexStart}–${imageIndexEnd} are ONLY for determining ${name}'s face and body.
-These images MUST NOT provide the scenery, background, or environmental context.
-
-Character identity locked FROM these images:
-  ✓ Face shape and bone structure
-  ✓ Facial features (eyes, nose, mouth, cheekbones, jaw)
-  ✓ Skin tone and complexion
-  ✓ Hair texture, length, and color
-  ✓ Body type and proportions
-  ✓ Any distinctive physical features
-
-Character identity NOT determined by these images:
-  ✗ Background or room visible in the avatar photo
-  ✗ Furniture or environmental objects in the avatar
-  ✗ Lighting context from the avatar setting
-  ✗ Any scenery, walls, or architectural elements
-
-This is a HARD SEPARATION. The avatar background is CONTAMINATION if used for scenery.
-════════════════════════════════════════════════════════════`;
+  const avatarSeparationWarning = `Note: Reference images ${imageIndexStart}–${imageIndexEnd} are for ${name}'s face and body identity only. Use the scene prompt for environment and setting, not the reference image backgrounds.`;
 
   return `
-════════════════════════════════════════════════════════════
-IDENTITY LOCK — ${name.toUpperCase()} (Images ${imageIndexStart}–${imageIndexEnd})
-════════════════════════════════════════════════════════════
-Subject: ${name} | Type: ${subject.subject_type}
-Reference images ${imageIndexStart}–${imageIndexEnd} ARE this person's face and body. They are the GROUND TRUTH.
 
-LOCKED AT 100% — NO DEVIATION:
-• Face shape: IDENTICAL — bone structure, jaw, cheekbones, forehead
-• Facial features: Eyes (shape, color, distance), nose (shape, size), lips — EXACT MATCH
-• Skin tone: EXACT match — do NOT lighten, darken, or shift hue
-• Hair texture, length, and color: LOCKED — do NOT alter in any way
-• Body type: Exact build, proportions, and height from reference
-• Distinctive features: Any birthmarks, scars, or unique traits MUST appear
-
+Identity reference (images ${imageIndexStart}–${imageIndexEnd}): This is ${name}. Replicate their exact face, skin tone, hair, and body type from these reference photos with high fidelity.
 ${ethnicityWarning}
 ${lockDesc}
-${subject.appearance_text ? `Appearance description: ${subject.appearance_text}` : ''}
-
-${avatarSeparationWarning}
-
-THIS IS NOT A GENERIC CHARACTER. This is a SPECIFIC person who must be INSTANTLY RECOGNIZABLE.
-Do NOT produce a random person. Do NOT swap this face with a generic model.
-Do NOT beautify or normalize their appearance.
-════════════════════════════════════════════════════════════`;
+${subject.appearance_text ? `Appearance: ${subject.appearance_text}.` : ''}
+${avatarSeparationWarning}`;
 }
 
 Deno.serve(async (req) => {
@@ -1080,23 +1043,22 @@ The environment must feel real, functional, and original.
 
     if (finalCharSubject && finalUserSubject) {
       // MULTI-SUBJECT MODE: character + user
-      // Order: char face refs (3) → user face refs (3) → location (2)
-      const charSlice = finalCharSubject.face_refs.slice(0, 3);
-      const userSlice = finalUserSubject.face_refs.slice(0, 3);
+      // Order: char face refs (2) → user face refs (2) → location (2)
+      const charSlice = finalCharSubject.face_refs.slice(0, 2);
+      const userSlice = finalUserSubject.face_refs.slice(0, 2);
       const locSlice = locationImages.slice(0, 2);
       referenceImages = [...charSlice, ...userSlice, ...locSlice].filter(Boolean);
       console.log(`[REFS] Multi-subject: char=${charSlice.length} + user=${userSlice.length} + loc=${locSlice.length} = ${referenceImages.length} total`);
     } else if (finalUserSubject && !finalCharSubject) {
       // USER-ONLY MODE
-      referenceImages = finalUserSubject.face_refs.slice(0, 4);
+      referenceImages = finalUserSubject.face_refs.slice(0, 2);
       console.log(`[REFS] User-only: ${referenceImages.length} refs`);
     } else if (finalCharSubject) {
       // CHARACTER-ONLY MODE
       // CRITICAL ORDERING: Location images FIRST (environment lock), then character (identity lock)
-      // This enforces that the model establishes the scene environment BEFORE placing the character.
       // Avatar background is ignored for scenery by virtue of being AFTER location images in the sequence.
-      const locSlice = locationImages.slice(0, 5);  // Location images first — maximum scene authority
-      const charSlice = finalCharSubject.face_refs.slice(0, 3);  // Character after — identity only
+      const locSlice = locationImages.slice(0, 3);  // Location images first — environment lock
+      const charSlice = finalCharSubject.face_refs.slice(0, 2);  // Max 2 char refs to avoid filter triggers
       referenceImages = [...locSlice, ...charSlice].filter(Boolean);
       console.log(`[REFS] Character-only (location-first): loc=${locSlice.length} + char=${charSlice.length} = ${referenceImages.length} total`);
     } else {
@@ -1155,6 +1117,11 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
       // ── CHARACTER-ONLY PROMPT ───────────────────────────────────────────────
       const charName = finalCharSubject.canonical_name;
       const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
+      // If no outfit block (sensitive outfit filtered out), add a safe clothing note
+      // so the model doesn't pick up nudity cues from reference images
+      const safeClothingNote = !charOutfitBlock && !cleanPrompt.toLowerCase().includes('shirt') && !cleanPrompt.toLowerCase().includes('wear') && !cleanPrompt.toLowerCase().includes('outfit')
+        ? `\nNote: Ensure the subject is wearing appropriate casual clothing suitable for the scene.\n`
+        : '';
       const locRefEnd = Math.min(locationImages.length, 3);
       const charRefStart = locRefEnd + 1;
       const charRefEnd = locRefEnd + Math.min(finalCharSubject.face_refs.length, 4);
@@ -1184,7 +1151,7 @@ Do NOT blend or borrow any environment from the character reference images.
 
       const noDoubleInject = `⚠️ DUPLICATE PREVENTION: ${charName} appears EXACTLY ONCE. Do NOT generate two versions of this person.`;
 
-      enhancedPrompt = `${charOutfitBlock}\n\n${cleanPrompt}${locationNote}${charIdentityBlock}\n\n${roomInstruction}\n${noDoubleInject}`;
+      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${cleanPrompt}${locationNote}${charIdentityBlock}\n\n${roomInstruction}\n${noDoubleInject}`;
 
     } else {
       // No subjects resolved — pure environment/text render
@@ -1220,9 +1187,7 @@ Do NOT blend or borrow any environment from the character reference images.
     }
 
     // ── DIVERSITY DIRECTIVE ──────────────────────────────────────────────────
-    const AUTO_DIVERSITY_CONSTRAINT = (resolvedSubjectType === 'character' || resolvedSubjectType === 'joint')
-      ? `\n\n════════════════════════════════════════════════════════════\nDIVERSITY DIRECTIVE (AUTO-ENFORCED):\nRepresentation must be: 1% Caucasian/White, 99% Latino, African American, Indian, Native American, and multicultural individuals.\nEnsure diverse skin tones, facial features, body types, and cultural authenticity.\nNO whitewashing. Maintain authentic representation.\n════════════════════════════════════════════════════════════`
-      : '';
+    const AUTO_DIVERSITY_CONSTRAINT = '';
 
     const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.`;
 
