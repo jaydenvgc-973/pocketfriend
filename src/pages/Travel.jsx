@@ -3,7 +3,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowLeft, MapPin, Users, Navigation, Plus, Wrench } from "lucide-react";
+import { ArrowLeft, MapPin, Users, Navigation, Plus, Wrench, Map } from "lucide-react";
+import LivePresenceMap from "@/components/travel/LivePresenceMap";
+import { ensureLocationsMapped } from "@/lib/mapCoordinates";
 import FixLocationsButton from "@/components/home/FixLocationsButton";
 import { toDisplay12h } from "@/lib/timeFormat";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,6 +41,7 @@ export default function Travel() {
   const [showDebug, setShowDebug] = useState(false);
   const [distributeResult, setDistributeResult] = useState(null);
   const [isDistributing, setIsDistributing] = useState(false);
+  const [showMap, setShowMap] = useState(false);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -107,6 +110,16 @@ export default function Travel() {
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const settings = settingsList[0] || {};
+
+  // Ensure every location has saved map coordinates
+  useEffect(() => {
+    if (!locationsData.length || !currentUser?.email) return;
+    const saveLocation = async (locationId, updates) => {
+      await base44.entities.LocationReference.update(locationId, updates);
+      queryClient.invalidateQueries({ queryKey: ['locationReferences', currentUser.email] });
+    };
+    ensureLocationsMapped(locationsData, saveLocation).catch(() => {});
+  }, [locationsData.length, currentUser?.email]);
 
   // Auto-distribute VGC NPCs on page load so UI shows their real locations
   useEffect(() => {
@@ -338,6 +351,13 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         </div>
         <FixLocationsButton currentUserEmail={currentUser?.email} />
         <button
+          onClick={() => setShowMap(!showMap)}
+          className={`p-2 rounded-lg transition-colors ${showMap ? "text-primary bg-primary/10" : "text-muted-foreground hover:text-foreground hover:bg-secondary"}`}
+          title="Live Presence Map"
+        >
+          <Map className="w-5 h-5" />
+        </button>
+        <button
           onClick={() => setShowDebug(!showDebug)}
           className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
           title="Debug Travel Issues"
@@ -347,6 +367,32 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       </div>
 
       <div className="max-w-lg mx-auto px-4 py-4 space-y-6">
+
+        {/* Live Presence Map */}
+        <AnimatePresence>
+          {showMap && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="space-y-2 pb-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Live World Map</p>
+                <LivePresenceMap
+                  locations={locationsData}
+                  characters={characters}
+                  onLocationClick={(locationId) => {
+                    const loc = locationsData.find(l => l.id === locationId);
+                    if (loc) setSelectedLocation(loc);
+                  }}
+                />
+                <p className="text-[10px] text-muted-foreground text-center">Tap a location to select it · Character pins show real-time presence</p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div>
           <div className="flex items-center gap-2 mb-3">
             <Users className="w-4 h-4 text-muted-foreground" />
