@@ -586,7 +586,8 @@ Deno.serve(async (req) => {
       manualLocationId, manualZoneId, isUserIdentityLocked, userIdentityStrictMode,
       userAppearanceData, includesUser,
       liveLocationContext, // authoritative location truth string from buildLiveLocationContext()
-      isCreativeGeneration // true = media grid / user-directed creative; false/absent = presence-based scene
+      isCreativeGeneration, // true = media grid / user-directed creative; false/absent = presence-based scene
+      characterEmotionalState // current emotional state to influence expression in image
     } = await req.json();
 
     if (!messageId || !prompt) {
@@ -1089,6 +1090,35 @@ The environment must feel real, functional, and original.
     // ── STEP 5: BUILD PROMPT FROM SUBJECT RECORDS ────────────────────────────
     // Outfit overrides FIRST (highest priority), then scene, then identity locks.
     // This order ensures the model processes outfit constraints before rendering.
+    
+    // ── EMOTIONAL EXPRESSION DIRECTIVE ────────────────────────────────────────
+    // Map emotional states to facial expressions and body language
+    const emotionalStateMap = {
+      calm: 'neutral, serene expression',
+      irritated: 'slightly annoyed expression, subtle frown',
+      defensive: 'guarded expression, tensed jaw',
+      reflective: 'thoughtful, distant gaze, contemplative expression',
+      'closed-off': 'withdrawn expression, minimal emotion',
+      flirtatious: 'playful smile, warm eyes',
+      bored: 'disengaged expression, blank stare',
+      'burnt out': 'tired, weary expression, exhausted look',
+      joyful: 'genuine smile, warm expression',
+      anxious: 'tense expression, worried eyes',
+      sad: 'downturned mouth, melancholic expression',
+      excited: 'big smile, bright eyes, animated expression',
+      overwhelmed: 'stressed expression, wide eyes',
+      content: 'subtle smile, relaxed expression',
+      frustrated: 'tightened jaw, furrowed brow, irritated eyes',
+      angry: 'intense frown, sharp eyes, aggressive expression',
+      confused: 'raised eyebrows, uncertain expression',
+      hopeful: 'slight smile, bright eyes, optimistic expression',
+      depressed: 'blank stare, downturned mouth, lifeless expression',
+      neutral: 'neutral, expressionless face',
+    };
+    
+    const emotionalExpression = emotionalStateMap[characterEmotionalState?.toLowerCase()] || 'natural, neutral expression';
+    const expressionNote = `\nFacial Expression: ${emotionalExpression}. Ensure the expression and body language reflect this emotional state.`;
+    
     let enhancedPrompt = '';
 
     if (finalCharSubject && finalUserSubject) {
@@ -1122,7 +1152,7 @@ These are TWO DIFFERENT PEOPLE. DO NOT mix or blend their appearances, faces, or
       const noDoubleInject = `
 ⚠️ DUPLICATE PREVENTION: Each person appears EXACTLY ONCE. Do NOT generate two versions of ${charName}. Do NOT generate two versions of ${userName}. Explicitly selected subjects are the ONLY named people in this scene. No ambient or background versions of named subjects.`;
 
-      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}${noDoubleInject}`;
+      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}${noDoubleInject}`;
 
     } else if (finalUserSubject && !finalCharSubject) {
       // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
@@ -1131,7 +1161,7 @@ These are TWO DIFFERENT PEOPLE. DO NOT mix or blend their appearances, faces, or
       const userIdentityBlock = finalUserSubject.face_refs.length > 0
         ? buildSubjectIdentityBlock(finalUserSubject, 1, Math.min(finalUserSubject.face_refs.length, 4))
         : '';
-      enhancedPrompt = `${userOutfitBlock}\n\n${cleanPrompt}${locationNote}${userIdentityBlock}
+      enhancedPrompt = `${userOutfitBlock}\n\n${cleanPrompt}${expressionNote}${locationNote}${userIdentityBlock}
 CRITICAL: The subject of this image is ${userName}. Replicate their exact face, features, and appearance from the reference photos provided. This is a SPECIFIC real person — do NOT invent a generic face.`;
 
     } else if (finalCharSubject) {
@@ -1172,7 +1202,7 @@ Do NOT blend or borrow any environment from the character reference images.
 
       const noDoubleInject = `⚠️ DUPLICATE PREVENTION: ${charName} appears EXACTLY ONCE. Do NOT generate two versions of this person.`;
 
-      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${cleanPrompt}${locationNote}${charIdentityBlock}\n\n${roomInstruction}\n${noDoubleInject}`;
+      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}\n\n${roomInstruction}\n${noDoubleInject}`;
 
     } else {
       // No subjects resolved — pure environment/text render
