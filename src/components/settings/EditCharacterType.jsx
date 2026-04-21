@@ -103,12 +103,14 @@ function findMatches(query, characters) {
 export default function EditCharacterType({ characters = [], currentUser }) {
   const queryClient = useQueryClient();
 
-  // Re-fetch characters scoped to current user by owner_email
+  // Re-fetch all characters and filter client-side by owner_email
   const { data: userCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 200)
-      : [],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const allChars = await base44.entities.Character.list("-created_date", 200);
+      return allChars.filter(c => c.owner_email === currentUser.email);
+    },
     enabled: !!currentUser?.email,
   });
 
