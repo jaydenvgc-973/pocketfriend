@@ -286,13 +286,7 @@ export default function Home() {
             <CharacterInteractionSimulator characters={[
               ...(defaultChar ? [defaultChar] : []),
               ...activeCustomChars,
-              ...characters.filter(c => {
-                if (c.status !== 'active' || c.is_test_character || c.diagnostic_only) return false;
-                // For murqart@gmail.com, include all NPCs without character_type check (backward compatible)
-                // For other accounts, require explicit npc_fictitious type
-                if (isMurqart) return c.character_type?.startsWith('npc_') || !c.character_type;
-                return c.character_type === 'npc_fictitious';
-              }),
+              ...characters.filter(c => c.character_type === 'npc_fictitious' && c.status === 'active' && !c.is_test_character && !c.diagnostic_only),
             ]} />
           ) : null}
           
