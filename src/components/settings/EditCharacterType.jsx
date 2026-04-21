@@ -146,25 +146,68 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   // Whenever search query changes, perform a backend-driven search
   useEffect(() => {
     const performSearch = async () => {
+      const debugLog = [];
+
       if (!searchQuery.trim()) {
         setSearchMatches({ strong: [], weak: [] });
         return;
       }
       
+      // Step 1: Verify current user identity
+      debugLog.push(`[EditCharType Search] Current User Email: ${currentUser?.email}`);
+      debugLog.push(`[EditCharType Search] Current User ID: ${currentUser?.id}`);
+      
       if (!currentUser?.email) {
+        debugLog.push(`[EditCharType Search] ERROR: No user email available`);
+        console.log(debugLog.join("\n"));
         setSearchMatches({ strong: [], weak: [] });
         return;
       }
 
-      // Fetch ALL characters owned by current user from backend
-      const allOwnedChars = await base44.entities.Character.list("-created_date", 500);
-      const ownedByUser = allOwnedChars.filter(c => 
-        (c.owner_email === currentUser.email || c.created_by === currentUser.email) &&
-        c.status !== "deleted"
-      );
+      // Step 2: Fetch ALL characters from backend (no filtering yet)
+      debugLog.push(`[EditCharType Search] Fetching all characters from backend...`);
+      const allCharsRaw = await base44.entities.Character.list("-created_date", 500);
+      debugLog.push(`[EditCharType Search] Total characters fetched: ${allCharsRaw.length}`);
 
-      // Search within owned characters
+      // Step 3: Inspect ownership fields on a sample character
+      if (allCharsRaw.length > 0) {
+        const sample = allCharsRaw[0];
+        debugLog.push(`[EditCharType Search] Sample record - ID: ${sample.id}, Name: ${sample.name}`);
+        debugLog.push(`[EditCharType Search] Sample owner_email: ${sample.owner_email}`);
+        debugLog.push(`[EditCharType Search] Sample created_by: ${sample.created_by}`);
+        debugLog.push(`[EditCharType Search] Sample status: ${sample.status}`);
+      }
+
+      // Step 4: Filter by ownership
+      const ownedByUser = allCharsRaw.filter(c => {
+        const ownerEmailMatch = c.owner_email === currentUser.email;
+        const createdByMatch = c.created_by === currentUser.email;
+        const statusValid = c.status !== "deleted";
+        const isOwned = (ownerEmailMatch || createdByMatch) && statusValid;
+        
+        if (isOwned) {
+          debugLog.push(`[EditCharType Search] OWNED: ${c.name} (owner_email: ${ownerEmailMatch}, created_by: ${createdByMatch}, status ok: ${statusValid})`);
+        }
+        
+        return isOwned;
+      });
+
+      debugLog.push(`[EditCharType Search] Characters owned by ${currentUser.email}: ${ownedByUser.length}`);
+
+      if (ownedByUser.length === 0) {
+        debugLog.push(`[EditCharType Search] WARNING: No owned characters found. Ownership lookup may be broken.`);
+      }
+
+      // Step 5: Search within owned characters by name
+      debugLog.push(`[EditCharType Search] Searching for: "${searchQuery}"`);
       const matches = findMatches(searchQuery, ownedByUser);
+      debugLog.push(`[EditCharType Search] Strong matches: ${matches.strong.length}`);
+      debugLog.push(`[EditCharType Search] Weak matches: ${matches.weak.length}`);
+
+      matches.strong.forEach(m => debugLog.push(`  → Strong: ${m.name}`));
+      matches.weak.forEach(m => debugLog.push(`  → Weak: ${m.name}`));
+
+      console.log(debugLog.join("\n"));
       setSearchMatches(matches);
     };
 
