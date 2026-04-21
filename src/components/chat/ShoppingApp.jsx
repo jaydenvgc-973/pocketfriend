@@ -199,6 +199,58 @@ export default function ShoppingApp({ conversationId, characterId, character, on
     }
   };
 
+  const handleBuyForCharacter = async (product) => {
+    if (!characterId || userBalance < product.price) {
+      if (userBalance < product.price) {
+        setShowActionModal({ type: 'error', message: `Insufficient funds. Need $${product.price}`, product });
+      }
+      return;
+    }
+
+    try {
+      // Deduct from user balance
+      const settings = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      await base44.entities.UserSettings.update(settings[0].id, {
+        user_balance: settings[0].user_balance - product.price,
+      });
+
+      // Add to character closet
+      const charCloset = character.character_closet || [];
+      const newItem = {
+        outfit_id: `piece_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        type: "piece",
+        created_at: new Date().toISOString(),
+        label: product.name,
+        piece_type: product.item_type,
+        description: `${product.brand} • ${product.color}`,
+        image_url: product.image_url,
+        is_favorite: false,
+      };
+
+      await base44.entities.Character.update(characterId, {
+        character_closet: [...charCloset, newItem],
+      });
+
+      // Record transaction
+      await base44.entities.FinancialTransaction.create({
+        type: "gift",
+        amount: product.price,
+        direction: "out",
+        category: "shopping",
+        description: `Bought ${product.name} for ${character.name}`,
+        related_character_id: characterId,
+        location_id: null,
+        transaction_date: new Date().toISOString(),
+      });
+
+      queryClient.invalidateQueries({ queryKey: ["userSettings", "character", characterId] });
+      setShowActionModal({ type: 'success', message: `Bought ${product.name} for ${character.name}!`, product });
+      setSelectedProduct(null);
+    } catch (err) {
+      setShowActionModal({ type: 'error', message: "Purchase failed: " + err.message, product });
+    }
+  };
+
   if (selectedProduct) {
     return (
       <div className="border-t border-border pt-4 mt-4 space-y-3">
@@ -236,6 +288,13 @@ export default function ShoppingApp({ conversationId, characterId, character, on
 
           {character && (
             <>
+              <button
+                onClick={() => handleBuyForCharacter(selectedProduct)}
+                disabled={userBalance < selectedProduct.price}
+                className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 transition-colors"
+              >
+                Buy for {character.name}
+              </button>
               <button
                 onClick={() => handleForwardToCharacter(selectedProduct)}
                 className="w-full py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
