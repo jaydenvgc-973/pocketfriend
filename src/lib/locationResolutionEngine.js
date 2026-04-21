@@ -470,7 +470,7 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   if (!character) return { status: 'unknown', label: 'Unknown', sublabel: null, isTransit: false, isSleeping: false };
 
   const loc = locationMap[character.resolved_current_location_id];
-  const locName = loc?.name || character.resolved_current_location_name || 'Home';
+  const locName = loc?.name || character.resolved_current_location_name || null;
 
   // ── PRIORITY 1: OVERRIDES ──────────────────────────────────────────────────
   const presenceStatus = character.resolved_presence_status || character.location_status;
