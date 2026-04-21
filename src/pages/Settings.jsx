@@ -265,7 +265,7 @@ export default function Settings() {
 
           {/* Active Characters */}
           {(() => {
-            const activeChars = characters.filter(c => (c.character_type === "active" || c.character_type === "promoted_npc") && c.status === "active");
+            const activeChars = characters.filter(c => c.character_type === "active_created_character" && c.status === "active").sort((a, b) => (a.name || '').localeCompare(b.name || ''));
             return activeChars.length > 0 ? (
               <div className="space-y-3 pb-4 border-b border-border">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Active Characters ({activeChars.length})</p>
