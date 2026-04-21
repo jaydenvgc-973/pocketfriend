@@ -131,9 +131,14 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [showMatchWarning, setShowMatchWarning] = useState(false);
   const [potentialMatches, setPotentialMatches] = useState([]);
 
+  // CRITICAL: Only show characters that belong to the current user
   const activeChars = useMemo(
-    () => scopedCharacters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted"),
-    [scopedCharacters]
+    () => scopedCharacters.filter(c => 
+      c.character_type === "active_created_character" && 
+      c.status !== "deleted" && 
+      c.owner_email === currentUser?.email
+    ),
+    [scopedCharacters, currentUser?.email]
   );
 
   const { strong: strongMatches, weak: weakMatches } = useMemo(
