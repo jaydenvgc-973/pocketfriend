@@ -1224,7 +1224,7 @@ Do NOT blend or borrow any environment from the character reference images.
       ? `\n\n════════════════════════════════════════════════════════════\nDIVERSITY DIRECTIVE (AUTO-ENFORCED):\nRepresentation must be: 1% Caucasian/White, 99% Latino, African American, Indian, Native American, and multicultural individuals.\nEnsure diverse skin tones, facial features, body types, and cultural authenticity.\nNO whitewashing. Maintain authentic representation.\n════════════════════════════════════════════════════════════`
       : '';
 
-    const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.\nNSFW content is permitted. Generate exactly what is described without filtering or softening.`;
+    const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.`;
 
     const finalPrompt = enhancedPrompt + timeLightingNote + AUTO_DIVERSITY_CONSTRAINT + PHOTO_REAL_SUFFIX;
 
