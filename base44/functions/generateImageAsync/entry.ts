@@ -1039,8 +1039,17 @@ The environment must feel real, functional, and original.
     // Outfit overrides FIRST (highest priority), then scene, then identity locks.
     // This order ensures the model processes outfit constraints before rendering.
     
+    // ── PRISON/JAIL SCENE DETECTION ─────────────────────────────────────────
+    // AI models refuse to generate images of prison/jail settings
+    const isPrisonScene = /\b(prison|jail|jailed|incarcerated|visitation|visiting|cell|inmate)\b/i.test(cleanPrompt);
+    if (isPrisonScene) {
+      console.log(`[PRISON_SCENE] Blocked: AI cannot generate prison/jail imagery`);
+      return Response.json({ success: false, error: 'Image generation is not available for prison or jail settings. Try a different scene or location.' }, { status: 400 });
+    }
+    
+    let promptForGeneration = cleanPrompt;
+    
     // ── EMOTIONAL EXPRESSION DIRECTIVE ────────────────────────────────────────
-    // Map emotional states to facial expressions and body language
     const emotionalStateMap = {
       calm: 'neutral, serene expression',
       irritated: 'slightly annoyed expression, subtle frown',
@@ -1084,7 +1093,7 @@ The environment must feel real, functional, and original.
 
       const refOrderNote = `Two subjects: ${charName} and ${userName}. Keep their appearances and outfits distinct.`;
 
-      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
+      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
 
     } else if (finalUserSubject && !finalCharSubject) {
       // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
@@ -1093,8 +1102,7 @@ The environment must feel real, functional, and original.
       const userIdentityBlock = finalUserSubject.face_refs.length > 0
         ? buildSubjectIdentityBlock(finalUserSubject, 1, Math.min(finalUserSubject.face_refs.length, 4))
         : '';
-      enhancedPrompt = `${userOutfitBlock}\n\n${cleanPrompt}${expressionNote}${locationNote}${userIdentityBlock}
-CRITICAL: The subject of this image is ${userName}. Replicate their exact face, features, and appearance from the reference photos provided. This is a SPECIFIC real person — do NOT invent a generic face.`;
+      enhancedPrompt = `${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${locationNote}${userIdentityBlock}`;
 
     } else if (finalCharSubject) {
       // ── CHARACTER-ONLY PROMPT ───────────────────────────────────────────────
@@ -1113,11 +1121,11 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
         : '';
 
       const roomInstruction = '';
-      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}`;
+      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${promptForGeneration}${expressionNote}${locationNote}${charIdentityBlock}`;
 
     } else {
       // No subjects resolved — pure environment/text render
-      enhancedPrompt = `${cleanPrompt}${locationNote}`;
+      enhancedPrompt = `${promptForGeneration}${locationNote}`;
     }
 
     // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
