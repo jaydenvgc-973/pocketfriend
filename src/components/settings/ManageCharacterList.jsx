@@ -18,8 +18,11 @@ export default function ManageCharacterList() {
   });
 
   const { data: userSettings = {} } = useQuery({
-    queryKey: ['userSettings'],
-    queryFn: () => base44.entities.UserSettings.list().then(list => list[0] || {}),
+    queryKey: ['userSettings', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.UserSettings.filter({ created_by: currentUser.email }).then(list => list[0] || {})
+      : {},
+    enabled: !!currentUser?.email,
   });
 
   const isAdmin = currentUser?.email === ADMIN_EMAIL;
@@ -117,7 +120,7 @@ export default function ManageCharacterList() {
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-foreground truncate">{item.type === 'user' ? itemData.worldName : itemName}</p>
+                          <p className="text-sm font-medium text-foreground truncate">{item.type === 'user' ? (itemData.worldName || itemData.full_name) : itemName}</p>
                           {item.type === 'character' && itemData.character_type && (
                             <p className="text-xs text-muted-foreground">{itemData.character_type}</p>
                           )}
