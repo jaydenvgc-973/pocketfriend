@@ -108,15 +108,7 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         product,
       });
 
-      // Record transaction for user
-      await base44.entities.FinancialTransaction.create({
-        transaction_type: "purchase",
-        amount: product.price,
-        direction: "out",
-        category: "shopping",
-        description: `Purchased ${product.name}`,
-        timestamp: new Date().toISOString(),
-      });
+
       
       // Add item to user closet
       const settings = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
@@ -137,15 +129,7 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         user_balance: settings[0].user_balance - product.price,
       });
 
-      // Record transaction
-      await base44.entities.FinancialTransaction.create({
-        transaction_type: "purchase",
-        amount: product.price,
-        direction: "out",
-        category: "shopping",
-        description: `Purchased ${product.name}`,
-        timestamp: new Date().toISOString(),
-      });
+
       
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
       setShowActionModal({ type: 'success', message: `Added ${product.name} to your closet!`, product });
