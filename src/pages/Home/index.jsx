@@ -199,7 +199,16 @@ export default function Home() {
 
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
-  const allActiveCreated = customChars.filter(c => (c.status === "active" || !c.status) && c.character_type === "active_created_character" && c.name !== "Leo Parker");
+  
+  // For murqart@gmail.com, show all active characters (backward compatible — no character_type filter).
+  // For other users, filter to active_created_character only.
+  const isMurqart = currentUser?.email === 'murqart@gmail.com';
+  const allActiveCreated = customChars.filter(c => {
+    if ((c.status !== "active" && c.status) || c.name === "Leo Parker") return false;
+    if (isMurqart) return true; // Show all owned characters for this account
+    return c.character_type === "active_created_character"; // Filter by type for other accounts
+  });
+  
   // Sort remaining active created characters alphabetically
   const activeCustomChars = allActiveCreated.sort((a, b) => {
     const nameA = (a.display_name || a.name || '').toLowerCase();
