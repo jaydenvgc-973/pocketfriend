@@ -7,15 +7,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
 export default function CharacterInteractionSimulator({ characters }) {
-  const alpha = (a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '');
-
-  const activeCreated = characters
-    .filter(c => c.character_type === 'active_created_character' && c.status !== 'deleted')
-    .sort(alpha);
-
-  const npcFictitious = characters
-    .filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted')
-    .sort(alpha);
+  // Filter out NPC characters — only include active characters created by the user, sorted alphabetically
+  const activeCharactersOnly = characters
+    .filter(c => c.character_type !== "npc")
+    .sort((a, b) => {
+      const nameA = (a.display_name || a.name || '').toLowerCase();
+      const nameB = (b.display_name || b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
   const [selected, setSelected] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState(null);
@@ -148,50 +147,22 @@ export default function CharacterInteractionSimulator({ characters }) {
           className="min-h-20 text-xs rounded-xl"
         />
 
-        {/* Character selection grid — scrollable, ~4 rows visible */}
-        <div className="overflow-y-auto pr-0.5" style={{ maxHeight: '232px' }}>
-          {activeCreated.length > 0 && (
-            <>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Active Characters</p>
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                {activeCreated.map(char => (
-                  <button
-                    key={char.id}
-                    onClick={() => toggleSelect(char.id)}
-                    className={`p-2 rounded-xl border transition-colors text-left text-xs ${
-                      selected.includes(char.id)
-                        ? 'bg-primary/10 border-primary'
-                        : 'bg-secondary border-border hover:border-primary/40'
-                    }`}
-                  >
-                    <div className="font-medium text-foreground truncate">{char.name}</div>
-                    <div className="text-muted-foreground text-[10px] truncate">{char.archetype || 'character'}</div>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
-          {npcFictitious.length > 0 && (
-            <>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">NPC Fictitious</p>
-              <div className="grid grid-cols-2 gap-2">
-                {npcFictitious.map(char => (
-                  <button
-                    key={char.id}
-                    onClick={() => toggleSelect(char.id)}
-                    className={`p-2 rounded-xl border transition-colors text-left text-xs ${
-                      selected.includes(char.id)
-                        ? 'bg-primary/10 border-primary'
-                        : 'bg-secondary border-border hover:border-primary/40'
-                    }`}
-                  >
-                    <div className="font-medium text-foreground truncate">{char.name}</div>
-                    <div className="text-muted-foreground text-[10px] truncate">{char.archetype || 'NPC'}</div>
-                  </button>
-                ))}
-              </div>
-            </>
-          )}
+        {/* Character selection grid */}
+         <div className="grid grid-cols-2 gap-2">
+           {activeCharactersOnly.map(char => (
+            <button
+              key={char.id}
+              onClick={() => toggleSelect(char.id)}
+              className={`p-2 rounded-xl border transition-colors text-left text-xs ${
+                selected.includes(char.id)
+                  ? 'bg-primary/10 border-primary'
+                  : 'bg-secondary border-border hover:border-primary/40'
+              }`}
+            >
+              <div className="font-medium text-foreground truncate">{char.name}</div>
+              <div className="text-muted-foreground text-[10px] truncate">{char.archetype || 'character'}</div>
+            </button>
+          ))}
         </div>
 
         {selected.length > 0 && (
