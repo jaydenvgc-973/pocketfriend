@@ -145,6 +145,8 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [diagnosticData, setDiagnosticData] = useState(null);
 
   // Whenever search query changes, perform a backend-driven search
+  const userEmail = currentUser?.email || '';
+
   useEffect(() => {
     const performSearch = async () => {
       const diag = {
@@ -259,6 +261,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
       
       if (searchQuery.trim()) {
         matches = findMatches(searchQuery, unifiedCandidateSet);
+      }
       
       diag.steps.push({ 
         step: 4.5, 
@@ -333,7 +336,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     };
 
     performSearch();
-  }, [searchQuery, currentUser?.email || '']);
+  }, [searchQuery, userEmail]);
 
   const { strong: strongMatches, weak: weakMatches } = searchMatches;
 
