@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Search, ChevronDown, ChevronUp, Check, AlertCircle, User, Users, Heart, Star, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -103,6 +103,18 @@ function findMatches(query, characters) {
 export default function EditCharacterType({ characters = [], currentUser }) {
   const queryClient = useQueryClient();
 
+  // Re-fetch characters scoped to current user to ensure RLS is applied correctly
+  const { data: userCharacters = [] } = useQuery({
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.list("-created_date", 200)
+      : [],
+    enabled: !!currentUser?.email,
+  });
+
+  // Use user-scoped characters, fallback to passed prop
+  const scopedCharacters = userCharacters.length > 0 ? userCharacters : characters;
+
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChar, setSelectedChar] = useState(null);
@@ -118,13 +130,13 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [potentialMatches, setPotentialMatches] = useState([]);
 
   const activeChars = useMemo(
-    () => characters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted"),
-    [characters]
+    () => scopedCharacters.filter(c => c.character_type === "active_created_character" && c.status !== "deleted"),
+    [scopedCharacters]
   );
 
   const { strong: strongMatches, weak: weakMatches } = useMemo(
-    () => findMatches(searchQuery, characters),
-    [searchQuery, characters]
+    () => findMatches(searchQuery, scopedCharacters),
+    [searchQuery, scopedCharacters]
   );
 
   const selectedTypeDef = CHARACTER_TYPES.find(t => t.value === selectedType);
@@ -434,7 +446,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                             <p className="text-xs text-amber-400 bg-amber-400/10 rounded-lg px-3 py-2">No active creative characters. Create one first.</p>
                           ) : (
                             <select value={linkedCharId} onChange={e => setLinkedCharId(e.target.value)} className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:border-primary/50 outline-none">
-                              <option value="">— Select a character —</option>
+                              <option value="">— Select character (own account only) —</option>
                               {activeChars.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                           )}
