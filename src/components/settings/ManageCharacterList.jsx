@@ -8,33 +8,37 @@ import CharacterAvatar from '@/components/chat/CharacterAvatar';
 
 const ADMIN_EMAIL = 'murqart@gmail.com';
 
-export default function ManageCharacterList() {
+export default function ManageCharacterList({ characters: propCharacters, currentUser: propUser, userSettings: propSettings }) {
   const queryClient = useQueryClient();
   const [expandedMenu, setExpandedMenu] = useState(null);
 
-  const { data: currentUser } = useQuery({
+  const { data: fetchedUser } = useQuery({
     queryKey: ['user'],
     queryFn: () => base44.auth.me(),
+    enabled: !propUser,
   });
+  const currentUser = propUser || fetchedUser;
 
-  const { data: userSettings = {} } = useQuery({
+  const { data: fetchedSettings = {} } = useQuery({
     queryKey: ['userSettings', currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.UserSettings.filter({ created_by: currentUser.email }).then(list => list[0] || {})
       : {},
-    enabled: !!currentUser?.email,
+    enabled: !!currentUser?.email && !propSettings,
   });
+  const userSettings = propSettings || fetchedSettings;
 
   const isAdmin = currentUser?.email === ADMIN_EMAIL;
 
-  const { data: characters = [] } = useQuery({
+  const { data: fetchedCharacters = [] } = useQuery({
     queryKey: ['all-characters', currentUser?.email],
     queryFn: () => {
       if (!currentUser?.email) return [];
       return base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 200);
     },
-    enabled: !!currentUser?.email,
+    enabled: !!currentUser?.email && !propCharacters,
   });
+  const characters = propCharacters || fetchedCharacters;
 
   const deleteMutation = useMutation({
     mutationFn: async (id) => {

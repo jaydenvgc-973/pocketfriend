@@ -566,7 +566,7 @@ export default function Settings() {
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>
           <div className="mb-6 bg-card border border-border rounded-2xl p-4">
-            <ManageCharacterList />
+            <ManageCharacterList characters={characters} currentUser={user} />
           </div>
 
            <button
