@@ -286,6 +286,11 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         candidatePoolSize: unifiedCandidateSet.length,
         searchTermUsed: searchQuery.trim(),
         matchesFound: matches.strong.length + matches.weak.length,
+        candidateCoverage: {
+          fromBackend: unifiedCandidateSet.length,
+          fromDashboardOnly: 0,
+          total: unifiedCandidateSet.length
+        },
         discoveryComplete: true
       };
 
