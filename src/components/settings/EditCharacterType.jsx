@@ -144,7 +144,56 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [searchMatches, setSearchMatches] = useState({ strong: [], weak: [] });
   const [diagnosticData, setDiagnosticData] = useState(null);
 
-  // Whenever search query changes, perform a backend-driven search
+  // ===== FULL CHARACTER DISCOVERY PIPELINE =====
+  // Builds complete candidate set from all sources before applying search
+  const performFullDiscovery = async (userEmail) => {
+    const discovered = {
+      byId: new Map(),
+      byNormalizedName: new Map(),
+      sources: []
+    };
+
+    if (!userEmail) return discovered;
+
+    try {
+      // Source 1: Backend Character table (filter by owner)
+      const allChars = await base44.entities.Character.list("-created_date", 500);
+      const owned = allChars.filter(c => 
+        (c.owner_email === userEmail || c.created_by === userEmail) && 
+        c.status !== "deleted"
+      );
+      
+      owned.forEach(c => {
+        if (!discovered.byId.has(c.id)) {
+          discovered.byId.set(c.id, c);
+          discovered.sources.push({ id: c.id, name: c.name, source: 'backend_character_table' });
+        }
+      });
+
+      // Source 2: Dashboard characters (passed to component)
+      (scopedCharacters || []).forEach(c => {
+        if (!discovered.byId.has(c.id)) {
+          discovered.byId.set(c.id, c);
+          discovered.sources.push({ id: c.id, name: c.name, source: 'scoped_characters' });
+        }
+      });
+
+      // Source 3: Normalize all discovered records
+      discovered.byId.forEach(char => {
+        const normalized = normalizeName(char.name);
+        if (!discovered.byNormalizedName.has(normalized)) {
+          discovered.byNormalizedName.set(normalized, []);
+        }
+        discovered.byNormalizedName.get(normalized).push(char);
+      });
+
+    } catch (err) {
+      console.error('Discovery error:', err);
+    }
+
+    return discovered;
+  };
+
   const userEmail = currentUser?.email || '';
 
   useEffect(() => {
@@ -170,103 +219,60 @@ export default function EditCharacterType({ characters = [], currentUser }) {
 
       diag.steps.push({ step: 1, status: 'OK', message: `User authenticated: ${currentUser.email}` });
 
-      // ===== STEP 2: BUILD UNIFIED CANDIDATE SET FROM ALL SOURCES =====
-      // This is the core fix: gather ALL legitimate user-owned characters before applying search
-      
-      const candidateSources = {};
-      
-      // Source A: Backend character table (all)
-      const allCharsRaw = await base44.entities.Character.list("-created_date", 500);
-      candidateSources.backendAll = allCharsRaw.length;
-      diag.steps.push({ step: 2, status: 'OK', message: `Fetched ${allCharsRaw.length} total characters from Character table` });
+      // ===== STEP 2: FULL DISCOVERY =====
+      const discovered = await performFullDiscovery(currentUser.email);
+      const unifiedCandidateSet = Array.from(discovered.byId.values());
 
-      // Source B: Dashboard-passed characters (visible to user)
-      const dashboardSourceIds = new Set((characters || []).map(c => c.id));
-      candidateSources.dashboard = characters?.length || 0;
-      diag.steps.push({ step: 2.1, status: 'OK', message: `Dashboard source: ${characters?.length || 0} characters passed to component` });
-
-      // Source C: Filter backend by ownership
-      const backendOwned = [];
-      const backendNotOwned = [];
-      
-      allCharsRaw.forEach(c => {
-        const ownerEmailMatch = c.owner_email === currentUser.email;
-        const createdByMatch = c.created_by === currentUser.email;
-        const statusValid = c.status !== "deleted";
-        const isOwned = (ownerEmailMatch || createdByMatch) && statusValid;
-        
-        if (isOwned) {
-          backendOwned.push(c);
-        } else {
-          backendNotOwned.push({
-            name: c.name,
-            owner_email: c.owner_email,
-            created_by: c.created_by,
-            status: c.status,
-            ownerEmailMatch,
-            createdByMatch,
-            statusValid
-          });
-        }
+      diag.steps.push({
+        step: 2,
+        status: 'OK',
+        message: `Full discovery complete: ${unifiedCandidateSet.length} total characters owned by user`,
+        sources: discovered.sources.slice(0, 20)
       });
-      candidateSources.backendOwned = backendOwned.length;
-      diag.steps.push({ step: 2.2, status: 'OK', message: `Backend ownership filter: ${backendOwned.length} owned, ${backendNotOwned.length} excluded` });
 
-      // ===== STEP 3: UNIFY AND DEDUPLICATE CANDIDATE SET =====
-      // Combine backend-owned + dashboard sources, deduplicate by id
-      const backendOwnedIds = new Set(backendOwned.map(c => c.id));
-      const dashboardOnlyChars = (characters || []).filter(c => !backendOwnedIds.has(c.id));
-      candidateSources.dashboardOnly = dashboardOnlyChars.length;
-      
-      // Build unified candidate set: backend-owned + dashboard-only
-      const unifiedCandidateSet = [...backendOwned, ...dashboardOnlyChars];
-      const candidateIds = new Set(unifiedCandidateSet.map(c => c.id));
-      candidateSources.unified = unifiedCandidateSet.length;
+      // ===== STEP 3: APPLY SEARCH MATCHING =====
+      let matches = { strong: [], weak: [] };
+
+      if (searchQuery.trim()) {
+        const normalized = normalizeName(searchQuery);
+        const strong = [];
+        const weak = [];
+
+        // Direct normalized name match
+        if (discovered.byNormalizedName.has(normalized)) {
+          strong.push(...discovered.byNormalizedName.get(normalized));
+        }
+
+        // Partial matches
+        for (const [key, chars] of discovered.byNormalizedName.entries()) {
+          if (key !== normalized && (key.includes(normalized) || normalized.includes(key))) {
+            chars.forEach(c => {
+              if (!strong.some(s => s.id === c.id)) {
+                weak.push(c);
+              }
+            });
+          }
+        }
+
+        // Alias matching
+        unifiedCandidateSet.forEach(c => {
+          if (!strong.some(s => s.id === c.id) && !weak.some(w => w.id === c.id)) {
+            if ((c.aliases || []).some(a => normalizeName(a.text || a).includes(normalized))) {
+              weak.push(c);
+            }
+          }
+        });
+
+        matches = { 
+          strong: [...new Set(strong.map(c => c.id))].map(id => unifiedCandidateSet.find(c => c.id === id)),
+          weak: [...new Set(weak.map(c => c.id))].map(id => unifiedCandidateSet.find(c => c.id === id)).filter(c => c && !matches.strong.some(s => s.id === c.id))
+        };
+      }
 
       diag.steps.push({
         step: 3,
-        status: dashboardOnlyChars.length > 0 ? 'WARNING' : 'OK',
-        message: `Unified candidate set: ${backendOwned.length} (backend-owned) + ${dashboardOnlyChars.length} (dashboard-only) = ${unifiedCandidateSet.length} total candidates`,
-        coverage: {
-          backendOwnedCount: backendOwned.length,
-          dashboardOnlyCount: dashboardOnlyChars.length,
-          unifiedTotalCount: unifiedCandidateSet.length,
-          dashboardOnlyNames: dashboardOnlyChars.map(c => c.name)
-        }
-      });
-
-      // ===== COVERAGE DIAGNOSTIC =====
-      // Compare dashboard visibility vs candidate availability
-      const dashboardNames = new Set(characters?.map(c => c.id) || []);
-      const candidateNames = new Set(unifiedCandidateSet.map(c => c.id));
-      const missingFromCandidates = Array.from(dashboardNames).filter(id => !candidateNames.has(id));
-      
-      if (missingFromCandidates.length > 0) {
-        const missingChars = (characters || []).filter(c => missingFromCandidates.includes(c.id));
-        diag.steps.push({
-          step: 3.5,
-          status: 'ERROR',
-          message: `COVERAGE GAP: ${missingChars.length} dashboard character(s) not in candidate set`,
-          missingCharacters: missingChars.map(c => ({
-            id: c.id,
-            name: c.name,
-            owner_email: c.owner_email,
-            created_by: c.created_by
-          }))
-        });
-      }
-
-      // ===== STEP 4: APPLY SEARCH MATCHING TO COMPLETE CANDIDATE SET =====
-      let matches = { strong: [], weak: [] };
-      
-      if (searchQuery.trim()) {
-        matches = findMatches(searchQuery, unifiedCandidateSet);
-      }
-      
-      diag.steps.push({ 
-        step: 4.5, 
-        status: 'OK', 
-        message: `Name matching against unified candidate set: ${matches.strong.length} strong, ${matches.weak.length} weak`,
+        status: 'OK',
+        message: `Search matching: ${matches.strong.length} strong, ${matches.weak.length} weak matches`,
         matchCount: {
           strongMatches: matches.strong.length,
           weakMatches: matches.weak.length,
@@ -275,59 +281,12 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         }
       });
 
-      // ===== STEP 5: FINAL COVERAGE VALIDATION =====
-      // Verify that all dashboard-visible characters were candidates before search
-      const searchResultIds = new Set([...matches.strong, ...matches.weak].map(c => c.id));
-      const dashboardVisibleIds = new Set(characters?.map(c => c.id) || []);
-      
-      const dashboardButNotSearched = Array.from(dashboardVisibleIds).filter(id => !searchResultIds.has(id) && searchQuery.trim());
-      const dashboardButNotInCandidates = Array.from(dashboardVisibleIds).filter(id => !candidateIds.has(id));
-
-      if (dashboardButNotInCandidates.length > 0) {
-        const missingFromCandidates = (characters || []).filter(c => dashboardButNotInCandidates.includes(c.id));
-        diag.steps.push({
-          step: 5,
-          status: 'ERROR',
-          message: `CRITICAL: ${missingFromCandidates.length} dashboard character(s) not in candidate set before search`,
-          criticalGap: missingFromCandidates.map(c => ({
-            id: c.id,
-            name: c.name,
-            owner_email: c.owner_email,
-            created_by: c.created_by,
-            reason: 'Character is visible on dashboard but NOT in unified candidate pool'
-          }))
-        });
-      } else if (searchQuery.trim() && dashboardButNotSearched.length > 0) {
-        const notMatched = (characters || []).filter(c => dashboardButNotSearched.includes(c.id));
-        diag.steps.push({
-          step: 5,
-          status: 'INFO',
-          message: `${notMatched.length} dashboard character(s) in candidates but didn't match search term "${searchQuery}"`,
-          nonMatches: notMatched.map(c => ({
-            id: c.id,
-            name: c.name,
-            reason: 'In candidate pool but name does not match search term'
-          }))
-        });
-      } else if (!searchQuery.trim()) {
-        diag.steps.push({
-          step: 5,
-          status: 'OK',
-          message: `Candidate set ready: ${unifiedCandidateSet.length} characters available for search`
-        });
-      }
-
-      // Final diagnostic summary
       diag.summary = {
         dashboardVisibleCount: characters?.length || 0,
         candidatePoolSize: unifiedCandidateSet.length,
         searchTermUsed: searchQuery.trim(),
         matchesFound: matches.strong.length + matches.weak.length,
-        candidateCoverage: {
-          fromBackend: backendOwned.length,
-          fromDashboardOnly: dashboardOnlyChars.length,
-          total: unifiedCandidateSet.length
-        }
+        discoveryComplete: true
       };
 
       setDiagnosticData(diag);
@@ -336,7 +295,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     };
 
     performSearch();
-  }, [searchQuery, userEmail]);
+  }, [searchQuery, userEmail, scopedCharacters]);
 
   const { strong: strongMatches, weak: weakMatches } = searchMatches;
 
