@@ -126,50 +126,24 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
         </div>
       </div>
 
-      {validationIssues.length > 0 && (
-        <div className="mb-3 p-2 bg-destructive/10 border border-destructive/30 rounded-lg space-y-1">
-          {validationIssues.map((issue, idx) => (
-            <p key={idx} className="text-[10px] text-destructive">{issue}</p>
-          ))}
-        </div>
-      )}
-
-      <div className="space-y-3">
+      <div className="space-y-2">
         {NEEDS.map(({ label, key, emoji }) => {
           const value = character[key] ?? null;
           const displayValue = value !== null ? Math.round(value) : null;
           const { text, color, bg } = displayValue !== null ? getLabel(displayValue) : { text: '…', color: 'text-muted-foreground', bg: 'bg-muted' };
 
           return (
-            <div key={key}>
-              <div className="flex justify-between items-center mb-2">
-                <span className="text-xs font-medium text-foreground">{emoji} {label}</span>
-                <div className="flex items-center gap-2">
-                  {displayValue !== null && (
-                    <span className="text-[10px] font-mono text-foreground font-semibold">{displayValue}</span>
-                  )}
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${color} bg-opacity-20`}>
-                    {text}
-                  </span>
-                </div>
-              </div>
-              {/* Display bar (read-only) */}
-              <div className="h-2 bg-secondary rounded-full overflow-hidden mb-2">
+            <div key={key} className="flex items-center justify-between gap-2">
+              <span className="text-xs font-medium text-foreground min-w-16">{emoji} {label}</span>
+              <div className="flex-1 h-1.5 bg-secondary rounded-full overflow-hidden">
                 <div
                   className={`h-full ${bg} transition-all duration-700`}
                   style={{ width: displayValue !== null ? `${displayValue}%` : '0%' }}
                 />
               </div>
-              {/* Slider for live editing */}
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={displayValue ?? 0}
-                onChange={(e) => handleNeedChange(key, parseInt(e.target.value, 10))}
-                disabled={isUpdating}
-                className="w-full h-1.5 bg-secondary rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40"
-              />
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${color} bg-opacity-20 min-w-fit`}>
+                {displayValue ?? '…'}
+              </span>
             </div>
           );
         })}
