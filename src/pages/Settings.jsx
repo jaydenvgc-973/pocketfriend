@@ -25,6 +25,7 @@ import DiagnosticReportViewer from "@/components/settings/DiagnosticReportViewer
 import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesModal";
 import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
 import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubleshootingPanel";
+import EditCharacterType from "@/components/settings/EditCharacterType";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -563,6 +564,10 @@ export default function Settings() {
                <DiagnosticReportViewer />
              </div>
            )}
+
+          <div className="mb-3">
+            <EditCharacterType characters={characters} currentUser={user} />
+          </div>
 
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3 mt-6">Manage Characters</p>
           <div className="mb-6 bg-card border border-border rounded-2xl p-4">
