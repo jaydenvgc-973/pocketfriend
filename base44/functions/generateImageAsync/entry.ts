@@ -540,7 +540,6 @@ function buildSubjectOutfitBlock(subject) {
   if (!subject.outfit_desc) return '';
   const name = subject.canonical_name;
   // Sanitize outfit descriptions that could trigger content filters
-  // Replace descriptions of minimal/partial clothing with safe alternatives
   let outfitDesc = subject.outfit_desc;
   const sensitivePatterns = [
     /wearing only\s+/gi,
@@ -548,13 +547,12 @@ function buildSubjectOutfitBlock(subject) {
     /topless/gi,
     /no (shirt|top|clothes)/gi,
     /bare (chest|torso|skin|body)/gi,
-    /slight sheen of moisture on his skin/gi,
-    /slight sheen of moisture on her skin/gi,
+    /slight sheen of moisture on (his|her) skin/gi,
   ];
   const isSensitive = sensitivePatterns.some(p => p.test(outfitDesc));
   if (isSensitive) {
-    // Don't inject the outfit block at all — let the user's prompt or reference images handle it
-    return '';
+    // Outfit description triggered filter — use safe default instead
+    return `\nClothing for ${name}: Fully clothed in casual, appropriate everyday clothing for the scene. The character is wearing a complete outfit with a shirt/top and bottom (pants, shorts, or equivalent). Do not generate any partial nudity or minimal clothing.\n`;
   }
   return `\nOutfit for ${name}: ${outfitDesc}. Reproduce this outfit exactly as described. Do not use clothing from the reference photos.\n`;
 }
