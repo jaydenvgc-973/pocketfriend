@@ -152,6 +152,10 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         currentUserEmail: currentUser?.email,
         currentUserId: currentUser?.id,
         searchQuery: searchQuery.trim(),
+        dashboardSource: {
+          charactersPassedIn: characters?.length || 0,
+          charactersFromProps: characters?.map(c => ({ id: c.id, name: c.name, owner_email: c.owner_email, created_by: c.created_by })) || []
+        },
         steps: []
       };
 
@@ -234,6 +238,31 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         strongMatches: matches.strong.map(m => m.name),
         weakMatches: matches.weak.map(m => m.name),
         ownedCharacterNames: ownedByUser.map(c => c.name)
+      });
+
+      // Step 6: CRITICAL COMPARISON — Compare dashboard source to search results
+      const dashboardIds = new Set(characters?.map(c => c.id) || []);
+      const searchResultIds = new Set([...matches.strong, ...matches.weak].map(c => c.id));
+      const backendAllIds = new Set(ownedByUser.map(c => c.id));
+
+      const dashboardInBackend = characters?.filter(c => backendAllIds.has(c.id)) || [];
+      const dashboardNotInSearch = characters?.filter(c => !searchResultIds.has(c.id)) || [];
+
+      diag.steps.push({
+        step: 6,
+        status: dashboardNotInSearch.length > 0 ? 'WARNING' : 'OK',
+        message: `Cross-system comparison: ${dashboardInBackend.length} dashboard chars in backend, ${dashboardNotInSearch.length} dashboard chars missing from search`,
+        dashboardCharacterIds: Array.from(dashboardIds),
+        searchResultIds: Array.from(searchResultIds),
+        backendAllIds: Array.from(backendAllIds),
+        dashboardVisibleButNotFound: dashboardNotInSearch.map(c => ({
+          id: c.id,
+          name: c.name,
+          owner_email: c.owner_email,
+          created_by: c.created_by,
+          inBackendQuery: backendAllIds.has(c.id),
+          inSearchResults: searchResultIds.has(c.id)
+        }))
       });
 
       setDiagnosticData(diag);
@@ -517,9 +546,24 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                   <p className="text-zinc-400">
                     <span className="text-zinc-500">User:</span> {diagnosticData.currentUserEmail}
                   </p>
+                  
+                  {/* Dashboard source comparison */}
+                  {diagnosticData.dashboardSource && (
+                    <div className="p-2 rounded border-l-2 border-purple-600 bg-purple-950/30 text-purple-300">
+                      <p className="font-semibold">Dashboard Source</p>
+                      <p className="mt-1">Characters passed to component: {diagnosticData.dashboardSource.charactersPassedIn}</p>
+                      {diagnosticData.dashboardSource.charactersFromProps.length > 0 && (
+                        <p className="mt-1 text-[10px]">
+                          {diagnosticData.dashboardSource.charactersFromProps.map(c => `${c.name} (${c.owner_email || c.created_by})`).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {diagnosticData.steps.map((step, idx) => (
                     <div key={idx} className={`p-2 rounded border-l-2 ${
                       step.status === 'ERROR' ? 'border-red-600 bg-red-950/30 text-red-300' :
+                      step.status === 'WARNING' ? 'border-amber-600 bg-amber-950/30 text-amber-300' :
                       step.status === 'INFO' ? 'border-blue-600 bg-blue-950/30 text-blue-300' :
                       'border-green-600 bg-green-950/30 text-green-300'
                     }`}>
@@ -548,6 +592,16 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                         <p className="mt-1 text-zinc-400 text-[10px]">
                           Sample excluded: {step.excludedSample.map(e => `${e.name} (owner_email: ${e.ownerEmailMatch}, created_by: ${e.createdByMatch}, status ok: ${e.statusValid})`).join(' | ')}
                         </p>
+                      )}
+                      {step.dashboardVisibleButNotFound && step.dashboardVisibleButNotFound.length > 0 && (
+                        <div className="mt-2 p-2 bg-red-950/50 rounded">
+                          <p className="text-red-300 font-semibold">⚠️ CRITICAL MISMATCH: Dashboard visible but not found in search</p>
+                          {step.dashboardVisibleButNotFound.map((c, i) => (
+                            <p key={i} className="mt-1 text-red-200">
+                              {c.name}: in backend? {c.inBackendQuery ? '✓' : '✗'} | in search? {c.inSearchResults ? '✓' : '✗'} | owner: {c.owner_email || c.created_by}
+                            </p>
+                          ))}
+                        </div>
                       )}
                     </div>
                   ))}
