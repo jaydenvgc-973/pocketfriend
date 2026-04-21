@@ -159,7 +159,7 @@ export default function Moments() {
           <section className="space-y-3">
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider px-1">🔥 Active Arcs</h2>
             <div className="space-y-2">
-              {characters.filter(c => c.character_type === 'active_created_character').map(c => (
+              {characters.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.name || '').localeCompare(b.name || '')).map(c => (
                 <ActiveArcCard key={c.id} character={c} />
               ))}
             </div>
