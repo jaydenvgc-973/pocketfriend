@@ -360,6 +360,79 @@ Deno.serve(async (req) => {
         } catch (_) {}
       }
 
+      // ── WORLD STATE — active environmental drivers ────────────────────────────
+      // Read cached world context (fetched daily at 5 AM by fetchDailyWorldContext).
+      // This is NOT passive flavor. It shapes character behavior, decisions, and tone.
+      let worldStateBlock = '';
+      try {
+        const dateStr = now.toISOString().split('T')[0];
+        const worldStates = await base44.asServiceRole.entities.AppWorldState.filter({ current_date: dateStr });
+        const ws = worldStates?.[0] || null;
+        if (ws) {
+          const parts = [];
+
+          // Crime/safety → characters adjust behavior
+          const crimeHeadlines = ws.news?.crime || [];
+          if (crimeHeadlines.length > 0) {
+            parts.push(`CRIME / SAFETY CONDITIONS: ${crimeHeadlines.slice(0,3).join('; ')}
+→ Characters aware of crime may: avoid going out late, stick to known areas, leave certain venues earlier, mention safety concerns naturally in conversation.`);
+          }
+
+          // Economic stress → financial decisions
+          const econ = ws.news?.economics || [];
+          if (econ.length > 0) {
+            parts.push(`ECONOMIC CONDITIONS: ${econ.slice(0,2).join('; ')}
+→ Characters under economic stress may: hesitate on purchases, choose cheaper options, express money anxiety, skip social outings due to cost.`);
+          }
+
+          // Health / social alerts → health behaviors
+          const healthAlerts = ws.society?.health_alerts || {};
+          const healthStr = typeof healthAlerts === 'object' ? Object.entries(healthAlerts).map(([k,v]) => `${k}: ${v}`).join('; ') : String(healthAlerts);
+          if (healthStr && healthStr.length > 5) {
+            parts.push(`HEALTH CONDITIONS IN THE WORLD: ${healthStr}
+→ Characters may respond with: scheduling checkups, picking up medication, mentioning going to the clinic, expressing concern about their own health or someone else's. Hospitals and pharmacies are active destinations.`);
+          }
+
+          // Addiction / substance trends
+          const addictionTrends = ws.society?.addiction_trends || {};
+          const addStr = typeof addictionTrends === 'object' ? Object.entries(addictionTrends).map(([k,v]) => `${k}: ${v}`).join('; ') : String(addictionTrends);
+          if (addStr && addStr.length > 5) {
+            parts.push(`SUBSTANCE / ADDICTION ENVIRONMENT: ${addStr}
+→ Characters with relevant traits or vulnerabilities may reflect this through their choices, temptations, or restraint.`);
+          }
+
+          // General news/stress
+          const headlines = (ws.news?.headlines || []).slice(0,4).map(h => h.title || h).filter(Boolean);
+          if (headlines.length > 0) {
+            parts.push(`CURRENT WORLD NEWS (background awareness): ${headlines.join('; ')}
+→ Characters may reference or react to current events subtly — not by reciting them, but by how they affect mood, conversation, or decisions.`);
+          }
+
+          // Entertainment / pop culture
+          const trending = (ws.entertainment?.trending || []).slice(0,3);
+          if (trending.length > 0) {
+            parts.push(`TRENDING CULTURE: ${trending.join(', ')}
+→ Characters may reference these naturally in conversation, social plans, or entertainment choices.`);
+          }
+
+          if (parts.length > 0) {
+            worldStateBlock = `
+WORLD STATE — ACTIVE ENVIRONMENTAL DRIVERS (treat as behavioral inputs, not background trivia)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+${parts.join('\n\n')}
+
+CRITICAL RULE: These conditions must influence ${name}'s behavior, decisions, and/or narrative today.
+Characters do NOT recite statistics. They respond to them through action, tone, and choices.
+If crime is up → they may leave earlier, avoid certain areas, lock up.
+If health risks exist → they may schedule a checkup, pick up meds, mention a concern.
+If economic stress is high → they may skip spending, mention money, choose cheaper options.
+If substance trends are present → relevant characters may feel the pull or resist it.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`;
+          }
+        }
+      } catch (_) {}
+      // ─────────────────────────────────────────────────────────────────────────
+
       // Gender pronoun resolution for third-person narration
       const gender = character.gender?.toLowerCase();
       const pronouns = (() => {
@@ -393,6 +466,8 @@ ${departedContext}
 ${eventHistoryContext}
 ${vulnerabilityContext}
 ${growthContext}
+
+${worldStateBlock}
 
 LOCATION AFFINITY (identity-driven — must shape every location choice during free time):
 ${locationAffinityContext ? `

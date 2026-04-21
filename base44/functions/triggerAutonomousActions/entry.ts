@@ -445,6 +445,38 @@ function resolveCurrentActivity(character, pendingScheduledEvents, allLocations)
     }
   }
 
+  // ── WORLD CONDITIONS — active environmental drivers ───────────────────────
+  const wc = character._worldConditions || null;
+  if (wc) {
+    // Health alerts → push medical/pharmacy visits
+    if (wc.hasHealthAlert && healthNeed < 75) {
+      candidates.push({ weight: 50, label: pickRandom(['out — picking up medication', 'out — health errand', 'at the pharmacy', 'out — scheduled a checkup', 'out — health appointment']), type: 'out', needsEffect: { health: 12 } });
+    }
+
+    // High crime → remove late-night outings or reduce their weight
+    if (wc.highCrime && (isEvening || isLateNight)) {
+      for (const c of candidates) {
+        if (/bar|lounge|club|night|social/i.test(c.label)) {
+          c.weight = Math.floor(c.weight * 0.5); // less likely to go out at risky times
+        }
+      }
+      // May mention safety as reason to stay closer to home
+      if (isLateNight) candidates.push({ weight: 30, label: 'at home — not going out tonight, not safe', type: 'home', needsEffect: {} });
+    }
+
+    // High economic stress → more errands/budget behavior, fewer luxury outings
+    if (wc.highEconomicStress) {
+      // Reduce weight of expensive outings
+      for (const c of candidates) {
+        if (/restaurant|dinner out|bar|lounge|entertainment|club/i.test(c.label) && financial < 50) {
+          c.weight = Math.floor(c.weight * 0.6);
+        }
+      }
+      // Add budget-conscious alternatives
+      candidates.push({ weight: 30, label: pickRandom(['out running errands — keeping it budget', 'at the grocery store — sticking to basics', 'out — handling necessities']), type: 'out', needsEffect: { hunger: 10 } });
+    }
+  }
+
   // ── HOMEBODY ADJUSTMENT ───────────────────────────────────────────────────
   // Homebodies still go out but at a lower rate
   if (isHomebody) {
@@ -553,10 +585,37 @@ Deno.serve(async (req) => {
       allLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: user.email });
     } catch (_) {}
 
+    // ── WORLD STATE: inject real-world conditions as activity drivers ──────────
+    let worldConditions = null;
+    try {
+      const dateStr = now.toISOString().split('T')[0];
+      const worldStates = await base44.asServiceRole.entities.AppWorldState.filter({ current_date: dateStr });
+      if (worldStates?.[0]) {
+        const ws = worldStates[0];
+        worldConditions = {
+          // High crime → characters go out less at night, avoid certain areas
+          highCrime: ws.society?.crime_stats?.safety_level === 'high' || ws.society?.crime_stats?.safety_level === 'elevated',
+          // Health alerts → push medical/pharmacy visits
+          healthAlerts: ws.society?.health_alerts || {},
+          hasHealthAlert: Object.values(ws.society?.health_alerts || {}).some(v => v && String(v).length > 10),
+          // Economic stress → restrain spending, fewer social outings
+          economicStress: ws.society?.economic_indicators?.overall_stress_level,
+          highEconomicStress: ['high', 'very_high'].includes(ws.society?.economic_indicators?.overall_stress_level),
+          // Entertainment → might drive social plans
+          trending: ws.entertainment?.trending || [],
+        };
+      }
+    } catch (_) {}
+
     const updated = [];
 
     for (const character of characters) {
       if (!shouldTriggerAutonomy(character)) continue;
+
+      // Inject world conditions into character as temporary context
+      if (worldConditions) {
+        character._worldConditions = worldConditions;
+      }
 
       const resolved = resolveCurrentActivity(character, pendingScheduledEvents, allLocations);
 
