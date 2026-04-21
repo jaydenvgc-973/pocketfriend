@@ -23,11 +23,13 @@ function getLabel(value) {
 export default function CharacterNeedsPanel({ character, onRefresh }) {
   const [isSimulating, setIsSimulating] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
   const [lastSimResult, setLastSimResult] = useState(null);
+  const [validationIssues, setValidationIssues] = useState([]);
   const queryClient = useQueryClient();
 
-  // Only show for active created characters
-  const isActiveCreated = character?.character_type === 'active' && character?.status === 'active';
+  // Only show for active created characters (HARD RULE: character_type must be exactly 'active_created_character')
+  const isActiveCreated = character?.character_type === 'active_created_character' && character?.status === 'active';
 
   // Run simulation on mount and when character changes
   useEffect(() => {
@@ -45,18 +47,47 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
   const runSimulation = async () => {
     if (isSimulating) return;
     setIsSimulating(true);
+    setValidationIssues([]);
     try {
       const res = await base44.functions.invoke('simulateActiveCharacterNeeds', {
         characterId: character.id,
       });
       setLastSimResult(res?.data);
-      // Invalidate character query so profile re-reads fresh values
-      queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+      // Force re-sync: invalidate and refetch immediately
+      await queryClient.invalidateQueries({ queryKey: ['character', character.id] });
       if (onRefresh) onRefresh();
     } catch (err) {
       console.error('[CharacterNeedsPanel] simulation error:', err);
+      setValidationIssues([`Simulation failed: ${err.message}`]);
     } finally {
       setIsSimulating(false);
+    }
+  };
+
+  const handleNeedChange = async (key, newValue) => {
+    if (isUpdating) return;
+    setIsUpdating(true);
+    setValidationIssues([]);
+    try {
+      // Persist immediately to backend
+      const updatePayload = { [key]: newValue };
+      await base44.entities.Character.update(character.id, updatePayload);
+      
+      // Force re-sync: invalidate character query
+      await queryClient.invalidateQueries({ queryKey: ['character', character.id] });
+      
+      // Trigger state recalculation
+      await base44.functions.invoke('simulateActiveCharacterNeeds', {
+        characterId: character.id,
+        forceRecalculate: true,
+      }).then(res => setLastSimResult(res?.data)).catch(e => console.error('Recalc error:', e));
+      
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      console.error('[CharacterNeedsPanel] update error:', err);
+      setValidationIssues([`Failed to update ${key}: ${err.message}`]);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
@@ -95,6 +126,14 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
         </div>
       </div>
 
+      {validationIssues.length > 0 && (
+        <div className="mb-3 p-2 bg-destructive/10 border border-destructive/30 rounded-lg space-y-1">
+          {validationIssues.map((issue, idx) => (
+            <p key={idx} className="text-[10px] text-destructive">{issue}</p>
+          ))}
+        </div>
+      )}
+
       <div className="space-y-3">
         {NEEDS.map(({ label, key, emoji }) => {
           const value = character[key] ?? null;
@@ -103,48 +142,80 @@ export default function CharacterNeedsPanel({ character, onRefresh }) {
 
           return (
             <div key={key}>
-              <div className="flex justify-between items-center mb-1">
+              <div className="flex justify-between items-center mb-2">
                 <span className="text-xs font-medium text-foreground">{emoji} {label}</span>
                 <div className="flex items-center gap-2">
                   {displayValue !== null && (
-                    <span className="text-[10px] font-mono text-muted-foreground">{displayValue}</span>
+                    <span className="text-[10px] font-mono text-foreground font-semibold">{displayValue}</span>
                   )}
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${color} bg-opacity-20`}>
                     {text}
                   </span>
                 </div>
               </div>
-              <div className="h-2 bg-secondary rounded-full overflow-hidden">
+              {/* Display bar (read-only) */}
+              <div className="h-2 bg-secondary rounded-full overflow-hidden mb-2">
                 <div
                   className={`h-full ${bg} transition-all duration-700`}
                   style={{ width: displayValue !== null ? `${displayValue}%` : '0%' }}
                 />
               </div>
+              {/* Slider for live editing */}
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={displayValue ?? 0}
+                onChange={(e) => handleNeedChange(key, parseInt(e.target.value, 10))}
+                disabled={isUpdating}
+                className="w-full h-1.5 bg-secondary rounded-full appearance-none cursor-pointer accent-primary disabled:opacity-40"
+              />
             </div>
           );
         })}
       </div>
 
-      {/* Debug panel */}
+      {/* Debug panel — exposes raw backend state */}
       {showDebug && (
-        <div className="mt-4 p-3 bg-secondary/50 rounded-xl space-y-2 text-[10px] font-mono text-muted-foreground">
-          <p className="font-semibold text-foreground text-xs">Debug Info — Active Character Needs</p>
-          <p>character_type: <span className="text-primary">{character.character_type}</span></p>
-          <p>needs_initialized: <span className={character.needs_initialized ? 'text-green-400' : 'text-red-400'}>{String(character.needs_initialized ?? false)}</span></p>
-          <p>last_need_simulated_at: <span className="text-foreground">{lastSimAt ? new Date(lastSimAt).toLocaleString() : 'never'}</span></p>
-          <p>elapsed since last sim: <span className="text-foreground">{elapsedMinutes !== null ? `${elapsedMinutes} min` : '—'}</span></p>
+        <div className="mt-4 p-3 bg-secondary/50 rounded-xl space-y-2 text-[10px] font-mono text-muted-foreground overflow-auto max-h-64">
+          <p className="font-semibold text-foreground text-xs">Backend State Inspector</p>
+          
+          <div className="border-t border-border pt-2 mt-2">
+            <p className="font-semibold text-foreground text-xs mb-1">Character</p>
+            <p>id: <span className="text-primary">{character.id}</span></p>
+            <p>character_type: <span className="text-primary">{character.character_type}</span></p>
+            <p>status: <span className="text-primary">{character.status}</span></p>
+            <p>needs_initialized: <span className={character.needs_initialized ? 'text-green-400' : 'text-red-400'}>{String(character.needs_initialized ?? false)}</span></p>
+            <p>last_need_simulated_at: <span className="text-foreground">{lastSimAt ? new Date(lastSimAt).toLocaleString() : 'never'}</span></p>
+            <p>elapsed since last sim: <span className="text-foreground">{elapsedMinutes !== null ? `${elapsedMinutes} min` : '—'}</span></p>
+          </div>
+
+          <div className="border-t border-border pt-2">
+            <p className="font-semibold text-foreground text-xs mb-1">Current Needs (from DB)</p>
+            {NEEDS.map(({ label, key }) => (
+              <p key={key}>{label.padEnd(10)}: <span className="text-foreground font-semibold">{character[key] ?? '(null)'}</span></p>
+            ))}
+          </div>
+
           {simUpdate && (
-            <>
-              <p>last sim action: <span className="text-primary">{simUpdate.action}</span></p>
+            <div className="border-t border-border pt-2">
+              <p className="font-semibold text-foreground text-xs mb-1">Last Simulation</p>
+              <p>action: <span className="text-primary">{simUpdate.action}</span></p>
               <p>context: <span className="text-primary">{simUpdate.context ?? '—'}</span></p>
-              <p>elapsed hours applied: <span className="text-foreground">{simUpdate.elapsedHours ?? '—'}</span></p>
-            </>
+              <p>elapsed_hours: <span className="text-foreground">{simUpdate.elapsedHours ?? '—'}</span></p>
+            </div>
           )}
-          <p className="pt-1 text-muted-foreground/60">Raw values:</p>
-          {NEEDS.map(({ label, key }) => (
-            <p key={key}>{label}: <span className="text-foreground">{character[key] ?? 'null (from DB)'}</span></p>
-          ))}
-          <p>source: <span className={character.needs_initialized ? 'text-green-400' : 'text-amber-400'}>{character.needs_initialized ? 'database' : 'uninitialized — will be set on next run'}</span></p>
+
+          {lastSimResult?.decision_weights && (
+            <div className="border-t border-border pt-2">
+              <p className="font-semibold text-foreground text-xs mb-1">Decision Weights (from last sim)</p>
+              {Object.entries(lastSimResult.decision_weights).map(([key, weight]) => (
+                <p key={key}>{key.padEnd(15)}: <span className="text-foreground">{(weight * 100).toFixed(1)}%</span></p>
+              ))}
+            </div>
+          )}
+
+          <p className="pt-2 text-muted-foreground/60 italic">This panel shows the authoritative backend state. UI must match exactly.</p>
         </div>
       )}
     </div>
