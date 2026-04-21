@@ -78,6 +78,8 @@ export default function EditCharacterType({ characters = [], currentUser }) {
   const [familyTitle, setFamilyTitle] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [saveResult, setSaveResult] = useState(null); // { success, message }
+  const [isCreatingNew, setIsCreatingNew] = useState(false); // Create mode when no match found
+  const [newCharName, setNewCharName] = useState("");
 
   // Active characters for linking (NPC must link to an active_created_character)
   const activeChars = useMemo(
@@ -116,6 +118,108 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     setFamilyTitle("");
     setSaveResult(null);
     setSearchQuery("");
+    setIsCreatingNew(false);
+    setNewCharName("");
+  };
+
+  const handleCreateNew = async () => {
+    if (!newCharName.trim() || !selectedType) return;
+    setIsSaving(true);
+    setSaveResult(null);
+
+    try {
+      // Create minimal new character with the selected type
+      const charData = {
+        name: newCharName.trim(),
+        character_type: selectedType,
+        status: "active",
+        created_by: currentUser?.email,
+        owner_email: currentUser?.email,
+        owner_user_id: currentUser?.id,
+        created_by_role: currentUser?.role || "user",
+      };
+
+      // Handle required relationship setup before creating
+      if (selectedType === "npc_family_member" && linkedCharId && familyTitle) {
+        charData.family_members = [];
+      } else if (selectedType === "npc_fictitious" && linkedCharId && relationshipType) {
+        charData.fictional_relationships = [];
+      }
+
+      // Create the character
+      const created = await base44.entities.Character.create(charData);
+
+      // If it's an NPC with a linked character, add it to that character's relationships
+      if (linkedCharId) {
+        const linkedChar = characters.find(c => c.id === linkedCharId);
+        if (linkedChar) {
+          if (selectedType === "npc_family_member" && familyTitle) {
+            const existingFamily = linkedChar.family_members || [];
+            await base44.entities.Character.update(linkedCharId, {
+              family_members: [...existingFamily, { name: created.name, relationship_type: familyTitle }]
+            });
+            const existingRels = linkedChar.fictional_relationships || [];
+            await base44.entities.Character.update(linkedCharId, {
+              fictional_relationships: [
+                ...existingRels,
+                {
+                  person_name: created.name,
+                  related_character_id: created.id,
+                  relationship_type: "family",
+                  description: `${familyTitle} — ${created.name}`,
+                  current_status: "active",
+                  emotional_impact: "neutral",
+                  last_interaction_summary: "",
+                  history_summary: "",
+                }
+              ]
+            });
+          } else if (selectedType === "npc_fictitious" && relationshipType) {
+            const existingRels = linkedChar.fictional_relationships || [];
+            await base44.entities.Character.update(linkedCharId, {
+              fictional_relationships: [
+                ...existingRels,
+                {
+                  person_name: created.name,
+                  related_character_id: created.id,
+                  relationship_type: relationshipType.toLowerCase(),
+                  description: `${relationshipType} — ${created.name}`,
+                  current_status: "active",
+                  emotional_impact: "neutral",
+                  last_interaction_summary: "",
+                  history_summary: "",
+                }
+              ]
+            });
+          }
+        }
+      }
+
+      // Invalidate caches
+      queryClient.invalidateQueries({ queryKey: ["characters"] });
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      if (linkedCharId) queryClient.invalidateQueries({ queryKey: ["character", linkedCharId] });
+
+      setSaveResult({
+        success: true,
+        message: `✓ Created ${newCharName} as ${typeLabel(selectedType)}. All lists updated.`
+      });
+
+      // Reset
+      setIsCreatingNew(false);
+      setNewCharName("");
+      setSearchQuery("");
+      setSelectedChar(null);
+      setSelectedType("");
+      setLinkedCharId("");
+      setRelationshipType("");
+      setFamilyTitle("");
+
+    } catch (err) {
+      setSaveResult({ success: false, message: `Failed to create: ${err.message}` });
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleSave = async () => {
@@ -270,8 +374,121 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                 )}
               </AnimatePresence>
 
+              {/* Create new mode */}
+              {isCreatingNew && (
+                <div className="space-y-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Creating New Character</p>
+                    <div className="p-3 rounded-xl bg-secondary/60 border border-border">
+                      <p className="text-sm font-semibold text-foreground">{newCharName}</p>
+                    </div>
+                  </div>
+
+                  {/* Type selector for new character */}
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Step 1 — Select Type</p>
+                    {CHARACTER_TYPES.map(type => {
+                      const Icon = type.icon;
+                      const isSelected = selectedType === type.value;
+                      return (
+                        <button
+                          key={type.value}
+                          onClick={() => { setSelectedType(type.value); setLinkedCharId(""); setRelationshipType(""); setFamilyTitle(""); }}
+                          className={`w-full flex items-start gap-3 p-3 rounded-xl border transition-colors text-left ${isSelected ? `${type.bg} ${type.border}` : "bg-secondary border-border hover:border-primary/30"}`}
+                        >
+                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${isSelected ? type.bg : "bg-card"}`}>
+                            <Icon className={`w-4 h-4 ${isSelected ? type.color : "text-muted-foreground"}`} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium">{type.label}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">{type.desc}</p>
+                          </div>
+                          {isSelected && <Check className={`w-4 h-4 flex-shrink-0 mt-1 ${type.color}`} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Required fields for new character */}
+                  {selectedType && CHARACTER_TYPES.find(t => t.value === selectedType) && (CHARACTER_TYPES.find(t => t.value === selectedType).requiresLinkedChar || CHARACTER_TYPES.find(t => t.value === selectedType).requiresRelType || CHARACTER_TYPES.find(t => t.value === selectedType).requiresFamilyTitle) && (
+                    <div className="space-y-3 pt-1">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Step 2 — Required Relationship Info</p>
+
+                      {CHARACTER_TYPES.find(t => t.value === selectedType).requiresLinkedChar && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-muted-foreground">Link to Active Creative Character <span className="text-destructive">*</span></label>
+                          {activeChars.length === 0 ? (
+                            <p className="text-xs text-amber-400 bg-amber-400/10 rounded-lg px-3 py-2">No active creative characters found. Create one first.</p>
+                          ) : (
+                            <select
+                              value={linkedCharId}
+                              onChange={e => setLinkedCharId(e.target.value)}
+                              className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:border-primary/50 outline-none"
+                            >
+                              <option value="">— Select a character —</option>
+                              {activeChars.map(c => (
+                                <option key={c.id} value={c.id}>{c.name}</option>
+                              ))}
+                            </select>
+                          )}
+                        </div>
+                      )}
+
+                      {CHARACTER_TYPES.find(t => t.value === selectedType).requiresRelType && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-muted-foreground">Relationship to that character <span className="text-destructive">*</span></label>
+                          <select
+                            value={relationshipType}
+                            onChange={e => setRelationshipType(e.target.value)}
+                            className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:border-primary/50 outline-none"
+                          >
+                            <option value="">— Select relationship type —</option>
+                            {NPC_REL_TYPES.map(r => (
+                              <option key={r} value={r}>{r}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {CHARACTER_TYPES.find(t => t.value === selectedType).requiresFamilyTitle && (
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-muted-foreground">Family title <span className="text-destructive">*</span></label>
+                          <select
+                            value={familyTitle}
+                            onChange={e => setFamilyTitle(e.target.value)}
+                            className="w-full bg-secondary text-foreground text-sm rounded-xl px-3 py-2.5 border border-border focus:border-primary/50 outline-none"
+                          >
+                            <option value="">— Select family title —</option>
+                            {FAMILY_TITLES.map(t => (
+                              <option key={t} value={t}>{t}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="flex gap-2">
+                    <Button
+                      onClick={() => { setIsCreatingNew(false); setNewCharName(""); setSelectedType(""); setSearchQuery(""); }}
+                      variant="outline"
+                      className="flex-1 rounded-xl h-11"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      onClick={handleCreateNew}
+                      disabled={!selectedType || !canSave() || isSaving}
+                      className="flex-1 rounded-xl h-11"
+                    >
+                      {isSaving ? "Creating..." : "Create Character"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+
               {/* Step 1: Search */}
-              {!selectedChar && (
+              {!selectedChar && !isCreatingNew && (
                 <div className="space-y-3">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Step 1 — Find a Character</p>
                   <p className="text-xs text-muted-foreground">Search all characters on your account — active, NPCs, family, contacts.</p>
@@ -285,10 +502,19 @@ export default function EditCharacterType({ characters = [], currentUser }) {
                     />
                   </div>
 
-                  {searchQuery.length >= 2 && (
+                  {searchQuery.length >= 2 && !isCreatingNew && (
                     <div className="space-y-1.5">
-                      {searchResults.length === 0 ? (
-                        <p className="text-xs text-muted-foreground text-center py-3">No characters found matching "{searchQuery}".</p>
+                      {searchResults.length === 0 && !isCreatingNew ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-muted-foreground text-center py-2">No characters found matching "{searchQuery}".</p>
+                          <button
+                            onClick={() => { setIsCreatingNew(true); setNewCharName(searchQuery); }}
+                            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary/10 text-primary text-xs font-medium hover:bg-primary/20 transition-colors"
+                          >
+                            <Star className="w-3.5 h-3.5" />
+                            Create new character named "{searchQuery}"
+                          </button>
+                        </div>
                       ) : (
                         searchResults.map(char => (
                           <button
