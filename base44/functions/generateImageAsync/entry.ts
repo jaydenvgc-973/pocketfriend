@@ -231,49 +231,10 @@ function resolveLocationAndZone(prompt, locations, characterId) {
 function buildRoomLockNote(locationName, zoneName) {
   const placeLabel = [locationName, zoneName].filter(Boolean).join(' → ');
   return `
-
-════════════════════════════════════════════════════════════
-ENVIRONMENT IDENTITY LOCK: ${placeLabel}
-THIS IS A MANDATORY ARCHITECTURAL CONSTRAINT — NOT A SUGGESTION
-════════════════════════════════════════════════════════════
-The reference images provided are NOT inspiration, NOT mood boards, NOT style guides.
-They are the GROUND TRUTH photographs of this specific ${zoneName || 'space'}.
-${locationName ? `Location: ${locationName}` : ''}${zoneName ? `\nZone: ${zoneName}` : ''}
-
-YOU ARE GENERATING A NEW PHOTOGRAPH OF THE EXACT SAME ROOM/SPACE FROM A DIFFERENT ANGLE.
-Not a similar room. Not a reimagined version. The IDENTICAL space.
-
-WHAT IS LOCKED — ZERO EXCEPTIONS:
-────────────────────────────────────
-ZONE INTEGRITY: You are working within the "${zoneName || 'matched area'}" zone only. Do NOT blend elements from other zones or rooms within this location.
-FLOORING: Exact material, species, color, plank direction, tile pattern, grout lines, carpet pile, and finish.
-WALLS: Exact paint color, sheen level, any wallpaper, wainscoting, baseboard trim color, crown molding profile, and accent walls.
-FURNITURE: Each furniture item must match in exact shape, proportions, style, color, fabric, and material. Do NOT add, remove, substitute, or restyle ANY furniture.
-SPATIAL RELATIONSHIPS ARE LOCKED: couch position, bed position, dresser position, table position.
-FABRICS & UPHOLSTERY: Exact texture, weave, pattern, and color of every cushion, throw pillow, blanket, curtain, rug, and chair cover.
-WINDOW TREATMENTS: Curtains, blinds, shades, shutters — same fabric, color, length, fullness, rod/track hardware.
-WALL ART & MOUNTED OBJECTS: Every framed photo, painting, mirror, clock, and wall-mounted object must appear in the same wall position.
-LIGHTING FIXTURES: All ceiling fixtures, pendants, floor lamps, table lamps, and sconces must match in style, position, and light temperature.
-DECORATIVE OBJECTS: Every plant, vase, sculpture, candle, tray, remote, throw blanket must be present and in place.
-SPATIAL PROPORTIONS: Room dimensions, ceiling height, window size, window placement, door positions.
-
-CHARACTER PLACEMENT: Place subjects only in spots where a person could physically be. Do NOT block doors, stand inside furniture, or clip through walls.
-
-PERMITTED CHANGES:
-✓ Camera angle, framing, zoom, and perspective
-✓ Subject pose, position, expression, and action
-✓ Time of day / lighting conditions ONLY IF explicitly requested
-
-PROHIBITED CHANGES:
-✗ Furniture style, color, shape, or placement
-✗ Floor material or color
-✗ Wall color or finish
-✗ Room layout or aesthetic
-✗ Adding or removing any room-defining element
-
-CRITICAL RULE: "Same room different angle" means ONLY the camera moves. Nothing else changes.
-CRITICAL RULE: Do NOT fall back to generic generation. If reference images exist, they are the source of truth.
-════════════════════════════════════════════════════════════`;
+The scene is set in the ${zoneName || 'space'} of ${locationName}.
+Use the reference photographs to match: flooring material and color, wall color and finish, furniture pieces and positions, lighting fixtures, window treatments, and decorative objects.
+Generate the scene from a different camera angle. Only the viewpoint changes—all architectural and furnishing elements remain identical.
+Place the subject naturally within the space.`;
 }
 
 // ── SUBJECT RECORD BUILDERS ──────────────────────────────────────────────────
@@ -539,7 +500,6 @@ function dedupeSubjects(subjects) {
 function buildSubjectOutfitBlock(subject) {
   if (!subject.outfit_desc) return '';
   const name = subject.canonical_name;
-  // Sanitize outfit descriptions that could trigger content filters
   let outfitDesc = subject.outfit_desc;
   const sensitivePatterns = [
     /wearing only\s+/gi,
@@ -551,28 +511,18 @@ function buildSubjectOutfitBlock(subject) {
   ];
   const isSensitive = sensitivePatterns.some(p => p.test(outfitDesc));
   if (isSensitive) {
-    // Outfit description triggered filter — use safe default instead
-    return `\nClothing for ${name}: Fully clothed in casual, appropriate everyday clothing for the scene. The character is wearing a complete outfit with a shirt/top and bottom (pants, shorts, or equivalent). Do not generate any partial nudity or minimal clothing.\n`;
+    return `\n${name} is wearing casual everyday clothing suitable for the scene.\n`;
   }
-  return `\nOutfit for ${name}: ${outfitDesc}. Reproduce this outfit exactly as described. Do not use clothing from the reference photos.\n`;
+  return `\n${name}'s clothing: ${outfitDesc}\n`;
 }
 
 function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd) {
   const name = subject.canonical_name;
-  const lockDesc = subject.lock_text ? `Appearance lock (FIXED — never change): ${subject.lock_text}.` : '';
+  const lockDesc = subject.lock_text ? `Appearance details: ${subject.lock_text}.` : '';
   const ethnicityWarning = subject.ethnicities?.length > 0
-    ? `Ethnicity: ${subject.ethnicities.join(', ')}. Accurately reflect this in skin tone, facial structure, and hair texture.`
-    : `Use reference images to accurately determine ${name}'s appearance.`;
-
-  const avatarSeparationWarning = `Note: Reference images ${imageIndexStart}–${imageIndexEnd} are for ${name}'s face and body identity only. Use the scene prompt for environment and setting, not the reference image backgrounds.`;
-
-  return `
-
-Identity reference (images ${imageIndexStart}–${imageIndexEnd}): This is ${name}. Replicate their exact face, skin tone, hair, and body type from these reference photos with high fidelity.
-${ethnicityWarning}
-${lockDesc}
-${subject.appearance_text ? `Appearance: ${subject.appearance_text}.` : ''}
-${avatarSeparationWarning}`;
+    ? `Ethnicity: ${subject.ethnicities.join(', ')}.`
+    : '';
+  return `\nSubject: ${name} (reference images ${imageIndexStart}–${imageIndexEnd}). Match facial features, skin tone, hair, and body type from reference photos. ${ethnicityWarning} ${subject.appearance_text ? `Additional context: ${subject.appearance_text}.` : ''} ${lockDesc}`;
 }
 
 Deno.serve(async (req) => {
@@ -1132,25 +1082,9 @@ The environment must feel real, functional, and original.
       const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charRefStart, charRefEnd);
       const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userRefStart, userRefEnd);
 
-      const refOrderNote = hasLocationImages
-        ? `REFERENCE IMAGE ORDER:
-• Images ${charRefStart}–${charRefEnd}: ${charName}'s face and body — replicate EXACTLY
-• Images ${userRefStart}–${userRefEnd}: ${userName}'s face and body — replicate EXACTLY (their real face, NOT a generic person)
-• Images ${locRefStart}–${locRefEnd}: THE ROOM ("${resolvedZoneName || resolvedLocationName}") — locked environment
+      const refOrderNote = `Two subjects: ${charName} and ${userName}. Keep their appearances and outfits distinct.`;
 
-CRITICAL: ${charName} and ${userName} are TWO DIFFERENT, COMPLETELY SEPARATE PEOPLE.
-DO NOT merge, blend, or confuse their faces, bodies, or outfits in any way.
-Each person's outfit is assigned EXCLUSIVELY to them and must not be applied to the other person.`
-        : `CRITICAL: This image features TWO SPECIFIC PEOPLE:
-• Person 1 = ${charName} (Images ${charRefStart}–${charRefEnd}): replicate their exact face, skin tone, hair, and body
-• Person 2 = ${userName} (Images ${userRefStart}–${userRefEnd}): replicate their exact face, skin tone, hair, and body — real person from reference photos, NOT a random or generic face
-
-These are TWO DIFFERENT PEOPLE. DO NOT mix or blend their appearances, faces, or outfits.`;
-
-      const noDoubleInject = `
-⚠️ DUPLICATE PREVENTION: Each person appears EXACTLY ONCE. Do NOT generate two versions of ${charName}. Do NOT generate two versions of ${userName}. Explicitly selected subjects are the ONLY named people in this scene. No ambient or background versions of named subjects.`;
-
-      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}${noDoubleInject}`;
+      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
 
     } else if (finalUserSubject && !finalCharSubject) {
       // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
@@ -1178,29 +1112,8 @@ CRITICAL: The subject of this image is ${userName}. Replicate their exact face, 
         ? buildSubjectIdentityBlock(finalCharSubject, charRefStart, charRefEnd)
         : '';
 
-      const roomInstruction = hasLocationImages
-        ? `
-════════════════════════════════════════════════════════════
-REFERENCE IMAGE ORDER — TWO SEPARATE PIPELINES
-════════════════════════════════════════════════════════════
-Images 1–${locRefEnd}: SCENE/LOCATION ("${resolvedZoneName || resolvedLocationName}")
-  → These images define WHERE the scene happens
-  → Replicate the environment EXACTLY (flooring, walls, furniture, lighting)
-  → This is the SOLE source of scenery — avatar background does NOT contribute
-
-Images ${charRefStart}–${charRefEnd}: CHARACTER IDENTITY (${charName})
-  → These images define WHO is in the scene
-  → Extract ONLY: face, skin tone, hair, body type
-  → ⛔ DO NOT use any background or room from these images — environment comes from Images 1–${locRefEnd} only
-
-HARD RULE: The scene environment is Images 1–${locRefEnd}. Period.
-Do NOT blend or borrow any environment from the character reference images.
-════════════════════════════════════════════════════════════`
-        : `CRITICAL: Subject is ${charName}. Replicate their exact face, features, and appearance. Do NOT include any other person — ${charName} only.`;
-
-      const noDoubleInject = `⚠️ DUPLICATE PREVENTION: ${charName} appears EXACTLY ONCE. Do NOT generate two versions of this person.`;
-
-      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}\n\n${roomInstruction}\n${noDoubleInject}`;
+      const roomInstruction = '';
+      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${cleanPrompt}${expressionNote}${locationNote}${charIdentityBlock}`;
 
     } else {
       // No subjects resolved — pure environment/text render
@@ -1215,32 +1128,7 @@ Do NOT blend or borrow any environment from the character reference images.
       console.log(`[LOCATION_SYNC] Live location context injected into prompt.`);
     }
 
-    // ── STEP 6: TIME OF DAY ──────────────────────────────────────────────────
-    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    const nowHour = nowET.getHours();
-    const nowMinutes = nowET.getMinutes();
-    const nowTimeStr = `${nowHour % 12 || 12}:${String(nowMinutes).padStart(2, '0')} ${nowHour >= 12 ? 'PM' : 'AM'}`;
-    let timeLightingNote = '';
-    if (nowHour >= 22 || nowHour < 5) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (late night / deep night). ABSOLUTELY NO sunlight. NO daylight. Windows must show complete darkness, night sky, or city lights at night. Interior lighting only.`;
-    } else if (nowHour >= 5 && nowHour < 7) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (very early morning / pre-dawn). Minimal natural light. Mostly interior lighting.`;
-    } else if (nowHour >= 7 && nowHour < 10) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (morning). Soft morning sunlight. Golden morning light.`;
-    } else if (nowHour >= 10 && nowHour < 16) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (daytime). Natural daylight is appropriate.`;
-    } else if (nowHour >= 16 && nowHour < 19) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (late afternoon / golden hour). Warm golden-hour light, sun is low.`;
-    } else if (nowHour >= 19 && nowHour < 22) {
-      timeLightingNote = `\n\nTIME OF DAY — MANDATORY LIGHTING RULE: It is currently ${nowTimeStr} (evening). Dim natural light or sunset. Interior lights are on. No bright sunlight.`;
-    }
-
-    // ── DIVERSITY DIRECTIVE ──────────────────────────────────────────────────
-    const AUTO_DIVERSITY_CONSTRAINT = '';
-
-    const PHOTO_REAL_SUFFIX = `\n\nPHOTOREALISTIC QUALITY DIRECTIVE (MANDATORY):\nThis MUST look like a real photograph — NOT an illustration, NOT a painting, NOT a digital render, NOT anime, NOT CGI.\nPhotorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality.\nNatural lighting. Natural skin texture. Real human proportions. Authentic depth of field.`;
-
-    const finalPrompt = enhancedPrompt + timeLightingNote + AUTO_DIVERSITY_CONSTRAINT + PHOTO_REAL_SUFFIX;
+    const finalPrompt = enhancedPrompt;
 
     // ── PRE-GENERATION VALIDATION ─────────────────────────────────────────────
     // CRITICAL: Verify prompt location truth matches resolved location before generation
