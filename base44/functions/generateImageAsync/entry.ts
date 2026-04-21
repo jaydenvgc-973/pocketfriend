@@ -1294,6 +1294,8 @@ Do NOT blend or borrow any environment from the character reference images.
     }
 
     // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────
+    console.log(`[generateImageAsync] FULL PROMPT BEING SENT:\n${finalPrompt}\n\n[generateImageAsync] REFERENCE IMAGES (${referenceImages.length}): ${referenceImages.join(' | ')}`);
+    
     const response = await base44.integrations.Core.GenerateImage({
       prompt: finalPrompt,
       existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
