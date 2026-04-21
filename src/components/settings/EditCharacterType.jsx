@@ -103,17 +103,17 @@ function findMatches(query, characters) {
 export default function EditCharacterType({ characters = [], currentUser }) {
   const queryClient = useQueryClient();
 
-  // Re-fetch characters scoped to current user to ensure RLS is applied correctly
+  // Re-fetch characters scoped to current user by owner_email
   const { data: userCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.list("-created_date", 200)
+      ? base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 200)
       : [],
     enabled: !!currentUser?.email,
   });
 
   // Use user-scoped characters, fallback to passed prop
-  const scopedCharacters = userCharacters.length > 0 ? userCharacters : characters;
+  const scopedCharacters = userCharacters.length > 0 ? userCharacters : characters.filter(c => c.owner_email === currentUser?.email);
 
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
