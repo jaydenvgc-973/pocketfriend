@@ -39,15 +39,21 @@ export default function NPCContactPanel() {
    enabled: !!currentUser?.email,
   });
 
-  // Show NPCs - only show npc_fictitious (and other NPC types), exclude active_created_character and protected_active
+  // Show NPCs - for murqart@gmail.com, show all NPCs (backward compatible — no character_type filter).
+  // For other users, filter by character_type starting with 'npc_'.
+  const isMurqart = currentUser?.email === 'murqart@gmail.com';
   const npcCharacters = rawNpcCharacters
     .filter(c => {
-      // Only show actual NPC types (npc_fictitious, npc_regular, npc_family_member)
-      const isNpcType = c.character_type?.startsWith('npc_');
-      if (!isNpcType) return false;
       if (c.protected_active) return false;
       if (c.is_default) return false;
-      return true;
+      if (c.is_active_character) return false; // Exclude actively played characters
+      
+      // For murqart@gmail.com, show all non-active characters (backward compatible)
+      if (isMurqart) return true;
+      
+      // For other users, only show actual NPC types (npc_fictitious, npc_regular, npc_family_member)
+      const isNpcType = c.character_type?.startsWith('npc_');
+      return isNpcType;
     })
     .sort((a, b) => {
       const nameA = (a.display_name || a.name || '').toLowerCase();
