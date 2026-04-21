@@ -341,12 +341,22 @@ export default function EditCharacterType({ characters = [], currentUser }) {
 
   const handleSaveExisting = async () => {
     if (!selectedChar || !selectedType || !canSave()) return;
+    // CRITICAL: Validate owner_email
+    if (!currentUser?.email) {
+      setSaveResult({ success: false, message: 'Error: Unable to determine current user.' });
+      return;
+    }
     setIsSaving(true);
     setSaveResult(null);
 
     try {
       const oldType = selectedChar.character_type;
       const updatePayload = { character_type: selectedType };
+      
+      // Repair missing owner_email on existing character
+      if (!selectedChar.owner_email) {
+        updatePayload.owner_email = currentUser.email;
+      }
 
       // Update the character record
       await base44.entities.Character.update(selectedChar.id, updatePayload);
@@ -436,6 +446,11 @@ export default function EditCharacterType({ characters = [], currentUser }) {
 
   const handleCreateNew = async () => {
     if (!newCharName.trim() || !selectedType || !canSave()) return;
+    // CRITICAL: Validate owner_email before creation
+    if (!currentUser?.email) {
+      setSaveResult({ success: false, message: 'Error: Unable to determine current user.' });
+      return;
+    }
     setIsSaving(true);
     setSaveResult(null);
 
@@ -444,10 +459,10 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         name: newCharName.trim(),
         character_type: selectedType,
         status: "active",
-        created_by: currentUser?.email,
-        owner_email: currentUser?.email,
-        owner_user_id: currentUser?.id,
-        created_by_role: currentUser?.role || "user",
+        created_by: currentUser.email,
+        owner_email: currentUser.email,
+        owner_user_id: currentUser.id,
+        created_by_role: currentUser.role || "user",
       };
 
       const created = await base44.entities.Character.create(charData);

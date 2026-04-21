@@ -50,12 +50,21 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
 
   const handleAddNew = async () => {
     if (!newName.trim()) return;
+    if (!currentUser?.email) {
+      alert('Error: Unable to determine current user.');
+      return;
+    }
     setIsLoading(true);
     try {
-      // Create new npc_fictitious_person
+      // Create new npc_fictitious_person with owner_email enforcement
       const newNPC = await base44.entities.Character.create({
         name: newName.trim(),
-        character_type: 'npc_fictitious_person'
+        character_type: 'npc_fictitious_person',
+        owner_email: currentUser.email,
+        created_by: currentUser.email,
+        created_by_role: currentUser.role || 'user',
+        owner_user_id: currentUser.id,
+        status: 'active'
       });
 
       // Add to fictional_relationships

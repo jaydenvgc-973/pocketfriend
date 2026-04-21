@@ -542,6 +542,11 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
       return;
     }
+    // CRITICAL: Validate owner_email before proceeding
+    if (!currentUser?.email) {
+      alert('Error: Unable to determine current user. Please refresh and try again.');
+      return;
+    }
     setIsCreating(true);
     // BACKWARD COMPATIBILITY: merge any missing fields with safe defaults so older
     // draft data never blocks creation after a schema update
