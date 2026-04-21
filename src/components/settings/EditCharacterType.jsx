@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { Search, ChevronDown, ChevronUp, Check, AlertCircle, User, Users, Heart, Star, XCircle } from "lucide-react";
@@ -141,10 +141,37 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     [scopedCharacters, currentUser?.email]
   );
 
-  const { strong: strongMatches, weak: weakMatches } = useMemo(
-    () => findMatches(searchQuery, scopedCharacters),
-    [searchQuery, scopedCharacters]
-  );
+  const [searchMatches, setSearchMatches] = useState({ strong: [], weak: [] });
+
+  // Whenever search query changes, perform a backend-driven search
+  useEffect(() => {
+    const performSearch = async () => {
+      if (!searchQuery.trim()) {
+        setSearchMatches({ strong: [], weak: [] });
+        return;
+      }
+      
+      if (!currentUser?.email) {
+        setSearchMatches({ strong: [], weak: [] });
+        return;
+      }
+
+      // Fetch ALL characters owned by current user from backend
+      const allOwnedChars = await base44.entities.Character.list("-created_date", 500);
+      const ownedByUser = allOwnedChars.filter(c => 
+        (c.owner_email === currentUser.email || c.created_by === currentUser.email) &&
+        c.status !== "deleted"
+      );
+
+      // Search within owned characters
+      const matches = findMatches(searchQuery, ownedByUser);
+      setSearchMatches(matches);
+    };
+
+    performSearch();
+  }, [searchQuery, currentUser?.email]);
+
+  const { strong: strongMatches, weak: weakMatches } = searchMatches;
 
   const selectedTypeDef = CHARACTER_TYPES.find(t => t.value === selectedType);
 
