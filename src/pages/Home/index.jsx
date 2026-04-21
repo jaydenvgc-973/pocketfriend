@@ -274,7 +274,11 @@ export default function Home() {
             </div>
           )}
           {(defaultChar && activeCustomChars.length >= 1) || activeCustomChars.length >= 2 ? (
-            <CharacterInteractionSimulator characters={defaultChar ? [defaultChar, ...activeCustomChars] : activeCustomChars} />
+            <CharacterInteractionSimulator characters={[
+              ...(defaultChar ? [defaultChar] : []),
+              ...activeCustomChars,
+              ...characters.filter(c => c.character_type === 'npc_fictitious' && c.status === 'active' && !c.is_test_character && !c.diagnostic_only),
+            ]} />
           ) : null}
           
           <div>
