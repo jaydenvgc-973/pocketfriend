@@ -107,6 +107,18 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         recipient: { type: "user", name: currentUser.full_name },
         product,
       });
+
+      // Record transaction for user
+      await base44.entities.FinancialTransaction.create({
+        type: "purchase",
+        amount: product.price,
+        direction: "out",
+        category: "shopping",
+        description: `Purchased ${product.name}`,
+        related_character_id: null,
+        location_id: null,
+        transaction_date: new Date().toISOString(),
+      });
       
       // Add item to user closet
       const settings = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
@@ -125,6 +137,18 @@ export default function ShoppingApp({ conversationId, characterId, character, on
       await base44.entities.UserSettings.update(settings[0].id, {
         user_closet: [...closet, newItem],
         user_balance: settings[0].user_balance - product.price,
+      });
+
+      // Record transaction
+      await base44.entities.FinancialTransaction.create({
+        type: "purchase",
+        amount: product.price,
+        direction: "out",
+        category: "shopping",
+        description: `Purchased ${product.name}`,
+        related_character_id: null,
+        location_id: null,
+        transaction_date: new Date().toISOString(),
       });
       
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
