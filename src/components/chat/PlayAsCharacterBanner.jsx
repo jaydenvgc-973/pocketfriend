@@ -1,13 +1,14 @@
 import { useState, useEffect } from "react";
 import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import { motion } from "framer-motion";
-import { X, Gamepad2, Images, Globe, BookOpen, Settings, Wrench } from "lucide-react";
+import { X, Gamepad2 } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import { Link } from "react-router-dom";
 import GlobalMediaGallery from "@/components/chat/GlobalMediaGallery";
 import NarrativeBuilderPopup from "@/components/chat/NarrativeBuilderPopup";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanelHome from "@/components/home/TroubleshootingPanelHome";
+import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import { base44 } from "@/api/base44Client";
 
 export default function PlayAsCharacterBanner() {
@@ -43,55 +44,24 @@ export default function PlayAsCharacterBanner() {
         <CharacterAvatar character={activeCharacter} size="sm" />
         <span className="text-xs font-semibold flex-1 truncate min-w-0">Playing as {activeCharacter.name}</span>
 
-        {/* Media Grid */}
-        <button
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowMediaGallery(true); }}
-          onTouchStart={(e) => { e.stopPropagation(); setShowMediaGallery(true); }}
-          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
-          title="Media from characters"
-        >
-          <Images className="w-4 h-4" />
-        </button>
-
-        {/* World Contacts — speaks as active character */}
-        <button
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowWorldContacts(true); }}
-          onTouchStart={(e) => { e.stopPropagation(); setShowWorldContacts(true); }}
-          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
-          title="Speak to NPCs as this character"
-        >
-          <Globe className="w-4 h-4" />
-        </button>
-
-        {/* Narrative Tool */}
-        <button
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowNarrative(true); }}
-          onTouchStart={(e) => { e.stopPropagation(); setShowNarrative(true); }}
-          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
-          title="Narrative tool"
-        >
-          <BookOpen className="w-4 h-4" />
-        </button>
-
-        {/* Troubleshooting */}
-        <button
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setShowTroubleshooting(true); }}
-          onTouchStart={(e) => { e.stopPropagation(); setShowTroubleshooting(true); }}
-          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
-          title="Troubleshooting"
-        >
-          <Wrench className="w-4 h-4" />
-        </button>
-
-        {/* Settings */}
-        <button
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = '/settings'; }}
-          onTouchStart={(e) => { e.stopPropagation(); window.location.href = '/settings'; }}
-          className="p-2.5 rounded-full active:bg-primary-foreground/30 hover:bg-primary-foreground/20 transition-colors flex-shrink-0 cursor-pointer pointer-events-auto touch-none"
-          title="Settings"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
+        <ChatActionsMenu
+          visible={{
+            media: true,
+            game: false,
+            narrative: !!activeConversationId,
+            contacts: (activeCharacter.fictional_relationships || []).length > 0,
+            story: true,
+            money: false,
+            shopping: false,
+            troubleshoot: !!activeConversationId,
+          }}
+          onSelect={(id) => {
+            if (id === "media") setShowMediaGallery(true);
+            if (id === "contacts") setShowWorldContacts(true);
+            if (id === "story") setShowNarrative(true);
+            if (id === "troubleshoot") setShowTroubleshooting(true);
+          }}
+        />
 
         {/* Stop playing */}
         <button
