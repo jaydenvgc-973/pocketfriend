@@ -990,12 +990,14 @@ The environment must feel real, functional, and original.
               }
 
               if (realTimeLoc) {
-                const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, liveZoneHint);
+                // ALWAYS try to resolve zone images first, using sensible defaults
+                const defaultZoneHint = liveZoneHint || getDefaultZoneHint(realTimeLoc.category);
+                const { zoneImages, zoneName, matchType } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, defaultZoneHint);
                 const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
                 if (imgs.length > 0) {
                   locationImages = imgs;
                   resolvedLocationName = realTimeLoc.name;
-                  resolvedZoneName = zoneName || liveZoneHint;
+                  resolvedZoneName = zoneName || defaultZoneHint;
                   locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
                   const locCat = (realTimeLoc.category || '').toLowerCase();
                   if (locCat === 'home') {
@@ -1028,6 +1030,18 @@ The environment must feel real, functional, and original.
                   resolvedZoneName = zoneName;
                   locationNote = buildRoomLockNote(locationName, zoneName);
                   console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
+                }
+              } else if (isHome && realTimeLoc) {
+                // Home with a location but no images — still try zone resolution
+                const defaultZoneHint = liveZoneHint || 'living room';
+                const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, defaultZoneHint);
+                if (zoneImages.length > 0) {
+                  locationImages = zoneImages;
+                  resolvedZoneName = zoneName || defaultZoneHint;
+                  resolvedLocationName = realTimeLoc.name;
+                  locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
+                } else {
+                  locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home — specifically ${realTimeLoc.name}. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
                 }
               } else {
                 // Home with no location record at all
