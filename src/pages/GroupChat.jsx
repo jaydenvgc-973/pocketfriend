@@ -87,7 +87,7 @@ export default function GroupChat() {
   useEffect(() => {
     setMessages(messagesData);
     messagesRef.current = messagesData;
-  }, [messagesData, selectedConversation?.id]);
+  }, [messagesData]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
