@@ -110,14 +110,12 @@ export default function ShoppingApp({ conversationId, characterId, character, on
 
       // Record transaction for user
       await base44.entities.FinancialTransaction.create({
-        type: "purchase",
+        transaction_type: "purchase",
         amount: product.price,
         direction: "out",
         category: "shopping",
         description: `Purchased ${product.name}`,
-        related_character_id: null,
-        location_id: null,
-        transaction_date: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
       });
       
       // Add item to user closet
@@ -141,14 +139,12 @@ export default function ShoppingApp({ conversationId, characterId, character, on
 
       // Record transaction
       await base44.entities.FinancialTransaction.create({
-        type: "purchase",
+        transaction_type: "purchase",
         amount: product.price,
         direction: "out",
         category: "shopping",
         description: `Purchased ${product.name}`,
-        related_character_id: null,
-        location_id: null,
-        transaction_date: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
       });
       
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
@@ -233,14 +229,13 @@ export default function ShoppingApp({ conversationId, characterId, character, on
 
       // Record transaction
       await base44.entities.FinancialTransaction.create({
-        type: "gift",
+        transaction_type: "gift",
         amount: product.price,
         direction: "out",
         category: "shopping",
         description: `Bought ${product.name} for ${character.name}`,
-        related_character_id: characterId,
-        location_id: null,
-        transaction_date: new Date().toISOString(),
+        character_id: characterId,
+        timestamp: new Date().toISOString(),
       });
 
       queryClient.invalidateQueries({ queryKey: ["userSettings", "character", characterId] });
