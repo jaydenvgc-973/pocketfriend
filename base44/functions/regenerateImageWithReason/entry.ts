@@ -219,7 +219,8 @@ Ultra high-resolution photorealistic photograph. Real photo, not illustration.${
       }
 
     } else if (reason === 'no_avatar') {
-      // Same scene, same location — push hard on character likeness
+      // Character likeness issue — use ONLY facial/body features from avatar, NOT environment
+      // Location must come from resolved location reference images, NOT avatar background
       const scenePrompt = originalPrompt
         ? originalPrompt
         : `${charName} in a natural candid scene`;
@@ -234,21 +235,43 @@ CRITICAL — MULTIPLE PEOPLE IN THIS IMAGE:
 • Even if people are similar in appearance (e.g. siblings), they MUST have subtle but clear differences: slightly different nose shape, eye spacing, facial structure, or bone structure.
 • Every face in the image must correspond to one of the provided reference photos.` : '';
 
+      const avatarSeparationWarning = `
+
+CRITICAL — AVATAR SEPARATION RULE:
+Reference photos of ${charName} ARE ONLY FOR:
+  ✓ Facial bone structure, jaw, cheekbones, forehead, chin
+  ✓ Eye shape, size, spacing, color
+  ✓ Nose shape, lip shape, mouth structure
+  ✓ Skin complexion, undertone, texture, marks
+  ✓ Hair color, texture, cut, length, style
+  ✓ Body type, height proportions, build, posture
+  ✓ Facial hair (beard, stubble, etc.)
+
+Reference photos are NEVER for:
+  ✗ Background, scenery, room environment
+  ✗ Avatar photo setting or location context
+  ✗ Bedroom walls, furniture, or indoor background
+  ✗ Avatar photo lighting or time-of-day context
+
+Location MUST ONLY come from location reference images provided (${effectiveLocationName}${effectiveZoneName ? ` → ${effectiveZoneName}` : ''}).`;
+
       prompt = `${scenePrompt}${roomLock}
 
 EXTREME CHARACTER LIKENESS REQUIREMENT${isMultiPerson ? ' (MULTI-PERSON)' : ''} for ${charName}:
-The reference photos define ${isMultiPerson ? 'each person\'s' : 'this person\'s'} exact appearance. Match with maximum fidelity:
+The reference photos define ${isMultiPerson ? 'each person\'s' : 'this person\'s'} exact appearance. Match facial and body features with maximum fidelity:
 • FACE: Exact facial bone structure, jaw, cheekbones, forehead, chin — replicate from reference
 • EYES: Exact shape, size, spacing, color, expression
 • NOSE & MOUTH: Exact nose shape, lip shape, mouth structure
 • SKIN: Exact complexion, undertone, skin texture, any marks
 • HAIR: Exact color, texture, cut, LENGTH, style — replicate precisely. Do NOT shorten or lengthen.
 • BODY: Exact build, height proportions, posture
-• FACIAL HAIR: Match exactly — if the reference shows none, generate none; if it shows a beard, match it
-Do NOT invent, average, or approximate. The reference photos ARE the people.${multiPersonNote}
+• FACIAL HAIR: Match exactly — if reference shows none, generate none; if it shows a beard, match it
+Do NOT invent, average, or approximate. The reference photos ARE the people.${multiPersonNote}${avatarSeparationWarning}
 ${charDesc ? `Additional context: ${charDesc}.` : ''}
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
+      // LOCATION IMAGES MUST COME FIRST so model locks the space before rendering character
+      // This prevents avatar background from contaminating the scene
       referenceImages = [
         ...locationRefImages.slice(0, 4),
         ...charRefImages.slice(0, 3),
