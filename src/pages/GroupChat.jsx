@@ -174,7 +174,10 @@ export default function GroupChat() {
     );
   }
 
-  const activeCharacters = characters.filter(c => c.status === 'active' || c.status === 'moved_away' || !c.status);
+  const activeCharacters = characters.filter(c =>
+    c.status === 'active' &&
+    (c.character_type === 'active_created_character' || c.character_type === 'npc_fictitious')
+  );
 
   return (
     <div className="fixed inset-0 flex flex-col bg-background pb-[60px]">
