@@ -7,9 +7,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
 export default function CharacterInteractionSimulator({ characters }) {
-  const alpha = (a, b) => (a.display_name || a.name || '').toLowerCase().localeCompare((b.display_name || b.name || '').toLowerCase());
-  const activeCreated = characters.filter(c => c.character_type === 'active_created_character').sort(alpha);
-  const npcFictitious = characters.filter(c => c.character_type === 'npc_fictitious').sort(alpha);
+  // Filter out NPC characters — only include active characters created by the user, sorted alphabetically
+  const activeCharactersOnly = characters
+    .filter(c => c.character_type !== "npc")
+    .sort((a, b) => {
+      const nameA = (a.display_name || a.name || '').toLowerCase();
+      const nameB = (b.display_name || b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
   const [selected, setSelected] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [result, setResult] = useState(null);
@@ -143,30 +148,22 @@ export default function CharacterInteractionSimulator({ characters }) {
         />
 
         {/* Character selection grid */}
-        {[
-          { label: 'Active Characters', group: activeCreated },
-          { label: 'NPC Fictitious', group: npcFictitious },
-        ].map(({ label, group }) => group.length === 0 ? null : (
-          <div key={label}>
-            <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">{label}</p>
-            <div className="grid grid-cols-2 gap-2">
-              {group.map(char => (
-                <button
-                  key={char.id}
-                  onClick={() => toggleSelect(char.id)}
-                  className={`p-2 rounded-xl border transition-colors text-left text-xs ${
-                    selected.includes(char.id)
-                      ? 'bg-primary/10 border-primary'
-                      : 'bg-secondary border-border hover:border-primary/40'
-                  }`}
-                >
-                  <div className="font-medium text-foreground truncate">{char.display_name || char.name}</div>
-                  <div className="text-muted-foreground text-[10px] truncate">{char.archetype || 'character'}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
+         <div className="grid grid-cols-2 gap-2">
+           {activeCharactersOnly.map(char => (
+            <button
+              key={char.id}
+              onClick={() => toggleSelect(char.id)}
+              className={`p-2 rounded-xl border transition-colors text-left text-xs ${
+                selected.includes(char.id)
+                  ? 'bg-primary/10 border-primary'
+                  : 'bg-secondary border-border hover:border-primary/40'
+              }`}
+            >
+              <div className="font-medium text-foreground truncate">{char.name}</div>
+              <div className="text-muted-foreground text-[10px] truncate">{char.archetype || 'character'}</div>
+            </button>
+          ))}
+        </div>
 
         {selected.length > 0 && (
           <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-primary/10 border border-primary/20">
