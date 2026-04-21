@@ -38,31 +38,47 @@ Deno.serve(async (req) => {
       ? originalCharRefs
       : [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean);
 
-    // Fetch location reference images if needed
+    // Fetch the character's current location and zone to resolve proper imagery
+    let currentLocationId = originalLocationId || manualLocationId || null;
+    let currentZoneName = originalZoneName || manualZoneId || null;
+    
+    // If no location specified, fetch character's resolved location
+    if (!currentLocationId && character) {
+      currentLocationId = character.resolved_current_location_id || character.current_home_location_id;
+      currentZoneName = character.resolved_location_type === 'home' ? 'bedroom' : null;
+      if (character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping') {
+        currentZoneName = 'bedroom';
+      }
+      console.log(`[regen] Fetched character location: ${currentLocationId} | zone hint: ${currentZoneName}`);
+    }
+
+    // Fetch location reference images from the resolved location + zone
     let locationRefImages = originalLocationRefs;
-    if (locationRefImages.length === 0 && (originalLocationId || manualLocationId)) {
+    if (locationRefImages.length === 0 && currentLocationId) {
       try {
-        const locId = manualLocationId || originalLocationId;
-        const loc = await base44.asServiceRole.entities.LocationReference.get(locId).catch(() => null);
+        const loc = await base44.asServiceRole.entities.LocationReference.get(currentLocationId).catch(() => null);
         if (loc) {
-          const zoneToUse = manualZoneId || originalZoneName;
-          if (zoneToUse && loc.zones?.length > 0) {
-            const zone = loc.zones.find(z => z.zone_name === zoneToUse);
+          // Try to find the exact zone
+          if (currentZoneName && loc.zones?.length > 0) {
+            const zone = loc.zones.find(z => z.zone_name?.toLowerCase() === currentZoneName.toLowerCase());
             if (zone?.image_urls?.length > 0) {
               locationRefImages = zone.image_urls.slice(0, 6);
-              console.log(`[regen] Zone "${zoneToUse}" images: ${locationRefImages.length}`);
+              console.log(`[regen] Matched zone "${currentZoneName}" at "${loc.name}": ${locationRefImages.length} images`);
             }
           }
+          // Fallback: first zone with images
           if (locationRefImages.length === 0 && loc.zones?.length > 0) {
             const firstZone = loc.zones.find(z => z.image_urls?.length > 0);
             if (firstZone) {
               locationRefImages = firstZone.image_urls.slice(0, 6);
-              console.log(`[regen] Auto-zone "${firstZone.zone_name}" images: ${locationRefImages.length}`);
+              currentZoneName = firstZone.zone_name;
+              console.log(`[regen] Auto-resolved zone "${currentZoneName}" at "${loc.name}": ${locationRefImages.length} images`);
             }
           }
+          // Fallback: location flat images
           if (locationRefImages.length === 0 && loc.image_urls?.length > 0) {
             locationRefImages = loc.image_urls.slice(0, 6);
-            console.log(`[regen] Location flat images: ${locationRefImages.length}`);
+            console.log(`[regen] Using location flat images at "${loc.name}": ${locationRefImages.length}`);
           }
         }
       } catch (err) {
@@ -70,25 +86,42 @@ Deno.serve(async (req) => {
       }
     }
 
-    // If user manually selected a correct location, override the stored generation context
-    let effectiveLocationId = originalLocationId;
-    let effectiveZoneName = originalZoneName;
+    // Use the resolved location and zone
+    let effectiveLocationId = currentLocationId;
+    let effectiveZoneName = currentZoneName;
     let effectiveLocationName = originalLocationName;
-    if (manualLocationId) {
+    
+    // Fetch location name if we have ID
+    if (effectiveLocationId && !effectiveLocationName) {
+      try {
+        const loc = await base44.asServiceRole.entities.LocationReference.get(effectiveLocationId).catch(() => null);
+        if (loc) effectiveLocationName = loc.name;
+      } catch (err) {
+        console.warn('[regen] Failed to fetch location name:', err.message);
+      }
+    }
+    
+    // If user manually selected a different location, override
+    if (manualLocationId && manualLocationId !== effectiveLocationId) {
       effectiveLocationId = manualLocationId;
       effectiveZoneName = manualZoneId || null;
+      locationRefImages = [];
       const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
       if (manualLoc) {
         effectiveLocationName = manualLoc.name;
-        locationRefImages = [];
         if (effectiveZoneName && manualLoc.zones?.length > 0) {
-          const zone = manualLoc.zones.find(z => z.zone_name === effectiveZoneName);
-          if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.slice(0, 3);
+          const zone = manualLoc.zones.find(z => z.zone_name?.toLowerCase() === effectiveZoneName.toLowerCase());
+          if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.slice(0, 6);
         }
-        if (locationRefImages.length === 0) {
-          const firstZone = manualLoc.zones?.find(z => z.image_urls?.length > 0);
-          locationRefImages = firstZone?.image_urls?.slice(0, 3) || manualLoc.image_urls?.slice(0, 3) || [];
-          if (!effectiveZoneName && firstZone) effectiveZoneName = firstZone.zone_name;
+        if (locationRefImages.length === 0 && manualLoc.zones?.length > 0) {
+          const firstZone = manualLoc.zones.find(z => z.image_urls?.length > 0);
+          if (firstZone) {
+            locationRefImages = firstZone.image_urls.slice(0, 6);
+            effectiveZoneName = firstZone.zone_name;
+          }
+        }
+        if (locationRefImages.length === 0 && manualLoc.image_urls?.length > 0) {
+          locationRefImages = manualLoc.image_urls.slice(0, 6);
         }
       }
     }
