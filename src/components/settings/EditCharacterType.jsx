@@ -228,8 +228,22 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         excludedSample: notOwned.slice(0, 5)
       });
 
-      // Search within owned characters
-      const matches = findMatches(searchQuery, ownedByUser);
+      // CRITICAL FIX: Dashboard is canonical fallback source
+      // If a character is visible on dashboard, it MUST be searchable in Edit Character Type
+      const backendCharIds = new Set(ownedByUser.map(c => c.id));
+      const dashboardOnlyChars = (characters || []).filter(c => !backendCharIds.has(c.id));
+      const finalSearchSource = [...ownedByUser, ...dashboardOnlyChars];
+
+      diag.steps.push({
+        step: 4.5,
+        status: dashboardOnlyChars.length > 0 ? 'WARNING' : 'OK',
+        message: `Dashboard fallback merge: ${ownedByUser.length} from backend + ${dashboardOnlyChars.length} from dashboard = ${finalSearchSource.length} total searchable`,
+        dashboardOnlyChars: dashboardOnlyChars.map(c => c.name),
+        reason: dashboardOnlyChars.length > 0 ? 'Using dashboard as canonical fallback for missing owned records' : 'All dashboard chars verified in backend'
+      });
+
+      // Search within merged source (backend + dashboard)
+      const matches = findMatches(searchQuery, finalSearchSource);
       
       diag.steps.push({ 
         step: 5, 
