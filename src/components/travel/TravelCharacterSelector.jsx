@@ -59,6 +59,17 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
         const isAvailable = availability.available;
         const StatusIcon = STATUS_ICONS[availability.reason?.iconType];
 
+        // SINGLE SOURCE OF TRUTH: derive sublabel from resolved_* fields directly from DB.
+        // This ensures Travel selector always shows the same location as the Home card.
+        const resolvedLocName = char.resolved_current_location_name;
+        const resolvedStatus = char.resolved_presence_status;
+        let currentLocationLabel = null;
+        if (isAvailable && resolvedLocName && resolvedStatus !== 'home' && resolvedStatus !== 'sleeping' && resolvedStatus !== 'napping') {
+          currentLocationLabel = `At ${resolvedLocName}`;
+        } else if (isAvailable && resolvedStatus === 'home') {
+          currentLocationLabel = 'At home';
+        }
+
         return (
           <button
             key={char.id}
@@ -91,7 +102,9 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
                   <StatusIcon className={`w-3 h-3 ${availability.reason?.color}`} />
                 )}
                 <p className={`text-xs ${isAvailable ? "text-muted-foreground" : availability.reason?.color}`}>
-                  {isAvailable ? "Available" : availability.reason?.message?.replace(`${char.name} `, "").replace("can't join", "unavailable").split(".")[0]}
+                  {isAvailable
+                    ? (currentLocationLabel || "Available")
+                    : availability.reason?.message?.replace(`${char.name} `, "").replace("can't join", "unavailable").split(".")[0]}
                 </p>
               </div>
               {!isAvailable && availability.availableAt && (

@@ -104,12 +104,16 @@ export function getCharacterTravelAvailability(character, locationMap = {}) {
 }
 
 /**
- * Returns true if a character is currently at home (not at work, school, etc.)
- * CRITICAL: Uses location resolution engine to determine actual location
+ * Returns true if a character is currently at home.
+ * SINGLE SOURCE OF TRUTH: reads resolved_presence_status directly from DB.
+ * This matches what every other UI surface (Home card, Travel popup) reads.
  */
 export function isCharacterHome(character, locationMap = {}) {
-  const resolved = resolveCharacterLocation(character, locationMap);
-  // They're home only if their resolved location is their home location
-  if (!resolved.resolved_current_location_id || !character.current_home_location_id) return false;
-  return resolved.resolved_current_location_id === character.current_home_location_id;
+  // Use the authoritative DB field first — avoids drift between recomputed and stored state
+  const status = character.resolved_presence_status;
+  if (status === 'home' || status === 'sleeping' || status === 'napping') return true;
+  // Fallback: check if resolved location matches their home
+  const homeId = character.current_home_location_id || character.home_location_id;
+  if (!homeId) return false;
+  return character.resolved_current_location_id === homeId;
 }
