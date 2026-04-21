@@ -3,7 +3,7 @@ import ImageLightbox from "@/components/ui/ImageLightbox";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
-import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock } from "lucide-react";
+import { ArrowLeft, Cake, BookOpen, Users, User, Ghost, Zap, Wrench, Briefcase, GraduationCap, MapPin, Camera, ZoomIn, Heart, Settings, Clock, X } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
@@ -12,6 +12,7 @@ import CharacterFeelingsCard from "@/components/character/CharacterFeelingsCard"
 import CharacterFinancialSummary from "@/components/character/CharacterFinancialSummary";
 import { EditableTextField, EditableSelectField, EditableEthnicityField, NonEditableField } from "@/components/character/ProfileFieldEditor";
 import { format } from "date-fns";
+import { motion, AnimatePresence } from "framer-motion";
 import { calculateBirthdateFromZodiac } from "@/lib/zodiacUtils";
 import { getReciprocalRole, getRelationshipLabel } from "@/lib/relationshipUtils";
 import ProfileTroubleshootingPanel from "@/components/character/ProfileTroubleshootingPanel";
@@ -117,6 +118,7 @@ export default function CharacterProfile() {
   const [promotingNPC, setPromotingNPC] = useState(null);
   const [editingNPCPhoto, setEditingNPCPhoto] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
+  const [showOutfitSharer, setShowOutfitSharer] = useState(false);
   
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
@@ -1039,13 +1041,94 @@ export default function CharacterProfile() {
         {/* Character Closet */}
         <CharacterClosetPanel character={character} />
 
+        {/* Share Outfit with Character */}
+        {!character.is_default && character?.fictional_relationships?.length > 0 && (
+          <div className="bg-card border border-border rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Share Your Outfit</p>
+              <button
+                onClick={() => setShowOutfitSharer(true)}
+                className="text-xs text-primary font-medium hover:opacity-70 transition-opacity"
+              >
+                Send an outfit
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground/70">Give a character one of your outfits to show your style.</p>
+          </div>
+        )}
+
         {/* Nickname for User */}
         <NicknameForUserField character={character} />
 
       </div>
+
+      {/* Outfit Sharing Modal */}
+      <AnimatePresence>
+        {showOutfitSharer && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-40 bg-black/40 flex items-end"
+            onClick={() => setShowOutfitSharer(false)}
+          >
+            <motion.div
+              initial={{ y: "100%" }}
+              animate={{ y: 0 }}
+              exit={{ y: "100%" }}
+              className="w-full bg-card border-t border-border rounded-t-2xl max-h-96 overflow-y-auto p-6"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-foreground">Pick an outfit to share</h3>
+                <button onClick={() => setShowOutfitSharer(false)} className="text-muted-foreground hover:text-foreground">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {!userSettings[0]?.user_closet || userSettings[0].user_closet.length === 0 ? (
+                <p className="text-sm text-muted-foreground italic">No outfits in your closet yet.</p>
+              ) : (
+                <div className="space-y-2">
+                  {userSettings[0].user_closet
+                    .filter(item => item.type === "outfit" || (item.outfit_id && !item.piece_id))
+                    .map((outfit, idx) => (
+                      <button
+                        key={outfit.outfit_id || idx}
+                        onClick={async () => {
+                          try {
+                            await base44.entities.Message.create({
+                              conversation_id: "shared",
+                              sender_type: "user",
+                              content: `Check out this outfit: ${outfit.label}`,
+                              timestamp: new Date().toISOString(),
+                            });
+                            await base44.entities.Character.update(character.id, {
+                              fictional_relationships: (character.fictional_relationships || []).map(r =>
+                                r.person_name === character.name
+                                  ? { ...r, _shared_outfit: outfit }
+                                  : r
+                              ),
+                            });
+                            setShowOutfitSharer(false);
+                          } catch (e) {
+                            console.error("Share failed:", e);
+                          }
+                        }}
+                        className="w-full p-3 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors text-left"
+                      >
+                        <p className="text-sm font-medium text-foreground">{outfit.label}</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">{outfit.category}</p>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <BottomNav />
-
-
 
       {editingNPCPhoto && character && (
         <NPCPromotionModal

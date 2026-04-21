@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, ShoppingBag, Loader } from "lucide-react";
+import { X, ShoppingBag, Loader, ChevronRight } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -9,16 +9,25 @@ const SAMPLE_PRODUCTS = [
   { category: "clothes", item_type: "hoodie", name: "Oversized Hoodie", brand: "Comfort", price: 75, color: "Gray", image_url: null, image_status: "not_generated" },
   { category: "clothes", item_type: "shirt", name: "Classic Tee", brand: "Basic", price: 25, color: "White", image_url: null, image_status: "not_generated" },
   { category: "clothes", item_type: "jacket", name: "Denim Jacket", brand: "Classic", price: 95, color: "Blue", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "sweater", name: "Wool Sweater", brand: "Cozy", price: 85, color: "Cream", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "shirt", name: "Linen Button Up", brand: "Summer", price: 55, color: "Light Blue", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "pants", name: "Black Jeans", brand: "Classic", price: 75, color: "Black", image_url: null, image_status: "not_generated" },
+  { category: "clothes", item_type: "pants", name: "Khaki Chinos", brand: "Casual", price: 65, color: "Khaki", image_url: null, image_status: "not_generated" },
   { category: "sneakers", item_type: "sneakers", name: "High Tops", brand: "Street", price: 120, color: "Black", image_url: null, image_status: "not_generated" },
   { category: "sneakers", item_type: "sneakers", name: "Minimalist Sneakers", brand: "Clean", price: 100, color: "White", image_url: null, image_status: "not_generated" },
+  { category: "sneakers", item_type: "sneakers", name: "Running Shoes", brand: "Athletic", price: 135, color: "Gray", image_url: null, image_status: "not_generated" },
+  { category: "sneakers", item_type: "sneakers", name: "Retro Court Shoes", brand: "Vintage", price: 95, color: "Red", image_url: null, image_status: "not_generated" },
   { category: "accessories", item_type: "hat", name: "Baseball Cap", brand: "Basic", price: 30, color: "Black", image_url: null, image_status: "not_generated" },
   { category: "accessories", item_type: "bag", name: "Canvas Backpack", brand: "Carry", price: 85, color: "Khaki", image_url: null, image_status: "not_generated" },
+  { category: "accessories", item_type: "bag", name: "Crossbody Bag", brand: "Urban", price: 75, color: "Black", image_url: null, image_status: "not_generated" },
+  { category: "accessories", item_type: "hat", name: "Beanie", brand: "Cozy", price: 25, color: "Navy", image_url: null, image_status: "not_generated" },
 ];
 
 export default function ShoppingApp({ conversationId, characterId, character, onClose, currentUser }) {
   const [category, setCategory] = useState("clothes");
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [generatingImage, setGeneratingImage] = useState(null);
+  const [showActionModal, setShowActionModal] = useState(null); // { type: 'buy'|'forward'|'ask', product }
   const queryClient = useQueryClient();
 
   // Initialize products on mount
@@ -88,7 +97,7 @@ export default function ShoppingApp({ conversationId, characterId, character, on
 
   const handleBuyForSelf = async (product) => {
     if (userBalance < product.price) {
-      alert("Insufficient funds");
+      setShowActionModal({ type: 'error', message: `Insufficient funds. Need $${product.price}`, product });
       return;
     }
 
@@ -98,11 +107,31 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         recipient: { type: "user", name: currentUser.full_name },
         product,
       });
+      
+      // Add item to user closet
+      const settings = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      const closet = settings[0]?.user_closet || [];
+      const newItem = {
+        piece_id: `piece_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+        type: "piece",
+        created_at: new Date().toISOString(),
+        label: product.name,
+        piece_type: product.item_type,
+        description: `${product.brand} • ${product.color}`,
+        image_url: product.image_url,
+        is_favorite: false,
+      };
+      
+      await base44.entities.UserSettings.update(settings[0].id, {
+        user_closet: [...closet, newItem],
+        user_balance: settings[0].user_balance - product.price,
+      });
+      
       queryClient.invalidateQueries({ queryKey: ["userSettings"] });
-      alert(`Purchased ${product.name}!`);
+      setShowActionModal({ type: 'success', message: `Added ${product.name} to your closet!`, product });
       setSelectedProduct(null);
     } catch (err) {
-      alert("Purchase failed: " + err.message);
+      setShowActionModal({ type: 'error', message: "Purchase failed: " + err.message, product });
     }
   };
 
@@ -110,7 +139,7 @@ export default function ShoppingApp({ conversationId, characterId, character, on
     if (!characterId || !conversationId) return;
 
     try {
-      const message = await base44.entities.Message.create({
+      await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: "user",
         content: `What do you think of this? ${product.name} ($${product.price})`,
@@ -121,11 +150,10 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         _forwarded_product: { ...product, forwarded_at: new Date().toISOString() },
       });
 
-      alert(`Forwarded ${product.name} to ${character.name}`);
+      setShowActionModal({ type: 'success', message: `Showed ${product.name} to ${character.name}!`, product });
       setSelectedProduct(null);
-      onClose();
     } catch (err) {
-      alert("Forward failed: " + err.message);
+      setShowActionModal({ type: 'error', message: "Forward failed: " + err.message, product });
     }
   };
 
@@ -140,30 +168,17 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         timestamp: new Date().toISOString(),
       });
 
-      alert(`Asked ${character.name} to buy ${product.name}`);
+      setShowActionModal({ type: 'success', message: `Asked ${character.name} to buy it!`, product });
       setSelectedProduct(null);
-      onClose();
     } catch (err) {
-      alert("Request failed: " + err.message);
+      setShowActionModal({ type: 'error', message: "Request failed: " + err.message, product });
     }
   };
 
   if (selectedProduct) {
     return (
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="fixed top-20 inset-x-0 z-50 flex items-center justify-center"
-      >
-        <div className="w-72 bg-card border border-border rounded-3xl shadow-2xl p-6">
-        <button
-          onClick={() => setSelectedProduct(null)}
-          className="absolute top-4 right-4 p-1.5 rounded-lg bg-secondary text-muted-foreground hover:text-foreground"
-        >
-          <X className="w-4 h-4" />
-        </button>
-
-        <div className="w-full h-48 bg-secondary rounded-2xl mb-4 flex items-center justify-center overflow-hidden">
+      <div className="border-t border-border pt-4 mt-4 space-y-3">
+        <div className="w-full h-40 bg-secondary rounded-2xl flex items-center justify-center overflow-hidden">
           {selectedProduct.image_url ? (
             <img src={selectedProduct.image_url} alt={selectedProduct.name} className="w-full h-full object-cover" />
           ) : generatingImage === selectedProduct.id ? (
@@ -180,30 +195,32 @@ export default function ShoppingApp({ conversationId, characterId, character, on
             </button>
           )}
         </div>
-        <h3 className="text-lg font-semibold text-foreground text-center">{selectedProduct.name}</h3>
-        <p className="text-xs text-muted-foreground text-center mb-2">{selectedProduct.brand} • {selectedProduct.color}</p>
-        <p className="text-2xl font-bold text-primary text-center mb-6">${selectedProduct.price}</p>
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">{selectedProduct.name}</h3>
+          <p className="text-[10px] text-muted-foreground">{selectedProduct.brand} • {selectedProduct.color}</p>
+          <p className="text-lg font-bold text-primary mt-1">${selectedProduct.price}</p>
+        </div>
 
-        <div className="space-y-2.5">
+        <div className="space-y-2">
           <button
             onClick={() => handleBuyForSelf(selectedProduct)}
             disabled={userBalance < selectedProduct.price}
-            className="w-full py-2.5 rounded-lg bg-primary text-primary-foreground font-medium disabled:opacity-50"
+            className="w-full py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 transition-colors"
           >
-            Buy for Yourself
+            Add to Closet
           </button>
 
           {character && (
             <>
               <button
                 onClick={() => handleForwardToCharacter(selectedProduct)}
-                className="w-full py-2.5 rounded-lg bg-secondary text-foreground font-medium hover:bg-secondary/80"
+                className="w-full py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
               >
                 Show to {character.name}
               </button>
               <button
                 onClick={() => handleAskCharacterToBuy(selectedProduct)}
-                className="w-full py-2.5 rounded-lg bg-secondary text-foreground font-medium hover:bg-secondary/80"
+                className="w-full py-2 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
               >
                 Ask Them to Buy It
               </button>
@@ -212,15 +229,32 @@ export default function ShoppingApp({ conversationId, characterId, character, on
 
           <button
             onClick={() => setSelectedProduct(null)}
-            className="w-full py-2.5 rounded-lg border border-border text-foreground font-medium"
+            className="w-full py-2 rounded-lg border border-border text-foreground text-sm font-medium hover:bg-secondary/50 transition-colors"
           >
-            Close
+            Back to Shopping
           </button>
         </div>
-        </div>
-        </motion.div>
-        );
-        }
+
+        {/* Inline action feedback modal */}
+        <AnimatePresence>
+          {showActionModal && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className={`p-3 rounded-lg text-sm font-medium text-center ${
+                showActionModal.type === 'success'
+                  ? 'bg-green-500/10 text-green-600 border border-green-500/30'
+                  : 'bg-amber-500/10 text-amber-600 border border-amber-500/30'
+              }`}
+            >
+              {showActionModal.message}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -258,7 +292,7 @@ export default function ShoppingApp({ conversationId, characterId, character, on
         ))}
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3 max-h-96 overflow-y-auto">
         <AnimatePresence>
           {products.map(product => (
             <motion.button
