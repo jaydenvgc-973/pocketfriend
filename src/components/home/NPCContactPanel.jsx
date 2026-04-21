@@ -16,52 +16,36 @@ export default function NPCContactPanel() {
   });
 
   const { data: rawNpcCharacters = [], isLoading: isNpcLoading } = useQuery({
-    queryKey: ['npc-characters', currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return [];
-      
-      // Fetch ALL characters (both created_by and owner_email) without type filter
-      const [allByCreatedBy, allByOwnerEmail] = await Promise.all([
-        base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 500),
-        base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500),
-      ]);
-      
-      // Merge and deduplicate ALL characters
-      const seen = new Set();
-      const allChars = [...allByCreatedBy, ...allByOwnerEmail].filter(c => {
-        if (seen.has(c.id)) return false;
-        seen.add(c.id);
-        return true;
-      });
-      
-      // Log actual character_type values in database
-      const typeBreakdown = {};
-      allChars.forEach(c => {
-        typeBreakdown[c.character_type] = (typeBreakdown[c.character_type] || 0) + 1;
-      });
-      
-      console.log('[NPCContactPanel - Actual Types in Database]', {
-        totalChars: allChars.length,
-        typeBreakdown,
-        allCharacterDetails: allChars.map(c => ({
-          id: c.id,
-          name: c.name,
-          character_type: c.character_type,
-          protected_active: c.protected_active,
-        })),
-      });
-      
-      return allChars;
-    },
-    enabled: !!currentUser?.email,
+   queryKey: ['npc-characters', currentUser?.email],
+   queryFn: async () => {
+     if (!currentUser?.email) return [];
+
+     // Fetch ALL characters (both created_by and owner_email) without type filter
+     const [allByCreatedBy, allByOwnerEmail] = await Promise.all([
+       base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 500),
+       base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500),
+     ]);
+
+     // Merge and deduplicate ALL characters
+     const seen = new Set();
+     const allChars = [...allByCreatedBy, ...allByOwnerEmail].filter(c => {
+       if (seen.has(c.id)) return false;
+       seen.add(c.id);
+       return true;
+     });
+
+     return allChars;
+   },
+   enabled: !!currentUser?.email,
   });
 
-  // Show NPCs - exclude active_created_character and protected_active only, sorted alphabetically
+  // Show NPCs - only show npc_fictitious (and other NPC types), exclude active_created_character and protected_active
   const npcCharacters = rawNpcCharacters
     .filter(c => {
+      // Only show actual NPC types (npc_fictitious, npc_regular, npc_family_member)
+      const isNpcType = c.character_type?.startsWith('npc_');
+      if (!isNpcType) return false;
       if (c.protected_active) return false;
-      // Exclude user's active character, show all other types
-      if (c.character_type === 'active_created_character') return false;
       if (c.is_default) return false;
       return true;
     })
