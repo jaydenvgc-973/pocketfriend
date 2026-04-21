@@ -18,7 +18,7 @@ import RealLocationModal from "@/components/travel/RealLocationModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { resolveCharacterLocation, verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
+import { verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
 
 const NPC_CHARACTER_TYPES = ["npc_regular", "npc_family_member", "npc_fictitious"];
 
@@ -489,9 +489,10 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const dayOfWeek = nowET.getDay();
                     const currentTime = `${String(nowET.getHours()).padStart(2, '0')}:${String(nowET.getMinutes()).padStart(2, '0')}`;
 
+                    // Annotate workers — check if any character already in lines is on shift here
                     characters.forEach(c => {
-                      const resolvedC = resolveCharacterLocation(c, locationMap);
-                      if (resolvedC.resolved_current_location_id === selectedLocation.id) {
+                      // Use resolved_current_location_id only — no recomputation from schedule
+                      if (c.resolved_current_location_id === selectedLocation.id) {
                         const workerShifts = selectedLocation.worker_shifts || {};
                         const shift = workerShifts[c.id];
                         if (shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end) {

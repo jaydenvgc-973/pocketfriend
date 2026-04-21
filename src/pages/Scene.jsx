@@ -670,57 +670,49 @@ export default function Scene() {
     }
   }, [location?.id, activeZone]);
 
-  // When characters arrive at the scene, update their current_location_id so their card reflects the venue
-  // Also update worker characters to reflect they're at this location while on shift
-  // Force asleep workers to wake up and go to work (make them angry/tired)
+  // PRESENCE ENFORCEMENT: When characters arrive at a scene, write to the AUTHORITATIVE resolved fields.
+  // This is the single location truth that propagates across ALL UI surfaces:
+  // Home page card, Travel page, Travel pop-ups, Chat/Narrative, Image generation.
+  // RULE: One character = one location. No overlap. No stale state.
   useEffect(() => {
     if (!location) return;
     
-    // Update brought characters
+    // Update brought characters — they have traveled here, so this IS their current location now.
     broughtCharacters.forEach(char => {
-      base44.entities.Character.update(char.id, { current_location_id: location.id }).catch(() => {});
+      base44.entities.Character.update(char.id, {
+        // AUTHORITATIVE fields — these are what every UI surface reads
+        resolved_current_location_id: location.id,
+        resolved_current_location_name: location.name,
+        resolved_location_type: location.category === 'home' ? 'home' : 'visit',
+        resolved_presence_status: location.category === 'home' ? 'home' : 'visiting',
+        resolved_source_reason: 'user_travel',
+        resolved_last_updated_at: new Date().toISOString(),
+        // Clear any stale travel transit state
+        travel_status: 'not_traveling',
+        travel_destination_location_id: null,
+      }).catch(() => {});
     });
-    
-    // Update worker characters who are on shift at this location
-    workerCharacters.forEach(async (char) => {
-      const updates = { current_location_id: location.id };
-      
-      // If Brian Anderson is asleep, force him awake and make him angry/tired
-      if (char.name === "Brian Anderson" && isCharacterAsleep(char)) {
-        updates.emotional_state = "irritated"; // angry/tired from being woken up
-        // Clear sleep indicators
-        if (char.sleep_start_time) {
-          updates.sleep_start_time = null;
-        }
-        
-        // Track missed shift at this location
-        const missedShifts = char.missed_shifts || {};
-        missedShifts[location.id] = (missedShifts[location.id] || 0) + 1;
-        updates.missed_shifts = missedShifts;
-        
-        // If Brian has missed 3 shifts at Esco's, fire him
-        if (missedShifts[location.id] >= 3 && location.name === "Esco's") {
-          updates.status = "deleted";
-          setMessages(prev => [...prev, {
-            id: Date.now().toString(),
-            sender: "narrative",
-            content: `${char.name} has been fired from ${location.name} for missing too many shifts.`,
-            timestamp: new Date().toISOString(),
-          }]);
-        }
-      }
-      
-      base44.entities.Character.update(char.id, updates).catch(() => {});
-    });
-  }, [location?.id, workerCharacters]);
+  }, [location?.id]);
 
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
-    // Clear current_location_id for all brought chars → they "go home" or resume schedule
+    // PRESENCE ENFORCEMENT: Characters leave with user → reset their authoritative resolved fields back to home.
+    // This clears the scene presence so Home page card, Travel page, and all popups reflect home correctly.
+    const homeNow = new Date().toISOString();
     await Promise.all(
-      broughtCharacters.map(char =>
-        base44.entities.Character.update(char.id, { current_location_id: "" }).catch(() => {})
-      )
+      broughtCharacters.map(char => {
+        const homeId = char.current_home_location_id || char.home_location_id || null;
+        return base44.entities.Character.update(char.id, {
+          resolved_current_location_id: homeId,
+          resolved_current_location_name: homeId ? (char.resolved_current_location_name || 'Home') : null,
+          resolved_location_type: 'home',
+          resolved_presence_status: 'home',
+          resolved_source_reason: 'returned_home_with_user',
+          resolved_last_updated_at: homeNow,
+          travel_status: 'not_traveling',
+          travel_destination_location_id: null,
+        }).catch(() => {});
+      })
     );
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/travel");
@@ -728,8 +720,8 @@ export default function Scene() {
 
   const handleLeaveCharactersBehind = async () => {
     setShowLeaveModal(false);
-    // Characters stay — their current_location_id remains set to this location
-    // We just navigate the user away
+    // Characters stay at this location — their resolved presence remains as-is.
+    // No change needed; they are correctly placed here already.
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     navigate("/travel");
   };
