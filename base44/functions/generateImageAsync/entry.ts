@@ -746,11 +746,18 @@ Deno.serve(async (req) => {
               const presenceLocId = charRecord?.current_home_location_id || charRecord?.resolved_current_location_id;
               if (presenceLocId) {
                 const presenceLoc = await base44.asServiceRole.entities.LocationReference.get(presenceLocId).catch(() => null);
-                if (presenceLoc && presenceLoc.image_urls?.length > 0) {
-                  locationImages = presenceLoc.image_urls.slice(0, 6);
-                  resolvedLocationName = presenceLoc.name;
-                  locationNote = buildRoomLockNote(presenceLoc.name, null);
-                  console.log(`[LOCATION] 🎨 CREATIVE MODE — character presence locked: "${presenceLoc.name}"`);
+                if (presenceLoc) {
+                  // For home locations, try to resolve to kitchen zone
+                  const zoneHint = isHome ? 'kitchen' : null;
+                  const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), presenceLoc, zoneHint);
+                  const imgs = zoneImages.length > 0 ? zoneImages : (presenceLoc.image_urls || []).slice(0, 6);
+                  if (imgs.length > 0) {
+                    locationImages = imgs;
+                    resolvedLocationName = presenceLoc.name;
+                    resolvedZoneName = zoneName || zoneHint;
+                    locationNote = buildRoomLockNote(presenceLoc.name, resolvedZoneName);
+                    console.log(`[LOCATION] 🎨 CREATIVE MODE — character home locked: "${presenceLoc.name}" → Zone: "${resolvedZoneName || 'default'}"`);
+                  }
                 }
               }
             }
