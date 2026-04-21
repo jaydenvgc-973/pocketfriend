@@ -114,8 +114,8 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     enabled: !!currentUser?.email,
   });
 
-  // Use user-scoped characters, fallback to passed prop
-  const scopedCharacters = userCharacters.length > 0 ? userCharacters : characters.filter(c => c.owner_email === currentUser?.email);
+  // ONLY use freshly fetched characters filtered by owner_email - never fall back to stale prop data
+  const scopedCharacters = userCharacters.filter(c => c.owner_email === currentUser?.email);
 
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
