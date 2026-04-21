@@ -39,27 +39,23 @@ export default function NPCContactPanel() {
    enabled: !!currentUser?.email,
   });
 
-  // Show NPCs - exclude active_created_character, is_active_character, and protected characters.
-  // For murqart@gmail.com, show legacy NPCs without character_type (backward compatible).
-  // For other users, filter by character_type starting with 'npc_'.
+  // Contact NPC List shows ONLY npc_fictitious type characters.
+  // For murqart@gmail.com only, also include legacy NPCs without character_type (backward compatible).
+  // Strict: exclude active_created_character and all other types.
   const isMurqart = currentUser?.email === 'murqart@gmail.com';
   const npcCharacters = rawNpcCharacters
     .filter(c => {
       if (c.protected_active) return false;
       if (c.is_default) return false;
       if (c.is_active_character) return false;
-      if (c.character_type === 'active_created_character') return false; // Exclude active created characters
       
-      // For murqart@gmail.com, show NPCs by type OR legacy NPCs missing character_type
-      if (isMurqart) {
-        const isNpcType = c.character_type?.startsWith('npc_');
-        const isLegacyNpc = !c.character_type; // Legacy NPC without type field
-        return isNpcType || isLegacyNpc;
-      }
+      // Strict: only npc_fictitious type
+      if (c.character_type === 'npc_fictitious') return true;
       
-      // For other users, only show actual NPC types
-      const isNpcType = c.character_type?.startsWith('npc_');
-      return isNpcType;
+      // For murqart@gmail.com only, include legacy NPCs without character_type
+      if (isMurqart && !c.character_type) return true;
+      
+      return false;
     })
     .sort((a, b) => {
       const nameA = (a.display_name || a.name || '').toLowerCase();

@@ -200,13 +200,18 @@ export default function Home() {
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
   
-  // For murqart@gmail.com, show all active characters (backward compatible — no character_type filter).
-  // For other users, filter to active_created_character only.
+  // Homepage shows ONLY active_created_character type OR legacy active characters without type (for backward compat on murqart).
+  // Exclude all NPC types.
   const isMurqart = currentUser?.email === 'murqart@gmail.com';
   const allActiveCreated = customChars.filter(c => {
     if ((c.status !== "active" && c.status) || c.name === "Leo Parker") return false;
-    if (isMurqart) return true; // Show all owned characters for this account
-    return c.character_type === "active_created_character"; // Filter by type for other accounts
+    // Exclude any NPC types
+    if (c.character_type?.startsWith('npc_')) return false;
+    // Strict: must be active_created_character type
+    if (c.character_type === "active_created_character") return true;
+    // For murqart only, show legacy active characters without character_type
+    if (isMurqart && !c.character_type) return true;
+    return false;
   });
   
   // Sort remaining active created characters alphabetically
