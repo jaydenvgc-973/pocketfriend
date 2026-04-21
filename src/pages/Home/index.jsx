@@ -358,6 +358,7 @@ export default function Home() {
             navigate(`/scene?locationId=${invite.locationId}&characterIds=${charIds}`);
           }}
           onMaybeLater={(inv) => {
+            // Character goes anyway — user just isn't joining
             base44.functions.invoke('recordCharacterInviteDeclined', {
               characterId: inv.characterId,
               locationId: inv.locationId,
@@ -370,6 +371,7 @@ export default function Home() {
             setInvitations(remaining.length > 0 ? remaining : null);
           }}
           onDecline={(inv) => {
+            // Character still goes — user declined the invite but the character had their own plan
             base44.functions.invoke('recordCharacterInviteDeclined', {
               characterId: inv.characterId,
               locationId: inv.locationId,
