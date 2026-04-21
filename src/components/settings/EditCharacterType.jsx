@@ -136,7 +136,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     () => scopedCharacters.filter(c => 
       c.character_type === "active_created_character" && 
       c.status !== "deleted" && 
-      c.owner_email === currentUser?.email
+      (c.owner_email === currentUser?.email || c.created_by === currentUser?.email)
     ),
     [scopedCharacters, currentUser?.email]
   );
