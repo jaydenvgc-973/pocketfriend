@@ -51,7 +51,7 @@ export default function Settings() {
     queryFn: async () => {
       if (!user?.email) return [];
       const allChars = await base44.entities.Character.list("-created_date", 200);
-      return allChars.filter(c => c.owner_email === user.email);
+      return allChars.filter(c => (c.owner_email === user.email || c.created_by === user.email));
     },
     enabled: !!user?.email,
   });

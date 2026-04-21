@@ -103,19 +103,19 @@ function findMatches(query, characters) {
 export default function EditCharacterType({ characters = [], currentUser }) {
   const queryClient = useQueryClient();
 
-  // Re-fetch all characters and filter client-side by owner_email
+  // Re-fetch all characters and filter client-side by owner_email OR created_by
   const { data: userCharacters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
       const allChars = await base44.entities.Character.list("-created_date", 200);
-      return allChars.filter(c => c.owner_email === currentUser.email);
+      return allChars.filter(c => (c.owner_email === currentUser.email || c.created_by === currentUser.email));
     },
     enabled: !!currentUser?.email,
   });
 
-  // ONLY use freshly fetched characters filtered by owner_email - never fall back to stale prop data
-  const scopedCharacters = userCharacters.filter(c => c.owner_email === currentUser?.email);
+  // ONLY use freshly fetched characters filtered by owner_email or created_by
+  const scopedCharacters = userCharacters.filter(c => (c.owner_email === currentUser?.email || c.created_by === currentUser?.email));
 
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
