@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -13,6 +13,7 @@ import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
 import OccupationLocationPicker from "@/components/character/OccupationLocationPicker";
 import { filterOutTemporaryNPCs } from "@/lib/temporaryNPCUtils";
+import { RELATIONSHIP_TYPES, RELATIONSHIP_CATEGORIES, getInverseRelationType, isBilateralRelationship, isPairedRelationship } from "@/lib/relationshipTypeDefinitions";
 
 const JOB_TYPES = [
   "Retail / Customer Service", "Food Service / Restaurant", "Healthcare / Medical",
@@ -20,8 +21,6 @@ const JOB_TYPES = [
   "Trades / Construction", "Freelance / Self-employed", "Student", "Student & Internship",
   "Unemployed", "Crime / Illegal", "Between jobs"
 ];
-
-const KNOWN_REL_TYPES = ["Friend", "Partner", "Spouse", "Sibling", "Cousin", "Co-worker", "Boss", "Mentor", "Rival", "Ex", "Case manager", "Client"];
 
 const REL_LEVELS = [
   { key: "respect_level", label: "Respect", color: "text-blue-400" },
@@ -230,7 +229,7 @@ export default function EditCharacterProfile() {
       }).catch(() => {});
     }
 
-    // Bi-directional sync: update each linked character's fictional_relationships
+    // Bi-directional sync with auto-pairing logic
     await Promise.all((form.char_relationships || []).map(async (rel) => {
       const otherChar = characters.find(c => c.id === rel.related_character_id);
       if (!otherChar) return;
@@ -238,10 +237,16 @@ export default function EditCharacterProfile() {
       const existingRels = otherChar.fictional_relationships || [];
       const alreadyLinked = existingRels.find(r => r.related_character_id === selectedChar.id);
 
+      // Determine inverse relationship type based on relationship type rules
+      const relTypeKey = Object.keys(RELATIONSHIP_TYPES).find(k => RELATIONSHIP_TYPES[k].label === rel.relationship_type) || rel.relationship_type;
+      const inverseType = getInverseRelationType(relTypeKey);
+      const isBilateral = isBilateralRelationship(relTypeKey);
+      const isPaired = isPairedRelationship(relTypeKey);
+
       const myEntry = {
         related_character_id: selectedChar.id,
         person_name: selectedChar.name,
-        relationship_type: rel.relationship_type,
+        relationship_type: relTypeKey,
         description: rel.description || "",
         respect_level: rel.respect_level ?? 50,
         friendship_level: rel.friendship_level ?? 50,
@@ -467,13 +472,24 @@ export default function EditCharacterProfile() {
                       </div>
                       {isExpanded && (
                         <div className="px-3 pb-3 space-y-3 border-t border-border pt-3">
-                          <div className="flex flex-wrap gap-2">
-                            {KNOWN_REL_TYPES.map(type => (
-                              <button key={type} onClick={() => updateCharRel(rel.related_character_id, "relationship_type", type)}
-                                className={`px-3 py-1 rounded-full text-xs border transition-colors ${rel.relationship_type === type ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}>
-                                {type}
-                              </button>
-                            ))}
+                          <div className="space-y-3">
+                            {Object.entries(RELATIONSHIP_CATEGORIES).filter(([_, def]) => def).map(([category, categoryDef]) => {
+                              const typesInCat = Object.entries(RELATIONSHIP_TYPES).filter(([_, def]) => def.category === category);
+                              return (
+                                <div key={category} className="space-y-1.5">
+                                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{categoryDef.label}</p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {typesInCat.map(([key, type]) => (
+                                      <button key={key} onClick={() => updateCharRel(rel.related_character_id, "relationship_type", key)}
+                                        className={`px-3 py-1 rounded-full text-xs border transition-colors ${rel.relationship_type === key ? `bg-primary text-primary-foreground border-primary` : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                                        title={type.description}>
+                                        {type.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
                           {REL_LEVELS.map(({ key, label, color }) => (
                             <div key={key} className="space-y-1">
