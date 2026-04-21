@@ -446,11 +446,19 @@ export default function EditCharacterType({ characters = [], currentUser }) {
 
   const handleCreateNew = async () => {
     if (!newCharName.trim() || !selectedType || !canSave()) return;
-    // CRITICAL: Validate owner_email before creation
-    if (!currentUser?.email) {
+    
+    // ══════════════════════════════════════════════════════════════
+    // LOCK ACTING USER CONTEXT AT CREATION START (CRITICAL FIX)
+    // ══════════════════════════════════════════════════════════════
+    if (!currentUser?.email || !currentUser?.id) {
       setSaveResult({ success: false, message: 'Error: Unable to determine current user.' });
       return;
     }
+    
+    const lockedActingUserEmail = currentUser.email;
+    const lockedActingUserId = currentUser.id;
+    const lockedActingUserRole = currentUser.role || "user";
+    
     setIsSaving(true);
     setSaveResult(null);
 
@@ -459,10 +467,10 @@ export default function EditCharacterType({ characters = [], currentUser }) {
         name: newCharName.trim(),
         character_type: selectedType,
         status: "active",
-        created_by: currentUser.email,
-        owner_email: currentUser.email,
-        owner_user_id: currentUser.id,
-        created_by_role: currentUser.role || "user",
+        created_by: lockedActingUserEmail,
+        owner_email: lockedActingUserEmail,
+        owner_user_id: lockedActingUserId,
+        created_by_role: lockedActingUserRole,
       };
 
       const created = await base44.entities.Character.create(charData);

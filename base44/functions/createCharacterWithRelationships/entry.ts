@@ -3,14 +3,42 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) {
+    
+    // ══════════════════════════════════════════════════════════════
+    // LOCK ACTING USER CONTEXT AT REQUEST START (CRITICAL FIX)
+    // ══════════════════════════════════════════════════════════════
+    // Do NOT re-read auth later. Use only this frozen context.
+    const actingUser = await base44.auth.me();
+    if (!actingUser) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
+    
+    const actingUserEmail = actingUser.email;
+    const actingUserId = actingUser.id;
+    const actingUserRole = actingUser.role || 'user';
 
     const body = await req.json();
     const characterData = body.characterData || body || {};
     const characterRelationships = body.characterRelationships || [];
+    
+    // ══════════════════════════════════════════════════════════════
+    // VALIDATE CREATOR/OWNER CONSISTENCY
+    // ══════════════════════════════════════════════════════════════
+    // The frontend should pass owner_email and created_by from the
+    // same session. Verify they don't contradict the locked acting user.
+    if (characterData.owner_email && characterData.owner_email !== actingUserEmail) {
+      console.error(`[createCharacterWithRelationships] CONTAMINATION DETECTED: Frontend passed owner_email="${characterData.owner_email}" but acting user is "${actingUserEmail}". This indicates session bleed.`);
+      return Response.json({ 
+        error: 'Identity mismatch: owner_email does not match the authenticated user session. This may indicate a session contamination issue.' 
+      }, { status: 400 });
+    }
+    
+    if (characterData.created_by && characterData.created_by !== actingUserEmail) {
+      console.error(`[createCharacterWithRelationships] CONTAMINATION DETECTED: Frontend passed created_by="${characterData.created_by}" but acting user is "${actingUserEmail}". This indicates session bleed.`);
+      return Response.json({ 
+        error: 'Identity mismatch: created_by does not match the authenticated user session. This may indicate a session contamination issue.' 
+      }, { status: 400 });
+    }
 
     // ── BACKWARD-COMPATIBLE SCHEMA NORMALIZATION ─────────────────────────────
     // Older clients may omit newer fields. We never reject based on missing new fields.
@@ -90,14 +118,23 @@ Deno.serve(async (req) => {
 
     const { system_prompt_url, ...charDataWithoutPrompt } = normalizedData;
 
+    // ══════════════════════════════════════════════════════════════
+    // FORCE CREATOR/OWNER FROM LOCKED ACTING USER CONTEXT
+    // ══════════════════════════════════════════════════════════════
+    // Do NOT use anything else. Do NOT re-read session. This is atomic.
     const newChar = await base44.entities.Character.create({
       ...charDataWithoutPrompt,
       system_prompt_url: system_prompt_url || undefined,
-      owner_user_id: user.id,
-      owner_email: user.email,
-      created_by_role: user.role || 'user',
+      owner_user_id: actingUserId,
+      owner_email: actingUserEmail,
+      created_by_role: actingUserRole,
       visibility_scope: charDataWithoutPrompt.visibility_scope || 'account_private',
     });
+    
+    // ══════════════════════════════════════════════════════════════
+    // LOG CREATION EVENT FOR AUDIT
+    // ══════════════════════════════════════════════════════════════
+    console.log(`[createCharacterWithRelationships] Character "${newChar.name}" created. owner_email="${newChar.owner_email}", created_by="${newChar.created_by}", acting_user="${actingUserEmail}". Consistency verified.`);
 
     // Handle bidirectional relationships
     if (characterRelationships && characterRelationships.length > 0) {

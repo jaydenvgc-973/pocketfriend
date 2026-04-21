@@ -370,6 +370,19 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
       return;
     }
+    
+    // ══════════════════════════════════════════════════════════════
+    // LOCK ACTING USER CONTEXT AT RANDOM CREATE START (CRITICAL FIX)
+    // ══════════════════════════════════════════════════════════════
+    if (!currentUser?.email || !currentUser?.id) {
+      alert('Error: Unable to determine current user. Please refresh and try again.');
+      return;
+    }
+    
+    const lockedActingUserEmail = currentUser.email;
+    const lockedActingUserId = currentUser.id;
+    const lockedActingUserRole = currentUser.role || 'user';
+    
     setIsRandomCreating(true);
     try {
       // Pick random attributes
@@ -434,10 +447,13 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
         }),
       ]);
 
+      // ══════════════════════════════════════════════════════════════
+      // RANDOM CREATE: USE LOCKED ACTING USER CONTEXT FOR ALL IDENTITY
+      // ══════════════════════════════════════════════════════════════
       const charData = {
         name: fullName,
-        created_by: currentUser?.email,
-        owner_email: currentUser?.email,
+        created_by: lockedActingUserEmail,
+        owner_email: lockedActingUserEmail,
         character_type: "active_created_character",
         gender: randomGender.toLowerCase(),
         archetype: randomArchetype.label,
@@ -542,11 +558,21 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
       alert('You have reached the maximum of 4 active characters. Delete or archive one to create another.');
       return;
     }
-    // CRITICAL: Validate owner_email before proceeding
-    if (!currentUser?.email) {
+    
+    // ══════════════════════════════════════════════════════════════
+    // LOCK ACTING USER CONTEXT AT CREATION START (CRITICAL FIX)
+    // ══════════════════════════════════════════════════════════════
+    // Freeze the acting user identity. Do NOT re-read from global state.
+    // Use only this locked context for ALL identity-based fields.
+    if (!currentUser?.email || !currentUser?.id) {
       alert('Error: Unable to determine current user. Please refresh and try again.');
       return;
     }
+    
+    const lockedActingUserEmail = currentUser.email;
+    const lockedActingUserId = currentUser.id;
+    const lockedActingUserRole = currentUser.role || 'user';
+    
     setIsCreating(true);
     // BACKWARD COMPATIBILITY: merge any missing fields with safe defaults so older
     // draft data never blocks creation after a schema update
@@ -648,10 +674,13 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
         ? generatedMemories.memories
         : data.memories.length > 0 ? data.memories : undefined;
 
+      // ══════════════════════════════════════════════════════════════
+      // STANDARD CREATE: USE LOCKED ACTING USER CONTEXT FOR ALL IDENTITY
+      // ══════════════════════════════════════════════════════════════
       const charData = {
         name: fullName,
-        created_by: currentUser?.email,
-        owner_email: currentUser?.email,
+        created_by: lockedActingUserEmail,
+        owner_email: lockedActingUserEmail,
         character_type: "active_created_character",
         gender: data.gender?.toLowerCase(),
         archetype: data.archetype || undefined,
