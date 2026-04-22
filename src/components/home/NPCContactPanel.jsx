@@ -19,11 +19,9 @@ export default function NPCContactPanel() {
    queryKey: ['npc-characters', currentUser?.id],
    queryFn: async () => {
      if (!currentUser?.id) return [];
-
-     // Fetch by owner_user_id to catch system-created characters assigned to this user
-     const allByOwnerId = await base44.entities.Character.filter({ owner_user_id: currentUser.id }, '-created_date', 500);
-
-     return allByOwnerId;
+     // Use backend function with service role to bypass RLS restrictions
+     const res = await base44.functions.invoke('fetchNPCsForUser', {});
+     return res?.data?.npcs || [];
    },
    enabled: !!currentUser?.id,
   });

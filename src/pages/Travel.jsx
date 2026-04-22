@@ -75,11 +75,9 @@ export default function Travel() {
     queryKey: ["npcCharacters", currentUser?.id],
     queryFn: async () => {
       if (!currentUser?.id) return [];
-      const allByOwnerId = await base44.entities.Character.filter({
-        owner_user_id: currentUser.id,
-        character_type: { $in: NPC_CHARACTER_TYPES },
-      });
-      return allByOwnerId.filter(c => c.status !== "deleted" && c.status !== "moved_away");
+      // Use backend function with service role to bypass RLS restrictions
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      return res?.data?.npcs || [];
     },
     enabled: !!currentUser?.id,
     staleTime: 0,
