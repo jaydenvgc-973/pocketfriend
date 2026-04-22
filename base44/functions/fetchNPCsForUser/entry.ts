@@ -40,6 +40,16 @@ Deno.serve(async (req) => {
       return true;
     });
 
+    const fictitiousNames = all.filter(c => c.character_type === 'npc_fictitious').map(c => c.name);
+    const summary = {
+      total: all.length,
+      fictitious: all.filter(c => c.character_type === 'npc_fictitious').length,
+      family: all.filter(c => c.character_type === 'npc_family_member').length,
+      regular: all.filter(c => c.character_type === 'npc_regular').length,
+      other: all.filter(c => !['npc_fictitious','npc_family_member','npc_regular'].includes(c.character_type)).length,
+      fictitiousNames,
+    };
+    console.log('[fetchNPCsForUser] summary:', JSON.stringify(summary));
     return Response.json({ npcs: all });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });

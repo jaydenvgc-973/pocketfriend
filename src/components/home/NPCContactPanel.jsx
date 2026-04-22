@@ -15,24 +15,45 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: rawNpcCharacters = [], isLoading: isNpcLoading } = useQuery({
+  // Backend function (catches NPCs created by service accounts via owner_email/owner_user_id)
+  const { data: backendNpcs = [], isLoading: isNpcLoading } = useQuery({
    queryKey: ['npc-characters', currentUser?.id],
    queryFn: async () => {
      if (!currentUser?.id) return [];
-     // Use backend function with service role to bypass RLS restrictions
      const res = await base44.functions.invoke('fetchNPCsForUser', {});
      return res?.data?.npcs || [];
    },
    enabled: !!currentUser?.id,
   });
 
-  // Show all NPCs returned by the backend (already excludes active_created_character and deleted)
+  // Direct RLS query (catches npc_fictitious created_by the user directly)
+  const { data: rlsNpcs = [] } = useQuery({
+    queryKey: ['npc-fictitious-rls', currentUser?.email],
+    queryFn: () => base44.entities.Character.filter(
+      { created_by: currentUser.email, character_type: 'npc_fictitious' },
+      '-created_date',
+      300
+    ),
+    enabled: !!currentUser?.email,
+  });
+
+  // Merge both sources, deduplicated
+  const rawNpcCharacters = (() => {
+    const seen = new Set();
+    return [...backendNpcs, ...rlsNpcs].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  })();
+
+  // Contact NPC List shows ONLY npc_fictitious type characters
   const npcCharacters = rawNpcCharacters
     .filter(c => {
       if (c.protected_active) return false;
       if (c.is_default) return false;
       if (c.is_active_character) return false;
-      if (c.character_type === 'active_created_character') return false;
+      if (c.character_type !== 'npc_fictitious') return false;
       return true;
     })
     .sort((a, b) => {
