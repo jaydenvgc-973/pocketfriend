@@ -28,8 +28,62 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
   
   console.log('[TravelCharacterSelector Debug]', { activeCreated: characters.filter(c => c.character_type === 'active_created_character').length, npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious').length, npcFamily: characters.filter(c => c.character_type === 'npc_family_member').length, sortedTotal: sortedCharacters.length });
 
+  // Build "Who's Coming" list: active_created_character, then npc_fictitious
+  const selectedActiveCreated = selectedIds
+    .map(id => characters.find(c => c.id === id && c.character_type === 'active_created_character'))
+    .filter(Boolean)
+    .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+
+  const selectedNpcFictitious = selectedIds
+    .map(id => characters.find(c => c.id === id && c.character_type === 'npc_fictitious'))
+    .filter(Boolean)
+    .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+
+  const whosComing = [...selectedActiveCreated, ...selectedNpcFictitious];
+
   return (
     <div className="space-y-2">
+      {/* Who's Coming list */}
+      {whosComing.length > 0 && (
+        <div className="bg-card border border-border rounded-xl p-3 space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming</p>
+          <div className="space-y-2">
+            {selectedActiveCreated.length > 0 && (
+              <div className="space-y-1">
+                {selectedActiveCreated.map(char => (
+                  <div key={char.id} className="text-xs flex items-center gap-2 text-foreground">
+                    <div className="w-5 h-5 rounded-full flex-shrink-0 overflow-hidden bg-primary/20 flex items-center justify-center">
+                      {char.avatar_url ? (
+                        <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-[10px] font-bold text-primary">{char.name?.[0]}</span>
+                      )}
+                    </div>
+                    <span>{char.display_name || char.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {selectedNpcFictitious.length > 0 && (
+              <div className="space-y-1">
+                {selectedNpcFictitious.map(char => (
+                  <div key={char.id} className="text-xs flex items-center gap-2 text-foreground">
+                    <div className="w-5 h-5 rounded-full flex-shrink-0 overflow-hidden bg-secondary flex items-center justify-center">
+                      {char.avatar_url ? (
+                        <img src={char.avatar_url} alt={char.name} className="w-full h-full object-cover" />
+                      ) : (
+                        <span className="text-[10px] font-bold text-muted-foreground">{char.name?.[0]}</span>
+                      )}
+                    </div>
+                    <span>{char.display_name || char.name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* User card — always available */}
       <div className="flex items-center gap-3 p-3 rounded-xl bg-primary/10 border border-primary/30">
         <div className="w-10 h-10 rounded-full bg-primary/20 flex items-center justify-center overflow-hidden flex-shrink-0">
