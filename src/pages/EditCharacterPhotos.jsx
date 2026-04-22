@@ -117,22 +117,21 @@ export default function EditCharacterPhotos() {
                       className="hidden"
                       disabled={uploadingAvatarId === selectedChar.id}
                       onChange={async (e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        setUploadingAvatarId(selectedChar.id);
-                        try {
-                          const result = await base44.integrations.Core.UploadFile({ file });
-                          const updated = { ...selectedChar, avatar_url: result.file_url, reference_image_urls: [result.file_url] };
-                          await base44.entities.Character.update(selectedChar.id, {
-                            avatar_url: result.file_url,
-                            reference_image_urls: [result.file_url],
-                          });
-                          setSelectedChar(updated);
-                          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-                          queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
-                        } finally {
-                          setUploadingAvatarId(null);
-                        }
+                       const file = e.target.files?.[0];
+                       if (!file) return;
+                       setUploadingAvatarId(selectedChar.id);
+                       try {
+                         const result = await base44.integrations.Core.UploadFile({ file });
+                         await base44.functions.invoke('updateCharacterAvatar', {
+                           characterId: selectedChar.id,
+                           avatarUrl: result.file_url,
+                         });
+                         setSelectedChar({ ...selectedChar, avatar_url: result.file_url, reference_image_urls: [result.file_url] });
+                         queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+                         queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+                       } finally {
+                         setUploadingAvatarId(null);
+                       }
                       }}
                     />
                     <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors">
@@ -178,10 +177,11 @@ export default function EditCharacterPhotos() {
               <Button
                 onClick={async () => {
                   setIsSaving(true);
-                  await base44.entities.Character.update(selectedChar.id, {
-                    voice_enabled: form.voice_enabled,
-                    voice_name: form.voice_name,
-                    voice_style_note: form.voice_style_note,
+                  await base44.functions.invoke('updateCharacterAvatar', {
+                    characterId: selectedChar.id,
+                    voiceEnabled: form.voice_enabled,
+                    voiceName: form.voice_name,
+                    voiceStyleNote: form.voice_style_note,
                   });
                   queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
                   setIsSaving(false);
