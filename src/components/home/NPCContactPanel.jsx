@@ -26,23 +26,14 @@ export default function NPCContactPanel() {
    enabled: !!currentUser?.id,
   });
 
-  // Contact NPC List shows ONLY npc_fictitious type characters.
-  // For murqart@gmail.com only, also include legacy NPCs without character_type (backward compatible).
-  // Strict: exclude active_created_character and all other types.
-  const isMurqart = currentUser?.email === 'murqart@gmail.com';
+  // Show all NPCs returned by the backend (already excludes active_created_character and deleted)
   const npcCharacters = rawNpcCharacters
     .filter(c => {
       if (c.protected_active) return false;
       if (c.is_default) return false;
       if (c.is_active_character) return false;
-      
-      // Strict: only npc_fictitious type
-      if (c.character_type === 'npc_fictitious') return true;
-      
-      // For murqart@gmail.com only, include legacy NPCs without character_type
-      if (isMurqart && !c.character_type) return true;
-      
-      return false;
+      if (c.character_type === 'active_created_character') return false;
+      return true;
     })
     .sort((a, b) => {
       const nameA = (a.display_name || a.name || '').toLowerCase();
@@ -74,7 +65,7 @@ export default function NPCContactPanel() {
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
     try {
       await base44.entities.Character.delete(npcId);
-      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }
@@ -88,7 +79,7 @@ export default function NPCContactPanel() {
         character_type: 'active',
         protected_active: true,
       });
-      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
     } catch (err) {
       alert('Failed to update character: ' + err.message);
     }
