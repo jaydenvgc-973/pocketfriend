@@ -47,13 +47,21 @@ export default function Settings() {
   });
 
   const { data: characters = [] } = useQuery({
-    queryKey: ["characters", user?.email],
+    queryKey: ["characters", user?.id],
     queryFn: async () => {
-      if (!user?.email) return [];
-      const allChars = await base44.entities.Character.list("-created_date", 200);
-      return allChars.filter(c => (c.owner_email === user.email || c.created_by === user.email));
+      if (!user?.id) return [];
+      const [byOwnerId, byCreatedBy] = await Promise.all([
+        base44.entities.Character.filter({ owner_user_id: user.id }, "-created_date", 300),
+        base44.entities.Character.filter({ created_by: user.email }, "-created_date", 300),
+      ]);
+      const seen = new Set();
+      return [...byOwnerId, ...byCreatedBy].filter(c => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
     },
-    enabled: !!user?.email,
+    enabled: !!user?.id,
   });
 
   const isAdmin = user?.email === ADMIN_EMAIL;
@@ -90,7 +98,7 @@ export default function Settings() {
     },
     onSuccess: () => {
       setPendingDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+      queryClient.invalidateQueries({ queryKey: ["characters", user?.id] });
     },
   });
 
@@ -315,7 +323,7 @@ export default function Settings() {
                                   voice_name: charVoiceForm.voice_name,
                                   voice_style_note: charVoiceForm.voice_style_note,
                                 });
-                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.id] });
                                 setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
                               }} 
                               disabled={isSavingChar} 
@@ -383,7 +391,7 @@ export default function Settings() {
                                   voice_name: charVoiceForm.voice_name,
                                   voice_style_note: charVoiceForm.voice_style_note,
                                 });
-                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.id] });
                                 setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
                               }} 
                               disabled={isSavingChar} 
@@ -404,7 +412,33 @@ export default function Settings() {
 
 
 
-          {/* NPC Fictitious People - REMOVED (no voice/nickname for social NPCs) */}
+          {/* NPC Fictitious People */}
+          {(() => {
+            const npcFictitiousChars = characters.filter(c => c.character_type === "npc_fictitious" && c.status !== "deleted").sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            return npcFictitiousChars.length > 0 ? (
+              <div className="space-y-3 pb-4 border-b border-border">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">NPC Fictitious ({npcFictitiousChars.length})</p>
+                <div className="space-y-3">
+                  {npcFictitiousChars.map(char => (
+                    <div key={char.id} className="border border-border rounded-xl p-3 flex items-center gap-3">
+                      <CharacterAvatar character={char} size="sm" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground truncate">{char.name}</p>
+                        <p className="text-xs text-muted-foreground capitalize">{char.status}</p>
+                      </div>
+                      <button
+                        onClick={() => setPendingDelete(char)}
+                        className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                        title="Delete NPC"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null;
+          })()}
 
           {/* Moved Away & Deleted Characters at bottom */}
           <div className="space-y-4">
@@ -454,7 +488,7 @@ export default function Settings() {
                                   voice_name: charVoiceForm.voice_name,
                                   voice_style_note: charVoiceForm.voice_style_note,
                                 });
-                                queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+                                queryClient.invalidateQueries({ queryKey: ["characters", user?.id] });
                                 setSavingCharIds(p => { const next = new Set(p); next.delete(char.id); return next; });
                               }} 
                               disabled={isSavingChar} 
