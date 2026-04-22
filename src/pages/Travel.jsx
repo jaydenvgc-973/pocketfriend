@@ -531,7 +531,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
                       if (!locFamilyMember.name) return;
                       let npcLocationId = null;
-                      for (const char of characters) {
+                      for (const char of mapCharacters) {
                         const rel = (char.fictional_relationships || []).find(
                           r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase() && !r.related_character_id
                         );
