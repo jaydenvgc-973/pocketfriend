@@ -16,27 +16,16 @@ export default function NPCContactPanel() {
   });
 
   const { data: rawNpcCharacters = [], isLoading: isNpcLoading } = useQuery({
-   queryKey: ['npc-characters', currentUser?.email],
+   queryKey: ['npc-characters', currentUser?.id],
    queryFn: async () => {
-     if (!currentUser?.email) return [];
+     if (!currentUser?.id) return [];
 
-     // Fetch ALL characters (both created_by and owner_email) without type filter
-     const [allByCreatedBy, allByOwnerEmail] = await Promise.all([
-       base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 500),
-       base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500),
-     ]);
+     // Fetch by owner_user_id to catch system-created characters assigned to this user
+     const allByOwnerId = await base44.entities.Character.filter({ owner_user_id: currentUser.id }, '-created_date', 500);
 
-     // Merge and deduplicate ALL characters
-     const seen = new Set();
-     const allChars = [...allByCreatedBy, ...allByOwnerEmail].filter(c => {
-       if (seen.has(c.id)) return false;
-       seen.add(c.id);
-       return true;
-     });
-
-     return allChars;
+     return allByOwnerId;
    },
-   enabled: !!currentUser?.email,
+   enabled: !!currentUser?.id,
   });
 
   // Contact NPC List shows ONLY npc_fictitious type characters.

@@ -72,26 +72,16 @@ export default function Travel() {
   // NPC characters — standalone entities with NPC character_type
   // Fetch by both created_by AND owner_email to match all account-owned NPCs (mirrors NPCContactPanel logic)
   const { data: npcCharacters = [] } = useQuery({
-    queryKey: ["npcCharacters", currentUser?.email],
+    queryKey: ["npcCharacters", currentUser?.id],
     queryFn: async () => {
-      const [byCreatedBy, byOwnerEmail] = await Promise.all([
-        base44.entities.Character.filter({
-          created_by: currentUser.email,
-          character_type: { $in: NPC_CHARACTER_TYPES },
-        }),
-        base44.entities.Character.filter({
-          owner_email: currentUser.email,
-          character_type: { $in: NPC_CHARACTER_TYPES },
-        }),
-      ]);
-      const seen = new Set();
-      return [...byCreatedBy, ...byOwnerEmail].filter(c => {
-        if (seen.has(c.id)) return false;
-        seen.add(c.id);
-        return c.status !== "deleted" && c.status !== "moved_away";
+      if (!currentUser?.id) return [];
+      const allByOwnerId = await base44.entities.Character.filter({
+        owner_user_id: currentUser.id,
+        character_type: { $in: NPC_CHARACTER_TYPES },
       });
+      return allByOwnerId.filter(c => c.status !== "deleted" && c.status !== "moved_away");
     },
-    enabled: !!currentUser?.email,
+    enabled: !!currentUser?.id,
     staleTime: 0,
     gcTime: 0,
   });
