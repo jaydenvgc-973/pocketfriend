@@ -105,8 +105,12 @@ export default function Travel() {
     });
   })();
 
-  // Combined for travel companions, location presence, etc.
-  const characters = [...activeCharacters, ...npcCharacters];
+  // For travel companions: active_created_character + npc_fictitious ONLY
+  // (npc_family_member appears on map but NOT in "Who's coming" list)
+  const travelCompanions = [...activeCharacters, ...npcCharacters];
+  
+  // For map display: include all character types + location residents
+  const mapCharacters = travelCompanions;
 
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -161,7 +165,7 @@ export default function Travel() {
     if (!location || location.category !== "home") {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
-    const homeResidents = characters.filter(c => c.current_home_location_id === location.id);
+    const homeResidents = travelCompanions.filter(c => c.current_home_location_id === location.id);
     const npcResidents = location.resident_family_members || [];
     const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
     const hasAssignedResidents = (location.resident_character_ids || []).length > 0;
@@ -178,7 +182,7 @@ export default function Travel() {
   };
 
   const toggleCharacter = (charId) => {
-    const char = characters.find(c => c.id === charId);
+    const char = travelCompanions.find(c => c.id === charId);
     if (!char) return;
     if (isCharacterAsleep(char)) {
       setWakeUpModal({ character: char, pendingCharacterId: charId });
@@ -202,7 +206,7 @@ export default function Travel() {
     if (!busyPopup?.charId) return;
     setIsConvincing(true);
     try {
-      const char = characters.find(c => c.id === busyPopup.charId);
+      const char = travelCompanions.find(c => c.id === busyPopup.charId);
       if (!char) return;
       const convinceRes = await base44.integrations.Core.InvokeLLM({
         prompt: `You are ${char.name}. You are currently busy: ${busyPopup.reason}.
@@ -236,7 +240,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     if (!wakeUpModal?.pendingCharacterId) return;
     setIsWakingUp(true);
     try {
-      const char = characters.find(c => c.id === wakeUpModal.pendingCharacterId);
+      const char = travelCompanions.find(c => c.id === wakeUpModal.pendingCharacterId);
       if (!char) return;
       const wakeRes = await base44.functions.invoke('generateWakeUpResponse', {
         characterId: char.id,
@@ -323,7 +327,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
-        const char = characters.find(c => c.id === id);
+        const char = travelCompanions.find(c => c.id === id);
         if (!char) return null;
         const avail = getCharacterTravelAvailability(char, locationMap);
         return avail.available ? null : { character: char, reason: avail.reason, availableAt: avail.availableAt };
@@ -412,7 +416,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Live World Map</p>
                 <LivePresenceMap
                   locations={locationsData}
-                  characters={characters}
+                  characters={mapCharacters}
                   onLocationClick={(locationId) => {
                     const loc = locationsData.find(l => l.id === locationId);
                     if (loc) setSelectedLocation(loc);
@@ -431,7 +435,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Who's coming?</p>
           </div>
           <TravelCharacterSelector
-            characters={characters}
+            characters={travelCompanions}
             currentUser={currentUser}
             displayName={displayName}
             selectedIds={selectedCharacterIds}
@@ -464,7 +468,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             locations={sortedLocations}
             selectedLocation={selectedLocation}
             onSelect={setSelectedLocation}
-            characters={characters}
+            characters={mapCharacters}
           />
           <Button onClick={() => setShowRealLocationModal(true)} variant="outline" size="sm" className="w-full rounded-xl gap-2">
             <Plus className="w-4 h-4" />
@@ -509,19 +513,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
 
                   if (isHome) {
                     // Only show characters actually at this home (resolved_current_location_id matches)
-                    const charactersAtHome = characters.filter(c =>
+                    const charactersAtHome = travelCompanions.filter(c =>
                       c.resolved_current_location_id === selectedLocation.id &&
                       (c.resolved_presence_status === 'home' || c.resolved_presence_status === 'sleeping' || c.resolved_presence_status === 'napping')
                     );
                     charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
 
-                    characters.filter(c =>
-                      c.character_type === 'family_npc' &&
-                      c.status === 'active' &&
-                      (selectedLocation.resident_character_ids || []).includes(c.id)
-                    ).forEach(c => {
-                      if (!lines.find(l => l.name === c.name)) {
-                        lines.push({ name: c.name, status: 'home', color: 'text-muted-foreground' });
+                    // npc_family_members in resident list
+                    (selectedLocation.resident_character_ids || []).forEach(resId => {
+                      const familyChar = travelCompanions.find(c => c.id === resId && c.character_type === 'npc_family_member') ||
+                                         mapCharacters.find(c => c.id === resId && c.character_type === 'npc_family_member');
+                      if (familyChar && !lines.find(l => l.name === familyChar.name)) {
+                        lines.push({ name: familyChar.name, status: 'home', color: 'text-muted-foreground' });
                       }
                     });
 
@@ -543,7 +546,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   } else {
                     // Use resolved_current_location_id directly from DB (set by distributeVGCTowersNPCs)
                     // rather than re-running resolveCharacterLocation which may give stale results
-                    const currentlyAtLocation = characters.filter(c =>
+                    const currentlyAtLocation = mapCharacters.filter(c =>
                       c.resolved_current_location_id === selectedLocation.id
                     );
                     currentlyAtLocation.forEach(c => {
@@ -551,7 +554,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       lines.push({ name: c.name, status, color: "text-blue-400" });
                     });
 
-                    characters.forEach(char => {
+                    mapCharacters.forEach(char => {
                       if (!char.fictional_relationships) return;
                       char.fictional_relationships.forEach(rel => {
                         if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
@@ -568,7 +571,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const currentTime = `${String(nowET.getHours()).padStart(2, '0')}:${String(nowET.getMinutes()).padStart(2, '0')}`;
 
                     // Annotate workers — check if any character already in lines is on shift here
-                    characters.forEach(c => {
+                    mapCharacters.forEach(c => {
                       // Use resolved_current_location_id only — no recomputation from schedule
                       if (c.resolved_current_location_id === selectedLocation.id) {
                         const workerShifts = selectedLocation.worker_shifts || {};
@@ -742,7 +745,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             <div className="space-y-1 text-xs border-t border-border pt-2">
               <p className="font-medium text-muted-foreground">NPC Characters: {npcCharacters.length}</p>
               {npcCharacters.length > 0 ? (
-                [...npcCharacters].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => {
+               [...travelCompanions.filter(c => c.character_type === 'npc_fictitious')].sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || '')).map(c => {
                     return (
                       <div key={c.id} className="text-[10px]">
                         <span className="text-muted-foreground/70">• {c.name} ({c.character_type}):</span>

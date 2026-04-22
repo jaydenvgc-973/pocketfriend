@@ -58,7 +58,7 @@ export function getEditableCharactersForModule(allCharacters, currentUserId, cur
 /**
  * Get characters for homepage display.
  * 
- * @returns {Object} { activeCharacters, npcFictitious }
+ * @returns {Object} { activeCharacters, npcFictitious, allForLocationSystems }
  */
 export function getCharactersForHomepage(allCharacters, currentUserId, currentUserEmail) {
   const scoped = resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail);
@@ -66,6 +66,10 @@ export function getCharactersForHomepage(allCharacters, currentUserId, currentUs
   return {
     activeCharacters: scoped.filter(c => c._resolvedType === 'active_created_character'),
     npcFictitious: scoped.filter(c => c._resolvedType === 'npc_fictitious'),
+    // For location systems: include all valid types
+    allForLocationSystems: scoped.filter(c => 
+      ['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(c._resolvedType)
+    ),
   };
 }
 
@@ -97,6 +101,18 @@ export function getCharactersForSettingsList(allCharacters, currentUserId, curre
     if (aOrder !== bOrder) return aOrder - bOrder;
     return (a._displayName || '').localeCompare(b._displayName || '');
   });
+}
+
+/**
+ * Get all characters for location-based systems (residence, work, school, presence).
+ * Includes: active_created_character, npc_fictitious, npc_family_member
+ */
+export function getCharactersForLocationSystems(allCharacters, currentUserId, currentUserEmail) {
+  const scoped = resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail);
+  
+  return scoped.filter(c => 
+    ['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(c._resolvedType)
+  );
 }
 
 /**
@@ -250,7 +266,8 @@ function isCharacterEligibleForModule(resolvedType, moduleType) {
  * Helper: Hydrate a character ID to a displayable character object.
  * Used for residency lists, relationship displays, etc.
  * 
- * Returns { name, avatarUrl, type, fallback } suitable for UI rendering.
+ * Returns { name, avatarUrl, type, initials } suitable for UI rendering.
+ * NEVER returns raw ID — always resolves to displayable object or null.
  */
 export function hydrateCharacterReference(characterId, allCharacters, currentUserId, currentUserEmail) {
   const char = allCharacters.find(c => c.id === characterId);
@@ -270,6 +287,18 @@ export function hydrateCharacterReference(characterId, allCharacters, currentUse
     type: resolveCharacterType(char),
     initials: resolveInitials(char),
   };
+}
+
+/**
+ * Batch hydrate character IDs to displayable objects.
+ * Filters out invalid IDs and cross-account characters automatically.
+ */
+export function hydrateCharacterReferences(characterIds, allCharacters, currentUserId, currentUserEmail) {
+  if (!Array.isArray(characterIds)) return [];
+  
+  return characterIds
+    .map(id => hydrateCharacterReference(id, allCharacters, currentUserId, currentUserEmail))
+    .filter(Boolean);
 }
 
 /**
