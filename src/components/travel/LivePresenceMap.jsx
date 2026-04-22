@@ -634,7 +634,6 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
 
   const handleLocationDotClick = (locationId) => {
     setActiveLocationId(prev => prev === locationId ? null : locationId);
-    onLocationClick?.(locationId);
   };
 
   return (
