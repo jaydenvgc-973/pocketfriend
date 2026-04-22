@@ -17,6 +17,8 @@ import LocationHoursEditor from "@/components/location/LocationHoursEditor";
 import LocationMatchSuggestion from "@/components/approvals/LocationMatchSuggestion";
 import LocationDetailPanel from "@/components/location/LocationDetailPanel";
 import SavedPlaces from "@/components/location/SavedPlaces";
+import LocationDescriptionGenerator from "@/components/location/LocationDescriptionGenerator";
+import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
@@ -224,13 +226,13 @@ const SUBTYPE_OPTIONS = {
   community: ["community_center", "drop_in_center", "after_school_program", "daycare", "youth_center", "resource_hub"],
 };
 
-function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false }) {
+function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, locationName = "", category = "", subtype = [], locationDescription = "" }) {
   const [uploading, setUploading] = useState(false);
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    const remaining = 5 - (zone.image_urls?.length || 0);
+    const remaining = 1 - (zone.image_urls?.length || 0);
     const toUpload = files.slice(0, remaining);
     setUploading(true);
     const uploaded = [];
@@ -242,8 +244,12 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false }) {
     setUploading(false);
   };
 
-  const removeImage = (i) => {
-    onUpdateImages((zone.image_urls || []).filter((_, idx) => idx !== i));
+  const removeImage = () => {
+    onUpdateImages([]);
+  };
+
+  const handleGeneratedImage = (imageUrl) => {
+    onUpdateImages([imageUrl]);
   };
 
   const imgCount = zone.image_urls?.length || 0;
@@ -257,31 +263,57 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false }) {
         </button>}
       </div>
       {imgCount > 0 && (
-        <div className="grid grid-cols-4 gap-1.5">
-          {zone.image_urls.map((url, i) => (
-            <div key={i} className="relative group">
-              <img src={url} alt={`ref ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
-              {!readOnly && <button
-                onClick={() => removeImage(i)}
-                className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-              >
-                <X className="w-3 h-3 text-white" />
-              </button>}
-            </div>
-          ))}
+        <div className="relative">
+          <img src={zone.image_urls[0]} alt={zone.zone_name} className="w-full aspect-video object-cover rounded-lg" />
+          {!readOnly && (
+            <button
+              onClick={removeImage}
+              className="absolute top-2 right-2 w-6 h-6 bg-black/60 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors"
+            >
+              <X className="w-3.5 h-3.5 text-white" />
+            </button>
+          )}
         </div>
       )}
-      {!readOnly && imgCount < 5 ? (
-        <label className="block cursor-pointer">
-          <input type="file" accept="image/*" multiple onChange={handleUpload} className="hidden" />
-          <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-xs">
-            <Upload className="w-3.5 h-3.5" />
-            {uploading ? "Uploading..." : `Upload images (${5 - imgCount} remaining)`}
-          </div>
-        </label>
-      ) : (!readOnly && <p className="text-xs text-muted-foreground text-center">Maximum 5 images per zone</p>)}
-      {imgCount === 0 && (
-        <p className="text-xs text-amber-500/80">⚠ No images yet — add reference photos for this zone</p>
+      {!readOnly && (
+        <div className="space-y-2">
+          {imgCount === 0 ? (
+            <>
+              <label className="block cursor-pointer">
+                <input type="file" accept="image/*" onChange={handleUpload} className="hidden" />
+                <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-xs">
+                  <Upload className="w-3.5 h-3.5" />
+                  {uploading ? "Uploading..." : "Upload image"}
+                </div>
+              </label>
+              <ZoneImageGenerator
+                zoneName={zone.zone_name}
+                locationName={locationName}
+                category={category}
+                subtype={subtype}
+                locationDescription={locationDescription}
+                hasExistingImage={imgCount > 0}
+                onGenerate={handleGeneratedImage}
+              />
+            </>
+          ) : (
+            <div className="space-y-2">
+              <ZoneImageGenerator
+                zoneName={zone.zone_name}
+                locationName={locationName}
+                category={category}
+                subtype={subtype}
+                locationDescription={locationDescription}
+                hasExistingImage={true}
+                onGenerate={handleGeneratedImage}
+              />
+              <p className="text-xs text-muted-foreground text-center">One image per zone. Replace or delete to upload a different one.</p>
+            </div>
+          )}
+        </div>
+      )}
+      {imgCount === 0 && !readOnly && (
+        <p className="text-xs text-amber-500/80">⚠ No images yet — upload or generate a reference photo for this zone</p>
       )}
     </div>
   );
@@ -592,7 +624,17 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         )}
         <div className="space-y-3">
           {form.zones.map((zone, i) => (
-            <ZoneEditor key={i} zone={zone} onUpdateImages={(urls) => updateZoneImages(i, urls)} onDelete={() => removeZone(i)} readOnly={form.location_type === 'shared' && currentUser?.role !== 'admin'} />
+            <ZoneEditor 
+              key={i} 
+              zone={zone} 
+              onUpdateImages={(urls) => updateZoneImages(i, urls)} 
+              onDelete={() => removeZone(i)} 
+              readOnly={form.location_type === 'shared' && currentUser?.role !== 'admin'}
+              locationName={form.name}
+              category={form.category}
+              subtype={form.subtype}
+              locationDescription={form.description}
+            />
           ))}
         </div>
       </div>
@@ -922,7 +964,24 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         )}
       </div>
 
-      <Textarea value={form.description} onChange={e => update("description", e.target.value)} placeholder="Overall location description: style, atmosphere... (optional)" className="rounded-xl min-h-[60px] text-sm resize-none" />
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <label className="text-xs font-semibold text-foreground uppercase tracking-wider">Description (optional)</label>
+          <LocationDescriptionGenerator
+            locationName={form.name}
+            category={form.category}
+            subtype={form.subtype}
+            currentDescription={form.description}
+            onGenerate={(newDescription) => update("description", newDescription)}
+          />
+        </div>
+        <Textarea 
+          value={form.description} 
+          onChange={e => update("description", e.target.value)} 
+          placeholder="Overall location description: style, atmosphere..." 
+          className="rounded-xl min-h-[60px] text-sm resize-none" 
+        />
+      </div>
 
       {(form.category === 'home' || form.category === 'generic') && (
         <div className="space-y-3 bg-primary/5 border border-primary/20 rounded-xl p-4">
