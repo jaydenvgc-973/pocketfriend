@@ -340,37 +340,37 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {occupants.map(o => {
-            const isActiveChar = o.type === "active_created_character";
-            const isFamilyChar = o.isFamilyMember || o.type === "npc_family_member";
-            const pinColor = isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
-            return (
-            <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{
-                width: 32, height: 32, borderRadius: "50%",
-                border: `2px solid ${pinColor}`,
-                overflow: "hidden", flexShrink: 0,
-              }}>
-                {o.avatarUrl ? (
-                  <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : (
+              const isActiveChar = o.type === "active_created_character";
+              const isFamilyChar = o.isFamilyMember || o.type === "npc_family_member";
+              const pinColor = isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
+              return (
+                <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{
-                    width: "100%", height: "100%",
-                    background: `linear-gradient(135deg, ${pinColor}, ${pinColor}cc)`,
-                    display: "grid", placeItems: "center",
-                    fontSize: o.initials?.length > 1 ? 9 : 12, fontWeight: 700, color: "#fff",
+                    width: 32, height: 32, borderRadius: "50%",
+                    border: `2px solid ${pinColor}`,
+                    overflow: "hidden", flexShrink: 0,
                   }}>
-                    {o.initials || o.name?.[0]?.toUpperCase() || '?'}
+                    {o.avatarUrl ? (
+                      <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    ) : (
+                      <div style={{
+                        width: "100%", height: "100%",
+                        background: `linear-gradient(135deg, ${pinColor}, ${pinColor}cc)`,
+                        display: "grid", placeItems: "center",
+                        fontSize: o.initials?.length > 1 ? 9 : 12, fontWeight: 700, color: "#fff",
+                      }}>
+                        {o.initials || o.name?.[0]?.toUpperCase() || '?'}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
-                <div style={{ fontSize: 10, color: "#64748b" }}>
-                  {o.isAsleep ? "😴 Sleeping" : isFamilyChar ? "Family" : label}
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
+                    <div style={{ fontSize: 10, color: "#64748b" }}>
+                      {o.isAsleep ? "😴 Sleeping" : isFamilyChar ? "Family" : label}
+                    </div>
+                  </div>
                 </div>
-              </div>
-            </div>
-            );
+              );
             })}
           </div>
         </div>

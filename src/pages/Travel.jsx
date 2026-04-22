@@ -20,8 +20,7 @@ import RealLocationModal from "@/components/travel/RealLocationModal";
 import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAvailability";
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
-import { verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
-import { getLocationPresence, canCharacterTravelToLocation, resolveCharacterPresenceAtLocation } from "@/lib/characterEditableListResolver";
+import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolver";
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
 import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 
@@ -96,7 +95,7 @@ export default function Travel() {
     gcTime: 0,
   });
 
-  // npc_family_member — via direct RLS (both created_by and owner_email coverage)
+  // npc_family_member — via created_by (user-created family records)
   const { data: rlsFamilyByCreatedBy = [] } = useQuery({
     queryKey: ["npcFamilyMembers", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
@@ -109,6 +108,7 @@ export default function Travel() {
     gcTime: 0,
   });
 
+  // npc_family_member — via owner_email (service-created or migrated family records)
   const { data: rlsFamilyByOwnerEmail = [] } = useQuery({
     queryKey: ["npcFamilyMembersByOwner", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
@@ -160,7 +160,6 @@ export default function Travel() {
 
   // UNIFIED PRESENCE RESOLVER — single source of truth for map, popup, counts
   // Includes: active_created, npc_fictitious, npc_family_member, internal family
-  // Uses owner_user_id / owner_email scope, not just created_by
   const allPresenceEntities = useMemo(() => resolveTravelPresenceEntities({
     currentUser,
     activeCharacters,
@@ -226,10 +225,10 @@ export default function Travel() {
 
   const checkHomeAccess = (location) => {
     if (!location || location.category !== "home") {
-      return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
+      return { canVisit: true, blockedBy: null, homeResidents: [] };
     }
     
-    // Use unified presence resolver (allPresenceEntities) — includes family members
+    // Use unified presence resolver (allPresenceEntities) — consistent with map + popup
     const presentHere = getPresenceAtLocation(location, allPresenceEntities);
     const homeResidents = presentHere.map(e => ({ name: e.display_name }));
     
@@ -239,14 +238,13 @@ export default function Travel() {
     const canVisit = homeResidents.length > 0 || hasAssignedResidents || userHasKey;
     
     if (!hasAssignedResidents && homeResidents.length === 0) {
-      return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
+      return { canVisit: true, blockedBy: null, homeResidents: [] };
     }
     
     return {
       canVisit,
       blockedBy: !canVisit ? { name: location.name } : null,
       homeResidents,
-      npcResidents: [],
     };
   };
 
