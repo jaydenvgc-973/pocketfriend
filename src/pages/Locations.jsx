@@ -405,6 +405,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     zones: editingLocation?.zones || [],
     resident_character_ids: editingLocation?.resident_character_ids || [],
     resident_family_members: editingLocation?.resident_family_members || [],
+    resident_housing_context: editingLocation?.resident_housing_context || {},
     cost_split_method: editingLocation?.cost_split_method || "even",
     resident_cost_split: editingLocation?.resident_cost_split || {},
     owner_character_id: editingLocation?.owner_character_id || "",
@@ -628,45 +629,51 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       </div>
 
       {/* ── RESIDENTS ── */}
-      {(form.category === 'home' || form.category === 'generic') && form.location_type !== 'shared' && (
+      {(form.category === 'home' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && form.location_type !== 'shared' && (
         <div className="space-y-3">
           <div>
-            <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives here?</label>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-2">Add resident characters. Rent and utilities will be split among them.</p>
+            <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives/stays here?</label>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">{form.category === 'home' || form.category === 'generic' ? 'Add resident characters. Rent and utilities will be split among them.' : 'Add characters using this location for shelter or as a home base.'}</p>
           </div>
           <div className="space-y-2">
             {form.resident_character_ids?.length > 0 || form.resident_family_members?.length > 0 ? (
               <>
-                <div className="space-y-2 max-h-44 overflow-y-auto">
+                <div className="space-y-2 max-h-56 overflow-y-auto">
                   {form.resident_character_ids.map((resId, idx) => {
                     const isUser = resId === currentUser?.id;
                     const resChar = isUser ? null : characters.find(c => c.id === resId);
                     const displayName = isUser ? (currentUser?.full_name || "You") : (resChar?.name || resId);
+                    const housingContext = (form.resident_housing_context || {})[resId];
                     return (
-                      <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
-                        {isUser ? (
-                          <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                            <span className="text-xs font-bold text-primary">U</span>
+                      <div key={idx} className="space-y-2 p-3 rounded-lg bg-secondary/50 border border-border">
+                        <div className="flex items-center gap-2">
+                          {isUser ? (
+                            <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                              <span className="text-xs font-bold text-primary">U</span>
+                            </div>
+                          ) : resChar ? <CharacterAvatar character={resChar} size="sm" /> : null}
+                          <span className="text-sm text-foreground flex-1">{displayName}</span>
+                          {isUser && <span className="text-xs text-primary/60">Player</span>}
+                          <button onClick={() => update("resident_character_ids", form.resident_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                        {(form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && (
+                          <div className="flex gap-2">
+                            {['shelter', 'homeless'].map(status => (
+                              <button
+                                key={status}
+                                onClick={() => update("resident_housing_context", { ...form.resident_housing_context, [resId]: status })}
+                                className={`flex-1 px-2 py-1.5 rounded-lg text-xs border transition-colors capitalize ${housingContext === status ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                              >
+                                {status === 'shelter' ? '🏠 Shelter' : '🌙 Homeless'}
+                              </button>
+                            ))}
                           </div>
-                        ) : resChar ? <CharacterAvatar character={resChar} size="sm" /> : null}
-                        <span className="text-sm text-foreground flex-1">{displayName}</span>
-                        {isUser && <span className="text-xs text-primary/60">Player</span>}
-                        <button onClick={() => update("resident_character_ids", form.resident_character_ids.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
-                          <X className="w-3.5 h-3.5" />
-                        </button>
+                        )}
                       </div>
                     );
                   })}
-                  {form.residents?.map((res, idx) => (
-                    <div key={`new-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
-                      {res.avatar_url && <img src={res.avatar_url} alt={res.character_name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />}
-                      {!res.avatar_url && <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{res.character_name?.[0]?.toUpperCase() || "?"}</div>}
-                      <span className="text-sm text-foreground flex-1">{res.character_name}</span>
-                      <button onClick={() => update("residents", form.residents.filter((_, i) => i !== idx))} className="p-1 text-muted-foreground hover:text-destructive transition-colors rounded-lg">
-                        <X className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
                   {form.resident_family_members?.map((fam, idx) => (
                     <div key={`fam-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
                       <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{fam.name?.[0]?.toUpperCase() || "?"}</div>
@@ -680,7 +687,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                     </div>
                   ))}
                 </div>
-                {(form.resident_character_ids.length + (form.residents?.length || 0) + (form.resident_family_members?.length || 0)) > 1 && (
+                {(form.category === 'home' || form.category === 'generic') && (form.resident_character_ids.length + (form.residents?.length || 0) + (form.resident_family_members?.length || 0)) > 1 && (
                   <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
                     <label className="text-xs font-semibold text-foreground uppercase">Split costs</label>
                     <div className="flex gap-2">
