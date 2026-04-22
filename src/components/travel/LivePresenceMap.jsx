@@ -1,33 +1,35 @@
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, MapPin } from "lucide-react";
+import { Moon, MapPin, X, Home, Briefcase, Users, Star } from "lucide-react";
 
 // ─── Category metadata ────────────────────────────────────────────────────────
 const CATEGORY_LABELS = {
-  home: "Residential", workplace: "Workplace", school: "School",
+  home: "Home", workplace: "Business", school: "School",
   gym: "Gym", food_drink: "Food & Drink", bar: "Bar",
-  restaurant: "Restaurant", park: "Park", outdoor: "Outdoor",
-  hospital: "Hospital", medical: "Medical", clinic: "Clinic",
+  restaurant: "Food & Drink", park: "Park", outdoor: "Outdoor",
+  hospital: "Medical", medical: "Medical", clinic: "Medical",
   grocery: "Grocery", church: "Church", religion: "Church",
   social: "Social", community: "Community", government: "Gov't",
   business: "Business", public: "Public", generic: "Place",
 };
 
 const CATEGORY_COLORS = {
-  home:       { bg: "#dbeafe", border: "#3b82f6", text: "#1d4ed8", pin: "#3b82f6" },
-  workplace:  { bg: "#ede9fe", border: "#7c3aed", text: "#5b21b6", pin: "#7c3aed" },
-  school:     { bg: "#fef9c3", border: "#ca8a04", text: "#713f12", pin: "#ca8a04" },
-  gym:        { bg: "#dcfce7", border: "#16a34a", text: "#14532d", pin: "#16a34a" },
-  food_drink: { bg: "#fff7ed", border: "#ea580c", text: "#7c2d12", pin: "#ea580c" },
-  bar:        { bg: "#fdf4ff", border: "#a855f7", text: "#6b21a8", pin: "#a855f7" },
-  restaurant: { bg: "#fff7ed", border: "#f97316", text: "#7c2d12", pin: "#f97316" },
-  park:       { bg: "#d1fae5", border: "#059669", text: "#064e3b", pin: "#059669" },
-  hospital:   { bg: "#fee2e2", border: "#ef4444", text: "#7f1d1d", pin: "#ef4444" },
-  church:     { bg: "#fef3c7", border: "#d97706", text: "#78350f", pin: "#d97706" },
-  generic:    { bg: "#f1f5f9", border: "#64748b", text: "#334155", pin: "#64748b" },
+  home:       { pin: "#3b82f6", bg: "#dbeafe", text: "#1d4ed8", label: "#3b82f6" },
+  workplace:  { pin: "#7c3aed", bg: "#ede9fe", text: "#5b21b6", label: "#7c3aed" },
+  school:     { pin: "#ca8a04", bg: "#fef9c3", text: "#713f12", label: "#ca8a04" },
+  gym:        { pin: "#16a34a", bg: "#dcfce7", text: "#14532d", label: "#16a34a" },
+  food_drink: { pin: "#ea580c", bg: "#fff7ed", text: "#7c2d12", label: "#ea580c" },
+  bar:        { pin: "#a855f7", bg: "#fdf4ff", text: "#6b21a8", label: "#a855f7" },
+  restaurant: { pin: "#f97316", bg: "#fff7ed", text: "#7c2d12", label: "#f97316" },
+  park:       { pin: "#059669", bg: "#d1fae5", text: "#064e3b", label: "#059669" },
+  hospital:   { pin: "#ef4444", bg: "#fee2e2", text: "#7f1d1d", label: "#ef4444" },
+  medical:    { pin: "#ef4444", bg: "#fee2e2", text: "#7f1d1d", label: "#ef4444" },
+  church:     { pin: "#d97706", bg: "#fef3c7", text: "#78350f", label: "#d97706" },
+  social:     { pin: "#ec4899", bg: "#fdf2f8", text: "#831843", label: "#ec4899" },
+  grocery:    { pin: "#0891b2", bg: "#e0f2fe", text: "#0c4a6e", label: "#0891b2" },
+  generic:    { pin: "#64748b", bg: "#f1f5f9", text: "#334155", label: "#64748b" },
 };
 
-// Category icons (emoji — lightweight, no import needed)
 const CATEGORY_ICONS = {
   home: "🏠", workplace: "🏢", school: "🏫", gym: "💪",
   food_drink: "☕", bar: "🍸", restaurant: "🍽️", park: "🌳",
@@ -41,390 +43,388 @@ function getColors(category) {
 }
 
 // ─── City Map SVG background ──────────────────────────────────────────────────
-// A stylized, static vector city map — roads, blocks, parks, water
 function CityMapBackground() {
   return (
     <svg
-      viewBox="0 0 800 380"
+      viewBox="0 0 800 420"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}
       preserveAspectRatio="xMidYMid slice"
     >
-      {/* Base land */}
-      <rect width="800" height="380" fill="#eaf0f8" />
+      <rect width="800" height="420" fill="#e8f0dc" />
 
-      {/* === RESIDENTIAL ZONE (left ~0–33%) === */}
-      {/* Soft green backdrop for residential */}
-      <rect x="0" y="0" width="265" height="380" fill="#e8f4ec" opacity="0.5" />
+      {/* Green areas / parks */}
+      <rect x="0" y="0" width="280" height="420" fill="#dcecd0" opacity="0.7" />
+      <ellipse cx="80" cy="180" rx="55" ry="40" fill="#c8e0b8" opacity="0.7" />
+      <ellipse cx="190" cy="340" rx="45" ry="35" fill="#c0dab0" opacity="0.6" />
+      <ellipse cx="50" cy="360" rx="38" ry="28" fill="#b8d4a8" opacity="0.6" />
 
-      {/* Residential blocks */}
-      <rect x="12" y="45" width="50" height="38" rx="4" fill="#d0e8d8" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="70" y="45" width="55" height="38" rx="4" fill="#d0e8d8" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="133" y="45" width="48" height="38" rx="4" fill="#d0e8d8" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="188" y="45" width="52" height="38" rx="4" fill="#d0e8d8" stroke="#b5d4be" strokeWidth="0.8" />
+      {/* Work zone */}
+      <rect x="285" y="0" width="230" height="420" fill="#e4e0f0" opacity="0.5" />
 
-      <rect x="12" y="105" width="55" height="42" rx="4" fill="#cce4d4" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="75" y="105" width="48" height="42" rx="4" fill="#cce4d4" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="131" y="105" width="55" height="42" rx="4" fill="#cce4d4" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="194" y="105" width="50" height="42" rx="4" fill="#cce4d4" stroke="#b5d4be" strokeWidth="0.8" />
+      {/* Services zone */}
+      <rect x="520" y="0" width="150" height="420" fill="#f0e8d8" opacity="0.5" />
 
-      <rect x="12" y="175" width="60" height="40" rx="4" fill="#c8e0d0" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="80" y="175" width="52" height="40" rx="4" fill="#c8e0d0" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="140" y="175" width="48" height="40" rx="4" fill="#c8e0d0" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="196" y="175" width="50" height="40" rx="4" fill="#c8e0d0" stroke="#b5d4be" strokeWidth="0.8" />
+      {/* Social zone */}
+      <rect x="675" y="0" width="125" height="420" fill="#f0d8ec" opacity="0.45" />
 
-      <rect x="14" y="245" width="55" height="40" rx="4" fill="#c4dccb" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="77" y="245" width="50" height="40" rx="4" fill="#c4dccb" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="135" y="245" width="55" height="40" rx="4" fill="#c4dccb" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="198" y="245" width="48" height="40" rx="4" fill="#c4dccb" stroke="#b5d4be" strokeWidth="0.8" />
+      {/* Building blocks — residential */}
+      {[[10,30,58,45],[78,30,55,45],[145,30,52,45],[208,30,58,45],
+        [10,100,55,48],[75,100,52,48],[138,100,55,48],[202,100,55,48],
+        [10,178,60,45],[80,178,50,45],[140,178,52,45],[202,178,58,45],
+        [10,248,55,45],[75,248,55,45],[140,248,52,45],[202,248,58,45],
+        [10,320,58,48],[78,320,52,48],[142,320,55,48],[206,320,55,48],
+      ].map(([x,y,w,h],i) => (
+        <rect key={`rb${i}`} x={x} y={y} width={w} height={h} rx="5" fill="#c8ddb8" stroke="#b0cc9f" strokeWidth="0.8" />
+      ))}
 
-      <rect x="14" y="315" width="58" height="42" rx="4" fill="#c0d8c7" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="80" y="315" width="52" height="42" rx="4" fill="#c0d8c7" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="140" y="315" width="52" height="42" rx="4" fill="#c0d8c7" stroke="#b5d4be" strokeWidth="0.8" />
-      <rect x="200" y="315" width="50" height="42" rx="4" fill="#c0d8c7" stroke="#b5d4be" strokeWidth="0.8" />
+      {/* Building blocks — work/school */}
+      {[[292,28,62,58],[362,28,58,58],[428,28,65,58],
+        [292,108,65,55],[365,108,60,55],[433,108,60,55],
+        [292,185,62,52],[362,185,65,52],[435,185,58,52],
+        [292,258,65,52],[365,258,62,52],[435,258,58,52],
+        [292,332,180,55],
+      ].map(([x,y,w,h],i) => (
+        <rect key={`wb${i}`} x={x} y={y} width={w} height={h} rx="4" fill="#cdc8e8" stroke="#b8b0d8" strokeWidth="0.8" />
+      ))}
 
-      {/* Trees (residential area) */}
-      <circle cx="60" cy="158" r="7" fill="#6abf7b" opacity="0.6" />
-      <circle cx="120" cy="158" r="6" fill="#6abf7b" opacity="0.55" />
-      <circle cx="180" cy="158" r="7" fill="#6abf7b" opacity="0.6" />
-      <circle cx="240" cy="158" r="5" fill="#6abf7b" opacity="0.5" />
-      <circle cx="40" cy="228" r="6" fill="#6abf7b" opacity="0.5" />
-      <circle cx="100" cy="228" r="7" fill="#6abf7b" opacity="0.55" />
-      <circle cx="165" cy="228" r="6" fill="#6abf7b" opacity="0.5" />
-      <circle cx="228" cy="228" r="7" fill="#6abf7b" opacity="0.6" />
-      <circle cx="60" cy="298" r="6" fill="#6abf7b" opacity="0.5" />
-      <circle cx="120" cy="298" r="7" fill="#6abf7b" opacity="0.55" />
-      <circle cx="180" cy="298" r="6" fill="#6abf7b" opacity="0.5" />
-      <circle cx="245" cy="298" r="5" fill="#6abf7b" opacity="0.45" />
+      {/* Building blocks — services */}
+      {[[528,32,55,50],[590,32,50,50],
+        [528,105,55,50],[590,105,50,50],
+        [528,178,55,50],[590,178,50,50],
+        [528,250,55,50],[590,250,50,50],
+        [528,322,112,52],
+      ].map(([x,y,w,h],i) => (
+        <rect key={`sb${i}`} x={x} y={y} width={w} height={h} rx="4" fill="#e8d0b8" stroke="#d8b89f" strokeWidth="0.8" />
+      ))}
 
-      {/* === WORK / SCHOOL ZONE (mid 33–62%) === */}
-      <rect x="270" y="0" width="226" height="380" fill="#ece8f8" opacity="0.4" />
+      {/* Building blocks — social */}
+      {[[682,32,55,52],[745,32,50,52],
+        [682,108,55,52],[745,108,50,52],
+        [682,185,55,52],[745,185,50,52],
+        [682,260,55,52],[745,260,50,52],
+        [682,332,113,52],
+      ].map(([x,y,w,h],i) => (
+        <rect key={`scb${i}`} x={x} y={y} width={w} height={h} rx="4" fill="#e8c8e0" stroke="#d8a8d0" strokeWidth="0.8" />
+      ))}
 
-      {/* Commercial / office blocks — taller/denser */}
-      <rect x="278" y="35" width="60" height="60" rx="4" fill="#d8d0f0" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="345" y="35" width="55" height="60" rx="4" fill="#d8d0f0" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="408" y="35" width="62" height="60" rx="4" fill="#d8d0f0" stroke="#bbb0e0" strokeWidth="0.8" />
+      {/* Trees */}
+      {[[55,82],[120,82],[190,82],[248,82],
+        [40,163],[110,163],[175,163],[240,163],
+        [40,232],[105,232],[175,232],[245,232],
+        [40,303],[108,303],[170,303],[240,303],
+        [40,390],[115,390],[180,390],[245,390],
+      ].map(([cx,cy],i) => (
+        <circle key={`tr${i}`} cx={cx} cy={cy} r="8" fill="#7abf6a" opacity="0.65" />
+      ))}
+      {[[55,82],[120,82],[190,82],[248,82],
+        [40,163],[110,163],[175,163],[240,163],
+      ].map(([cx,cy],i) => (
+        <circle key={`tr2${i}`} cx={cx} cy={cy} r="4" fill="#5aa04a" opacity="0.5" />
+      ))}
 
-      <rect x="278" y="115" width="65" height="55" rx="4" fill="#cec6eb" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="350" y="115" width="58" height="55" rx="4" fill="#cec6eb" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="415" y="115" width="58" height="55" rx="4" fill="#cec6eb" stroke="#bbb0e0" strokeWidth="0.8" />
+      {/* River / water */}
+      <path d="M 0 390 Q 120 370 220 385 Q 320 400 420 378 Q 520 358 620 375 Q 720 390 800 372 L 800 420 L 0 420 Z"
+        fill="#90cdf4" opacity="0.55" />
+      <path d="M 0 400 Q 120 385 220 398 Q 320 410 420 392 Q 520 375 620 390 Q 720 405 800 388 L 800 420 L 0 420 Z"
+        fill="#63b3ed" opacity="0.4" />
 
-      <rect x="278" y="190" width="62" height="52" rx="4" fill="#c8bee8" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="348" y="190" width="62" height="52" rx="4" fill="#c8bee8" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="418" y="190" width="55" height="52" rx="4" fill="#c8bee8" stroke="#bbb0e0" strokeWidth="0.8" />
+      {/* Primary roads — horizontal */}
+      <rect x="0" y="85" width="800" height="11" fill="#f5f5f0" opacity="0.92" />
+      <rect x="0" y="88" width="800" height="2" fill="#e2dfd0" opacity="0.5" />
+      <rect x="0" y="160" width="800" height="10" fill="#f5f5f0" opacity="0.88" />
+      <rect x="0" y="235" width="800" height="10" fill="#f5f5f0" opacity="0.88" />
+      <rect x="0" y="308" width="800" height="10" fill="#f5f5f0" opacity="0.85" />
+      <rect x="0" y="380" width="800" height="10" fill="#f5f5f0" opacity="0.82" />
 
-      <rect x="278" y="262" width="65" height="52" rx="4" fill="#c2b8e4" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="350" y="262" width="60" height="52" rx="4" fill="#c2b8e4" stroke="#bbb0e0" strokeWidth="0.8" />
-      <rect x="418" y="262" width="55" height="52" rx="4" fill="#c2b8e4" stroke="#bbb0e0" strokeWidth="0.8" />
-
-      <rect x="278" y="330" width="195" height="38" rx="4" fill="#bdb2e0" stroke="#bbb0e0" strokeWidth="0.8" />
-
-      {/* Small park in work zone */}
-      <ellipse cx="340" cy="155" rx="10" ry="8" fill="#8dc98d" opacity="0.5" />
-      <ellipse cx="420" cy="245" rx="9" ry="7" fill="#8dc98d" opacity="0.45" />
-
-      {/* === SERVICES ZONE (mid-right 62–82%) === */}
-      <rect x="498" y="0" width="162" height="380" fill="#fdf0e8" opacity="0.45" />
-
-      <rect x="505" y="42" width="55" height="48" rx="4" fill="#f8d8c0" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="568" y="42" width="52" height="48" rx="4" fill="#f8d8c0" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="628" y="42" width="24" height="48" rx="4" fill="#f8d8c0" stroke="#e8c0a8" strokeWidth="0.8" />
-
-      <rect x="505" y="108" width="55" height="48" rx="4" fill="#f5ceb4" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="568" y="108" width="52" height="48" rx="4" fill="#f5ceb4" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="628" y="108" width="24" height="48" rx="4" fill="#f5ceb4" stroke="#e8c0a8" strokeWidth="0.8" />
-
-      <rect x="505" y="178" width="55" height="48" rx="4" fill="#f0c4aa" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="568" y="178" width="52" height="48" rx="4" fill="#f0c4aa" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="628" y="178" width="24" height="48" rx="4" fill="#f0c4aa" stroke="#e8c0a8" strokeWidth="0.8" />
-
-      <rect x="505" y="244" width="55" height="48" rx="4" fill="#ebbaa0" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="568" y="244" width="52" height="48" rx="4" fill="#ebbaa0" stroke="#e8c0a8" strokeWidth="0.8" />
-      <rect x="628" y="244" width="24" height="48" rx="4" fill="#ebbaa0" stroke="#e8c0a8" strokeWidth="0.8" />
-
-      <rect x="505" y="316" width="147" height="48" rx="4" fill="#e6b096" stroke="#e8c0a8" strokeWidth="0.8" />
-
-      {/* === SOCIAL / NIGHTLIFE ZONE (right 82–100%) === */}
-      <rect x="662" y="0" width="138" height="380" fill="#fdf4ff" opacity="0.5" />
-
-      <rect x="668" y="40" width="52" height="50" rx="4" fill="#edd8f8" stroke="#d8b8ee" strokeWidth="0.8" />
-      <rect x="728" y="40" width="52" height="50" rx="4" fill="#edd8f8" stroke="#d8b8ee" strokeWidth="0.8" />
-
-      <rect x="668" y="108" width="52" height="50" rx="4" fill="#e8ccf5" stroke="#d8b8ee" strokeWidth="0.8" />
-      <rect x="728" y="108" width="52" height="50" rx="4" fill="#e8ccf5" stroke="#d8b8ee" strokeWidth="0.8" />
-
-      <rect x="668" y="178" width="52" height="50" rx="4" fill="#e2c0f2" stroke="#d8b8ee" strokeWidth="0.8" />
-      <rect x="728" y="178" width="52" height="50" rx="4" fill="#e2c0f2" stroke="#d8b8ee" strokeWidth="0.8" />
-
-      <rect x="668" y="248" width="52" height="50" rx="4" fill="#dcb4ef" stroke="#d8b8ee" strokeWidth="0.8" />
-      <rect x="728" y="248" width="52" height="50" rx="4" fill="#dcb4ef" stroke="#d8b8ee" strokeWidth="0.8" />
-
-      <rect x="668" y="318" width="112" height="46" rx="4" fill="#d8aaec" stroke="#d8b8ee" strokeWidth="0.8" />
-
-      {/* Venue lights (social zone) */}
-      <circle cx="694" cy="160" r="4" fill="#c084fc" opacity="0.4" />
-      <circle cx="752" cy="160" r="4" fill="#f472b6" opacity="0.4" />
-      <circle cx="694" cy="232" r="4" fill="#a78bfa" opacity="0.35" />
-      <circle cx="752" cy="232" r="4" fill="#fb923c" opacity="0.35" />
-
-      {/* === WATER ELEMENT === */}
-      <path d="M 0 358 Q 100 340 200 355 Q 300 368 400 352 Q 500 338 600 355 Q 700 368 800 352 L 800 380 L 0 380 Z"
-        fill="#bdd8f0" opacity="0.5" />
-      <path d="M 0 365 Q 100 352 200 364 Q 300 375 400 362 Q 500 350 600 363 Q 700 375 800 362 L 800 380 L 0 380 Z"
-        fill="#a8ccec" opacity="0.4" />
-
-      {/* === PRIMARY ROADS === */}
-      {/* Main horizontal boulevard */}
-      <rect x="0" y="92" width="800" height="10" fill="#fff" opacity="0.85" />
-      <rect x="0" y="95" width="800" height="1.5" fill="#e2e8f0" opacity="0.6" />
-      {/* Second horizontal */}
-      <rect x="0" y="162" width="800" height="9" fill="#fff" opacity="0.8" />
-      {/* Third horizontal */}
-      <rect x="0" y="232" width="800" height="9" fill="#fff" opacity="0.8" />
-      {/* Fourth horizontal */}
-      <rect x="0" y="302" width="800" height="8" fill="#fff" opacity="0.75" />
-
-      {/* Main vertical roads */}
-      <rect x="62" y="0" width="8" height="380" fill="#fff" opacity="0.8" />
-      <rect x="128" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
-      <rect x="196" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
-      {/* Zone separator road — residential/work */}
-      <rect x="260" y="0" width="12" height="380" fill="#f8faff" opacity="0.9" />
-      <rect x="263" y="0" width="1.5" fill="#e2e8f0" height="380" opacity="0.6" />
-      <rect x="340" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
-      <rect x="412" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
-      {/* Zone separator road — work/services */}
-      <rect x="494" y="0" width="12" height="380" fill="#f8faff" opacity="0.9" />
-      <rect x="497" y="0" width="1.5" fill="#e2e8f0" height="380" opacity="0.6" />
-      <rect x="566" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
-      <rect x="630" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
-      {/* Zone separator road — services/social */}
-      <rect x="656" y="0" width="12" height="380" fill="#f8faff" opacity="0.9" />
-      <rect x="659" y="0" width="1.5" fill="#e2e8f0" height="380" opacity="0.6" />
-      <rect x="726" y="0" width="8" height="380" fill="#fff" opacity="0.75" />
+      {/* Primary roads — vertical / zone separators */}
+      <rect x="68" y="0" width="9" height="420" fill="#f5f5f0" opacity="0.85" />
+      <rect x="138" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.82" />
+      <rect x="205" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.82" />
+      {/* Zone road residential→work */}
+      <rect x="276" y="0" width="13" height="420" fill="#f8f6f0" opacity="0.95" />
+      <rect x="279" y="0" width="2" fill="#ddd" height="420" opacity="0.5" />
+      <rect x="355" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
+      <rect x="430" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
+      {/* Zone road work→services */}
+      <rect x="515" y="0" width="13" height="420" fill="#f8f6f0" opacity="0.95" />
+      <rect x="518" y="0" width="2" fill="#ddd" height="420" opacity="0.5" />
+      <rect x="583" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
+      {/* Zone road services→social */}
+      <rect x="670" y="0" width="13" height="420" fill="#f8f6f0" opacity="0.95" />
+      <rect x="673" y="0" width="2" fill="#ddd" height="420" opacity="0.5" />
+      <rect x="742" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
 
       {/* Road center dashes */}
-      {[92, 162, 232, 302].map((y) =>
-        [0,80,160,240,320,400,480,560,640,720].map(x => (
-          <rect key={`${y}-${x}`} x={x+30} y={y+3.5} width="20" height="1.5" fill="#dde8f0" opacity="0.7" />
+      {[90,165,240,313,385].map(y =>
+        [0,70,140,210,280,350,420,490,560,630,700,770].map(x => (
+          <rect key={`d${y}-${x}`} x={x+20} y={y+3} width="18" height="1.5" fill="#ccc" opacity="0.5" />
         ))
       )}
 
-      {/* === PEDESTRIAN PATHS (dashed) === */}
-      <line x1="0" y1="380" x2="800" y2="0" stroke="#d4e0ea" strokeWidth="0.8" strokeDasharray="6,8" opacity="0.25" />
-      <line x1="0" y1="0" x2="800" y2="380" stroke="#d4e0ea" strokeWidth="0.8" strokeDasharray="6,8" opacity="0.2" />
-
-      {/* === INTERSECTION DOTS === */}
-      {[98, 170, 240, 308].flatMap(y =>
-        [66, 132, 200, 264, 344, 416, 498, 570, 634, 660, 730].map(x => (
-          <circle key={`i-${x}-${y}`} cx={x} cy={y} r="2.5" fill="#cbd5e1" opacity="0.6" />
+      {/* Intersection circles */}
+      {[90,165,240,313,385].flatMap(y =>
+        [72,142,209,280,358,434,518,586,674,746].map(x => (
+          <circle key={`i${x}-${y}`} cx={x} cy={y} r="3" fill="#e8e4d8" opacity="0.8" />
         ))
       )}
 
-      {/* Small park patches */}
-      <ellipse cx="132" cy="57" rx="12" ry="9" fill="#86efac" opacity="0.45" />
-      <ellipse cx="340" cy="57" rx="10" ry="8" fill="#86efac" opacity="0.4" />
-      <ellipse cx="560" cy="57" rx="10" ry="8" fill="#86efac" opacity="0.4" />
-      <ellipse cx="692" cy="57" rx="10" ry="8" fill="#c4b5fd" opacity="0.3" />
-
-      {/* Subtle vignette */}
-      <rect width="800" height="380"
-        fill="url(#vignette)" />
+      {/* Vignette */}
+      <rect width="800" height="420" fill="url(#vig)" />
       <defs>
-        <radialGradient id="vignette" cx="50%" cy="50%" r="70%">
-          <stop offset="60%" stopColor="transparent" />
-          <stop offset="100%" stopColor="rgba(0,0,0,0.06)" />
+        <radialGradient id="vig" cx="50%" cy="50%" r="70%">
+          <stop offset="55%" stopColor="transparent" />
+          <stop offset="100%" stopColor="rgba(0,0,0,0.08)" />
         </radialGradient>
       </defs>
     </svg>
   );
 }
 
-// ─── Location pin anchor (small, always visible) ─────────────────────────────
-function LocationPin({ location }) {
-  const coords = location.map_coordinates;
-  if (!coords) return null;
-  const colors = getColors(location.category || "generic");
-  const icon = CATEGORY_ICONS[location.category] || "📍";
+// ─── Zone tab bar ─────────────────────────────────────────────────────────────
+const ZONE_TABS = [
+  { label: "HOMES", icon: "🏠", color: "#3b82f6" },
+  { label: "WORK / SCHOOL", icon: "💼", color: "#7c3aed" },
+  { label: "SERVICES", icon: "⭐", color: "#f59e0b" },
+  { label: "SOCIAL", icon: "👥", color: "#ec4899" },
+];
 
-  return (
-    <div
-      style={{
-        position: "absolute",
-        left: `${coords.x}%`,
-        top: `${coords.y}%`,
-        transform: "translate(-50%, -100%)",
-        pointerEvents: "none",
-        zIndex: 8,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-      }}
-    >
-      {/* Pin body */}
-      <div style={{
-        width: 22, height: 22,
-        borderRadius: "50% 50% 50% 0",
-        background: colors.pin,
-        transform: "rotate(-45deg)",
-        boxShadow: `0 2px 8px ${colors.pin}55`,
-        display: "grid",
-        placeItems: "center",
-        border: "1.5px solid rgba(255,255,255,0.6)",
-      }}>
-        <span style={{ transform: "rotate(45deg)", fontSize: 9, lineHeight: 1 }}>{icon}</span>
-      </div>
-      {/* Pin stem dot */}
-      <div style={{
-        width: 4, height: 4, borderRadius: "50%",
-        background: colors.pin + "66",
-        marginTop: 1,
-      }} />
-    </div>
-  );
-}
-
-// ─── Location popup (Google Maps preview style) ───────────────────────────────
-function LocationPopup({ location, occupants, onClose }) {
+// ─── Mini location card (always visible on map) ───────────────────────────────
+function LocationCard({ location, occupants, isActive, onClick }) {
   const coords = location.map_coordinates;
   if (!coords) return null;
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
-  const icon = CATEGORY_ICONS[location.category] || "📍";
-
-  // Flip popup upward if near bottom of map
-  const flipUp = coords.y > 70;
+  const count = occupants.length;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.9, y: flipUp ? 8 : -8 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.9 }}
-      transition={{ duration: 0.18, ease: "easeOut" }}
-      onClick={(e) => e.stopPropagation()}
+    <motion.button
+      onClick={(e) => { e.stopPropagation(); onClick(location.id); }}
+      initial={{ opacity: 0, scale: 0.85 }}
+      animate={{ opacity: 1, scale: 1 }}
       style={{
         position: "absolute",
         left: `${coords.x}%`,
         top: `${coords.y}%`,
-        transform: flipUp
-          ? "translate(-50%, calc(-100% - 38px))"
-          : "translate(-50%, calc(-100% - 38px))",
-        zIndex: 50,
-        pointerEvents: "auto",
-        filter: "drop-shadow(0 8px 24px rgba(0,0,0,0.18))",
+        transform: "translate(-50%, -110%)",
+        zIndex: isActive ? 30 : 15,
+        cursor: "pointer",
+        background: "none",
+        border: "none",
+        padding: 0,
       }}
     >
-      <div style={{
-        background: "#ffffff",
-        borderRadius: 14,
-        minWidth: 140,
-        maxWidth: 180,
-        overflow: "hidden",
-        border: `1.5px solid ${colors.border}44`,
-      }}>
-        {/* Header stripe */}
+      {/* Character avatars above card */}
+      {occupants.length > 0 && (
         <div style={{
-          background: `linear-gradient(135deg, ${colors.pin}22, ${colors.pin}08)`,
-          borderBottom: `1px solid ${colors.border}22`,
-          padding: "9px 12px 7px",
           display: "flex",
-          alignItems: "flex-start",
-          gap: 8,
+          justifyContent: "center",
+          marginBottom: -8,
+          position: "relative",
+          zIndex: 2,
         }}>
-          <div style={{
-            width: 30, height: 30,
-            borderRadius: 8,
-            background: colors.pin + "22",
-            border: `1.5px solid ${colors.pin}44`,
-            display: "grid",
-            placeItems: "center",
-            fontSize: 14,
-            flexShrink: 0,
-          }}>
-            {icon}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{
-              fontSize: 12, fontWeight: 700,
-              color: "#1e293b", lineHeight: 1.3,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+          {occupants.slice(0, 3).map((o, i) => (
+            <div key={o.characterId} style={{
+              width: 34, height: 34,
+              borderRadius: "50%",
+              border: `2.5px solid ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}`,
+              background: "#fff",
+              overflow: "hidden",
+              marginLeft: i === 0 ? 0 : -8,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+              flexShrink: 0,
             }}>
-              {location.name}
-            </div>
-            <div style={{
-              fontSize: 10, color: colors.pin,
-              fontWeight: 600, marginTop: 1,
-            }}>
-              {label}
-            </div>
-          </div>
-          <button
-            onClick={(e) => { e.stopPropagation(); onClose(); }}
-            style={{
-              background: "none", border: "none", cursor: "pointer",
-              color: "#94a3b8", fontSize: 14, lineHeight: 1,
-              padding: "1px 2px", flexShrink: 0,
-            }}
-          >✕</button>
-        </div>
-
-        {/* Occupants */}
-        {occupants.length > 0 && (
-          <div style={{ padding: "7px 12px 9px" }}>
-            <div style={{ fontSize: 9, fontWeight: 700, color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
-              {occupants.length} {occupants.length === 1 ? "person" : "people"} here
-            </div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {occupants.map(o => (
-                <div key={o.characterId} style={{
-                  display: "flex", alignItems: "center", gap: 4,
-                  background: "#f1f5f9", borderRadius: 20, padding: "2px 7px 2px 3px",
+              {o.avatarUrl ? (
+                <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+              ) : (
+                <div style={{
+                  width: "100%", height: "100%",
+                  background: `linear-gradient(135deg, ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}, #a78bfa)`,
+                  display: "grid", placeItems: "center",
+                  fontSize: 12, fontWeight: 700, color: "#fff",
                 }}>
-                  {o.avatarUrl ? (
-                    <img src={o.avatarUrl} style={{ width: 14, height: 14, borderRadius: "50%", objectFit: "cover" }} />
-                  ) : (
-                    <div style={{
-                      width: 14, height: 14, borderRadius: "50%",
-                      background: o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6",
-                      display: "grid", placeItems: "center", fontSize: 7, color: "#fff", fontWeight: 700,
-                    }}>
-                      {o.name[0]?.toUpperCase()}
-                    </div>
-                  )}
-                  <span style={{ fontSize: 10, fontWeight: 600, color: "#475569", whiteSpace: "nowrap" }}>
-                    {o.name.split(" ")[0]}
-                  </span>
+                  {o.name[0]?.toUpperCase()}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
-        {occupants.length === 0 && (
-          <div style={{ padding: "6px 12px 9px", fontSize: 10, color: "#94a3b8" }}>
-            No one here right now
+          ))}
+        </div>
+      )}
+
+      {/* Card body */}
+      <div style={{
+        background: isActive ? "#fff" : "rgba(255,255,255,0.94)",
+        borderRadius: 10,
+        padding: "6px 10px 5px",
+        boxShadow: isActive
+          ? `0 6px 20px rgba(0,0,0,0.2), 0 0 0 2px ${colors.pin}`
+          : "0 3px 12px rgba(0,0,0,0.15)",
+        minWidth: 90,
+        maxWidth: 130,
+        textAlign: "left",
+        border: `1.5px solid ${isActive ? colors.pin : "rgba(255,255,255,0.9)"}`,
+        transition: "box-shadow 0.15s",
+        position: "relative",
+        zIndex: 1,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 700, color: "#1e293b",
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {location.name}
+        </div>
+        <div style={{ fontSize: 9, color: colors.label, fontWeight: 600, marginTop: 1 }}>
+          {label}
+        </div>
+        {count > 0 && (
+          <div style={{ fontSize: 9, color: colors.pin, fontWeight: 700, marginTop: 2 }}>
+            {count} here
           </div>
         )}
       </div>
 
-      {/* Downward arrow */}
+      {/* Arrow pointing down to location */}
       <div style={{
-        position: "absolute", bottom: -8, left: "50%",
-        transform: "translateX(-50%)",
         width: 0, height: 0,
-        borderLeft: "8px solid transparent",
-        borderRight: "8px solid transparent",
-        borderTop: "8px solid #ffffff",
-        filter: `drop-shadow(0 2px 2px rgba(0,0,0,0.1))`,
+        borderLeft: "6px solid transparent",
+        borderRight: "6px solid transparent",
+        borderTop: `6px solid ${isActive ? colors.pin : "rgba(255,255,255,0.94)"}`,
+        margin: "0 auto",
+        position: "relative",
+        zIndex: 1,
       }} />
+    </motion.button>
+  );
+}
+
+// ─── Side detail panel ────────────────────────────────────────────────────────
+function LocationDetailPanel({ location, occupants, onClose }) {
+  if (!location) return null;
+  const colors = getColors(location.category || "generic");
+  const label = CATEGORY_LABELS[location.category] || "Place";
+  const icon = CATEGORY_ICONS[location.category] || "📍";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: 24 }}
+      animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 24 }}
+      transition={{ duration: 0.2, ease: "easeOut" }}
+      style={{
+        position: "absolute",
+        top: 0,
+        right: 0,
+        bottom: 0,
+        width: 230,
+        background: "#1a1f2e",
+        borderLeft: "1px solid rgba(255,255,255,0.08)",
+        zIndex: 60,
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Header */}
+      <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+              <span style={{
+                width: 22, height: 22, borderRadius: 6,
+                background: colors.pin + "22", border: `1px solid ${colors.pin}44`,
+                display: "grid", placeItems: "center", fontSize: 11, flexShrink: 0,
+              }}>{icon}</span>
+              <div style={{ fontSize: 14, fontWeight: 800, color: "#f1f5f9", lineHeight: 1.2 }}>
+                {location.name}
+              </div>
+            </div>
+            <div style={{ fontSize: 11, color: "#94a3b8" }}>{label}</div>
+            {occupants.length > 0 && (
+              <div style={{ fontSize: 11, color: colors.pin, fontWeight: 700, marginTop: 4 }}>
+                {occupants.length} here now
+              </div>
+            )}
+          </div>
+          <button onClick={onClose} style={{
+            background: "rgba(255,255,255,0.08)", border: "none",
+            borderRadius: 6, width: 26, height: 26,
+            cursor: "pointer", color: "#94a3b8", fontSize: 13,
+            display: "grid", placeItems: "center", flexShrink: 0,
+          }}>✕</button>
+        </div>
+      </div>
+
+      {/* Who's here */}
+      {occupants.length > 0 && (
+        <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+            Who's here
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            {occupants.map(o => (
+              <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{
+                  width: 30, height: 30, borderRadius: "50%",
+                  border: `2px solid ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}`,
+                  overflow: "hidden", flexShrink: 0,
+                }}>
+                  {o.avatarUrl ? (
+                    <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  ) : (
+                    <div style={{
+                      width: "100%", height: "100%",
+                      background: `linear-gradient(135deg, ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}, #a78bfa)`,
+                      display: "grid", placeItems: "center",
+                      fontSize: 11, fontWeight: 700, color: "#fff",
+                    }}>
+                      {o.name[0]?.toUpperCase()}
+                    </div>
+                  )}
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
+                  <div style={{ fontSize: 10, color: "#64748b" }}>
+                    {o.isAsleep ? "😴 Sleeping" : label}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Details */}
+      <div style={{ padding: "12px 14px" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
+          Details
+        </div>
+        {[
+          { key: "Category", val: label, icon: icon },
+          { key: "Type", val: location.category || "generic", icon: "🏷️" },
+          location.city && { key: "City", val: location.city, icon: "🌆" },
+          location.state && { key: "State", val: location.state, icon: "📍" },
+        ].filter(Boolean).map(row => (
+          <div key={row.key} style={{
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+            paddingTop: 6, paddingBottom: 6,
+            borderBottom: "1px solid rgba(255,255,255,0.04)",
+          }}>
+            <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
+              <span>{row.icon}</span> {row.key}
+            </div>
+            <div style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>{row.val}</div>
+          </div>
+        ))}
+      </div>
     </motion.div>
   );
 }
 
-// ─── Character pin ────────────────────────────────────────────────────────────
+// ─── Character pin (floating above location cards) ────────────────────────────
 function CharacterPin({ marker, onClick, offset }) {
   const [hovered, setHovered] = useState(false);
   const isActive = marker.type === "active_created_character";
   const borderColor = isActive ? "#3b82f6" : "#8b5cf6";
-  const glowColor = isActive ? "#3b82f633" : "#8b5cf633";
 
   return (
     <button
@@ -436,49 +436,39 @@ function CharacterPin({ marker, onClick, offset }) {
         left: `${marker.coordinates.x}%`,
         top: `${marker.coordinates.y}%`,
         transform: `translate(${offset.x}px, ${offset.y}px)`,
-        width: 32,
-        height: 32,
+        width: 34, height: 34,
         borderRadius: "50%",
         border: `2.5px solid ${borderColor}`,
         background: "#fff",
         boxShadow: hovered
-          ? `0 0 0 4px ${glowColor}, 0 8px 20px rgba(0,0,0,0.22)`
-          : `0 3px 10px rgba(0,0,0,0.18), 0 0 0 2px ${glowColor}`,
+          ? `0 0 0 4px ${borderColor}33, 0 8px 20px rgba(0,0,0,0.22)`
+          : `0 3px 10px rgba(0,0,0,0.2), 0 0 0 1.5px ${borderColor}44`,
         overflow: "hidden",
         cursor: "pointer",
-        zIndex: 20,
-        transition: "box-shadow 0.15s, transform 0.12s",
+        zIndex: 25,
         outline: "none",
+        transition: "box-shadow 0.15s",
       }}
       title={`${marker.name} @ ${marker.locationName}`}
     >
       {marker.avatarUrl ? (
-        <img
-          src={marker.avatarUrl}
-          alt={marker.name}
-          style={{ width: "100%", height: "100%", objectFit: "cover", opacity: marker.isAsleep ? 0.45 : 1 }}
-        />
+        <img src={marker.avatarUrl} alt={marker.name}
+          style={{ width: "100%", height: "100%", objectFit: "cover", opacity: marker.isAsleep ? 0.45 : 1 }} />
       ) : (
         <div style={{
           width: "100%", height: "100%",
           display: "grid", placeItems: "center",
-          fontSize: 12, fontWeight: 700,
-          color: "#fff",
+          fontSize: 13, fontWeight: 700, color: "#fff",
           background: `linear-gradient(135deg, ${borderColor}, ${borderColor}cc)`,
-          opacity: marker.isAsleep ? 0.6 : 1,
         }}>
           {marker.name.slice(0, 1).toUpperCase()}
         </div>
       )}
       {marker.isAsleep && (
-        <div style={{
-          position: "absolute", inset: 0, display: "grid", placeItems: "center",
-          background: "rgba(15,23,42,0.45)",
-        }}>
+        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.4)" }}>
           <Moon style={{ width: 11, height: 11, color: "#93c5fd" }} />
         </div>
       )}
-      {/* Hover name tooltip */}
       <AnimatePresence>
         {hovered && (
           <motion.div
@@ -488,18 +478,11 @@ function CharacterPin({ marker, onClick, offset }) {
             style={{
               position: "absolute",
               bottom: "calc(100% + 7px)",
-              left: "50%",
-              transform: "translateX(-50%)",
-              background: "#1e293b",
-              color: "#f1f5f9",
-              fontSize: 10,
-              fontWeight: 600,
-              padding: "3px 8px",
-              borderRadius: 6,
-              whiteSpace: "nowrap",
-              pointerEvents: "none",
-              zIndex: 30,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+              left: "50%", transform: "translateX(-50%)",
+              background: "#1e293b", color: "#f1f5f9",
+              fontSize: 10, fontWeight: 600,
+              padding: "3px 8px", borderRadius: 6,
+              whiteSpace: "nowrap", pointerEvents: "none", zIndex: 35,
             }}
           >
             {marker.name}
@@ -512,22 +495,22 @@ function CharacterPin({ marker, onClick, offset }) {
 
 // ─── Coordinate / logic (unchanged) ──────────────────────────────────────────
 const CATEGORY_ZONES = {
-  home:       { xMin: 2,  xMax: 31 },
-  workplace:  { xMin: 34, xMax: 60 },
-  school:     { xMin: 34, xMax: 60 },
-  gym:        { xMin: 63, xMax: 82 },
-  hospital:   { xMin: 63, xMax: 82 },
-  medical:    { xMin: 63, xMax: 82 },
-  clinic:     { xMin: 63, xMax: 82 },
-  grocery:    { xMin: 63, xMax: 82 },
-  park:       { xMin: 63, xMax: 82 },
-  church:     { xMin: 63, xMax: 82 },
+  home:       { xMin: 2,  xMax: 32 },
+  workplace:  { xMin: 36, xMax: 62 },
+  school:     { xMin: 36, xMax: 62 },
+  gym:        { xMin: 65, xMax: 82 },
+  hospital:   { xMin: 65, xMax: 82 },
+  medical:    { xMin: 65, xMax: 82 },
+  clinic:     { xMin: 65, xMax: 82 },
+  grocery:    { xMin: 65, xMax: 82 },
+  park:       { xMin: 65, xMax: 82 },
+  church:     { xMin: 65, xMax: 82 },
   food_drink: { xMin: 84, xMax: 98 },
   bar:        { xMin: 84, xMax: 98 },
   restaurant: { xMin: 84, xMax: 98 },
   social:     { xMin: 84, xMax: 98 },
   community:  { xMin: 84, xMax: 98 },
-  generic:    { xMin: 34, xMax: 82 },
+  generic:    { xMin: 36, xMax: 82 },
 };
 const Y_MIN = 14;
 const Y_MAX = 88;
@@ -591,7 +574,7 @@ function buildMarkers(characters, locations, gridCoords) {
     if (seenIds.has(char.id)) continue;
     const resolved = resolveCharacterLocation(char);
     if (!resolved) continue;
-    const { locId, source } = resolved;
+    const { locId } = resolved;
     const location = locationMap.get(locId);
     if (!location) continue;
     const coordinates = syntheticCoords[location.id];
@@ -606,19 +589,10 @@ function buildMarkers(characters, locations, gridCoords) {
       locationName: location.name,
       coordinates,
       isAsleep: char.resolved_presence_status === "sleeping" || char.resolved_presence_status === "napping",
-      locationSource: source,
     });
   }
   return markers;
 }
-
-// ─── Zone label overlays ──────────────────────────────────────────────────────
-const ZONE_LABELS = [
-  { label: "Residential", x: "3%", color: "#2563eb" },
-  { label: "Work & School", x: "36%", color: "#6d28d9" },
-  { label: "Services", x: "64%", color: "#c2410c" },
-  { label: "Social", x: "85%", color: "#9333ea" },
-];
 
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick }) {
@@ -649,103 +623,133 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
     onCharacterClick?.(characterId);
   };
 
+  const handleLocationClick = (locationId) => {
+    setActiveLocationId(prev => prev === locationId ? null : locationId);
+    onLocationClick?.(locationId);
+  };
+
+  const mapWidth = activeLocation ? "calc(100% - 230px)" : "100%";
+
   return (
     <div
       onClick={() => setActiveLocationId(null)}
       style={{
         position: "relative",
         width: "100%",
-        height: 380,
+        height: 420,
         borderRadius: 18,
         overflow: "hidden",
-        boxShadow: "0 8px 32px rgba(0,0,0,0.10), 0 1px 0 rgba(255,255,255,0.8) inset",
-        border: "1px solid #dde8f5",
-        cursor: "default",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
+        border: "1px solid rgba(255,255,255,0.1)",
+        background: "#e8f0dc",
+        display: "flex",
       }}
     >
-      {/* City map background */}
-      <CityMapBackground />
+      {/* Map area */}
+      <div style={{
+        position: "relative",
+        width: mapWidth,
+        height: "100%",
+        transition: "width 0.2s ease",
+        overflow: "hidden",
+        flexShrink: 0,
+      }}>
+        <CityMapBackground />
 
-      {/* Zone labels */}
-      {ZONE_LABELS.map(z => (
-        <div
-          key={z.label}
-          style={{
-            position: "absolute",
-            left: z.x,
-            top: "3%",
-            fontSize: 8,
-            fontWeight: 800,
-            color: z.color,
-            opacity: 0.5,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            pointerEvents: "none",
-            zIndex: 6,
-            textShadow: "0 1px 3px rgba(255,255,255,0.9)",
-          }}
-        >
-          {z.label}
+        {/* Zone tab bar */}
+        <div style={{
+          position: "absolute", top: 0, left: 0, right: 0,
+          display: "flex", zIndex: 20,
+          background: "rgba(15,20,35,0.82)",
+          backdropFilter: "blur(8px)",
+        }}>
+          {ZONE_TABS.map(tab => (
+            <div key={tab.label} style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
+              gap: 5, padding: "8px 4px",
+              borderBottom: `2px solid transparent`,
+            }}>
+              <span style={{ fontSize: 11 }}>{tab.icon}</span>
+              <span style={{ fontSize: 9, fontWeight: 800, color: tab.color, letterSpacing: "0.06em" }}>
+                {tab.label}
+              </span>
+            </div>
+          ))}
         </div>
-      ))}
 
-      {/* Location pins (always visible, minimal) */}
-      {allLocations.map(location => (
-        <LocationPin key={location.id} location={location} />
-      ))}
+        {/* Location mini cards — always visible */}
+        {allLocations.map(location => (
+          <LocationCard
+            key={location.id}
+            location={location}
+            occupants={groupedByLocation.get(location.id) ?? []}
+            isActive={location.id === activeLocationId}
+            onClick={handleLocationClick}
+          />
+        ))}
 
-      {/* Active popup — one at a time */}
+        {/* Character pins */}
+        {markers.map((marker) => {
+          const siblings = groupedByLocation.get(marker.locationId) ?? [];
+          const siblingIndex = siblings.findIndex(s => s.characterId === marker.characterId);
+          const cols = Math.min(siblings.length, 3);
+          const col = siblingIndex % cols;
+          const row = Math.floor(siblingIndex / cols);
+          const offset = {
+            x: 10 + col * 22 - (cols * 22) / 2,
+            y: -12 - row * 24,
+          };
+          return (
+            <CharacterPin
+              key={marker.characterId}
+              marker={marker}
+              onClick={handleCharacterClick}
+              offset={offset}
+            />
+          );
+        })}
+
+        {/* Bottom hint */}
+        <div style={{
+          position: "absolute", bottom: 10, left: "50%", transform: "translateX(-50%)",
+          background: "rgba(15,20,35,0.7)", backdropFilter: "blur(6px)",
+          borderRadius: 20, padding: "5px 14px",
+          fontSize: 10, color: "rgba(255,255,255,0.75)", fontWeight: 500,
+          pointerEvents: "none", zIndex: 10, whiteSpace: "nowrap",
+          display: "flex", alignItems: "center", gap: 5,
+        }}>
+          Tap a character to see their location ℹ️
+        </div>
+
+        {/* Empty state */}
+        {markers.length === 0 && allLocations.length === 0 && (
+          <div style={{
+            position: "absolute", inset: 0,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            pointerEvents: "none", zIndex: 10,
+          }}>
+            <div style={{
+              textAlign: "center",
+              background: "rgba(255,255,255,0.88)", borderRadius: 12,
+              padding: "14px 20px", boxShadow: "0 4px 16px rgba(0,0,0,0.1)",
+            }}>
+              <MapPin style={{ width: 24, height: 24, margin: "0 auto 6px", color: "#94a3b8" }} />
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>No locations yet</div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Side detail panel */}
       <AnimatePresence>
         {activeLocation && (
-          <LocationPopup
-            key={activeLocation.id}
+          <LocationDetailPanel
             location={activeLocation}
             occupants={groupedByLocation.get(activeLocation.id) ?? []}
             onClose={() => setActiveLocationId(null)}
           />
         )}
       </AnimatePresence>
-
-      {/* Character pins */}
-      {markers.map((marker) => {
-        const siblings = groupedByLocation.get(marker.locationId) ?? [];
-        const siblingIndex = siblings.findIndex(s => s.characterId === marker.characterId);
-        const cols = Math.min(siblings.length, 3);
-        const col = siblingIndex % cols;
-        const row = Math.floor(siblingIndex / cols);
-        const offset = {
-          x: 10 + col * 20 - (cols * 20) / 2,
-          y: -14 - row * 22,
-        };
-        return (
-          <CharacterPin
-            key={marker.characterId}
-            marker={marker}
-            onClick={handleCharacterClick}
-            offset={offset}
-          />
-        );
-      })}
-
-      {/* Empty state */}
-      {markers.length === 0 && (
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          pointerEvents: "none", zIndex: 10,
-        }}>
-          <div style={{
-            textAlign: "center", opacity: 0.7,
-            background: "rgba(255,255,255,0.85)",
-            borderRadius: 12, padding: "14px 20px",
-            boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-          }}>
-            <MapPin style={{ width: 24, height: 24, margin: "0 auto 6px", color: "#94a3b8" }} />
-            <div style={{ fontSize: 12, fontWeight: 600, color: "#475569" }}>No characters on the map</div>
-            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 3 }}>Tap a character pin to see their location</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
