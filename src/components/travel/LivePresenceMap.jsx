@@ -194,22 +194,115 @@ function LocationNode({ location, occupants, onClick }) {
   );
 }
 
+// Category-based default coordinates for fallback placement
+const CATEGORY_DEFAULT_COORDS = {
+  home:       { x: 15, y: 50 },
+  workplace:  { x: 45, y: 35 },
+  school:     { x: 45, y: 65 },
+  gym:        { x: 70, y: 40 },
+  food_drink: { x: 88, y: 55 },
+  bar:        { x: 88, y: 65 },
+  restaurant: { x: 88, y: 45 },
+  park:       { x: 70, y: 70 },
+  hospital:   { x: 70, y: 30 },
+  church:     { x: 70, y: 55 },
+  grocery:    { x: 70, y: 60 },
+  generic:    { x: 50, y: 50 },
+};
+
 /**
- * Builds renderable character markers from raw character + location data.
- * HARD RULE: only attaches to resolved_current_location_id — no home fallback.
+ * Layered location resolution — tries multiple fields before excluding a character.
+ * Returns { locId, source } or null if no location can be determined.
+ */
+function resolveCharacterLocation(char) {
+  // 1. Primary: resolved current location
+  if (char.resolved_current_location_id) {
+    return { locId: char.resolved_current_location_id, source: "resolved" };
+  }
+  // 2. Travel destination (actively traveling)
+  if (char.travel_destination_location_id) {
+    return { locId: char.travel_destination_location_id, source: "travel_destination" };
+  }
+  // 3. Work location (if currently at work based on status)
+  if (
+    char.resolved_presence_status === "at_work" ||
+    char.location_status === "at_location"
+  ) {
+    if (char.current_work_location_id) {
+      return { locId: char.current_work_location_id, source: "work" };
+    }
+    if (char.occupation_location_id) {
+      return { locId: char.occupation_location_id, source: "occupation" };
+    }
+  }
+  // 4. School location (if at school)
+  if (char.resolved_presence_status === "at_school") {
+    if (char.current_school_location_id) {
+      return { locId: char.current_school_location_id, source: "school" };
+    }
+    if (char.education_location_id) {
+      return { locId: char.education_location_id, source: "education" };
+    }
+  }
+  // 5. Home fallback (housed character with no active location)
+  if (char.current_home_location_id) {
+    return { locId: char.current_home_location_id, source: "home_fallback" };
+  }
+  // 6. Work as last resort (character is a worker somewhere)
+  if (char.current_work_location_id) {
+    return { locId: char.current_work_location_id, source: "work_fallback" };
+  }
+  if (char.occupation_location_id) {
+    return { locId: char.occupation_location_id, source: "occupation_fallback" };
+  }
+  return null;
+}
+
+/**
+ * Builds renderable character markers using layered location resolution.
+ * Falls back through multiple location fields before excluding a character.
  */
 function buildMarkers(characters, locations) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
+  // Track used fallback coords per category to spread characters out slightly
+  const categoryOffsets = {};
   const markers = [];
   const seenIds = new Set();
 
   for (const char of characters) {
     if (seenIds.has(char.id)) continue;
-    const locId = char.resolved_current_location_id;
-    if (!locId) continue; // NO fallback — no location = no marker
 
+    const resolved = resolveCharacterLocation(char);
+
+    if (!resolved) {
+      console.log(`[LivePresenceMap] EXCLUDED ${char.name} (${char.id}): no location source found`);
+      continue;
+    }
+
+    const { locId, source } = resolved;
     const location = locationMap.get(locId);
-    if (!location?.map_coordinates) continue;
+
+    if (!location) {
+      console.log(`[LivePresenceMap] EXCLUDED ${char.name}: location record ${locId} not found (source: ${source})`);
+      continue;
+    }
+
+    // Get or generate coordinates
+    let coordinates = location.map_coordinates;
+    if (!coordinates) {
+      const cat = location.category || "generic";
+      const base = CATEGORY_DEFAULT_COORDS[cat] || CATEGORY_DEFAULT_COORDS.generic;
+      // Spread multiple characters in the same category slightly
+      const count = categoryOffsets[cat] || 0;
+      categoryOffsets[cat] = count + 1;
+      coordinates = {
+        x: Math.min(95, base.x + (count % 3) * 3),
+        y: Math.min(90, base.y + Math.floor(count / 3) * 5),
+      };
+      console.log(`[LivePresenceMap] ${char.name}: using category fallback coords for "${location.name}" (${cat})`);
+    }
+
+    console.log(`[LivePresenceMap] RENDERED ${char.name} @ "${location.name}" (source: ${source})`);
 
     seenIds.add(char.id);
     markers.push({
@@ -219,11 +312,13 @@ function buildMarkers(characters, locations) {
       avatarUrl: char.avatar_url || null,
       locationId: locId,
       locationName: location.name,
-      coordinates: location.map_coordinates,
+      coordinates,
       isAsleep: char.resolved_presence_status === "sleeping" || char.resolved_presence_status === "napping",
+      locationSource: source,
     });
   }
 
+  console.log(`[LivePresenceMap] Total: ${characters.length} characters, ${markers.length} rendered`);
   return markers;
 }
 
@@ -355,7 +450,8 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         >
           <div style={{ textAlign: "center", opacity: 0.4 }}>
             <MapPin style={{ width: 28, height: 28, margin: "0 auto 6px", color: "#94a3b8" }} />
-            <div style={{ fontSize: 12, color: "#64748b" }}>No characters with known locations</div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>No characters could be placed</div>
+            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>Characters need a home, work, or current location assigned</div>
           </div>
         </div>
       )}
