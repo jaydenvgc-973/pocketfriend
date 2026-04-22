@@ -46,7 +46,7 @@ function getColors(category) {
 function CityMapBackground() {
   return (
     <img
-      src="https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/258fa5f5d_file_00000000185071fd8b67fe302065fb1f.png"
+      src="https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/689a0904c_file_00000000be4c71fdac83f8c9a646c536.png"
       style={{
         position: "absolute", inset: 0,
         width: "100%", height: "100%",
