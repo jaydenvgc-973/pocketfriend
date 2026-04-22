@@ -194,60 +194,83 @@ function LocationNode({ location, occupants, onClick }) {
   );
 }
 
-// Category zones: each zone defines a bounding box [xMin, xMax, yMin, yMax]
-// within which distinct locations will be spread out
+// Each category maps to its own exclusive zone bounding box.
+// Categories that are semantically similar but distinct each get their own zone.
 const CATEGORY_ZONES = {
-  home:       { xMin: 3,  xMax: 30, yMin: 15, yMax: 88 },
-  workplace:  { xMin: 35, xMax: 58, yMin: 15, yMax: 55 },
-  school:     { xMin: 35, xMax: 58, yMin: 55, yMax: 88 },
-  gym:        { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
-  hospital:   { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
-  medical:    { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
-  clinic:     { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
-  grocery:    { xMin: 62, xMax: 80, yMin: 45, yMax: 88 },
-  park:       { xMin: 62, xMax: 80, yMin: 45, yMax: 88 },
-  church:     { xMin: 62, xMax: 80, yMin: 45, yMax: 88 },
-  food_drink: { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
-  bar:        { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
-  restaurant: { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
-  social:     { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
-  community:  { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
-  generic:    { xMin: 35, xMax: 80, yMin: 15, yMax: 88 },
+  home:       { xMin: 2,  xMax: 31 },
+  workplace:  { xMin: 34, xMax: 60 },
+  school:     { xMin: 34, xMax: 60 },
+  gym:        { xMin: 63, xMax: 82 },
+  hospital:   { xMin: 63, xMax: 82 },
+  medical:    { xMin: 63, xMax: 82 },
+  clinic:     { xMin: 63, xMax: 82 },
+  grocery:    { xMin: 63, xMax: 82 },
+  park:       { xMin: 63, xMax: 82 },
+  church:     { xMin: 63, xMax: 82 },
+  food_drink: { xMin: 84, xMax: 98 },
+  bar:        { xMin: 84, xMax: 98 },
+  restaurant: { xMin: 84, xMax: 98 },
+  social:     { xMin: 84, xMax: 98 },
+  community:  { xMin: 84, xMax: 98 },
+  generic:    { xMin: 34, xMax: 82 },
 };
 
+// Y band is always the full usable height (avoids top label and bottom edge)
+const Y_MIN = 14;
+const Y_MAX = 90;
+
 /**
- * Assigns stable, evenly-distributed coordinates for each unique location
- * within its category zone. Same location always gets same coords.
- * Different locations get different positions inside the zone.
+ * Groups all locations (with or without saved coords) by category,
+ * then distributes each category's locations into evenly-spaced grid slots
+ * across the full zone width and the full Y band.
+ *
+ * Stability: locations sorted by ID before slot assignment so order never
+ * changes between renders unless locations are added/removed.
+ *
+ * Returns: Map<locationId, {x, y}>
  */
 function buildLocationCoordinateMap(locations) {
-  // Group locations without map_coordinates by their resolved zone
-  const zoneGroups = {};
+  // Group by category — ALL locations (including those with map_coordinates,
+  // so we can override with the grid system for a consistent layout)
+  const catGroups = {}; // cat → loc[]
   for (const loc of locations) {
-    if (loc.map_coordinates) continue; // already has real coords
     const cat = loc.category || "generic";
-    const zone = CATEGORY_ZONES[cat] || CATEGORY_ZONES.generic;
-    const key = JSON.stringify(zone); // group by zone (multiple cats can share a zone)
-    if (!zoneGroups[key]) zoneGroups[key] = { zone, locs: [] };
-    zoneGroups[key].locs.push(loc);
+    if (!catGroups[cat]) catGroups[cat] = [];
+    catGroups[cat].push(loc);
   }
 
   const coordMap = {}; // locationId → {x, y}
 
-  for (const { zone, locs } of Object.values(zoneGroups)) {
-    const total = locs.length;
-    // Arrange in a grid within the zone
-    const cols = Math.max(1, Math.ceil(Math.sqrt(total)));
-    const rows = Math.ceil(total / cols);
-    const xStep = (zone.xMax - zone.xMin) / (cols + 1);
-    const yStep = (zone.yMax - zone.yMin) / (rows + 1);
+  for (const [cat, locs] of Object.entries(catGroups)) {
+    const zone = CATEGORY_ZONES[cat] || CATEGORY_ZONES.generic;
+    const xMin = zone.xMin;
+    const xMax = zone.xMax;
 
-    locs.forEach((loc, i) => {
-      const col = (i % cols) + 1;
-      const row = Math.floor(i / cols) + 1;
+    // Sort by ID for stable, deterministic slot assignment
+    const sorted = [...locs].sort((a, b) => a.id.localeCompare(b.id));
+    const total = sorted.length;
+
+    // Grid: choose cols to keep aspect ratio reasonable
+    // For wide zones prefer more cols; for narrow zones prefer 1-2 cols
+    const zoneWidth = xMax - xMin;
+    const zoneHeight = Y_MAX - Y_MIN;
+    const aspectRatio = zoneWidth / zoneHeight;
+
+    // Target roughly square cells; bias toward more cols for wider zones
+    const cols = Math.max(1, Math.round(Math.sqrt(total * aspectRatio)));
+    const rows = Math.ceil(total / cols);
+
+    // Divide zone into (cols) columns and (rows) rows
+    // Place location anchors at the CENTER of each cell
+    const cellW = zoneWidth / cols;
+    const cellH = zoneHeight / rows;
+
+    sorted.forEach((loc, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
       coordMap[loc.id] = {
-        x: Math.round(zone.xMin + col * xStep),
-        y: Math.round(zone.yMin + row * yStep),
+        x: Math.round(xMin + col * cellW + cellW / 2),
+        y: Math.round(Y_MIN + row * cellH + cellH / 2),
       };
     });
   }
@@ -305,13 +328,12 @@ function resolveCharacterLocation(char) {
 
 /**
  * Builds renderable character markers using layered location resolution.
- * Each unique location gets its own stable position within its category zone.
+ * Each unique location gets its own stable grid slot.
  * Only characters at the exact same location share a cluster.
  */
-function buildMarkers(characters, locations) {
+function buildMarkers(characters, locations, gridCoords) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
-  // Pre-compute stable per-location coordinates for locations without saved coords
-  const syntheticCoords = buildLocationCoordinateMap(locations);
+  const syntheticCoords = gridCoords || buildLocationCoordinateMap(locations);
   const markers = [];
   const seenIds = new Set();
 
@@ -331,15 +353,15 @@ function buildMarkers(characters, locations) {
       continue;
     }
 
-    // Use saved coords first, then stable synthetic coords per location
-    const coordinates = location.map_coordinates || syntheticCoords[location.id];
+    // Always use the grid-distributed coords (ignore saved map_coordinates
+    // so every location is placed by the distribution system, not ad-hoc)
+    const coordinates = syntheticCoords[location.id];
     if (!coordinates) {
-      console.log(`[LivePresenceMap] EXCLUDED "${char.name}": could not generate coords for "${location.name}"`);
+      console.log(`[LivePresenceMap] EXCLUDED "${char.name}": no grid slot for "${location.name}"`);
       continue;
     }
 
-    const isSynthetic = !location.map_coordinates;
-    console.log(`[LivePresenceMap] RENDERED "${char.name}" @ "${location.name}" coords=(${coordinates.x},${coordinates.y}) source=${source} synthetic=${isSynthetic}`);
+    console.log(`[LivePresenceMap] RENDERED "${char.name}" @ "${location.name}" slot=(${coordinates.x},${coordinates.y}) source=${source}`);
 
     seenIds.add(char.id);
     markers.push({
@@ -360,7 +382,8 @@ function buildMarkers(characters, locations) {
 }
 
 export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick }) {
-  const markers = useMemo(() => buildMarkers(characters, locations), [characters, locations]);
+  const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
+  const markers = useMemo(() => buildMarkers(characters, locations, gridCoords), [characters, locations, gridCoords]);
 
   const groupedByLocation = useMemo(() => {
     const map = new Map();
@@ -370,16 +393,12 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
     }
     return map;
   }, [markers]);
-
-  // Show location nodes for ALL locations that have occupants (even synthetic coords)
-  const syntheticCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
-  const occupiedLocationIds = new Set(markers.map(m => m.locationId));
-  const visibleLocations = locations.filter(l =>
-    l.map_coordinates || (occupiedLocationIds.has(l.id) && syntheticCoords[l.id])
-  ).map(l => ({
-    ...l,
-    map_coordinates: l.map_coordinates || syntheticCoords[l.id],
-  }));
+  const visibleLocations = useMemo(() =>
+    locations
+      .filter(l => gridCoords[l.id])
+      .map(l => ({ ...l, map_coordinates: gridCoords[l.id] })),
+    [locations, gridCoords]
+  );
 
   return (
     <div
