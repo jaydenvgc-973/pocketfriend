@@ -46,23 +46,36 @@ export default function Settings() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", user?.id],
+  // Fetch regular characters (active_created_character, family_npc, moved_away, etc.) via RLS-filtered query
+  const { data: regularCharacters = [] } = useQuery({
+    queryKey: ["characters", user?.email],
+    queryFn: async () => {
+      if (!user?.email) return [];
+      return base44.entities.Character.filter({ created_by: user.email }, "-created_date", 300);
+    },
+    enabled: !!user?.email,
+  });
+
+  // Fetch NPC fictitious characters via service-role backend function (bypasses RLS)
+  const { data: npcFictitiousFromBackend = [] } = useQuery({
+    queryKey: ["npc-characters", user?.id],
     queryFn: async () => {
       if (!user?.id) return [];
-      const [byOwnerId, byCreatedBy] = await Promise.all([
-        base44.entities.Character.filter({ owner_user_id: user.id }, "-created_date", 300),
-        base44.entities.Character.filter({ created_by: user.email }, "-created_date", 300),
-      ]);
-      const seen = new Set();
-      return [...byOwnerId, ...byCreatedBy].filter(c => {
-        if (seen.has(c.id)) return false;
-        seen.add(c.id);
-        return true;
-      });
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      return res?.data?.npcs || [];
     },
     enabled: !!user?.id,
   });
+
+  // Merge: regular characters + npc_fictitious from backend, deduplicated
+  const characters = (() => {
+    const seen = new Set();
+    return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  })();
 
   const isAdmin = user?.email === ADMIN_EMAIL;
 
@@ -98,7 +111,8 @@ export default function Settings() {
     },
     onSuccess: () => {
       setPendingDelete(null);
-      queryClient.invalidateQueries({ queryKey: ["characters", user?.id] });
+      queryClient.invalidateQueries({ queryKey: ["characters", user?.email] });
+      queryClient.invalidateQueries({ queryKey: ["npc-characters", user?.id] });
     },
   });
 
