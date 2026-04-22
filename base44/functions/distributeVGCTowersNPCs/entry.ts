@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     // 2. character_type must be NPC (NOT active — promoted characters lose travel eligibility)
     // 3. home/residence must be THIS USER's VGC Towers (not a shared or another user's instance)
     // 4. Not protected
-    const NPC_ELIGIBLE_TYPES = ['npc', 'background', 'npc_fictitious_person'];
+    const NPC_ELIGIBLE_TYPES = ['npc', 'background', 'npc_fictitious_person', 'npc_fictitious', 'npc_regular', 'npc_family_member'];
     // NOTE: 'promoted_npc' and 'family_npc' are excluded — promoted means transitioning to active
     const vgcResidents = allCharacters.filter(c =>
       c.current_home_location_id === VGC_ID &&
@@ -169,8 +169,12 @@ Deno.serve(async (req) => {
       const differentLocations = pool.filter(l => l.id !== currentLocId);
       const finalPool = differentLocations.length > 0 ? differentLocations : pool;
 
-      const nameHash = npc.name.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-      const selectedLoc = finalPool[(i + nameHash) % finalPool.length];
+      // Build current occupancy map from already-queued updates + current resolved locations
+      const occupancyMap = new Map();
+      for (const u of updates) {
+        occupancyMap.set(u.data.resolved_current_location_id, (occupancyMap.get(u.data.resolved_current_location_id) || 0) + 1);
+      }
+      const selectedLoc = pickByGravity(finalPool, occupancyMap, nowET);
 
       const reason = (isAlreadyOut && needsRotation) ? 'vgc_rotation' : 'vgc_distribution';
 
@@ -296,4 +300,72 @@ function isInWindow(currentMinutes, openStr, closeStr) {
   const closeMin = ch * 60 + cm;
   if (openMin <= closeMin) return currentMinutes >= openMin && currentMinutes <= closeMin;
   return currentMinutes >= openMin || currentMinutes <= closeMin;
+}
+
+// ── GRAVITY SYSTEM ────────────────────────────────────────────────────────────
+
+const CATEGORY_BASE_POPULARITY = {
+  home: 10, workplace: 30, school: 30, gym: 45, grocery: 40,
+  medical: 25, hospital: 25, clinic: 25, church: 35, religion: 35,
+  park: 55, outdoor: 50, food_drink: 65, restaurant: 65,
+  bar: 70, social: 75, community: 60, business: 40, government: 20,
+  public: 50, generic: 40,
+};
+
+const CATEGORY_TIME_RULES = {
+  gym:        [[5, 9, 1.6], [17, 20, 1.5]],
+  food_drink: [[7, 10, 1.4], [12, 14, 1.5], [17, 20, 1.3]],
+  restaurant: [[11, 14, 1.6], [18, 21, 1.7]],
+  bar:        [[20, 23, 1.9], [22, 24, 2.0], [0, 2, 1.7]],
+  social:     [[18, 23, 1.8], [14, 17, 1.3]],
+  park:       [[8, 12, 1.5], [15, 18, 1.4]],
+  grocery:    [[10, 13, 1.5], [16, 19, 1.6]],
+  church:     [[8, 13, 1.8]],
+  workplace:  [[8, 17, 1.5]],
+  school:     [[7, 15, 1.6]],
+};
+
+function getTimeMultiplier(category, hour) {
+  const rules = CATEGORY_TIME_RULES[category];
+  if (!rules) return 1.0;
+  for (const [start, end, mult] of rules) {
+    if (hour >= start && hour < end) return mult;
+  }
+  return 0.8;
+}
+
+function socialAmplification(count) {
+  if (count === 0) return 0;
+  if (count === 1) return 5;
+  if (count === 2) return 12;
+  if (count === 3) return 20;
+  if (count <= 5) return 30;
+  if (count <= 8) return 42;
+  return 55;
+}
+
+function calcGravity(location, occupants, nowET) {
+  const category = location.category || 'generic';
+  const hour = nowET.getHours();
+  const base = typeof location.popularity_score === 'number'
+    ? location.popularity_score
+    : (CATEGORY_BASE_POPULARITY[category] ?? 40);
+  const timeMult = getTimeMultiplier(category, hour);
+  const social = socialAmplification(occupants);
+  const boost = typeof location.activity_boost === 'number' ? location.activity_boost : 0;
+  return Math.max(1, Math.round(base * timeMult + social + boost));
+}
+
+function pickByGravity(locations, occupancyMap, nowET) {
+  const weighted = locations.map(loc => ({
+    loc,
+    weight: calcGravity(loc, occupancyMap.get(loc.id) || 0, nowET),
+  }));
+  const total = weighted.reduce((s, w) => s + w.weight, 0);
+  let rand = Math.random() * total;
+  for (const { loc, weight } of weighted) {
+    rand -= weight;
+    if (rand <= 0) return loc;
+  }
+  return weighted[weighted.length - 1].loc;
 }
