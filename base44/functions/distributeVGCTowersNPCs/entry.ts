@@ -54,6 +54,35 @@ Deno.serve(async (req) => {
     // 4. Not protected
     const NPC_ELIGIBLE_TYPES = ['npc', 'background', 'npc_fictitious_person', 'npc_fictitious', 'npc_regular', 'npc_family_member'];
     // NOTE: 'promoted_npc' and 'family_npc' are excluded — promoted means transitioning to active
+    
+    // PRE-FLIGHT: Fix NPCs with missing locations — assign to VGC Towers home
+    const npcsMissingLocation = allCharacters.filter(c =>
+      NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
+      !c.protected_active &&
+      (c.owner_email === user.email || c.created_by === user.email) &&
+      (!c.resolved_current_location_id || c.resolved_current_location_id.length === 0) &&
+      (!c.current_home_location_id || c.current_home_location_id !== VGC_ID)
+    );
+    
+    const preflightFixes = [];
+    for (const npc of npcsMissingLocation) {
+      preflightFixes.push(
+        base44.entities.Character.update(npc.id, {
+          current_home_location_id: VGC_ID,
+          resolved_current_location_id: VGC_ID,
+          resolved_current_location_name: 'VGC Towers',
+          resolved_presence_status: 'home',
+          resolved_location_type: 'home',
+          resolved_source_reason: 'preflight_fix',
+          presence_state: 'home',
+          source_of_move: 'system',
+          valid_from: now.toISOString(),
+        })
+      );
+      log.push(`${npc.name} → PREFLIGHT_FIX: assigned to VGC Towers`);
+    }
+    if (preflightFixes.length > 0) await Promise.all(preflightFixes);
+    
     const vgcResidents = allCharacters.filter(c =>
       c.current_home_location_id === VGC_ID &&
       NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
@@ -247,6 +276,7 @@ Deno.serve(async (req) => {
       mode: 'active',
       timestamp: now.toISOString(),
       hoursET: hour,
+      preflightFixed: preflightFixes.length,
       totalVGCResidents: vgcResidents.length,
       eligible: eligible.length,
       ineligible,
