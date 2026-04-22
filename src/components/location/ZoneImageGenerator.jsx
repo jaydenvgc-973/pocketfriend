@@ -16,13 +16,6 @@ export default function ZoneImageGenerator({
   const [error, setError] = useState(null);
 
   const handleGenerate = async () => {
-    if (hasExistingImage) {
-      const confirmed = window.confirm(
-        `This zone already has an image. Do you want to generate an alternative to replace it?`
-      );
-      if (!confirmed) return;
-    }
-
     setGenerating(true);
     setError(null);
 
@@ -60,33 +53,6 @@ Do NOT create fantasy, abstract, or stylized art. Make it look like a real space
     }
   };
 
-  if (hasExistingImage) {
-    return (
-      <div className="space-y-2">
-        <p className="text-xs text-muted-foreground">This zone already has an image.</p>
-        <Button
-          onClick={handleGenerate}
-          disabled={generating}
-          variant="outline"
-          size="sm"
-          className="gap-1.5 rounded-lg w-full justify-center"
-        >
-          {generating ? (
-            <>
-              <Loader className="w-3.5 h-3.5 animate-spin" />
-              Generating Alternative...
-            </>
-          ) : (
-            <>
-              <Wand2 className="w-3.5 h-3.5" />
-              Generate Alternative Image
-            </>
-          )}
-        </Button>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-2">
       <Button
@@ -104,7 +70,7 @@ Do NOT create fantasy, abstract, or stylized art. Make it look like a real space
         ) : (
           <>
             <Wand2 className="w-3.5 h-3.5" />
-            Generate Zone Image
+            {hasExistingImage ? "Generate Another" : "Generate Zone Image"}
           </>
         )}
       </Button>

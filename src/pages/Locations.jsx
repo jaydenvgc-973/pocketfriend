@@ -232,7 +232,7 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
-    const remaining = 1 - (zone.image_urls?.length || 0);
+    const remaining = 5 - (zone.image_urls?.length || 0);
     const toUpload = files.slice(0, remaining);
     setUploading(true);
     const uploaded = [];
@@ -244,12 +244,12 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
     setUploading(false);
   };
 
-  const removeImage = () => {
-    onUpdateImages([]);
+  const removeImage = (i) => {
+    onUpdateImages((zone.image_urls || []).filter((_, idx) => idx !== i));
   };
 
   const handleGeneratedImage = (imageUrl) => {
-    onUpdateImages([imageUrl]);
+    onUpdateImages([...(zone.image_urls || []), imageUrl]);
   };
 
   const imgCount = zone.image_urls?.length || 0;
@@ -263,57 +263,45 @@ function ZoneEditor({ zone, onUpdateImages, onDelete, readOnly = false, location
         </button>}
       </div>
       {imgCount > 0 && (
-        <div className="relative">
-          <img src={zone.image_urls[0]} alt={zone.zone_name} className="w-full aspect-video object-cover rounded-lg" />
-          {!readOnly && (
-            <button
-              onClick={removeImage}
-              className="absolute top-2 right-2 w-6 h-6 bg-black/60 rounded-full flex items-center justify-center hover:bg-black/80 transition-colors"
-            >
-              <X className="w-3.5 h-3.5 text-white" />
-            </button>
-          )}
+        <div className="grid grid-cols-4 gap-1.5">
+          {zone.image_urls.map((url, i) => (
+            <div key={i} className="relative group">
+              <img src={url} alt={`${zone.zone_name} ${i + 1}`} className="w-full aspect-square object-cover rounded-lg" />
+              {!readOnly && <button
+                onClick={() => removeImage(i)}
+                className="absolute top-0.5 right-0.5 w-5 h-5 bg-black/60 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="w-3 h-3 text-white" />
+              </button>}
+            </div>
+          ))}
         </div>
       )}
-      {!readOnly && (
+      {!readOnly && imgCount < 5 && (
         <div className="space-y-2">
-          {imgCount === 0 ? (
-            <>
-              <label className="block cursor-pointer">
-                <input type="file" accept="image/*" onChange={handleUpload} className="hidden" />
-                <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-xs">
-                  <Upload className="w-3.5 h-3.5" />
-                  {uploading ? "Uploading..." : "Upload image"}
-                </div>
-              </label>
-              <ZoneImageGenerator
-                zoneName={zone.zone_name}
-                locationName={locationName}
-                category={category}
-                subtype={subtype}
-                locationDescription={locationDescription}
-                hasExistingImage={imgCount > 0}
-                onGenerate={handleGeneratedImage}
-              />
-            </>
-          ) : (
-            <div className="space-y-2">
-              <ZoneImageGenerator
-                zoneName={zone.zone_name}
-                locationName={locationName}
-                category={category}
-                subtype={subtype}
-                locationDescription={locationDescription}
-                hasExistingImage={true}
-                onGenerate={handleGeneratedImage}
-              />
-              <p className="text-xs text-muted-foreground text-center">One image per zone. Replace or delete to upload a different one.</p>
+          <label className="block cursor-pointer">
+            <input type="file" accept="image/*" multiple onChange={handleUpload} className="hidden" />
+            <div className="flex items-center justify-center gap-2 py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-xs">
+              <Upload className="w-3.5 h-3.5" />
+              {uploading ? "Uploading..." : `Upload images (${5 - imgCount} remaining)`}
             </div>
-          )}
+          </label>
+          <ZoneImageGenerator
+            zoneName={zone.zone_name}
+            locationName={locationName}
+            category={category}
+            subtype={subtype}
+            locationDescription={locationDescription}
+            hasExistingImage={false}
+            onGenerate={handleGeneratedImage}
+          />
         </div>
+      )}
+      {imgCount >= 5 && !readOnly && (
+        <p className="text-xs text-muted-foreground text-center">Maximum 5 images per zone reached</p>
       )}
       {imgCount === 0 && !readOnly && (
-        <p className="text-xs text-amber-500/80">⚠ No images yet — upload or generate a reference photo for this zone</p>
+        <p className="text-xs text-amber-500/80">⚠ No images yet — add reference photos for this zone</p>
       )}
     </div>
   );
