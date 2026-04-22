@@ -2,11 +2,12 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronRight, Check } from "lucide-react";
+import { ArrowLeft, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import ReligionStep from "@/components/create/ReligionStep";
+import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
+import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
 
 export default function EditCharacterReligion() {
   const queryClient = useQueryClient();
@@ -20,18 +21,7 @@ export default function EditCharacterReligion() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    queryFn: () =>
-      currentUser?.email
-        ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
-        : [],
-    enabled: !!currentUser?.email,
-  });
-
-  const editableChars = characters.filter(
-    (c) => !c.is_default && c.status !== "deleted"
-  );
+  const { sections, isLoading } = useSettingsCharacters(currentUser, "religion");
 
   const handleSelect = (char) => {
     setSelectedChar(char);
@@ -75,27 +65,20 @@ export default function EditCharacterReligion() {
         {!selectedChar ? (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground mb-4">Select a character to edit their religion.</p>
-            {editableChars.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-8">No custom characters yet.</p>
+            {isLoading ? (
+              <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>
+            ) : (
+              <SettingsCharacterList
+                sections={sections}
+                onSelect={handleSelect}
+                renderSubtitle={char =>
+                  char.religion && char.religion !== "None"
+                    ? `${char.religion} · ${char.belief_level?.replace("_", " ") || "moderate"}`
+                    : "No religion set"
+                }
+                emptyMessage="No characters yet."
+              />
             )}
-            {editableChars.map((char) => (
-              <button
-                key={char.id}
-                onClick={() => handleSelect(char)}
-                className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left"
-              >
-                <CharacterAvatar character={char} size="md" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">{char.name}</p>
-                  <p className="text-xs text-muted-foreground truncate capitalize">
-                    {char.religion && char.religion !== "None"
-                      ? `${char.religion} · ${char.belief_level?.replace("_", " ") || "moderate"}`
-                      : "No religion set"}
-                  </p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              </button>
-            ))}
           </div>
         ) : (
           <div className="space-y-6">

@@ -8,6 +8,8 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
 import CharacterTraitsStep, { CHARACTER_TRAITS } from "@/components/character/CharacterTraitsStep";
 import { buildSystemPrompt } from "@/lib/defaultCharacter";
+import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
+import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
 
 export default function EditCharacterTraits() {
   const queryClient = useQueryClient();
@@ -21,11 +23,7 @@ export default function EditCharacterTraits() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", user?.email],
-    queryFn: () => base44.entities.Character.filter({ created_by: user.email, status: "active" }, "-created_date"),
-    enabled: !!user?.email,
-  });
+  const { sections, allCharacters: characters, isLoading } = useSettingsCharacters(user, "traits");
 
   const selectedChar = characters.find(c => c.id === selectedCharId);
 
@@ -71,30 +69,16 @@ export default function EditCharacterTraits() {
         {/* Character selector */}
         <div>
           <p className="text-xs text-muted-foreground uppercase tracking-wider mb-3">Select a character</p>
-          <div className="space-y-2">
-            {characters.map(char => (
-              <button
-                key={char.id}
-                onClick={() => selectChar(char)}
-                className={`w-full flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-                  selectedCharId === char.id
-                    ? "bg-primary/10 border-primary/40"
-                    : "bg-card border-border hover:border-primary/30"
-                }`}
-              >
-                <CharacterAvatar character={char} size="sm" />
-                <div className="flex-1 min-w-0 text-left">
-                  <p className="text-sm font-medium text-foreground">{char.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {CHARACTER_TRAITS.filter(t => !!char[t.key]).map(t => t.label).join(", ") || "No traits set"}
-                  </p>
-                </div>
-                {selectedCharId === char.id && (
-                  <Check className="w-4 h-4 text-primary flex-shrink-0" />
-                )}
-              </button>
-            ))}
-          </div>
+          {isLoading ? (
+            <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>
+          ) : (
+            <SettingsCharacterList
+              sections={sections}
+              onSelect={selectChar}
+              renderSubtitle={char => CHARACTER_TRAITS.filter(t => !!char[t.key]).map(t => t.label).join(", ") || "No traits set"}
+              emptyMessage="No characters yet."
+            />
+          )}
         </div>
 
         {/* Traits editor */}

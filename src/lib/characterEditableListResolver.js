@@ -490,6 +490,96 @@ export function resolveTravelPresenceForUserScope(location, characters = []) {
   };
 }
 
+// ─── MODULE ELIGIBILITY MAP ───────────────────────────────────────────────────
+const MODULE_ALLOWED_TYPES = {
+  story:             ['active_created_character', 'npc_fictitious'],
+  photos:            ['active_created_character', 'npc_fictitious'],
+  emotions:          ['active_created_character', 'npc_fictitious'],
+  relationships:     ['active_created_character', 'npc_fictitious'],
+  traits:            ['active_created_character', 'npc_fictitious'],
+  religion:          ['active_created_character', 'npc_fictitious'],
+  profile:           ['active_created_character', 'npc_fictitious'],
+  work_school:       ['active_created_character', 'npc_fictitious'],
+  default_character: ['active_created_character', 'npc_fictitious'],
+  locations:         ['active_created_character', 'npc_fictitious'],
+  needs:             ['active_created_character'],
+};
+
+// Enforced hierarchy order for grouping
+const TYPE_HIERARCHY = ['active_created_character', 'npc_fictitious', 'npc_family_member'];
+
+const SECTION_LABELS = {
+  active_created_character: 'Active Characters',
+  npc_fictitious:           'NPC Fictitious',
+  npc_family_member:        'NPC Family Members',
+};
+
+/**
+ * MANDATORY SHARED SETTINGS LIST RESOLVER
+ *
+ * Use this in ALL Settings subpages that show a character-selection list.
+ *
+ * Returns sectioned data:
+ * [{ section, label, items: [...] }]
+ *
+ * Pipeline:
+ * 1. user scope / ownership
+ * 2. module eligibility
+ * 3. character type resolution
+ * 4. grouping by hierarchy
+ * 5. within-group alpha sort
+ * 6. return sectioned output
+ *
+ * @param {Array}  allCharacters    - raw merged character list
+ * @param {Object} currentUser      - { id, email }
+ * @param {string} moduleType       - e.g. "story", "photos", "needs"
+ * @returns {Array} sectioned list
+ */
+export function resolveSettingsCharacterLists(allCharacters, currentUser, moduleType) {
+  const allowedTypes = MODULE_ALLOWED_TYPES[moduleType] || ['active_created_character'];
+
+  // 1. User scope
+  const scoped = resolveUserScopedCharacters(allCharacters, currentUser?.id, currentUser?.email);
+
+  // 2. Status filter (exclude deleted/soft_deleted/merged)
+  const live = scoped.filter(c => !['deleted', 'soft_deleted', 'merged'].includes(c.status));
+
+  // 3. Module eligibility — only keep allowed types
+  const eligible = live.filter(c => allowedTypes.includes(c._resolvedType));
+
+  // 4. Group by type
+  const groups = {};
+  TYPE_HIERARCHY.forEach(t => { groups[t] = []; });
+
+  eligible.forEach(c => {
+    if (groups[c._resolvedType]) {
+      groups[c._resolvedType].push(c);
+    }
+  });
+
+  // 5. Sort within each group alphabetically
+  Object.keys(groups).forEach(type => {
+    groups[type].sort((a, b) => (a._displayName || '').localeCompare(b._displayName || ''));
+  });
+
+  // 6. Build sections — only include types allowed for this module, in hierarchy order
+  const sections = TYPE_HIERARCHY
+    .filter(type => allowedTypes.includes(type) && groups[type].length > 0)
+    .map(type => ({
+      section: type,
+      label: SECTION_LABELS[type],
+      items: groups[type],
+    }));
+
+  console.log(`[resolveSettingsCharacterLists] module=${moduleType}`, {
+    scopedCount: scoped.length,
+    eligibleCount: eligible.length,
+    sections: sections.map(s => ({ label: s.label, count: s.items.length })),
+  });
+
+  return sections;
+}
+
 /**
  * Check if a location appears empty (no residents or current occupants).
  * 

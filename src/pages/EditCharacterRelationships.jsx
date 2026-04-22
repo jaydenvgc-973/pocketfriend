@@ -2,7 +2,9 @@ import React, { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronRight, Check, Plus } from "lucide-react";
+import { ArrowLeft, Check, Plus, ChevronRight } from "lucide-react";
+import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
+import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { AnimatePresence } from "framer-motion";
@@ -34,15 +36,7 @@ export default function EditCharacterRelationships() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date")
-      : [],
-    enabled: !!currentUser?.email,
-  });
-
-  const editableChars = characters.filter(c => c.status !== "deleted");
+  const { sections, allCharacters: characters, isLoading } = useSettingsCharacters(currentUser, "relationships");
 
   const { data: userSettings = [] } = useQuery({
     queryKey: ["userSettings"],
@@ -108,23 +102,16 @@ export default function EditCharacterRelationships() {
         {!selectedChar ? (
           <div className="space-y-3">
             <p className="text-xs text-muted-foreground mb-4">Select a character to edit their relationship levels.</p>
-            {editableChars.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-8">No characters yet.</p>
+            {isLoading ? (
+              <div className="flex justify-center py-8"><div className="w-5 h-5 border-2 border-primary/20 border-t-primary rounded-full animate-spin" /></div>
+            ) : (
+              <SettingsCharacterList
+                sections={sections}
+                onSelect={handleSelect}
+                renderSubtitle={char => char.personality_summary?.split(".")[0]}
+                emptyMessage="No characters yet."
+              />
             )}
-            {editableChars.map(char => (
-              <button
-                key={char.id}
-                onClick={() => handleSelect(char)}
-                className="w-full flex items-center gap-3 p-3 rounded-xl bg-card border border-border hover:border-primary/40 transition-colors text-left"
-              >
-                <CharacterAvatar character={char} size="md" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground">{char.name}</p>
-                  <p className="text-xs text-muted-foreground truncate">{char.personality_summary?.split(".")[0]}</p>
-                </div>
-                <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-              </button>
-            ))}
           </div>
         ) : editingNPC ? (
           <NPCRelationshipEditor

@@ -5,6 +5,8 @@ import { base44 } from "@/api/base44Client";
 import { ArrowLeft, Check } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import BottomNav from "@/components/BottomNav";
+import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
+import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
 
 const NEEDS = [
   { label: "Hunger",    key: "hunger_value",        dbKey: "hunger",    emoji: "🍽️" },
@@ -138,17 +140,10 @@ export default function EditCharacterNeeds() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: characters = [], isLoading } = useQuery({
-    queryKey: ["characters", user?.email],
-    queryFn: () => user?.email
-      ? base44.entities.Character.filter({ created_by: user.email }, "-created_date", 100)
-      : [],
-    enabled: !!user?.email,
-  });
-
-  const activeChars = characters.filter(
-    c => c.character_type === "active" && c.status === "active"
-  );
+  // "needs" module → active_created_character ONLY
+  const { sections, isLoading } = useSettingsCharacters(user, "needs");
+  // Flatten for mini-bar previews
+  const activeChars = sections.flatMap(s => s.items);
 
   return (
     <div className="min-h-screen bg-background flex flex-col pb-24">
