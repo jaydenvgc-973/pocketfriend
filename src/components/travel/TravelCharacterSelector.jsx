@@ -47,7 +47,7 @@ export default function TravelCharacterSelector({ characters, currentUser, displ
     let currentLocationLabel = null;
     if (isAvailable && resolvedLocName && resolvedStatus !== 'home' && resolvedStatus !== 'sleeping' && resolvedStatus !== 'napping') {
       currentLocationLabel = `At ${resolvedLocName}`;
-    } else if (isAvailable && resolvedStatus === 'home') {
+    } else if (isAvailable && (resolvedStatus === 'home' || char.current_home_location_id)) {
       currentLocationLabel = 'At home';
     }
 
