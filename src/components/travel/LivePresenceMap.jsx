@@ -206,6 +206,16 @@ function LocationDetailPanel({ location, occupants, onClose }) {
   const label = CATEGORY_LABELS[location.category] || "Place";
   const icon = CATEGORY_ICONS[location.category] || "📍";
 
+  // Pick the first available image from zones
+  const locationImage = (() => {
+    const zones = location.zones || [];
+    for (const zone of zones) {
+      const imgs = zone.image_urls || [];
+      if (imgs.length > 0) return imgs[0];
+    }
+    return null;
+  })();
+
   return (
     <motion.div
       initial={{ opacity: 0, x: 24 }}
@@ -226,7 +236,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
       }}
     >
       {/* Header */}
-      <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+      <div style={{ padding: "14px 14px 10px", borderBottom: locationImage ? "none" : "1px solid rgba(255,255,255,0.07)" }}>
         <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
@@ -254,6 +264,17 @@ function LocationDetailPanel({ location, occupants, onClose }) {
           }}>✕</button>
         </div>
       </div>
+
+      {/* Location image */}
+      {locationImage && (
+        <div style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
+          <img
+            src={locationImage}
+            alt={location.name}
+            style={{ width: "100%", height: 130, objectFit: "cover", display: "block" }}
+          />
+        </div>
+      )}
 
       {/* Who's here */}
       {occupants.length > 0 && (
