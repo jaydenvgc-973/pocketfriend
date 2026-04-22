@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Moon, MapPin } from "lucide-react";
+import { calcLocationGravity } from "@/lib/locationGravity";
 
 // ─── Category metadata ────────────────────────────────────────────────────────
 const CATEGORY_LABELS = {
@@ -170,32 +171,63 @@ const ZONE_TABS = [
   { label: "SOCIAL", icon: "👥", color: "#ec4899" },
 ];
 
-// ─── Location dot (small, clickable, always visible) ─────────────────────────
-function LocationDot({ location, isActive, onClick }) {
+// ─── Location dot (small, clickable, gravity-aware) ──────────────────────────
+function LocationDot({ location, isActive, onClick, occupants = 0 }) {
   const coords = location.map_coordinates;
   if (!coords) return null;
   const colors = getColors(location.category || "generic");
+  const { gravity, color: gravColor, pulse } = calcLocationGravity(location, occupants);
+
+  // Scale dot size with gravity (hot = bigger)
+  const baseSize = isActive ? 14 : gravity >= 70 ? 13 : gravity >= 50 ? 11 : 9;
+  const dotColor = isActive ? colors.dot : (gravColor || colors.dot);
 
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onClick(location.id); }}
+    <div
       style={{
         position: "absolute",
         left: `${coords.x}%`,
         top: `${coords.y}%`,
         transform: "translate(-50%, -50%)",
-        width: isActive ? 14 : 10,
-        height: isActive ? 14 : 10,
-        borderRadius: "50%",
-        background: isActive ? colors.dot : colors.dot + "88",
-        border: `2px solid ${isActive ? colors.dot : colors.dot + "55"}`,
-        boxShadow: isActive ? `0 0 0 4px ${colors.dot}33, 0 2px 8px rgba(0,0,0,0.2)` : "0 1px 4px rgba(0,0,0,0.15)",
-        cursor: "pointer",
         zIndex: 10,
-        padding: 0,
-        transition: "all 0.15s ease",
       }}
-    />
+    >
+      {/* Pulsing ring for hot/busy locations */}
+      {pulse && !isActive && (
+        <motion.div
+          animate={{ scale: [1, 1.9, 1], opacity: [0.5, 0, 0.5] }}
+          transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+          style={{
+            position: "absolute",
+            inset: 0,
+            borderRadius: "50%",
+            background: dotColor,
+            width: baseSize, height: baseSize,
+            top: "50%", left: "50%",
+            transform: "translate(-50%, -50%)",
+          }}
+        />
+      )}
+      <button
+        onClick={(e) => { e.stopPropagation(); onClick(location.id); }}
+        style={{
+          width: baseSize,
+          height: baseSize,
+          borderRadius: "50%",
+          background: isActive ? dotColor : dotColor + "99",
+          border: `2px solid ${isActive ? dotColor : dotColor + "66"}`,
+          boxShadow: isActive
+            ? `0 0 0 4px ${dotColor}33, 0 2px 8px rgba(0,0,0,0.25)`
+            : gravity >= 70
+              ? `0 0 6px 2px ${dotColor}55`
+              : "0 1px 4px rgba(0,0,0,0.18)",
+          cursor: "pointer",
+          padding: 0,
+          transition: "all 0.15s ease",
+          display: "block",
+        }}
+      />
+    </div>
   );
 }
 
@@ -205,6 +237,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
   const icon = CATEGORY_ICONS[location.category] || "📍";
+  const { gravity, label: vibeLabel, color: vibeColor } = calcLocationGravity(location, occupants.length);
 
   // Pick the first available image — check multiple possible fields
   const locationImage = (() => {
@@ -260,11 +293,24 @@ function LocationDetailPanel({ location, occupants, onClose }) {
               </div>
             </div>
             <div style={{ fontSize: 11, color: "#94a3b8" }}>{label}</div>
-            {occupants.length > 0 && (
-              <div style={{ fontSize: 11, color: colors.pin, fontWeight: 700, marginTop: 4 }}>
-                {occupants.length} here now
-              </div>
-            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+              {occupants.length > 0 && (
+                <span style={{ fontSize: 11, color: colors.pin, fontWeight: 700 }}>
+                  {occupants.length} here now
+                </span>
+              )}
+              {vibeLabel && (
+                <span style={{
+                  fontSize: 10, fontWeight: 700,
+                  color: vibeColor,
+                  background: vibeColor + "18",
+                  border: `1px solid ${vibeColor}44`,
+                  borderRadius: 20, padding: "1px 7px",
+                }}>
+                  {vibeLabel}
+                </span>
+              )}
+            </div>
           </div>
           <button onClick={onClose} style={{
             background: "rgba(255,255,255,0.08)", border: "none",
@@ -335,7 +381,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
         </div>
         {[
           { key: "Category", val: label, icon: icon },
-          { key: "Type", val: location.category || "generic", icon: "🏷️" },
+          { key: "Gravity", val: `${gravity} / 100`, icon: "⚡" },
           location.city ? { key: "City", val: location.city, icon: "🌆" } : null,
           location.state ? { key: "State", val: location.state, icon: "📍" } : null,
         ].filter(Boolean).map(row => (
@@ -606,13 +652,14 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
           ))}
         </div>
 
-        {/* Location dots — always visible, clickable */}
+        {/* Location dots — always visible, gravity-aware */}
         {allLocations.map(location => (
           <LocationDot
             key={location.id}
             location={location}
             isActive={location.id === activeLocationId}
             onClick={handleLocationDotClick}
+            occupants={groupedByLocation.get(location.id)?.length ?? 0}
           />
         ))}
 
