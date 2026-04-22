@@ -22,7 +22,6 @@ import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils"
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolver";
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
-import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 
 export default function Travel() {
   const navigate = useNavigate();
