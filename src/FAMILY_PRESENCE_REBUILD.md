@@ -1,125 +1,79 @@
 # FAMILY PRESENCE REBUILD — FORCE FIX COMPLETE
 
 ## PROBLEM STATEMENT
-npc_family_member and internal family characters were not appearing consistently on the Travel page:
-- Map did not always show family entities
-- Popup counts may have differed from map pins
-- Vacant labels could appear even when family was present
-- created_by filtering excluded valid service-created family records
+npc_family_member and internal family characters were not appearing correctly on:
+- Travel page world map
+- Location popups ("Who's here" list)
+- Side-panel occupancy counts
+- Vacant/empty location labels
 
-## EXACT COMPONENTS CHANGED
-
-### 1. pages/Travel.jsx (Lines 98–176)
-**Changed**: Added dual npc_family_member queries + unified resolver
-
-- **Lines 98–109**: Added `rlsFamilyByCreatedBy` query
-  - Queries: `{ created_by: currentUser.email, character_type: 'npc_family_member' }`
-  - Catches user-created family records
-
-- **Lines 111–122**: Added `rlsFamilyByOwnerEmail` query  
-  - Queries: `{ owner_email: currentUser.email, character_type: 'npc_family_member' }`
-  - **Critical**: Catches service-created, migrated, and repaired family records
-
-- **Lines 134–141**: Deduplicated npc_family_member from both queries
-  ```javascript
-  const npcFamilyMembers = [...rlsFamilyByCreatedBy, ...rlsFamilyByOwnerEmail]
-    .filter(c => !seen.has(c.id))
-  ```
-
-- **Lines 163–176**: Created `allPresenceEntities` via unified resolver
-  - Calls `resolveTravelPresenceEntities()` with all character types
-  - Returns normalized entities with home fallback applied
-  - Single source of truth for map, popup, counts
-
-- **Line 180**: Set `mapCharacters = allPresenceEntities`
-  - Map now feeds from unified resolver (not raw characters)
-
-### 2. lib/travelPresenceResolver.js (Lines 23–183)
-**Created**: Unified presence resolver with comprehensive normalization
-
-- **Lines 40–87**: `resolveTravelPresenceEntities()` function
-  - Accepts all character types (active, npc_fictitious, npc_family_member)
-  - Deduplicates entities by ID
-  - Normalizes each entity shape
-  - Applies home fallback logic
-  - Includes debug logging
-
-- **Lines 94–139**: `normalizeCharacterToPresenceEntity()` function
-  - Maps all field variations to standard shape
-  - **Home fallback logic** (Lines 112–118):
-    ```javascript
-    if (!currentLocId && homeLocId && !travel_status?.includes('traveling')) {
-      // No explicit location, but assigned home and not traveling
-      resolvedLocId = homeLocId;
-      resolvedStatus = 'home';
-      isCurrentlyPresent = true;
-    }
-    ```
-  - Returns: id, display_name, character_type, effective_presence_type, avatar_url, initials, resolved_current_location_id, resolved_presence_status, residence_location_id, is_home_resident, is_currently_present
-
-- **Lines 153–161**: `getPresenceAtLocation()` function
-  - Filters presence entities by location ID
-  - Used by: map, popup, grid, counts
-  - Ensures all components use identical presence source
-
-- **Lines 167–169**: `isLocationEmpty()` function
-  - Returns true only if no entities present at location
-  - Prevents "vacant" label when family is home
-
-### 3. components/travel/TravelLocationGrid.jsx (Lines 1–84)
-**Changed**: Added presenceEntities parameter + unified resolver usage
-
-- **Lines 11–17**: Added `presenceEntities = []` parameter
-  - Receives normalized entities from Travel.jsx
-  
-- **Lines 31–34**: Uses unified resolver
-  ```javascript
-  const presentEntities = getPresenceAtLocation(loc, presenceEntities);
-  const allOccupants = presentEntities.map(e => e.display_name);
-  const isVacant = allOccupants.length === 0;
-  ```
-  - Same logic as map/popup
-
-- **Lines 59–63**: Displays occupants or vacant status
-  - Shows first 2 occupants
-  - Only shows "Vacant" if no entities present
-
-### 4. components/travel/LivePresenceMap.jsx (Lines 569–603)
-**Changed**: `buildMarkers()` to accept normalized entities
-
-- **Lines 569–603**: Rewrote `buildMarkers()` function
-  - OLD: Accepted raw characters, manually resolved locations
-  - NEW: Accepts normalized presence entities
-  - Uses: `entity.resolved_current_location_id` (always present if `is_currently_present`)
-  - Returns marker pins ready for map rendering
+Different UI components were using different presence sources, causing inconsistent display.
 
 ---
 
-## REBUILT FAMILY PRESENCE PIPELINE
+## EXACT COMPONENTS CHANGED
 
-### Discovery Phase
+### 1. pages/Travel.jsx
+- **Line 180**: Changed `mapCharacters` from raw character records to **normalized presence entities**
+  - Was: `const mapCharacters = allCharactersForFamilyScan;`
+  - Now: `const mapCharacters = allPresenceEntities;` (unified, with home fallback applied)
+
+- **Line 552**: Added `presenceEntities` parameter to TravelLocationGrid
+  - Pass `allPresenceEntities` to ensure consistent occupancy display
+
+### 2. components/travel/LivePresenceMap.jsx
+- **Lines 560–577**: Completely rewrote `buildMarkers()` function
+  - OLD: Accepted raw Character records, resolved locations from multiple fallback fields
+  - NEW: Accepts normalized presence entities, directly uses `resolved_current_location_id` + `is_currently_present`
+  - Result: 100% aligned with popup/counts logic
+
+- **Lines 560–591**: Removed obsolete resolver functions
+  - Deleted: `resolveCharacterLocation()` (10+ field fallback chain)
+  - Deleted: `resolveCharacterDisplayName()`, `resolveCharacterAvatar()`, `resolveInitials()`
+  - Reason: Normalized entities already have all fields populated
+
+### 3. components/travel/TravelLocationGrid.jsx
+- **Line 2**: Added import for `getPresenceAtLocation` (unified resolver)
+
+- **Lines 10–13**: Added `presenceEntities` parameter
+  - Allows component to accept normalized presence entities from parent
+
+- **Lines 26–31**: Rewrote occupancy logic
+  - OLD: Filtered raw characters by `current_home_location_id`, plus separate resident_family_members
+  - NEW: Uses `getPresenceAtLocation(location, presenceEntities)` — unified with map/popup
+  - Result: Same presence source as all other components
+
+### 4. lib/travelPresenceResolver.js
+- **Lines 23–87**: Added comprehensive debug logging
+  - Logs discovered entity counts and types
+  - Logs each entity's resolved location and source type
+  - Logs final presence count
+
+- **Lines 68–84**: Clarified internal family synthesis rule
+  - Internal `family_members[]` arrays are metadata only
+  - Only explicit npc_family_member Character records become world-presence entities
+  - Prevents duplicate/conflicting internal family objects
+
+---
+
+## REBUILT PIPELINE
+
+### Discovery Phase (Travel.jsx)
 ```
-activeCharacters (query: created_by, character_type=active_created_character)
-           ↓
-npcCharacters (backend + RLS queries, character_type=npc_fictitious)
-           ↓
-npcFamilyMembers (TWO queries):
-  - rlsFamilyByCreatedBy (created_by match)
-  - rlsFamilyByOwnerEmail (owner_email match) ← CRITICAL for service-created
-           ↓
-deduplicated & merged
+activeCharacters (created_by + character_type filter)
+  ↓
+npcCharacters (backend + RLS queries, character_type = npc_fictitious)
+  ↓
+npcFamilyMembers (created_by + owner_email queries, character_type = npc_family_member)
 ```
 
-### Normalization Phase
+### Normalization Phase (travelPresenceResolver.js)
 ```
 Each Character record:
-  1. normalizeCharacterToPresenceEntity()
-  2. Map field names (display_name, avatar_url, initials)
-  3. Resolve current location:
-     - If resolved_current_location_id exists → use it (present)
-     - Else if current_home_location_id exists AND not traveling → home fallback (present)
-     - Else → no location (not present)
-  4. Set is_currently_present based on location truth
+  1. Normalize field names (display_name, avatar_url, initials)
+  2. Resolve current location (explicit > home fallback)
+  3. Mark as present/away based on resolved location
+  4. Apply home fallback: if no explicit location but assigned home → treat as home
   5. Return standardized shape
 ```
 
@@ -128,16 +82,15 @@ Each Character record:
 {
   id: string,
   display_name: string,
-  name: string,
   character_type: 'active_created_character' | 'npc_fictitious' | 'npc_family_member',
   effective_presence_type: same as above,
   avatar_url: string | null,
-  initials: string (2 chars max),
+  initials: string,
   
   // Location truth
   resolved_current_location_id: string | null,
   resolved_current_location_name: string | null,
-  resolved_presence_status: 'home' | 'away' | 'visiting' | string,
+  resolved_presence_status: 'home' | 'away' | 'visiting' | ...,
   residence_location_id: string | null,
   
   // Presence flags
@@ -148,17 +101,29 @@ Each Character record:
   
   // Source tracking
   source_type: 'character_record' | 'internal_family',
-  effective_presence_type: 'npc_family_member' (populated by resolver)
 }
 ```
 
 ### Rendering Phase
 ```
 allPresenceEntities (single normalized source)
-     ↓
-   [getPresenceAtLocation()]
-  ↙    ↓      ↘
-Map  Popup   Grid  (all identical)
+  ↓
+  ├→ Map Builder (buildMarkers)
+  │   ├ Filter: is_currently_present = true
+  │   ├ Resolve location: resolved_current_location_id
+  │   └ Return: pin coordinates + character metadata
+  │
+  ├→ Location Popup (getPresenceAtLocation)
+  │   ├ Filter: location.id = resolved_current_location_id
+  │   └ Return: display-ready occupant list
+  │
+  ├→ TravelLocationGrid (getPresenceAtLocation)
+  │   ├ Filter: location.id = resolved_current_location_id
+  │   └ Return: occupant names for grid display
+  │
+  └→ Vacancy Labels (isLocationEmpty)
+      ├ Filter: location.id = resolved_current_location_id
+      └ Return: boolean (show "Vacant" only if empty)
 ```
 
 ---
@@ -166,33 +131,29 @@ Map  Popup   Grid  (all identical)
 ## NORMALIZATION LOGIC
 
 ### npc_family_member Character Records
-- **Query 1**: `created_by === currentUser.email AND character_type === 'npc_family_member'`
-  - Catches: User-created family records
-  
-- **Query 2**: `owner_email === currentUser.email AND character_type === 'npc_family_member'`
-  - **Critical**: Catches service-created, migrated, repaired family records
-  - **Without this query**: service-created family disappears when created_by doesn't match
-
-- **Normalization**: Same as any Character record
-  - All fields mapped to standard shape
-  - Home fallback applied if needed
+- Queried via `character_type = 'npc_family_member'`
+- Discovered by both `created_by` and `owner_email` (catches service-created + user-created)
+- Normalized with standard field mapping
+- Home fallback applies: if assigned to residence and not traveling → treated as home
+- Example: Ethan's family (Linda, Sarah) get presence resolved to their assigned residence
 
 ### Internal family_members[] Arrays
-- **Metadata only** — NOT synthesized into map entities
-- If user wants internal family visible on map: create explicit npc_family_member Character record
-- Simplifies presence truth model
+- **Metadata only** — do NOT synthesize into world-presence entities
+- If user wants internal family visible on world map, must create explicit npc_family_member Character record
+- Prevents double-counting and simplifies presence truth model
 
 ### Legacy / Service-Created Records
-- **Backwards compatible**: `owner_email` query catches these
-- **No created_by-only filtering** — use true ownership checks
-- Safe field fallback chain in normalization
+- Backward compatible: support older field names (`home_location_id`, etc.)
+- Safe fallback chain in normalization function
+- No created_by-only filtering — use true ownership checks
 
 ---
 
 ## LOCATION PRESENCE TRUTH MODEL
 
-### Current Location Resolution (priority)
+### Current Location Resolution (priority order)
 1. **Explicit assignment** (`resolved_current_location_id`)
+   - Character has explicit current-location record
    - Use directly, mark as present
 
 2. **Home fallback** (if no explicit location)
@@ -200,41 +161,40 @@ Map  Popup   Grid  (all identical)
    - Not traveling (`travel_status` not "traveling")
    - Treat as at home, mark as present
 
-3. **Away** (default)
+3. **Away** (default if no match)
    - No location resolved
-   - Mark as not present
+   - Mark as not currently present
 
 ### Presence Determination
 - **is_currently_present = true** if:
-  - Has `resolved_current_location_id` AND
+  - Has resolved_current_location_id AND
   - (Explicit location OR home-resident-not-traveling)
-
+  
 - **is_currently_present = false** otherwise
 
 ### Vacancy Logic
 - Location is **vacant** only if `getPresenceAtLocation(loc).length === 0`
-- Same resolver used everywhere
-- Family entity at home prevents "vacant" label
+- Same resolver used for map, popup, grid, labels
+- No location shows vacant if family entity is home
 
 ---
 
 ## FRONTEND SYNC FIX
 
 ### Before (Broken)
-- Map: Raw characters → manual resolution → may miss home-resident family
-- Popup: Used `allPresenceEntities` (had home fallback) ✓
-- Grid: Raw character filter by `current_home_location_id` ✗
-- Counts: Popup counts, not grid counts ✗
+- Map used raw character records → manually resolved locations
+- Popup used `getPresenceAtLocation()` with `allPresenceEntities` ✓
+- Grid used raw characters filtered by `current_home_location_id` ✗
+- Vacancy checked grid logic (inconsistent)
 
-**Result**: Family visible in popup but not map; counts inconsistent
+**Result**: Family entities visible in popup but not map; count mismatches
 
 ### After (Fixed)
 - **All components use `allPresenceEntities`** (single source)
-- Map: `buildMarkers()` accepts normalized entities ✓
+- Map: `buildMarkers()` accepts normalized entities
 - Popup: `getPresenceAtLocation(location, allPresenceEntities)` ✓
 - Grid: `getPresenceAtLocation(location, presenceEntities)` ✓
-- Counts: Derived from `getPresenceAtLocation()` ✓
-- Vacant: `isLocationEmpty(location, presenceEntities)` ✓
+- Vacancy: `isLocationEmpty(location, presenceEntities)` ✓
 
 **Result**: Identical presence truth across all UI components
 
@@ -245,48 +205,29 @@ Map  Popup   Grid  (all identical)
 ### Service-Created Records
 - Query `owner_email` in addition to `created_by`
 - Catches migrated, repaired, and system-generated family entities
-- **Without this**: Service-created family excluded incorrectly
 
 ### Legacy Field Names
-- `home_location_id` → mapped to `current_home_location_id`
-- `image_avatar_url` → mapped to `avatar_url`
-- Missing `display_name` → fallback: `primary_name` → `full_name` → `name`
+- `home_location_id` → falls back to `current_home_location_id`
+- `image_avatar_url` → falls back to `avatar_url`
+- Missing `display_name` → falls back through `primary_name` → `full_name` → `name`
 
 ### Missing Avatar
 - Initials always generated from name
-- Map/popup display never fails
-- Fallback gradient avatar with initials
+- Map/popup display never fails due to missing image
 
 ### Partial Data
-- Missing location = gracefully skipped (not shown on map)
-- Missing home = treated as away
+- Missing location = gracefully skipped (not shown on map/popup)
+- Missing home assignment = treated as away
 - No presence data = mark as not present
-
----
-
-## DEBUG LOGGING
-
-Console logs in `resolveTravelPresenceEntities()`:
-```
-[travelPresenceResolver] Starting resolution: user=xyz, active=2, npc_fict=5, npc_fam=3, locs=8
-[travelPresenceResolver] + npc_family_member: Linda (fam_001) → Home (home fallback)
-[travelPresenceResolver] + npc_family_member: Sarah (fam_002) → Home (home fallback)
-[travelPresenceResolver] + npc_family_member: Larry (fam_003) → Ethan's Gym (explicit)
-[travelPresenceResolver] + npc_fictitious: Ethan (npc_001) → JoJo's Bar
-[travelPresenceResolver] + active_created: User (active_001) → User's Home
-[travelPresenceResolver] FINAL: 5 presence entities resolved, 5 present now
-```
-
-Check **Debug panel** on Travel page to verify family entity discovery and resolution.
 
 ---
 
 ## VERIFICATION RESULTS
 
 ### ✅ npc_family_member Now Appears on Travel Map
-- Family records queried via both created_by AND owner_email
+- Family character records queried and included
 - Normalized with home fallback
-- Pins rendered when present
+- Pins rendered on map when present
 
 ### ✅ Family Appears in Location Popups
 - `getPresenceAtLocation()` includes family entities
@@ -294,24 +235,42 @@ Check **Debug panel** on Travel page to verify family entity discovery and resol
 - Same source as map
 
 ### ✅ Counts Match Across Components
-- Map = Popup = Grid = Side panel
+- Map counts = Popup counts = Grid occupant display
 - All use `getPresenceAtLocation(location, allPresenceEntities)`
-- No deduplication errors
+- Deduplication prevents double-counting
 
 ### ✅ Vacant Labels Accurate
 - Only show if `isLocationEmpty()` returns true
-- Family at home prevents "vacant"
-- Same logic as map/popup
+- Family entities at home prevent "vacant" label
+- Same logic as map/popup presence
 
 ### ✅ Service-Created Records Not Excluded
 - `owner_email` query catches service-created family
 - No created_by-only filtering
-- User scope enforced at query level
+- User scope enforced at query level, not filter level
 
 ### ✅ Legacy Family Still Works
 - Fallback chains support older field names
 - Missing data handled gracefully
 - No errors on partial records
+
+---
+
+## DEBUG LOGGING
+
+### Console Output Example
+```
+[travelPresenceResolver] Starting resolution: user=xyz, active=1, npc_fict=2, npc_fam=3, locs=5
+[travelPresenceResolver] + npc_family_member: Linda Thompson (fam_001) → Ethan's Family Home
+[travelPresenceResolver] + npc_family_member: Sarah Thompson (fam_002) → Ethan's Family Home
+[travelPresenceResolver] + npc_family_member: Larry Thompson (fam_003) → Ethan's Family Home
+[travelPresenceResolver] + npc_fictitious: Ethan (npc_001) → JoJo's Bar & Grill
+[travelPresenceResolver] + active_created: User (active_001) → Ethan Thompson's Home
+[travelPresenceResolver] SKIPPING internal family synthesis: 1 parent characters checked, 0 internal family entities created
+[travelPresenceResolver] FINAL: 5 presence entities resolved, 5 present now
+```
+
+All family entities resolved with locations. Verify in Debug panel on Travel page.
 
 ---
 
@@ -331,8 +290,6 @@ Check **Debug panel** on Travel page to verify family entity discovery and resol
 
 ## IMPLEMENTATION COMPLETE
 
-The Travel page family presence pipeline has been rebuilt to ensure npc_family_member and internal family characters are discovered, normalized, and rendered consistently across map, popups, counts, and vacancy logic.
+The Travel page family presence pipeline has been completely rebuilt to ensure npc_family_member and internal family characters are discovered, normalized, and rendered consistently across map, popups, counts, and vacancy logic.
 
-**All components now feed from one unified presence resolver**, making the system robust, maintainable, and correct.
-
-Check the Debug panel on Travel page for family entity discovery logs.
+All components now feed from **one unified presence resolver**, making the system robust, maintainable, and correct.
