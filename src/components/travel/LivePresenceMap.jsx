@@ -54,7 +54,7 @@ function CharacterPin({ marker, onClick, offset }) {
 
   return (
     <button
-      onClick={() => onClick?.(marker.characterId)}
+      onClick={(e) => { e.stopPropagation(); onClick?.(marker.characterId); }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -140,57 +140,94 @@ function CharacterPin({ marker, onClick, offset }) {
   );
 }
 
-function LocationNode({ location, occupants, onClick }) {
-  const [hovered, setHovered] = useState(false);
+// Small dot anchor always shown at a location's position
+function LocationDot({ location }) {
   const coords = location.map_coordinates;
   if (!coords) return null;
-
   const colors = getNodeColors(location.category || "generic");
-  const label = CATEGORY_LABELS[location.category] || "Place";
-  const hasOccupants = occupants.length > 0;
-
   return (
-    <button
-      onClick={() => onClick?.(location.id)}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
+    <div
       style={{
         position: "absolute",
         left: `${coords.x}%`,
         top: `${coords.y}%`,
         transform: "translate(-50%, -50%)",
-        border: "none",
-        background: "transparent",
-        cursor: "pointer",
-        zIndex: 10,
+        width: 8,
+        height: 8,
+        borderRadius: "50%",
+        background: colors.border + "55",
+        border: `1.5px solid ${colors.border}88`,
+        pointerEvents: "none",
+        zIndex: 5,
+      }}
+    />
+  );
+}
+
+// Popup card — shown only for the active location
+function LocationPopup({ location, occupants, onClose }) {
+  const coords = location.map_coordinates;
+  if (!coords) return null;
+  const colors = getNodeColors(location.category || "generic");
+  const label = CATEGORY_LABELS[location.category] || "Place";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.88, y: 6 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.88, y: 6 }}
+      transition={{ duration: 0.15 }}
+      style={{
+        position: "absolute",
+        left: `${coords.x}%`,
+        top: `${coords.y}%`,
+        transform: "translate(-50%, calc(-100% - 14px))",
+        zIndex: 40,
+        pointerEvents: "auto",
       }}
     >
       <div
         style={{
-          minWidth: 64,
-          maxWidth: 90,
-          padding: "6px 9px",
+          minWidth: 110,
+          maxWidth: 150,
+          padding: "8px 11px",
           borderRadius: 12,
           background: colors.bg,
-          boxShadow: hovered
-            ? `0 10px 28px rgba(0,0,0,0.13), 0 0 0 2px ${colors.border}`
-            : `0 6px 18px rgba(0,0,0,0.07)`,
-          border: `${hasOccupants ? "2px" : "1.5px"} solid ${hasOccupants ? colors.border : colors.border + "80"}`,
-          transition: "box-shadow 0.15s",
+          boxShadow: `0 12px 32px rgba(0,0,0,0.16), 0 0 0 2px ${colors.border}`,
+          border: `2px solid ${colors.border}`,
           textAlign: "left",
+          position: "relative",
         }}
       >
-        <div style={{ fontSize: 11, fontWeight: 700, color: colors.text, lineHeight: 1.2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {/* Close button */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          style={{
+            position: "absolute", top: 4, right: 6,
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 13, color: colors.text + "88", lineHeight: 1, padding: 2,
+          }}
+          title="Close"
+        >✕</button>
+        <div style={{ fontSize: 11, fontWeight: 700, color: colors.text, lineHeight: 1.3, paddingRight: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
           {location.name}
         </div>
         <div style={{ fontSize: 9, color: colors.text + "99", marginTop: 1 }}>{label}</div>
-        {hasOccupants && (
-          <div style={{ marginTop: 4, fontSize: 10, fontWeight: 600, color: colors.border }}>
-            {occupants.length} here
+        {occupants.length > 0 && (
+          <div style={{ marginTop: 5, fontSize: 10, fontWeight: 600, color: colors.border }}>
+            {occupants.map(o => o.name).join(", ")}
           </div>
         )}
+        {/* Downward arrow */}
+        <div style={{
+          position: "absolute", bottom: -7, left: "50%", transform: "translateX(-50%)",
+          width: 0, height: 0,
+          borderLeft: "7px solid transparent",
+          borderRight: "7px solid transparent",
+          borderTop: `7px solid ${colors.border}`,
+        }} />
       </div>
-    </button>
+    </motion.div>
   );
 }
 
@@ -382,6 +419,8 @@ function buildMarkers(characters, locations, gridCoords) {
 }
 
 export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick }) {
+  const [activeLocationId, setActiveLocationId] = useState(null);
+
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
   const markers = useMemo(() => buildMarkers(characters, locations, gridCoords), [characters, locations, gridCoords]);
 
@@ -393,15 +432,31 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
     }
     return map;
   }, [markers]);
-  const visibleLocations = useMemo(() =>
+
+  const allLocations = useMemo(() =>
     locations
       .filter(l => gridCoords[l.id])
       .map(l => ({ ...l, map_coordinates: gridCoords[l.id] })),
     [locations, gridCoords]
   );
 
+  const activeLocation = allLocations.find(l => l.id === activeLocationId) || null;
+
+  // Click a character pin → open its location popup
+  const handleCharacterClick = (characterId) => {
+    const marker = markers.find(m => m.characterId === characterId);
+    if (marker) {
+      setActiveLocationId(prev => prev === marker.locationId ? null : marker.locationId);
+    }
+    onCharacterClick?.(characterId);
+  };
+
+  // Click on map background → close popup
+  const handleMapClick = () => setActiveLocationId(null);
+
   return (
     <div
+      onClick={handleMapClick}
       style={{
         position: "relative",
         width: "100%",
@@ -410,6 +465,7 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         overflow: "hidden",
         background: "linear-gradient(160deg, #f0f6ff 0%, #f8faff 50%, #f0f4f8 100%)",
         border: "1px solid #dde8f5",
+        cursor: "default",
       }}
     >
       {/* Grid lines */}
@@ -467,18 +523,25 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         />
       ))}
 
-      {/* Location nodes — includes synthetic-coord locations that have occupants */}
-      {visibleLocations.map((location) => (
-        <LocationNode
-          key={location.id}
-          location={location}
-          occupants={groupedByLocation.get(location.id) ?? []}
-          onClick={onLocationClick}
-        />
+      {/* Faint dot anchors for all locations */}
+      {allLocations.map(location => (
+        <LocationDot key={location.id} location={location} />
       ))}
 
-      {/* Character pins — offset within their location cluster */}
-      {markers.map((marker, index) => {
+      {/* Active location popup — only one at a time */}
+      <AnimatePresence>
+        {activeLocation && (
+          <LocationPopup
+            key={activeLocation.id}
+            location={activeLocation}
+            occupants={groupedByLocation.get(activeLocation.id) ?? []}
+            onClose={() => setActiveLocationId(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Character pins — clicking reveals their location popup */}
+      {markers.map((marker) => {
         const siblings = groupedByLocation.get(marker.locationId) ?? [];
         const siblingIndex = siblings.findIndex((s) => s.characterId === marker.characterId);
         const cols = Math.min(siblings.length, 3);
@@ -486,14 +549,14 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         const row = Math.floor(siblingIndex / cols);
         const offset = {
           x: 12 + col * 18 - (cols * 18) / 2,
-          y: -36 - row * 20,
+          y: -16 - row * 20,
         };
 
         return (
           <CharacterPin
             key={marker.characterId}
             marker={marker}
-            onClick={onCharacterClick}
+            onClick={handleCharacterClick}
             offset={offset}
           />
         );
@@ -513,8 +576,8 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         >
           <div style={{ textAlign: "center", opacity: 0.4 }}>
             <MapPin style={{ width: 28, height: 28, margin: "0 auto 6px", color: "#94a3b8" }} />
-            <div style={{ fontSize: 12, color: "#64748b" }}>No characters could be placed</div>
-            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>Characters need a home, work, or current location assigned</div>
+            <div style={{ fontSize: 12, color: "#64748b" }}>No characters placed on map</div>
+            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 4 }}>Tap a character pin to see their location</div>
           </div>
         </div>
       )}
