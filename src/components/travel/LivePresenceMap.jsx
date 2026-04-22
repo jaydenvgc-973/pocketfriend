@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, MapPin, X, Home, Briefcase, Users, Star } from "lucide-react";
+import { Moon, MapPin } from "lucide-react";
 
 // ─── Category metadata ────────────────────────────────────────────────────────
 const CATEGORY_LABELS = {
@@ -14,20 +14,20 @@ const CATEGORY_LABELS = {
 };
 
 const CATEGORY_COLORS = {
-  home:       { pin: "#3b82f6", bg: "#dbeafe", text: "#1d4ed8", label: "#3b82f6" },
-  workplace:  { pin: "#7c3aed", bg: "#ede9fe", text: "#5b21b6", label: "#7c3aed" },
-  school:     { pin: "#ca8a04", bg: "#fef9c3", text: "#713f12", label: "#ca8a04" },
-  gym:        { pin: "#16a34a", bg: "#dcfce7", text: "#14532d", label: "#16a34a" },
-  food_drink: { pin: "#ea580c", bg: "#fff7ed", text: "#7c2d12", label: "#ea580c" },
-  bar:        { pin: "#a855f7", bg: "#fdf4ff", text: "#6b21a8", label: "#a855f7" },
-  restaurant: { pin: "#f97316", bg: "#fff7ed", text: "#7c2d12", label: "#f97316" },
-  park:       { pin: "#059669", bg: "#d1fae5", text: "#064e3b", label: "#059669" },
-  hospital:   { pin: "#ef4444", bg: "#fee2e2", text: "#7f1d1d", label: "#ef4444" },
-  medical:    { pin: "#ef4444", bg: "#fee2e2", text: "#7f1d1d", label: "#ef4444" },
-  church:     { pin: "#d97706", bg: "#fef3c7", text: "#78350f", label: "#d97706" },
-  social:     { pin: "#ec4899", bg: "#fdf2f8", text: "#831843", label: "#ec4899" },
-  grocery:    { pin: "#0891b2", bg: "#e0f2fe", text: "#0c4a6e", label: "#0891b2" },
-  generic:    { pin: "#64748b", bg: "#f1f5f9", text: "#334155", label: "#64748b" },
+  home:       { pin: "#3b82f6", dot: "#3b82f6" },
+  workplace:  { pin: "#7c3aed", dot: "#7c3aed" },
+  school:     { pin: "#ca8a04", dot: "#ca8a04" },
+  gym:        { pin: "#16a34a", dot: "#16a34a" },
+  food_drink: { pin: "#ea580c", dot: "#ea580c" },
+  bar:        { pin: "#a855f7", dot: "#a855f7" },
+  restaurant: { pin: "#f97316", dot: "#f97316" },
+  park:       { pin: "#059669", dot: "#059669" },
+  hospital:   { pin: "#ef4444", dot: "#ef4444" },
+  medical:    { pin: "#ef4444", dot: "#ef4444" },
+  church:     { pin: "#d97706", dot: "#d97706" },
+  social:     { pin: "#ec4899", dot: "#ec4899" },
+  grocery:    { pin: "#0891b2", dot: "#0891b2" },
+  generic:    { pin: "#64748b", dot: "#64748b" },
 };
 
 const CATEGORY_ICONS = {
@@ -51,23 +51,14 @@ function CityMapBackground() {
       preserveAspectRatio="xMidYMid slice"
     >
       <rect width="800" height="420" fill="#e8f0dc" />
-
-      {/* Green areas / parks */}
       <rect x="0" y="0" width="280" height="420" fill="#dcecd0" opacity="0.7" />
       <ellipse cx="80" cy="180" rx="55" ry="40" fill="#c8e0b8" opacity="0.7" />
       <ellipse cx="190" cy="340" rx="45" ry="35" fill="#c0dab0" opacity="0.6" />
-      <ellipse cx="50" cy="360" rx="38" ry="28" fill="#b8d4a8" opacity="0.6" />
-
-      {/* Work zone */}
       <rect x="285" y="0" width="230" height="420" fill="#e4e0f0" opacity="0.5" />
-
-      {/* Services zone */}
       <rect x="520" y="0" width="150" height="420" fill="#f0e8d8" opacity="0.5" />
-
-      {/* Social zone */}
       <rect x="675" y="0" width="125" height="420" fill="#f0d8ec" opacity="0.45" />
 
-      {/* Building blocks — residential */}
+      {/* Residential blocks */}
       {[[10,30,58,45],[78,30,55,45],[145,30,52,45],[208,30,58,45],
         [10,100,55,48],[75,100,52,48],[138,100,55,48],[202,100,55,48],
         [10,178,60,45],[80,178,50,45],[140,178,52,45],[202,178,58,45],
@@ -77,7 +68,7 @@ function CityMapBackground() {
         <rect key={`rb${i}`} x={x} y={y} width={w} height={h} rx="5" fill="#c8ddb8" stroke="#b0cc9f" strokeWidth="0.8" />
       ))}
 
-      {/* Building blocks — work/school */}
+      {/* Work blocks */}
       {[[292,28,62,58],[362,28,58,58],[428,28,65,58],
         [292,108,65,55],[365,108,60,55],[433,108,60,55],
         [292,185,62,52],[362,185,65,52],[435,185,58,52],
@@ -87,84 +78,57 @@ function CityMapBackground() {
         <rect key={`wb${i}`} x={x} y={y} width={w} height={h} rx="4" fill="#cdc8e8" stroke="#b8b0d8" strokeWidth="0.8" />
       ))}
 
-      {/* Building blocks — services */}
-      {[[528,32,55,50],[590,32,50,50],
-        [528,105,55,50],[590,105,50,50],
-        [528,178,55,50],[590,178,50,50],
-        [528,250,55,50],[590,250,50,50],
-        [528,322,112,52],
+      {/* Services blocks */}
+      {[[528,32,55,50],[590,32,50,50],[528,105,55,50],[590,105,50,50],
+        [528,178,55,50],[590,178,50,50],[528,250,55,50],[590,250,50,50],[528,322,112,52],
       ].map(([x,y,w,h],i) => (
         <rect key={`sb${i}`} x={x} y={y} width={w} height={h} rx="4" fill="#e8d0b8" stroke="#d8b89f" strokeWidth="0.8" />
       ))}
 
-      {/* Building blocks — social */}
-      {[[682,32,55,52],[745,32,50,52],
-        [682,108,55,52],[745,108,50,52],
-        [682,185,55,52],[745,185,50,52],
-        [682,260,55,52],[745,260,50,52],
-        [682,332,113,52],
+      {/* Social blocks */}
+      {[[682,32,55,52],[745,32,50,52],[682,108,55,52],[745,108,50,52],
+        [682,185,55,52],[745,185,50,52],[682,260,55,52],[745,260,50,52],[682,332,113,52],
       ].map(([x,y,w,h],i) => (
         <rect key={`scb${i}`} x={x} y={y} width={w} height={h} rx="4" fill="#e8c8e0" stroke="#d8a8d0" strokeWidth="0.8" />
       ))}
 
       {/* Trees */}
-      {[[55,82],[120,82],[190,82],[248,82],
-        [40,163],[110,163],[175,163],[240,163],
-        [40,232],[105,232],[175,232],[245,232],
-        [40,303],[108,303],[170,303],[240,303],
-        [40,390],[115,390],[180,390],[245,390],
+      {[[55,82],[120,82],[190,82],[248,82],[40,163],[110,163],[175,163],[240,163],
+        [40,232],[105,232],[175,232],[245,232],[40,303],[108,303],[170,303],[240,303],
       ].map(([cx,cy],i) => (
         <circle key={`tr${i}`} cx={cx} cy={cy} r="8" fill="#7abf6a" opacity="0.65" />
       ))}
-      {[[55,82],[120,82],[190,82],[248,82],
-        [40,163],[110,163],[175,163],[240,163],
-      ].map(([cx,cy],i) => (
-        <circle key={`tr2${i}`} cx={cx} cy={cy} r="4" fill="#5aa04a" opacity="0.5" />
-      ))}
 
-      {/* River / water */}
-      <path d="M 0 390 Q 120 370 220 385 Q 320 400 420 378 Q 520 358 620 375 Q 720 390 800 372 L 800 420 L 0 420 Z"
-        fill="#90cdf4" opacity="0.55" />
-      <path d="M 0 400 Q 120 385 220 398 Q 320 410 420 392 Q 520 375 620 390 Q 720 405 800 388 L 800 420 L 0 420 Z"
-        fill="#63b3ed" opacity="0.4" />
+      {/* Water */}
+      <path d="M 0 390 Q 120 370 220 385 Q 320 400 420 378 Q 520 358 620 375 Q 720 390 800 372 L 800 420 L 0 420 Z" fill="#90cdf4" opacity="0.55" />
+      <path d="M 0 400 Q 120 385 220 398 Q 320 410 420 392 Q 520 375 620 390 Q 720 405 800 388 L 800 420 L 0 420 Z" fill="#63b3ed" opacity="0.4" />
 
-      {/* Primary roads — horizontal */}
+      {/* Roads — horizontal */}
       <rect x="0" y="85" width="800" height="11" fill="#f5f5f0" opacity="0.92" />
-      <rect x="0" y="88" width="800" height="2" fill="#e2dfd0" opacity="0.5" />
       <rect x="0" y="160" width="800" height="10" fill="#f5f5f0" opacity="0.88" />
       <rect x="0" y="235" width="800" height="10" fill="#f5f5f0" opacity="0.88" />
       <rect x="0" y="308" width="800" height="10" fill="#f5f5f0" opacity="0.85" />
       <rect x="0" y="380" width="800" height="10" fill="#f5f5f0" opacity="0.82" />
 
-      {/* Primary roads — vertical / zone separators */}
+      {/* Roads — vertical */}
       <rect x="68" y="0" width="9" height="420" fill="#f5f5f0" opacity="0.85" />
       <rect x="138" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.82" />
       <rect x="205" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.82" />
-      {/* Zone road residential→work */}
       <rect x="276" y="0" width="13" height="420" fill="#f8f6f0" opacity="0.95" />
-      <rect x="279" y="0" width="2" fill="#ddd" height="420" opacity="0.5" />
+      <rect x="279" y="0" width="2" height="420" fill="#ddd" opacity="0.5" />
       <rect x="355" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
       <rect x="430" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
-      {/* Zone road work→services */}
       <rect x="515" y="0" width="13" height="420" fill="#f8f6f0" opacity="0.95" />
-      <rect x="518" y="0" width="2" fill="#ddd" height="420" opacity="0.5" />
+      <rect x="518" y="0" width="2" height="420" fill="#ddd" opacity="0.5" />
       <rect x="583" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
-      {/* Zone road services→social */}
       <rect x="670" y="0" width="13" height="420" fill="#f8f6f0" opacity="0.95" />
-      <rect x="673" y="0" width="2" fill="#ddd" height="420" opacity="0.5" />
+      <rect x="673" y="0" width="2" height="420" fill="#ddd" opacity="0.5" />
       <rect x="742" y="0" width="8" height="420" fill="#f5f5f0" opacity="0.8" />
 
-      {/* Road center dashes */}
+      {/* Road dashes */}
       {[90,165,240,313,385].map(y =>
         [0,70,140,210,280,350,420,490,560,630,700,770].map(x => (
           <rect key={`d${y}-${x}`} x={x+20} y={y+3} width="18" height="1.5" fill="#ccc" opacity="0.5" />
-        ))
-      )}
-
-      {/* Intersection circles */}
-      {[90,165,240,313,385].flatMap(y =>
-        [72,142,209,280,358,434,518,586,674,746].map(x => (
-          <circle key={`i${x}-${y}`} cx={x} cy={y} r="3" fill="#e8e4d8" opacity="0.8" />
         ))
       )}
 
@@ -188,111 +152,32 @@ const ZONE_TABS = [
   { label: "SOCIAL", icon: "👥", color: "#ec4899" },
 ];
 
-// ─── Mini location card (always visible on map) ───────────────────────────────
-function LocationCard({ location, occupants, isActive, onClick }) {
+// ─── Location dot (small, clickable, always visible) ─────────────────────────
+function LocationDot({ location, isActive, onClick }) {
   const coords = location.map_coordinates;
   if (!coords) return null;
   const colors = getColors(location.category || "generic");
-  const label = CATEGORY_LABELS[location.category] || "Place";
-  const count = occupants.length;
 
   return (
-    <motion.button
+    <button
       onClick={(e) => { e.stopPropagation(); onClick(location.id); }}
-      initial={{ opacity: 0, scale: 0.85 }}
-      animate={{ opacity: 1, scale: 1 }}
       style={{
         position: "absolute",
         left: `${coords.x}%`,
         top: `${coords.y}%`,
-        transform: "translate(-50%, -110%)",
-        zIndex: isActive ? 30 : 15,
+        transform: "translate(-50%, -50%)",
+        width: isActive ? 14 : 10,
+        height: isActive ? 14 : 10,
+        borderRadius: "50%",
+        background: isActive ? colors.dot : colors.dot + "88",
+        border: `2px solid ${isActive ? colors.dot : colors.dot + "55"}`,
+        boxShadow: isActive ? `0 0 0 4px ${colors.dot}33, 0 2px 8px rgba(0,0,0,0.2)` : "0 1px 4px rgba(0,0,0,0.15)",
         cursor: "pointer",
-        background: "none",
-        border: "none",
+        zIndex: 10,
         padding: 0,
+        transition: "all 0.15s ease",
       }}
-    >
-      {/* Character avatars above card */}
-      {occupants.length > 0 && (
-        <div style={{
-          display: "flex",
-          justifyContent: "center",
-          marginBottom: -8,
-          position: "relative",
-          zIndex: 2,
-        }}>
-          {occupants.slice(0, 3).map((o, i) => (
-            <div key={o.characterId} style={{
-              width: 34, height: 34,
-              borderRadius: "50%",
-              border: `2.5px solid ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}`,
-              background: "#fff",
-              overflow: "hidden",
-              marginLeft: i === 0 ? 0 : -8,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
-              flexShrink: 0,
-            }}>
-              {o.avatarUrl ? (
-                <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-              ) : (
-                <div style={{
-                  width: "100%", height: "100%",
-                  background: `linear-gradient(135deg, ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}, #a78bfa)`,
-                  display: "grid", placeItems: "center",
-                  fontSize: 12, fontWeight: 700, color: "#fff",
-                }}>
-                  {o.name[0]?.toUpperCase()}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Card body */}
-      <div style={{
-        background: isActive ? "#fff" : "rgba(255,255,255,0.94)",
-        borderRadius: 10,
-        padding: "6px 10px 5px",
-        boxShadow: isActive
-          ? `0 6px 20px rgba(0,0,0,0.2), 0 0 0 2px ${colors.pin}`
-          : "0 3px 12px rgba(0,0,0,0.15)",
-        minWidth: 90,
-        maxWidth: 130,
-        textAlign: "left",
-        border: `1.5px solid ${isActive ? colors.pin : "rgba(255,255,255,0.9)"}`,
-        transition: "box-shadow 0.15s",
-        position: "relative",
-        zIndex: 1,
-      }}>
-        <div style={{
-          fontSize: 11, fontWeight: 700, color: "#1e293b",
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-        }}>
-          {location.name}
-        </div>
-        <div style={{ fontSize: 9, color: colors.label, fontWeight: 600, marginTop: 1 }}>
-          {label}
-        </div>
-        {count > 0 && (
-          <div style={{ fontSize: 9, color: colors.pin, fontWeight: 700, marginTop: 2 }}>
-            {count} here
-          </div>
-        )}
-      </div>
-
-      {/* Arrow pointing down to location */}
-      <div style={{
-        width: 0, height: 0,
-        borderLeft: "6px solid transparent",
-        borderRight: "6px solid transparent",
-        borderTop: `6px solid ${isActive ? colors.pin : "rgba(255,255,255,0.94)"}`,
-        margin: "0 auto",
-        position: "relative",
-        zIndex: 1,
-      }} />
-    </motion.button>
+    />
   );
 }
 
@@ -309,11 +194,10 @@ function LocationDetailPanel({ location, occupants, onClose }) {
       animate={{ opacity: 1, x: 0 }}
       exit={{ opacity: 0, x: 24 }}
       transition={{ duration: 0.2, ease: "easeOut" }}
+      onClick={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
-        top: 0,
-        right: 0,
-        bottom: 0,
+        top: 0, right: 0, bottom: 0,
         width: 230,
         background: "#1a1f2e",
         borderLeft: "1px solid rgba(255,255,255,0.08)",
@@ -322,7 +206,6 @@ function LocationDetailPanel({ location, occupants, onClose }) {
         flexDirection: "column",
         overflowY: "auto",
       }}
-      onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}
       <div style={{ padding: "14px 14px 10px", borderBottom: "1px solid rgba(255,255,255,0.07)" }}>
@@ -330,9 +213,9 @@ function LocationDetailPanel({ location, occupants, onClose }) {
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
               <span style={{
-                width: 22, height: 22, borderRadius: 6,
+                width: 24, height: 24, borderRadius: 6,
                 background: colors.pin + "22", border: `1px solid ${colors.pin}44`,
-                display: "grid", placeItems: "center", fontSize: 11, flexShrink: 0,
+                display: "grid", placeItems: "center", fontSize: 12, flexShrink: 0,
               }}>{icon}</span>
               <div style={{ fontSize: 14, fontWeight: 800, color: "#f1f5f9", lineHeight: 1.2 }}>
                 {location.name}
@@ -360,11 +243,11 @@ function LocationDetailPanel({ location, occupants, onClose }) {
           <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
             Who's here
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {occupants.map(o => (
               <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <div style={{
-                  width: 30, height: 30, borderRadius: "50%",
+                  width: 32, height: 32, borderRadius: "50%",
                   border: `2px solid ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}`,
                   overflow: "hidden", flexShrink: 0,
                 }}>
@@ -375,7 +258,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
                       width: "100%", height: "100%",
                       background: `linear-gradient(135deg, ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}, #a78bfa)`,
                       display: "grid", placeItems: "center",
-                      fontSize: 11, fontWeight: 700, color: "#fff",
+                      fontSize: 12, fontWeight: 700, color: "#fff",
                     }}>
                       {o.name[0]?.toUpperCase()}
                     </div>
@@ -392,6 +275,9 @@ function LocationDetailPanel({ location, occupants, onClose }) {
           </div>
         </div>
       )}
+      {occupants.length === 0 && (
+        <div style={{ padding: "12px 14px", fontSize: 11, color: "#64748b" }}>No one here right now</div>
+      )}
 
       {/* Details */}
       <div style={{ padding: "12px 14px" }}>
@@ -401,8 +287,8 @@ function LocationDetailPanel({ location, occupants, onClose }) {
         {[
           { key: "Category", val: label, icon: icon },
           { key: "Type", val: location.category || "generic", icon: "🏷️" },
-          location.city && { key: "City", val: location.city, icon: "🌆" },
-          location.state && { key: "State", val: location.state, icon: "📍" },
+          location.city ? { key: "City", val: location.city, icon: "🌆" } : null,
+          location.state ? { key: "State", val: location.state, icon: "📍" } : null,
         ].filter(Boolean).map(row => (
           <div key={row.key} style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -410,7 +296,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
             borderBottom: "1px solid rgba(255,255,255,0.04)",
           }}>
             <div style={{ fontSize: 11, color: "#64748b", display: "flex", alignItems: "center", gap: 5 }}>
-              <span>{row.icon}</span> {row.key}
+              <span>{row.icon}</span>{row.key}
             </div>
             <div style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>{row.val}</div>
           </div>
@@ -420,7 +306,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
   );
 }
 
-// ─── Character pin (floating above location cards) ────────────────────────────
+// ─── Character pin ────────────────────────────────────────────────────────────
 function CharacterPin({ marker, onClick, offset }) {
   const [hovered, setHovered] = useState(false);
   const isActive = marker.type === "active_created_character";
@@ -436,7 +322,7 @@ function CharacterPin({ marker, onClick, offset }) {
         left: `${marker.coordinates.x}%`,
         top: `${marker.coordinates.y}%`,
         transform: `translate(${offset.x}px, ${offset.y}px)`,
-        width: 34, height: 34,
+        width: 32, height: 32,
         borderRadius: "50%",
         border: `2.5px solid ${borderColor}`,
         background: "#fff",
@@ -445,9 +331,10 @@ function CharacterPin({ marker, onClick, offset }) {
           : `0 3px 10px rgba(0,0,0,0.2), 0 0 0 1.5px ${borderColor}44`,
         overflow: "hidden",
         cursor: "pointer",
-        zIndex: 25,
+        zIndex: 20,
         outline: "none",
         transition: "box-shadow 0.15s",
+        padding: 0,
       }}
       title={`${marker.name} @ ${marker.locationName}`}
     >
@@ -548,36 +435,34 @@ function buildLocationCoordinateMap(locations) {
 
 function resolveCharacterLocation(char) {
   if (char.resolved_current_location_id)
-    return { locId: char.resolved_current_location_id, source: "resolved" };
+    return { locId: char.resolved_current_location_id };
   if (char.travel_destination_location_id)
-    return { locId: char.travel_destination_location_id, source: "travel_destination" };
+    return { locId: char.travel_destination_location_id };
   if (char.resolved_presence_status === "at_work" || char.location_status === "at_location") {
-    if (char.current_work_location_id) return { locId: char.current_work_location_id, source: "work" };
-    if (char.occupation_location_id) return { locId: char.occupation_location_id, source: "occupation" };
+    if (char.current_work_location_id) return { locId: char.current_work_location_id };
+    if (char.occupation_location_id) return { locId: char.occupation_location_id };
   }
   if (char.resolved_presence_status === "at_school") {
-    if (char.current_school_location_id) return { locId: char.current_school_location_id, source: "school" };
-    if (char.education_location_id) return { locId: char.education_location_id, source: "education" };
+    if (char.current_school_location_id) return { locId: char.current_school_location_id };
+    if (char.education_location_id) return { locId: char.education_location_id };
   }
-  if (char.current_home_location_id) return { locId: char.current_home_location_id, source: "home_fallback" };
-  if (char.current_work_location_id) return { locId: char.current_work_location_id, source: "work_fallback" };
-  if (char.occupation_location_id) return { locId: char.occupation_location_id, source: "occupation_fallback" };
+  if (char.current_home_location_id) return { locId: char.current_home_location_id };
+  if (char.current_work_location_id) return { locId: char.current_work_location_id };
+  if (char.occupation_location_id) return { locId: char.occupation_location_id };
   return null;
 }
 
 function buildMarkers(characters, locations, gridCoords) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
-  const syntheticCoords = gridCoords || buildLocationCoordinateMap(locations);
   const markers = [];
   const seenIds = new Set();
   for (const char of characters) {
     if (seenIds.has(char.id)) continue;
     const resolved = resolveCharacterLocation(char);
     if (!resolved) continue;
-    const { locId } = resolved;
-    const location = locationMap.get(locId);
+    const location = locationMap.get(resolved.locId);
     if (!location) continue;
-    const coordinates = syntheticCoords[location.id];
+    const coordinates = gridCoords[location.id];
     if (!coordinates) continue;
     seenIds.add(char.id);
     markers.push({
@@ -585,7 +470,7 @@ function buildMarkers(characters, locations, gridCoords) {
       name: char.name,
       type: char.character_type,
       avatarUrl: char.avatar_url || null,
-      locationId: locId,
+      locationId: resolved.locId,
       locationName: location.name,
       coordinates,
       isAsleep: char.resolved_presence_status === "sleeping" || char.resolved_presence_status === "napping",
@@ -623,12 +508,10 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
     onCharacterClick?.(characterId);
   };
 
-  const handleLocationClick = (locationId) => {
+  const handleLocationDotClick = (locationId) => {
     setActiveLocationId(prev => prev === locationId ? null : locationId);
     onLocationClick?.(locationId);
   };
-
-  const mapWidth = activeLocation ? "calc(100% - 230px)" : "100%";
 
   return (
     <div
@@ -641,18 +524,16 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         overflow: "hidden",
         boxShadow: "0 8px 32px rgba(0,0,0,0.12)",
         border: "1px solid rgba(255,255,255,0.1)",
-        background: "#e8f0dc",
         display: "flex",
       }}
     >
-      {/* Map area */}
+      {/* Map area — shrinks when panel is open */}
       <div style={{
         position: "relative",
-        width: mapWidth,
+        flex: 1,
         height: "100%",
-        transition: "width 0.2s ease",
         overflow: "hidden",
-        flexShrink: 0,
+        minWidth: 0,
       }}>
         <CityMapBackground />
 
@@ -667,7 +548,6 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
             <div key={tab.label} style={{
               flex: 1, display: "flex", alignItems: "center", justifyContent: "center",
               gap: 5, padding: "8px 4px",
-              borderBottom: `2px solid transparent`,
             }}>
               <span style={{ fontSize: 11 }}>{tab.icon}</span>
               <span style={{ fontSize: 9, fontWeight: 800, color: tab.color, letterSpacing: "0.06em" }}>
@@ -677,18 +557,17 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
           ))}
         </div>
 
-        {/* Location mini cards — always visible */}
+        {/* Location dots — always visible, clickable */}
         {allLocations.map(location => (
-          <LocationCard
+          <LocationDot
             key={location.id}
             location={location}
-            occupants={groupedByLocation.get(location.id) ?? []}
             isActive={location.id === activeLocationId}
-            onClick={handleLocationClick}
+            onClick={handleLocationDotClick}
           />
         ))}
 
-        {/* Character pins */}
+        {/* Character pins — one per character, no duplicates */}
         {markers.map((marker) => {
           const siblings = groupedByLocation.get(marker.locationId) ?? [];
           const siblingIndex = siblings.findIndex(s => s.characterId === marker.characterId);
@@ -697,7 +576,7 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
           const row = Math.floor(siblingIndex / cols);
           const offset = {
             x: 10 + col * 22 - (cols * 22) / 2,
-            y: -12 - row * 24,
+            y: -18 - row * 24,
           };
           return (
             <CharacterPin
@@ -716,7 +595,6 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
           borderRadius: 20, padding: "5px 14px",
           fontSize: 10, color: "rgba(255,255,255,0.75)", fontWeight: 500,
           pointerEvents: "none", zIndex: 10, whiteSpace: "nowrap",
-          display: "flex", alignItems: "center", gap: 5,
         }}>
           Tap a character to see their location ℹ️
         </div>
@@ -740,7 +618,7 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         )}
       </div>
 
-      {/* Side detail panel */}
+      {/* Side detail panel — slides in on right */}
       <AnimatePresence>
         {activeLocation && (
           <LocationDetailPanel
