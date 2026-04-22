@@ -339,34 +339,39 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
             Who's here
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {occupants.map(o => (
-              <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{
-                  width: 32, height: 32, borderRadius: "50%",
-                  border: `2px solid ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}`,
-                  overflow: "hidden", flexShrink: 0,
-                }}>
-                  {o.avatarUrl ? (
-                    <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : (
-                    <div style={{
-                      width: "100%", height: "100%",
-                      background: `linear-gradient(135deg, ${o.type === "active_created_character" ? "#3b82f6" : "#8b5cf6"}, #a78bfa)`,
-                      display: "grid", placeItems: "center",
-                      fontSize: 12, fontWeight: 700, color: "#fff",
-                    }}>
-                      {o.name[0]?.toUpperCase()}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
-                  <div style={{ fontSize: 10, color: "#64748b" }}>
-                    {o.isAsleep ? "😴 Sleeping" : label}
+            {occupants.map(o => {
+            const isActiveChar = o.type === "active_created_character";
+            const isFamilyChar = o.isFamilyMember || o.type === "npc_family_member";
+            const pinColor = isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
+            return (
+            <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: "50%",
+                border: `2px solid ${pinColor}`,
+                overflow: "hidden", flexShrink: 0,
+              }}>
+                {o.avatarUrl ? (
+                  <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <div style={{
+                    width: "100%", height: "100%",
+                    background: `linear-gradient(135deg, ${pinColor}, ${pinColor}cc)`,
+                    display: "grid", placeItems: "center",
+                    fontSize: o.initials?.length > 1 ? 9 : 12, fontWeight: 700, color: "#fff",
+                  }}>
+                    {o.initials || o.name?.[0]?.toUpperCase() || '?'}
                   </div>
+                )}
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: "#e2e8f0" }}>{o.name}</div>
+                <div style={{ fontSize: 10, color: "#64748b" }}>
+                  {o.isAsleep ? "😴 Sleeping" : isFamilyChar ? "Family" : label}
                 </div>
               </div>
-            ))}
+            </div>
+            );
+            })}
           </div>
         </div>
       )}
@@ -434,7 +439,9 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
 function CharacterPin({ marker, onClick, offset }) {
   const [hovered, setHovered] = useState(false);
   const isActive = marker.type === "active_created_character";
-  const borderColor = isActive ? "#3b82f6" : "#8b5cf6";
+  const isFamilyMember = marker.isFamilyMember;
+  // active = blue, family = pink/rose, npc_fictitious = purple
+  const borderColor = isActive ? "#3b82f6" : isFamilyMember ? "#f43f5e" : "#8b5cf6";
 
   return (
     <button
@@ -469,10 +476,10 @@ function CharacterPin({ marker, onClick, offset }) {
         <div style={{
           width: "100%", height: "100%",
           display: "grid", placeItems: "center",
-          fontSize: 13, fontWeight: 700, color: "#fff",
+          fontSize: marker.initials?.length > 1 ? 10 : 13, fontWeight: 700, color: "#fff",
           background: `linear-gradient(135deg, ${borderColor}, ${borderColor}cc)`,
         }}>
-          {marker.name.slice(0, 1).toUpperCase()}
+          {marker.initials || marker.name?.slice(0, 1)?.toUpperCase() || '?'}
         </div>
       )}
       {marker.isAsleep && (
@@ -558,8 +565,14 @@ function buildLocationCoordinateMap(locations) {
 }
 
 function resolveCharacterLocation(char) {
+  // Support both raw Character records and normalized presence entities
+  // Normalized presence entity shape (from travelPresenceResolver)
   if (char.resolved_current_location_id)
     return { locId: char.resolved_current_location_id };
+  // Internal family with only residence
+  if (char.residence_location_id && char.is_currently_present)
+    return { locId: char.residence_location_id };
+  // Raw character record fallbacks
   if (char.travel_destination_location_id)
     return { locId: char.travel_destination_location_id };
   if (char.resolved_presence_status === "at_work" || char.location_status === "at_location") {
@@ -576,6 +589,20 @@ function resolveCharacterLocation(char) {
   return null;
 }
 
+function resolveCharacterDisplayName(char) {
+  // Support both shapes: raw record and normalized presence entity
+  return char.display_name || char.primary_name || char.full_name || char.name || 'Unknown';
+}
+
+function resolveCharacterAvatar(char) {
+  return char.avatar_url || char.image_avatar_url || null;
+}
+
+function resolveInitials(char) {
+  const name = resolveCharacterDisplayName(char);
+  return name.split(' ').map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
+}
+
 function buildMarkers(characters, locations, gridCoords) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
   const markers = [];
@@ -589,15 +616,20 @@ function buildMarkers(characters, locations, gridCoords) {
     const coordinates = gridCoords[location.id];
     if (!coordinates) continue;
     seenIds.add(char.id);
+    const avatarUrl = resolveCharacterAvatar(char);
+    const displayName = resolveCharacterDisplayName(char);
+    const initials = resolveInitials(char);
     markers.push({
       characterId: char.id,
-      name: char.name,
-      type: char.character_type,
-      avatarUrl: char.avatar_url || null,
+      name: displayName,
+      initials,
+      type: char.character_type || char.effective_presence_type || 'npc_fictitious',
+      avatarUrl,
       locationId: resolved.locId,
       locationName: location.name,
       coordinates,
       isAsleep: char.resolved_presence_status === "sleeping" || char.resolved_presence_status === "napping",
+      isFamilyMember: char.character_type === 'npc_family_member' || char.effective_presence_type === 'npc_family_member' || char.source_type === 'internal_family',
     });
   }
   return markers;
