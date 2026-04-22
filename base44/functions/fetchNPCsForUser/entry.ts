@@ -8,25 +8,36 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Use service role to bypass RLS — fetch ALL npc_fictitious characters owned by this user
-    const byOwnerId = await base44.asServiceRole.entities.Character.filter(
-      { owner_user_id: user.id, character_type: 'npc_fictitious' },
-      '-created_date',
-      200
-    );
+    // Fetch ALL characters for this user via service role (bypasses RLS)
+    // using all three ownership fields to ensure nothing is missed
+    const [byOwnerId, byOwnerEmail, byCreatedBy] = await Promise.all([
+      base44.asServiceRole.entities.Character.filter(
+        { owner_user_id: user.id },
+        '-created_date',
+        300
+      ),
+      base44.asServiceRole.entities.Character.filter(
+        { owner_email: user.email },
+        '-created_date',
+        300
+      ),
+      base44.asServiceRole.entities.Character.filter(
+        { created_by: user.email },
+        '-created_date',
+        300
+      ),
+    ]);
 
-    const byOwnerEmail = await base44.asServiceRole.entities.Character.filter(
-      { owner_email: user.email, character_type: 'npc_fictitious' },
-      '-created_date',
-      200
-    );
-
-    // Merge and deduplicate
+    // Merge and deduplicate all results
     const seen = new Set();
-    const all = [...byOwnerId, ...byOwnerEmail].filter(c => {
+    const all = [...byOwnerId, ...byOwnerEmail, ...byCreatedBy].filter(c => {
       if (seen.has(c.id)) return false;
       seen.add(c.id);
-      return c.status !== 'deleted' && c.status !== 'moved_away';
+      // Exclude hard-deleted
+      if (c.status === 'deleted') return false;
+      // Only return NPC types (not active_created_character)
+      if (c.character_type === 'active_created_character') return false;
+      return true;
     });
 
     return Response.json({ npcs: all });
