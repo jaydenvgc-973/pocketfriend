@@ -69,22 +69,43 @@ export default function Travel() {
     gcTime: 0,
   });
 
-  // NPC characters — standalone entities with NPC character_type
-  // Fetch by both created_by AND owner_email to match all account-owned NPCs (mirrors NPCContactPanel logic)
-  const { data: npcCharacters = [] } = useQuery({
+  // npc_fictitious only — via backend (catches service-account-created ones)
+  const { data: backendNpcFictitious = [] } = useQuery({
     queryKey: ["npcCharacters", currentUser?.id],
     queryFn: async () => {
       if (!currentUser?.id) return [];
-      // Use backend function with service role to bypass RLS restrictions
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
+      return (res?.data?.npcs || []).filter(c => c.character_type === 'npc_fictitious');
     },
     enabled: !!currentUser?.id,
     staleTime: 0,
     gcTime: 0,
   });
 
-  // Combined for general use (travel companions, location presence, etc.)
+  // npc_fictitious only — via direct RLS query (catches user-created ones)
+  const { data: rlsNpcFictitious = [] } = useQuery({
+    queryKey: ["npcFictitiousRls", currentUser?.email],
+    queryFn: () => base44.entities.Character.filter(
+      { created_by: currentUser.email, character_type: 'npc_fictitious' },
+      '-created_date',
+      300
+    ),
+    enabled: !!currentUser?.email,
+    staleTime: 0,
+    gcTime: 0,
+  });
+
+  // Merge both npc_fictitious sources, deduplicated
+  const npcCharacters = (() => {
+    const seen = new Set();
+    return [...backendNpcFictitious, ...rlsNpcFictitious].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  })();
+
+  // Combined for travel companions, location presence, etc.
   const characters = [...activeCharacters, ...npcCharacters];
 
   const { data: locationsData = [] } = useQuery({
