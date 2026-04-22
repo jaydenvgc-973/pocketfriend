@@ -144,8 +144,10 @@ Deno.serve(async (req) => {
       });
 
       // User revenue from VGC Mobile
-      if (character.created_by) {
-        const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: character.created_by }, null, 1);
+      // Prefer owner_email for ownership; fall back to created_by for legacy records
+      const ownerEmailForRevenue = character.owner_email || character.created_by;
+      if (ownerEmailForRevenue) {
+        const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: ownerEmailForRevenue }, null, 1);
         let userSettings = userSettingsList[0];
         if (!userSettings) {
           await base44.asServiceRole.entities.UserSettings.create({ vgc_mobile_revenue: VGC_MOBILE_MONTHLY_COST });

@@ -47,9 +47,10 @@ Deno.serve(async (req) => {
     }
 
     // ── STEP 2: Check if NPC with this name already exists for this user ─────
+    // Use service role to catch all ownership variants (owner_email, created_by)
     const [existingByCreated, existingByOwner] = await Promise.all([
-      base44.entities.Character.filter({ created_by: user.email, name }),
-      base44.entities.Character.filter({ owner_email: user.email, name }),
+      base44.asServiceRole.entities.Character.filter({ created_by: user.email, name }),
+      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, name }),
     ]);
     const seen = new Set();
     const existing = [...existingByCreated, ...existingByOwner].filter(c => {
@@ -80,13 +81,14 @@ Deno.serve(async (req) => {
       display_name: name,
 
       // Ownership — CRITICAL: must be user-scoped, never orphaned
-      owner_email: user.email,
+      owner_email: user.email.toLowerCase(),
+      owner_user_id: user.id,
       data_scope: 'private_user',
       created_by_role: 'user',
       visibility_scope: 'shared_npc',
 
       // Classification
-      character_type: 'npc',
+      character_type: 'npc_fictitious',
       status: 'active',
 
       // Residence — always VGC Towers for NPCs

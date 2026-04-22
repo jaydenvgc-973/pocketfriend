@@ -82,9 +82,18 @@ Deno.serve(async (req) => {
     }
 
     // ── 3. Check if matches an existing character or NPC ─────────────────
-    const allChars = await base44.asServiceRole.entities.Character.filter(
-      { created_by: user.email, status: 'active' }
-    );
+    // Backward-compatible: check both owner_email and created_by so legacy
+    // characters without owner_email are not missed.
+    const [charsByOwner, charsByCreated] = await Promise.all([
+      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
+      base44.asServiceRole.entities.Character.filter({ created_by: user.email, status: 'active' }),
+    ]);
+    const seenIds = new Set();
+    const allChars = [...charsByOwner, ...charsByCreated].filter(c => {
+      if (seenIds.has(c.id)) return false;
+      seenIds.add(c.id);
+      return true;
+    });
 
     // Check existing characters by name similarity
     const nameLower = mentionedName.toLowerCase().trim();

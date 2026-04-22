@@ -28,7 +28,9 @@ Deno.serve(async (req) => {
       ),
     ]);
 
-    // Merge and deduplicate all results
+    // Merge and deduplicate all results.
+    // BACKWARD COMPATIBILITY: include all characters regardless of which ownership
+    // field was used. Legacy chars may only have created_by set — they must remain visible.
     const seen = new Set();
     const all = [...byOwnerId, ...byOwnerEmail, ...byCreatedBy].filter(c => {
       if (seen.has(c.id)) return false;

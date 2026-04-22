@@ -12,20 +12,18 @@ Deno.serve(async (req) => {
 
     const { characterData } = await req.json();
 
-    // Validate owner_email is not blank
-    if (!characterData.owner_email || characterData.owner_email.trim() === '') {
-      return Response.json({ error: 'owner_email is required' }, { status: 400 });
+    if (!characterData?.name?.trim()) {
+      return Response.json({ error: 'Character name is required' }, { status: 400 });
     }
 
-    // Auto-set owner_email and created_by to current user's email
+    // STRICT: owner_email and owner_user_id always come from the authenticated session.
+    // Never trust or use caller-supplied ownership fields.
     const dataToCreate = {
       ...characterData,
-      owner_email: user.email,
-      created_by: user.email,
+      owner_email: user.email.toLowerCase(),
+      owner_user_id: user.id,
+      // created_by is set automatically by the platform but we set it here for audit clarity
     };
-
-    // Normalize owner_email to lowercase
-    dataToCreate.owner_email = dataToCreate.owner_email.toLowerCase();
 
     const character = await base44.entities.Character.create(dataToCreate);
 
