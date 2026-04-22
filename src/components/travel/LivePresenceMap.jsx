@@ -232,12 +232,25 @@ function LocationDot({ location, isActive, onClick, occupants = 0 }) {
 }
 
 // ─── Side detail panel ────────────────────────────────────────────────────────
+// CRITICAL: Must display location resident truth from location record, not just markers
 function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocationClosed }) {
   if (!location) return null;
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
   const icon = CATEGORY_ICONS[location.category] || "📍";
+  
+  // FORCE: Use occupants count passed in (which should be from unified resolver)
+  // Do NOT trust empty marker list — location record has resident truth
   const { gravity, label: vibeLabel, color: vibeColor } = calcLocationGravity(location, occupants.length);
+  
+  // DEBUG: Log if location claims residents but panel shows none
+  if ((location.resident_character_ids?.length > 0 || location.resident_family_members?.length > 0) && occupants.length === 0) {
+    console.warn(`[LocationDetailPanel] MISMATCH: ${location.name} has resident list but 0 occupants in panel`, {
+      resident_ids: location.resident_character_ids?.length || 0,
+      resident_family: location.resident_family_members?.length || 0,
+      occupants_count: occupants.length,
+    });
+  }
 
   // Pick the first available image — check multiple possible fields
   const locationImage = (() => {
@@ -343,6 +356,8 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
               const isActiveChar = o.type === "active_created_character";
               const isFamilyChar = o.isFamilyMember || o.type === "npc_family_member";
               const pinColor = isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
+              // Ensure initials exist for family members from location record
+              const safeInitials = o.initials || o.name?.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
               return (
                 <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{
@@ -357,9 +372,9 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
                         width: "100%", height: "100%",
                         background: `linear-gradient(135deg, ${pinColor}, ${pinColor}cc)`,
                         display: "grid", placeItems: "center",
-                        fontSize: o.initials?.length > 1 ? 9 : 12, fontWeight: 700, color: "#fff",
+                        fontSize: safeInitials?.length > 1 ? 9 : 12, fontWeight: 700, color: "#fff",
                       }}>
-                        {o.initials || o.name?.[0]?.toUpperCase() || '?'}
+                        {safeInitials}
                       </div>
                     )}
                   </div>
@@ -743,13 +758,40 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
 
       {/* Side detail panel — slides in on right */}
       <AnimatePresence>
-        {activeLocation && (
-          <LocationDetailPanel
-            location={activeLocation}
-            occupants={groupedByLocation.get(activeLocation.id) ?? []}
-            onClose={() => setActiveLocationId(null)}
-            onGoHere={onLocationPanelGoHere}
-            isLocationClosed={(() => {
+        {activeLocation && (() => {
+          // CRITICAL: Build occupants from BOTH markers AND location resident records
+          // Markers only include those with explicit is_currently_present=true
+          // But location.resident_character_ids and resident_family_members are the source of truth
+          const markerOccupants = groupedByLocation.get(activeLocation.id) ?? [];
+          
+          // Deduplicate by adding resident family names if not already in markers
+          const finalOccupants = [...markerOccupants];
+          const seenNames = new Set(markerOccupants.map(m => m.name?.toLowerCase()));
+          
+          // Add family residents from location record that aren't already in markers
+          (activeLocation.resident_family_members || []).forEach(fam => {
+            const famNameLC = fam.name?.toLowerCase();
+            if (famNameLC && !seenNames.has(famNameLC)) {
+              seenNames.add(famNameLC);
+              finalOccupants.push({
+                characterId: `family_${fam.name}`,
+                name: fam.name,
+                initials: fam.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2),
+                type: 'npc_family_member',
+                avatarUrl: fam.photo_url || null,
+                isFamilyMember: true,
+                isAsleep: false,
+              });
+            }
+          });
+          
+          return (
+            <LocationDetailPanel
+              location={activeLocation}
+              occupants={finalOccupants}
+              onClose={() => setActiveLocationId(null)}
+              onGoHere={onLocationPanelGoHere}
+              isLocationClosed={(() => {
               const now = new Date();
               const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
               if (!activeLocation.operating_hours || activeLocation.operating_hours.length === 0) return false;
@@ -769,8 +811,9 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
                 return currentMinutes >= openMin || currentMinutes <= closeMin;
               });
             })()}
-          />
-        )}
+            />
+          );
+        })()}
       </AnimatePresence>
     </div>
   );
