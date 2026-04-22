@@ -28,9 +28,23 @@ export default function TravelLocationGrid({
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
 
-        // UNIFIED: Use same resolver as map/popup to ensure consistent presence
+        // UNIFIED: presence entities from Character records
         const presentEntities = getPresenceAtLocation(loc, presenceEntities);
-        const allOccupants = presentEntities.map(e => e.display_name);
+        const seenOccupantNames = new Set(presentEntities.map(e => e.display_name?.toLowerCase()).filter(Boolean));
+        const allOccupants = [...presentEntities.map(e => e.display_name)];
+
+        // LOCATION RECORD TRUTH: resident_family_members from the location record itself
+        // These are exactly what the Location page shows — must match here
+        (loc.resident_family_members || []).forEach(fam => {
+          if (fam.name && !seenOccupantNames.has(fam.name.toLowerCase())) {
+            seenOccupantNames.add(fam.name.toLowerCase());
+            allOccupants.push(fam.name);
+          }
+        });
+
+        // Also include named resident_character_ids that aren't already in presence
+        // (handles cases where character location isn't synced yet)
+        // NOTE: We don't resolve names here since we'd need allCharacters — this is handled by presenceEntities
 
         return (
           <button

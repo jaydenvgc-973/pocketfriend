@@ -396,15 +396,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
       }]);
       return;
     }
-    const homeAccess = checkHomeAccess(selectedLocation);
-    if (!homeAccess.canVisit) {
-      setUnavailablePopup([{
-        character: { id: "blocked", name: selectedLocation.name, avatar_url: null },
-        reason: { iconType: "out", message: "No one's home right now.", color: "text-amber-400" },
-        availableAt: "Come back when they're home",
-      }]);
-      return;
-    }
+    // NOTE: Removed "no one home" block — locations with listed residents are always visitable
     const unavailable = selectedCharacterIds
       .filter(id => !convincedCharacterIds.includes(id))
       .map(id => {
@@ -592,18 +584,23 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     );
                   }
 
-                  // Use unified resolver — same source as map pins and counts
+                  // UNIFIED: Use presence entities + location record resident_family_members as fallback
                   const presentHere = getPresenceAtLocation(selectedLocation, allPresenceEntities);
                   const lines = [];
+                  const seenNames = new Set();
 
+                  // From unified presence entities (Character records)
                   presentHere.forEach(entity => {
                     const name = entity.display_name;
-                    if (lines.find(l => l.name === name)) return;
+                    if (seenNames.has(name?.toLowerCase())) return;
+                    seenNames.add(name?.toLowerCase());
                     let status = entity.resolved_presence_status || (isHome ? 'home' : 'here');
                     let color = isHome ? 'text-green-400' : 'text-blue-400';
                     if (status === 'visiting') { color = 'text-amber-400'; }
-                    if (status === 'home') { color = 'text-green-400'; }
-
+                    if (status === 'home' || status === 'sleeping' || status === 'napping') {
+                      color = status === 'home' ? 'text-green-400' : 'text-blue-400';
+                      status = status === 'sleeping' || status === 'napping' ? 'sleeping' : 'home';
+                    }
                     // Annotate workers on shift
                     if (!isHome && entity.resolved_current_location_id === selectedLocation.id) {
                       const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -616,9 +613,29 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                         color = 'text-purple-400';
                       }
                     }
-
                     lines.push({ name, status, color });
                   });
+
+                  // LOCATION RECORD FALLBACK: Also show resident_family_members listed directly on location
+                  // These may not have Character records, but they ARE residents per the Location page
+                  (selectedLocation.resident_family_members || []).forEach(fam => {
+                    if (!fam.name) return;
+                    if (seenNames.has(fam.name.toLowerCase())) return;
+                    seenNames.add(fam.name.toLowerCase());
+                    lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
+                  });
+
+                  // Also check resident_character_ids for named residents
+                  (selectedLocation.resident_character_ids || []).forEach(resId => {
+                    const resChar = allCharactersForFamilyScan.find(c => c.id === resId);
+                    if (!resChar) return;
+                    const name = resChar.display_name || resChar.name;
+                    if (!name || seenNames.has(name.toLowerCase())) return;
+                    seenNames.add(name.toLowerCase());
+                    lines.push({ name, status: 'home', color: 'text-green-400' });
+                  });
+
+                  console.log(`[Travel Popup] ${selectedLocation.name}: ${lines.length} residents shown`, lines.map(l => l.name));
 
                   const presenceSummary = lines.length > 0 ? (
                     <div className={lines.length > 4 ? "grid grid-cols-2 gap-x-3 gap-y-0.5" : "space-y-0.5"}>
@@ -644,16 +661,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     }
                   }
 
-                  if (isHome && !homeAccess.canVisit) {
-                    return (
-                      <div className="space-y-2">
-                        {presenceSummary}
-                        <div className="text-center py-1">
-                          <p className="text-xs text-amber-400">Nobody's home right now. Come back later.</p>
-                        </div>
-                      </div>
-                    );
-                  }
+                  // REMOVED: false "Nobody's home" block — if residents exist from location record, always allow travel
 
                   return (
                     <>

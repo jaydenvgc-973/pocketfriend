@@ -234,32 +234,32 @@ function LocationDot({ location, isActive, onClick, occupants = 0 }) {
 // ─── Side detail panel ────────────────────────────────────────────────────────
 // CRITICAL: Must display location resident truth from location record, not just markers
 // allCharacters needed to hydrate family avatar images from character profiles
-function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocationClosed, allCharacters = [] }) {
+function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocationClosed, allCharacters = [], familyAvatarMap = {} }) {
   if (!location) return null;
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
   const icon = CATEGORY_ICONS[location.category] || "📍";
   
-  // FORCE: Use occupants count passed in (which should be from unified resolver)
-  // Do NOT trust empty marker list — location record has resident truth
   const { gravity, label: vibeLabel, color: vibeColor } = calcLocationGravity(location, occupants.length);
-  
-  // Log unified occupancy from all sources (markers + location resident truth)
-  console.log(`[LocationDetailPanel] ${location.name}: ${occupants.length} occupants from unified resolver`, {
-    occupant_names: occupants.map(o => o.name),
-    sources: 'markers + location resident_family_members',
-  });
 
-  // AVATAR HYDRATION: Look up family character avatars from all characters
-  // Internal family members may have been created as Character records with avatars
+  /**
+   * AVATAR HYDRATION — priority order:
+   * 1. occupant.avatarUrl (already resolved, e.g. from Character record avatar_url)
+   * 2. familyAvatarMap[name] — from parent character's family_members[].photo_url
+   * 3. allCharacters match — Character record avatar_url / image_avatar_url
+   * 4. null → initials fallback
+   */
   const hydrateAvatarForOccupant = (occupant) => {
-    if (occupant.avatarUrl) return occupant.avatarUrl; // Already has avatar
-    // Try to find matching character in allCharacters to get real avatar
+    if (occupant.avatarUrl) return occupant.avatarUrl;
+    const nameLc = occupant.name?.toLowerCase();
+    if (nameLc && familyAvatarMap[nameLc]) return familyAvatarMap[nameLc];
     const matchedChar = allCharacters.find(c => 
-      c.display_name?.toLowerCase() === occupant.name?.toLowerCase() ||
-      c.name?.toLowerCase() === occupant.name?.toLowerCase()
+      c.display_name?.toLowerCase() === nameLc ||
+      c.name?.toLowerCase() === nameLc
     );
-    return matchedChar?.avatar_url || matchedChar?.image_avatar_url || null;
+    const resolved = matchedChar?.avatar_url || matchedChar?.image_avatar_url || null;
+    console.log(`[LocationDetailPanel] Avatar for ${occupant.name}: ${resolved ? 'found from Character record' : 'using initials'}`);
+    return resolved;
   };
 
   // Pick the first available image — check multiple possible fields
@@ -628,12 +628,32 @@ function buildMarkers(entities, locations, gridCoords) {
   return markers;
 }
 
+/**
+ * Build a name→avatarUrl map by scanning all characters' family_members[] arrays.
+ * This is the REAL source of internal family avatars.
+ */
+function buildFamilyAvatarMap(allCharacters) {
+  const map = {};
+  for (const char of allCharacters) {
+    for (const fm of (char.family_members || [])) {
+      if (fm.name && fm.photo_url) {
+        map[fm.name.toLowerCase()] = fm.photo_url;
+      }
+    }
+  }
+  return map;
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick, onLocationPanelGoHere, allCharacters = [] }) {
   const [activeLocationId, setActiveLocationId] = useState(null);
 
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
   const markers = useMemo(() => buildMarkers(characters, locations, gridCoords), [characters, locations, gridCoords]);
+  
+  // Build family avatar map: name (lowercase) → photo_url
+  // Scans all characters' family_members[] arrays — the REAL avatar source for internal family
+  const familyAvatarMap = useMemo(() => buildFamilyAvatarMap(allCharacters), [allCharacters]);
 
   const groupedByLocation = useMemo(() => {
     const map = new Map();
@@ -780,16 +800,20 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
           const seenNames = new Set(markerOccupants.map(m => m.name?.toLowerCase()));
           
           // Add family residents from location record that aren't already in markers
+          // Use familyAvatarMap to hydrate photo_url from parent character's family_members[] array
           (activeLocation.resident_family_members || []).forEach(fam => {
             const famNameLC = fam.name?.toLowerCase();
             if (famNameLC && !seenNames.has(famNameLC)) {
               seenNames.add(famNameLC);
+              // AVATAR HYDRATION: location record photo_url OR familyAvatarMap from parent character's family_members[]
+              const resolvedAvatar = fam.photo_url || familyAvatarMap[famNameLC] || null;
+              console.log(`[MapPanel] Family resident ${fam.name}: avatar=${resolvedAvatar ? 'found' : 'initials fallback'}`);
               finalOccupants.push({
                 characterId: `family_${fam.name}`,
                 name: fam.name,
                 initials: fam.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2),
                 type: 'npc_family_member',
-                avatarUrl: fam.photo_url || null,
+                avatarUrl: resolvedAvatar,
                 isFamilyMember: true,
                 isAsleep: false,
               });
@@ -803,6 +827,7 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
               onClose={() => setActiveLocationId(null)}
               onGoHere={onLocationPanelGoHere}
               allCharacters={allCharacters}
+              familyAvatarMap={familyAvatarMap}
               isLocationClosed={(() => {
               const now = new Date();
               const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
