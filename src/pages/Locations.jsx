@@ -22,6 +22,7 @@ import ZoneImageGenerator from "@/components/location/ZoneImageGenerator";
 import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
+import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
 
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
@@ -388,10 +389,12 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     enabled: !!currentUser?.email,
   });
 
-  // Build correctly ordered list: Active Characters → NPC Fictitious → NPC Family Members
-  const activeChars = allCharacters.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
-  const npcFictitious = allCharacters.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
-  const npcFamily = allCharacters.filter(c => c.character_type === 'npc_family_member').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+  // Use shared resolver for strict user scope + character type filtering
+  const editableChars = getEditableCharactersForModule(allCharacters, currentUser?.id, currentUser?.email, 'locations');
+  
+  // Build correctly ordered list: Active Characters → NPC Fictitious
+  const activeChars = editableChars.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+  const npcFictitious = editableChars.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
   const [form, setForm] = useState({
     name: editingLocation?.name || "",
@@ -748,20 +751,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 </button>
               );
             })}
-            {npcFamily.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>}
-            {npcFamily.map(npc => {
-              const alreadyResident = form.resident_character_ids?.includes(npc.id);
-              return (
-                <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                  <CharacterAvatar character={npc} size="sm" />
-                  <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
-                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                </button>
-              );
-            })}
 
-          </div>
+                       </div>
         </div>
       )}
 
@@ -875,8 +866,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 </button>
               );
             })}
-            {(npcFictitious.length > 0 || npcFamily.length > 0) && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Characters</p>}
-            {[...npcFictitious, ...npcFamily].map(npc => {
+            {npcFictitious.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Characters</p>}
+            {npcFictitious.map(npc => {
               const alreadyWorker = form.worker_character_ids?.includes(npc.id);
               const npcAge = getNPCAge(npc.name);
               let tooYoung = false;
@@ -939,13 +930,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                  <span className="text-sm text-foreground">{npc.name}</span>
                </button>
              ))}
-             {npcFamily.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>}
-             {npcFamily.map(npc => (
-               <button key={npc.id} onClick={() => update("owner_character_id", npc.id)} className={`w-full flex items-center gap-3 p-2 rounded-xl border transition-colors ${form.owner_character_id === npc.id ? "bg-primary/10 border-primary/40" : "bg-card border-border hover:border-primary/40"}`}>
-                 <CharacterAvatar character={npc} size="sm" />
-                 <span className="text-sm text-foreground">{npc.name}</span>
-               </button>
-             ))}
+
            </div>
          ) : (
           <Input value={form.owner_npc_name} onChange={e => update("owner_npc_name", e.target.value)} placeholder="NPC name (e.g. Mr. Hassan, The Landlord)" className="h-10 rounded-xl text-sm" />
