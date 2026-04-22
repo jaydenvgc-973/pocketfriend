@@ -194,21 +194,66 @@ function LocationNode({ location, occupants, onClick }) {
   );
 }
 
-// Category-based default coordinates for fallback placement
-const CATEGORY_DEFAULT_COORDS = {
-  home:       { x: 15, y: 50 },
-  workplace:  { x: 45, y: 35 },
-  school:     { x: 45, y: 65 },
-  gym:        { x: 70, y: 40 },
-  food_drink: { x: 88, y: 55 },
-  bar:        { x: 88, y: 65 },
-  restaurant: { x: 88, y: 45 },
-  park:       { x: 70, y: 70 },
-  hospital:   { x: 70, y: 30 },
-  church:     { x: 70, y: 55 },
-  grocery:    { x: 70, y: 60 },
-  generic:    { x: 50, y: 50 },
+// Category zones: each zone defines a bounding box [xMin, xMax, yMin, yMax]
+// within which distinct locations will be spread out
+const CATEGORY_ZONES = {
+  home:       { xMin: 3,  xMax: 30, yMin: 15, yMax: 88 },
+  workplace:  { xMin: 35, xMax: 58, yMin: 15, yMax: 55 },
+  school:     { xMin: 35, xMax: 58, yMin: 55, yMax: 88 },
+  gym:        { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
+  hospital:   { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
+  medical:    { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
+  clinic:     { xMin: 62, xMax: 80, yMin: 15, yMax: 45 },
+  grocery:    { xMin: 62, xMax: 80, yMin: 45, yMax: 88 },
+  park:       { xMin: 62, xMax: 80, yMin: 45, yMax: 88 },
+  church:     { xMin: 62, xMax: 80, yMin: 45, yMax: 88 },
+  food_drink: { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
+  bar:        { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
+  restaurant: { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
+  social:     { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
+  community:  { xMin: 82, xMax: 97, yMin: 15, yMax: 88 },
+  generic:    { xMin: 35, xMax: 80, yMin: 15, yMax: 88 },
 };
+
+/**
+ * Assigns stable, evenly-distributed coordinates for each unique location
+ * within its category zone. Same location always gets same coords.
+ * Different locations get different positions inside the zone.
+ */
+function buildLocationCoordinateMap(locations) {
+  // Group locations without map_coordinates by their resolved zone
+  const zoneGroups = {};
+  for (const loc of locations) {
+    if (loc.map_coordinates) continue; // already has real coords
+    const cat = loc.category || "generic";
+    const zone = CATEGORY_ZONES[cat] || CATEGORY_ZONES.generic;
+    const key = JSON.stringify(zone); // group by zone (multiple cats can share a zone)
+    if (!zoneGroups[key]) zoneGroups[key] = { zone, locs: [] };
+    zoneGroups[key].locs.push(loc);
+  }
+
+  const coordMap = {}; // locationId → {x, y}
+
+  for (const { zone, locs } of Object.values(zoneGroups)) {
+    const total = locs.length;
+    // Arrange in a grid within the zone
+    const cols = Math.max(1, Math.ceil(Math.sqrt(total)));
+    const rows = Math.ceil(total / cols);
+    const xStep = (zone.xMax - zone.xMin) / (cols + 1);
+    const yStep = (zone.yMax - zone.yMin) / (rows + 1);
+
+    locs.forEach((loc, i) => {
+      const col = (i % cols) + 1;
+      const row = Math.floor(i / cols) + 1;
+      coordMap[loc.id] = {
+        x: Math.round(zone.xMin + col * xStep),
+        y: Math.round(zone.yMin + row * yStep),
+      };
+    });
+  }
+
+  return coordMap;
+}
 
 /**
  * Layered location resolution — tries multiple fields before excluding a character.
@@ -260,12 +305,13 @@ function resolveCharacterLocation(char) {
 
 /**
  * Builds renderable character markers using layered location resolution.
- * Falls back through multiple location fields before excluding a character.
+ * Each unique location gets its own stable position within its category zone.
+ * Only characters at the exact same location share a cluster.
  */
 function buildMarkers(characters, locations) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
-  // Track used fallback coords per category to spread characters out slightly
-  const categoryOffsets = {};
+  // Pre-compute stable per-location coordinates for locations without saved coords
+  const syntheticCoords = buildLocationCoordinateMap(locations);
   const markers = [];
   const seenIds = new Set();
 
@@ -273,36 +319,27 @@ function buildMarkers(characters, locations) {
     if (seenIds.has(char.id)) continue;
 
     const resolved = resolveCharacterLocation(char);
-
     if (!resolved) {
-      console.log(`[LivePresenceMap] EXCLUDED ${char.name} (${char.id}): no location source found`);
+      console.log(`[LivePresenceMap] EXCLUDED "${char.name}": no location source found`);
       continue;
     }
 
     const { locId, source } = resolved;
     const location = locationMap.get(locId);
-
     if (!location) {
-      console.log(`[LivePresenceMap] EXCLUDED ${char.name}: location record ${locId} not found (source: ${source})`);
+      console.log(`[LivePresenceMap] EXCLUDED "${char.name}": location ${locId} not in locations list (source: ${source})`);
       continue;
     }
 
-    // Get or generate coordinates
-    let coordinates = location.map_coordinates;
+    // Use saved coords first, then stable synthetic coords per location
+    const coordinates = location.map_coordinates || syntheticCoords[location.id];
     if (!coordinates) {
-      const cat = location.category || "generic";
-      const base = CATEGORY_DEFAULT_COORDS[cat] || CATEGORY_DEFAULT_COORDS.generic;
-      // Spread multiple characters in the same category slightly
-      const count = categoryOffsets[cat] || 0;
-      categoryOffsets[cat] = count + 1;
-      coordinates = {
-        x: Math.min(95, base.x + (count % 3) * 3),
-        y: Math.min(90, base.y + Math.floor(count / 3) * 5),
-      };
-      console.log(`[LivePresenceMap] ${char.name}: using category fallback coords for "${location.name}" (${cat})`);
+      console.log(`[LivePresenceMap] EXCLUDED "${char.name}": could not generate coords for "${location.name}"`);
+      continue;
     }
 
-    console.log(`[LivePresenceMap] RENDERED ${char.name} @ "${location.name}" (source: ${source})`);
+    const isSynthetic = !location.map_coordinates;
+    console.log(`[LivePresenceMap] RENDERED "${char.name}" @ "${location.name}" coords=(${coordinates.x},${coordinates.y}) source=${source} synthetic=${isSynthetic}`);
 
     seenIds.add(char.id);
     markers.push({
@@ -318,12 +355,11 @@ function buildMarkers(characters, locations) {
     });
   }
 
-  console.log(`[LivePresenceMap] Total: ${characters.length} characters, ${markers.length} rendered`);
+  console.log(`[LivePresenceMap] Summary: ${characters.length} chars considered, ${markers.length} rendered`);
   return markers;
 }
 
 export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick }) {
-  // Group markers by location
   const markers = useMemo(() => buildMarkers(characters, locations), [characters, locations]);
 
   const groupedByLocation = useMemo(() => {
@@ -335,7 +371,15 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
     return map;
   }, [markers]);
 
-  const mappedLocations = locations.filter((l) => l.map_coordinates);
+  // Show location nodes for ALL locations that have occupants (even synthetic coords)
+  const syntheticCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
+  const occupiedLocationIds = new Set(markers.map(m => m.locationId));
+  const visibleLocations = locations.filter(l =>
+    l.map_coordinates || (occupiedLocationIds.has(l.id) && syntheticCoords[l.id])
+  ).map(l => ({
+    ...l,
+    map_coordinates: l.map_coordinates || syntheticCoords[l.id],
+  }));
 
   return (
     <div
@@ -404,8 +448,8 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
         />
       ))}
 
-      {/* Location nodes */}
-      {mappedLocations.map((location) => (
+      {/* Location nodes — includes synthetic-coord locations that have occupants */}
+      {visibleLocations.map((location) => (
         <LocationNode
           key={location.id}
           location={location}
