@@ -1,20 +1,19 @@
 /**
- * UNIFIED CHARACTER RESOLVER
+ * UNIFIED CHARACTER RESOLVER + PRESENCE ENGINE
  * 
  * Enforces strict user scope isolation, character type filtering, and legacy fallbacks.
- * Use this across ALL character discovery:
- * - Settings modules
- * - Homepage character cards and NPC contacts
- * - Residency hydration
- * - Character listing and filtering
+ * Provides unified presence resolution for all location/travel/world systems.
  * 
  * Rules:
  * - User scope comes FIRST (owner_user_id, owner_email, or assigned scope)
  * - Character type is resolved only AFTER scope validation
  * - Legacy records are safely resolved via fallback chain
- * - NO created_by primary filtering
- * - NO cross-account contamination
- * - Service-created records are included if user-owned
+ * - Service-created records included if user-owned (NOT excluded by created_by)
+ * - Presence truth is single-source (resolved_current_location_id, residency assignment)
+ * - Family characters are world-presence entities (map, popup, counts)
+ * - Age rules enforce movement, access, supervision constraints
+ * - No cross-account contamination
+ * - No UI-only filtering (all filtering is data-level)
  */
 
 /**
@@ -315,4 +314,191 @@ export function findCharacterInScope(characterId, allCharacters, currentUserId, 
   }
   
   return char;
+}
+
+/**
+ * UNIFIED PRESENCE RESOLVER
+ * 
+ * Determines world-presence state for a character at a location.
+ * Used by Travel page, map, popups, resident lists, and counts.
+ * 
+ * Returns { isPresent, presenceStatus, isResident, reasonCode }
+ */
+export function resolveCharacterPresenceAtLocation(character, location, currentTime = new Date()) {
+  if (!character || !location) {
+    return { isPresent: false, presenceStatus: null, isResident: false, reasonCode: 'invalid_input' };
+  }
+
+  // Check if character is assigned as a resident
+  const isResident = (location.resident_character_ids || []).includes(character.id) ||
+    (location.resident_family_members || []).some(fm => fm.name?.toLowerCase() === (character.name || '').toLowerCase());
+
+  // If character is traveling elsewhere, not present here
+  if (character.resolved_current_location_id && character.resolved_current_location_id !== location.id) {
+    return {
+      isPresent: false,
+      presenceStatus: 'away',
+      isResident,
+      reasonCode: 'traveling_elsewhere'
+    };
+  }
+
+  // Check resolved_current_location_id (authoritative)
+  if (character.resolved_current_location_id === location.id) {
+    const status = character.resolved_presence_status || 'visiting';
+    return {
+      isPresent: true,
+      presenceStatus: status,
+      isResident,
+      reasonCode: 'at_location'
+    };
+  }
+
+  // Fallback: if resident and home, count as present
+  if (isResident && character.current_home_location_id === location.id) {
+    const notTraveling = !character.travel_status || character.travel_status === 'not_traveling';
+    if (notTraveling) {
+      return {
+        isPresent: true,
+        presenceStatus: 'home',
+        isResident,
+        reasonCode: 'home_and_not_traveling'
+      };
+    }
+  }
+
+  // Not present
+  return {
+    isPresent: false,
+    presenceStatus: null,
+    isResident,
+    reasonCode: 'not_at_location'
+  };
+}
+
+/**
+ * Get all world-presence entities at a location (includes family characters).
+ * 
+ * Returns array of { character, presence } tuples.
+ */
+export function getLocationPresence(location, characters = []) {
+  if (!location) return [];
+
+  const presence = [];
+
+  // Active characters and npc_fictitious at this location
+  characters.forEach(char => {
+    if (!['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(char.character_type || resolveCharacterType(char))) {
+      return;
+    }
+
+    const p = resolveCharacterPresenceAtLocation(char, location);
+    if (p.isPresent) {
+      presence.push({ character: char, presence: p });
+    }
+  });
+
+  // Family members from resident list
+  (location.resident_family_members || []).forEach(familyMember => {
+    if (!familyMember.name) return;
+    // Check if this NPC is actually present at this location (from fictional_relationships)
+    let npcAtThisLocation = false;
+    for (const char of characters) {
+      const rel = (char.fictional_relationships || []).find(
+        r => r.person_name?.trim().toLowerCase() === familyMember.name.trim().toLowerCase() && !r.related_character_id
+      );
+      if (rel && rel.current_location_id === location.id) {
+        npcAtThisLocation = true;
+        break;
+      }
+    }
+    
+    // Family members assigned to home are present unless proven elsewhere
+    if (!npcAtThisLocation || location.category === 'home' || location.category === 'generic') {
+      presence.push({
+        character: {
+          id: `family_${familyMember.name}`,
+          name: familyMember.name,
+          character_type: 'npc_family_member',
+          avatar_url: null,
+        },
+        presence: {
+          isPresent: true,
+          presenceStatus: 'home',
+          isResident: true,
+          reasonCode: 'family_resident'
+        }
+      });
+    }
+  });
+
+  return presence;
+}
+
+/**
+ * Check if a location appears empty (no residents or current occupants).
+ * 
+ * Used to determine if "vacant" or "no one here" labels should appear.
+ */
+export function isLocationEmpty(location, characters = []) {
+  const presence = getLocationPresence(location, characters);
+  return presence.length === 0;
+}
+
+/**
+ * Check if character can travel to/visit a location based on age and rules.
+ */
+export function canCharacterTravelToLocation(character, location, currentTime = new Date()) {
+  if (!character) return { allowed: false, reason: 'Invalid character' };
+
+  const age = resolveCharacterAge(character);
+
+  // Under 5: cannot leave home
+  if (age !== null && age < 5) {
+    if (location.category !== 'home' && location.category !== 'generic') {
+      return { allowed: false, reason: 'Too young to leave home' };
+    }
+  }
+
+  // Under 21: cannot go to bars/clubs
+  if (age !== null && age < 21) {
+    if (location.category === 'social' || location.category === 'food_drink') {
+      const subtype = Array.isArray(location.subtype) ? location.subtype : [location.subtype];
+      const isBarnightlife = subtype.some(s =>
+        ['cocktail_bar', 'dive_bar', 'sports_bar', 'beer_hall', 'gay_bar', 'lesbian_bar', 'queer_bar',
+          'upscale_lounge', 'wine_bar', 'tiki_bar', 'house_music_club', 'hip_hop_club', 'electronic_club',
+          'punk_venue', 'rock_venue', 'latin_dance_club', 'country_bar', 'jazz_club', 'karaoke_bar',
+          'nightclub', 'dance_club', 'rave_venue', 'rooftop_bar', 'lounge_club'].includes(s)
+      );
+      if (isBarnightlife) {
+        return { allowed: false, reason: 'Too young for bars and nightlife venues' };
+      }
+    }
+  }
+
+  return { allowed: true, reason: null };
+}
+
+/**
+ * Resolve character age from birthday or age field.
+ */
+function resolveCharacterAge(character) {
+  if (!character) return null;
+
+  if (character.age !== undefined && character.age !== null) {
+    return character.age;
+  }
+
+  if (character.birthday) {
+    const birthDate = new Date(character.birthday);
+    const today = new Date();
+    let age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      age--;
+    }
+    return age >= 0 ? age : null;
+  }
+
+  return null;
 }

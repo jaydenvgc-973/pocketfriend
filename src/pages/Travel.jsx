@@ -21,6 +21,8 @@ import { getCharacterTravelAvailability, isCharacterHome } from "@/lib/travelAva
 import { isLocationActiveNow, isCharacterAtWork } from "@/lib/workScheduleUtils";
 import { isCharacterAsleep } from "@/lib/sleepUtils";
 import { verifyUniquePresence, verifyScreenConsistency } from "@/lib/locationResolutionEngine";
+import { getLocationPresence, isLocationEmpty, canCharacterTravelToLocation, resolveCharacterPresenceAtLocation } from "@/lib/characterEditableListResolver";
+import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 
 const NPC_CHARACTER_TYPES = ["npc_regular", "npc_family_member", "npc_fictitious"];
 
@@ -165,14 +167,20 @@ export default function Travel() {
     if (!location || location.category !== "home") {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
-    const homeResidents = travelCompanions.filter(c => c.current_home_location_id === location.id);
-    const npcResidents = location.resident_family_members || [];
+    
+    // Use unified presence resolver instead of separate logic
+    const presence = getLocationPresence(location, mapCharacters);
+    const homeResidents = presence.filter(p => p.presence.isResident && p.presence.isPresent).map(p => p.character);
+    const npcResidents = (location.resident_family_members || []).map(fm => fm.name);
+    
     const userHasKey = (settings.home_key_holders || []).some(k => k.location_id === location.id);
     const hasAssignedResidents = (location.resident_character_ids || []).length > 0;
     const canVisit = homeResidents.length > 0 || npcResidents.length > 0 || hasAssignedResidents || userHasKey;
+    
     if (homeResidents.length === 0 && npcResidents.length === 0 && !hasAssignedResidents) {
       return { canVisit: true, blockedBy: null, homeResidents: [], npcResidents: [] };
     }
+    
     return {
       canVisit,
       blockedBy: !canVisit ? { name: location.name } : null,
@@ -184,6 +192,20 @@ export default function Travel() {
   const toggleCharacter = (charId) => {
     const char = travelCompanions.find(c => c.id === charId);
     if (!char) return;
+    
+    // Check age-based travel restrictions
+    if (selectedLocation) {
+      const travelAllowed = canCharacterTravelToLocation(char, selectedLocation);
+      if (!travelAllowed.allowed) {
+        setUnavailablePopup([{
+          character: char,
+          reason: { iconType: "error", message: travelAllowed.reason, color: "text-destructive" },
+          availableAt: "Cannot travel to this location",
+        }]);
+        return;
+      }
+    }
+    
     if (isCharacterAsleep(char)) {
       setWakeUpModal({ character: char, pendingCharacterId: charId });
       return;
@@ -512,57 +534,27 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
 
                   if (isHome) {
-                    // Only show characters actually at this home (resolved_current_location_id matches)
-                    const charactersAtHome = travelCompanions.filter(c =>
-                      c.resolved_current_location_id === selectedLocation.id &&
-                      (c.resolved_presence_status === 'home' || c.resolved_presence_status === 'sleeping' || c.resolved_presence_status === 'napping')
-                    );
-                    charactersAtHome.forEach(c => lines.push({ name: c.name, status: "home", color: "text-green-400" }));
-
-                    // npc_family_members in resident list
-                    (selectedLocation.resident_character_ids || []).forEach(resId => {
-                      const familyChar = travelCompanions.find(c => c.id === resId && c.character_type === 'npc_family_member') ||
-                                         mapCharacters.find(c => c.id === resId && c.character_type === 'npc_family_member');
-                      if (familyChar && !lines.find(l => l.name === familyChar.name)) {
-                        lines.push({ name: familyChar.name, status: 'home', color: 'text-muted-foreground' });
-                      }
-                    });
-
-                    (selectedLocation.resident_family_members || []).forEach(locFamilyMember => {
-                      if (!locFamilyMember.name) return;
-                      let npcLocationId = null;
-                      for (const char of mapCharacters) {
-                        const rel = (char.fictional_relationships || []).find(
-                          r => r.person_name?.trim().toLowerCase() === locFamilyMember.name.trim().toLowerCase() && !r.related_character_id
-                        );
-                        if (rel) { npcLocationId = rel.current_location_id || null; break; }
-                      }
-                      if (!npcLocationId || npcLocationId === selectedLocation.id) {
-                        if (!lines.find(l => l.name === locFamilyMember.name)) {
-                          lines.push({ name: locFamilyMember.name, status: "home", color: "text-muted-foreground" });
+                    // Use unified presence resolver for home
+                    const homePresence = getLocationPresence(selectedLocation, mapCharacters);
+                    homePresence.forEach(({ character, presence }) => {
+                      if (presence.isPresent && presence.isResident) {
+                        const statusColor = presence.presenceStatus === 'home' ? 'text-green-400' : 'text-muted-foreground';
+                        if (!lines.find(l => l.name === character.name)) {
+                          lines.push({ name: character.name, status: presence.presenceStatus || 'home', color: statusColor });
                         }
                       }
                     });
                   } else {
-                    // Use resolved_current_location_id directly from DB (set by distributeVGCTowersNPCs)
-                    // rather than re-running resolveCharacterLocation which may give stale results
-                    const currentlyAtLocation = mapCharacters.filter(c =>
-                      c.resolved_current_location_id === selectedLocation.id
-                    );
-                    currentlyAtLocation.forEach(c => {
-                      const status = c.resolved_presence_status === 'visiting' ? 'visiting' : 'here';
-                      lines.push({ name: c.name, status, color: "text-blue-400" });
-                    });
-
-                    mapCharacters.forEach(char => {
-                      if (!char.fictional_relationships) return;
-                      char.fictional_relationships.forEach(rel => {
-                        if (!rel.related_character_id && rel.person_name && rel.current_location_id === selectedLocation.id) {
-                          if (!lines.find(l => l.name === rel.person_name)) {
-                            lines.push({ name: rel.person_name, status: "visiting", color: "text-amber-400" });
-                          }
+                    // Use unified presence resolver for non-home locations
+                    const locationPresence = getLocationPresence(selectedLocation, mapCharacters);
+                    locationPresence.forEach(({ character, presence }) => {
+                      if (presence.isPresent) {
+                        const statusColor = presence.presenceStatus === 'visiting' ? 'text-amber-400' : 'text-blue-400';
+                        const status = presence.presenceStatus === 'visiting' ? 'visiting' : 'here';
+                        if (!lines.find(l => l.name === character.name)) {
+                          lines.push({ name: character.name, status, color: statusColor });
                         }
-                      });
+                      }
                     });
 
                     // CRITICAL: Use Eastern Time for shift checks, never raw UTC
