@@ -337,6 +337,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     navigate(`/scene?${params.toString()}`);
   };
 
+  const handleSoloTravel = async (locationId) => {
+    const location = locationsData.find(l => l.id === locationId);
+    if (!location) return;
+
+    setIsTraveling(true);
+    const travelMs = 2000 + Math.random() * 4000;
+    await new Promise(r => setTimeout(r, travelMs));
+    const params = new URLSearchParams({ locationId });
+    navigate(`/scene?${params.toString()}`);
+  };
+
   const travelLabel = selectedCharacterIds.length === 0
     ? "Go alone"
     : `Go with ${selectedCharacterIds.length} character${selectedCharacterIds.length > 1 ? "s" : ""}`;
@@ -395,6 +406,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const loc = locationsData.find(l => l.id === locationId);
                     if (loc) setSelectedLocation(loc);
                   }}
+                  onLocationPanelGoHere={handleSoloTravel}
                 />
                 <p className="text-[10px] text-muted-foreground text-center">Tap a location to select it · Character pins show real-time presence</p>
               </div>

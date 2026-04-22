@@ -232,7 +232,7 @@ function LocationDot({ location, isActive, onClick, occupants = 0 }) {
 }
 
 // ─── Side detail panel ────────────────────────────────────────────────────────
-function LocationDetailPanel({ location, occupants, onClose }) {
+function LocationDetailPanel({ location, occupants, onClose, onGoHere }) {
   if (!location) return null;
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
@@ -375,7 +375,7 @@ function LocationDetailPanel({ location, occupants, onClose }) {
       )}
 
       {/* Details */}
-      <div style={{ padding: "12px 14px" }}>
+      <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 8 }}>
           Details
         </div>
@@ -396,6 +396,30 @@ function LocationDetailPanel({ location, occupants, onClose }) {
             <div style={{ fontSize: 11, color: "#cbd5e1", fontWeight: 500 }}>{row.val}</div>
           </div>
         ))}
+      </div>
+
+      {/* Action Button */}
+      <div style={{ padding: "12px 14px" }}>
+        <button
+          onClick={() => onGoHere?.(location.id)}
+          style={{
+            width: "100%",
+            padding: "10px 14px",
+            background: colors.pin,
+            color: "#fff",
+            border: "none",
+            borderRadius: 10,
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+            transition: "opacity 0.2s",
+            opacity: 1,
+          }}
+          onMouseEnter={(e) => e.target.style.opacity = "0.9"}
+          onMouseLeave={(e) => e.target.style.opacity = "1"}
+        >
+          Go Here
+        </button>
       </div>
     </motion.div>
   );
@@ -575,7 +599,7 @@ function buildMarkers(characters, locations, gridCoords) {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick }) {
+export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick, onLocationPanelGoHere }) {
   const [activeLocationId, setActiveLocationId] = useState(null);
 
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
@@ -721,6 +745,7 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
             location={activeLocation}
             occupants={groupedByLocation.get(activeLocation.id) ?? []}
             onClose={() => setActiveLocationId(null)}
+            onGoHere={onLocationPanelGoHere}
           />
         )}
       </AnimatePresence>
