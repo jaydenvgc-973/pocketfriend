@@ -95,8 +95,21 @@ Deno.serve(async (req) => {
     // Allow scheduled invocation (no user token)
     try { await base44.auth.me(); } catch (_) {}
 
+    console.log('[triggerCharacterNarratives] AUTOMATION STARTED');
+
     const allCharacters = await base44.asServiceRole.entities.Character.list();
-    const activeCharacters = allCharacters.filter(c => (!c.status || c.status === 'active') && c.created_by);
+    // HARD FILTER: Only active_created_character types are eligible for autonomous narratives
+    const activeCharacters = allCharacters.filter(c => {
+      const isActive = !c.status || c.status === 'active';
+      const hasCreatedBy = !!c.created_by;
+      const isTargetType = c.character_type === 'active_created_character';
+      if (!isTargetType) {
+        console.log(`[triggerCharacterNarratives] SKIPPED ${c.name} (id: ${c.id}) — character_type="${c.character_type}" is not "active_created_character"`);
+      }
+      return isActive && hasCreatedBy && isTargetType;
+    });
+
+    console.log(`[triggerCharacterNarratives] Filtered ${allCharacters.length} total characters → ${activeCharacters.length} eligible (active_created_character only)`);
 
     const results = [];
     const now = new Date();
@@ -104,18 +117,26 @@ Deno.serve(async (req) => {
 
     for (const character of activeCharacters) {
       try {
+        console.log(`[triggerCharacterNarratives] Evaluating ${character.name} (type: ${character.character_type})`);
+
         // Find the most recent direct conversation for this character
         const convos = await base44.asServiceRole.entities.Conversation.filter(
           { character_ids: character.id, type: 'direct' },
           '-last_message_date',
           1
         );
-        if (!convos.length) continue;
+        if (!convos.length) {
+          console.log(`[triggerCharacterNarratives] SKIPPED ${character.name} — no direct conversation found`);
+          continue;
+        }
 
         const convo = convos[0];
 
         // Only proceed if the conversation has been active in the last 24h
-        if (!convo.last_message_date || convo.last_message_date < oneDayAgo) continue;
+        if (!convo.last_message_date || convo.last_message_date < oneDayAgo) {
+          console.log(`[triggerCharacterNarratives] SKIPPED ${character.name} — conversation inactive (last: ${convo.last_message_date})`);
+          continue;
+        }
 
         // Check: no narrative sent in the last 2 hours
         const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
@@ -126,6 +147,7 @@ Deno.serve(async (req) => {
         );
         const narrativeRecently = recentNarratives.some(m => m.timestamp >= twoHoursAgo);
         if (narrativeRecently) {
+          console.log(`[triggerCharacterNarratives] SKIPPED ${character.name} — narrative sent within last 2 hours`);
           results.push({ characterId: character.id, name: character.name, status: 'skipped', reason: 'narrative sent within last 2 hours' });
           continue;
         }
@@ -136,7 +158,10 @@ Deno.serve(async (req) => {
           '-timestamp',
           10
         );
-        if (recentMessages.length < 3) continue;
+        if (recentMessages.length < 3) {
+          console.log(`[triggerCharacterNarratives] SKIPPED ${character.name} — fewer than 3 messages in conversation`);
+          continue;
+        }
 
         // Build context for narrative generation
         const recentText = recentMessages
@@ -186,12 +211,17 @@ Examples of good tone:
 
 Return ONLY the narrative text, nothing else.`;
 
+        console.log(`[triggerCharacterNarratives] ELIGIBLE: ${character.name} — generating narrative`);
+
         const narrativeContent = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt });
 
-        if (!narrativeContent?.trim()) continue;
+        if (!narrativeContent?.trim()) {
+          console.log(`[triggerCharacterNarratives] FAILED: ${character.name} — empty narrative returned from LLM`);
+          continue;
+        }
 
         // Save as narrative message
-        await base44.asServiceRole.entities.Message.create({
+        const createdMessage = await base44.asServiceRole.entities.Message.create({
           conversation_id: convo.id,
           sender_type: 'character',
           character_id: character.id,
@@ -202,19 +232,24 @@ Return ONLY the narrative text, nothing else.`;
           timestamp: now.toISOString(),
         });
 
+        console.log(`[triggerCharacterNarratives] MESSAGE CREATED: ${character.name} — msg_id: ${createdMessage?.id}, convo_id: ${convo.id}`);
+
         // Update conversation preview
         await base44.asServiceRole.entities.Conversation.update(convo.id, {
           last_message_preview: narrativeContent.trim().substring(0, 100),
           last_message_date: now.toISOString(),
         });
 
+        console.log(`[triggerCharacterNarratives] SUCCESS: ${character.name} — narrative sent and conversation updated`);
         results.push({ characterId: character.id, name: character.name, status: 'sent', narrative: narrativeContent.trim().substring(0, 80) });
 
       } catch (charErr) {
+        console.error(`[triggerCharacterNarratives] ERROR for ${character.name}:`, charErr.message);
         results.push({ characterId: character.id, name: character.name, status: 'error', error: charErr.message });
       }
     }
 
+    console.log(`[triggerCharacterNarratives] AUTOMATION COMPLETE: ${results.length} characters processed`);
     return Response.json({ success: true, results });
 
   } catch (error) {
