@@ -1,5 +1,19 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+/**
+ * VGC TOWERS TRAVEL SYSTEM — BLOCK-BASED MOVEMENT LOOP
+ * 
+ * Explicit blocks ensure reliable, scheduled movement:
+ * - 10:00 AM: DEPARTURE BLOCK — move eligible residents to first destinations
+ * - 1:00 PM: MIDDAY BLOCK — re-evaluate, rotate if needed
+ * - 4:00 PM: AFTERNOON BLOCK — rotate again
+ * - 7:00 PM: EVENING BLOCK — final rotations
+ * - 10:00 PM: WRAP-UP BLOCK — prepare for return
+ * - 1:00 AM: RETURN-HOME BLOCK (handled by separate automation)
+ * 
+ * Runs hourly. Current block is determined by time-of-day.
+ * Each block re-evaluates eligibility and moves characters appropriately.
+ */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -13,6 +27,26 @@ Deno.serve(async (req) => {
     const minute = nowET.getMinutes();
     const currentMinutes = hour * 60 + minute;
 
+    // Define travel blocks explicitly
+    const blocks = [
+      { name: 'DEPARTURE', start: 10 * 60, end: 13 * 60 },      // 10 AM - 1 PM
+      { name: 'MIDDAY', start: 13 * 60, end: 16 * 60 },         // 1 PM - 4 PM
+      { name: 'AFTERNOON', start: 16 * 60, end: 19 * 60 },      // 4 PM - 7 PM
+      { name: 'EVENING', start: 19 * 60, end: 22 * 60 },        // 7 PM - 10 PM
+      { name: 'WRAPUP', start: 22 * 60, end: 25 * 60 },         // 10 PM - 1 AM (wraps to 01:00)
+    ];
+    
+    let currentBlock = null;
+    if (currentMinutes >= blocks[0].start && currentMinutes < blocks[4].end) {
+      for (const block of blocks) {
+        if (currentMinutes >= block.start && currentMinutes < block.end) {
+          currentBlock = block.name;
+          break;
+        }
+      }
+    }
+
+    // Outside active travel window (1 AM - 10 AM) — skip movement, let return-home automation handle it
     const isLockdown = hour >= 1 && hour < 10;
 
     // Load this user's characters + ALL locations (user-owned + shared)
@@ -92,28 +126,18 @@ Deno.serve(async (req) => {
     );
 
     const log = [];
+    log.push(`[BLOCK: ${currentBlock}] Time: ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ET`);
 
-    // ── LOCKDOWN: Return everyone home ──────────────────────────────────────────
+    // ── LOCKDOWN: Skip movement during 1-10 AM (return-home automation handles 1 AM return)
     if (isLockdown) {
-      const updates = vgcResidents
-        .filter(npc => npc.presence_state === 'social_visit' || npc.presence_state === 'in_transit')
-        .map(npc => {
-          log.push(`${npc.name} → returned home (lockdown)`);
-          return base44.entities.Character.update(npc.id, {
-            resolved_current_location_id: VGC_ID,
-            resolved_current_location_name: 'VGC Towers',
-            resolved_presence_status: 'home',
-            resolved_location_type: 'home',
-            resolved_source_reason: 'lockdown',
-            presence_state: 'home',
-            source_of_move: 'system',
-            valid_from: now.toISOString(),
-            valid_until: null,
-            return_location_id: null,
-          });
-        });
-      await Promise.all(updates);
-      return Response.json({ success: true, mode: 'lockdown', returned: updates.length, log });
+      log.push('LOCKDOWN MODE (1-10 AM): Return-home handled by separate automation. Movement disabled.');
+      return Response.json({ success: true, mode: 'lockdown', message: 'Return-home automation active', distributed: 0, log });
+    }
+    
+    // If no active block, return early (safety check)
+    if (!currentBlock) {
+      log.push('No active travel block at this time.');
+      return Response.json({ success: true, mode: 'no_block', message: 'Outside active travel window', distributed: 0, log });
     }
 
     // ── ACTIVE WINDOW ────────────────────────────────────────────────────────────
@@ -165,8 +189,10 @@ Deno.serve(async (req) => {
       eligible.push(npc);
     }
 
-    // ── NO RETENTION RULE — ALL eligible NPCs travel ─────────────────────────
-    const ROTATION_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+    // ── BLOCK-BASED MOVEMENT ─────────────────────────────────────────
+    // Each block evaluates movement independently.
+    // Rotation threshold: 30 minutes from last move, OR first move of the day.
+    const ROTATION_THRESHOLD_MS = 30 * 60 * 1000;
     const updates = [];
 
     for (let i = 0; i < eligible.length; i++) {
@@ -177,8 +203,12 @@ Deno.serve(async (req) => {
         npc.resolved_current_location_id &&
         npc.resolved_current_location_id !== VGC_ID;
 
-      if (isAlreadyOut && !needsRotation) {
-        log.push(`${npc.name} → staying at ${npc.resolved_current_location_name} (no rotation needed)`);
+      // SELF-HEAL: If away but next_move_at is missing/stale, recalculate
+      if (isAlreadyOut && !npc.valid_from) {
+        log.push(`${npc.name} → SELF-HEAL: Missing valid_from, forcing rotation`);
+        // Fall through to move
+      } else if (isAlreadyOut && !needsRotation) {
+        log.push(`${npc.name} → staying at ${npc.resolved_current_location_name} (moved within last 30min, next check at ${new Date(new Date(npc.valid_from).getTime() + ROTATION_THRESHOLD_MS).toLocaleTimeString('en-US', { timeZone: 'America/New_York' })})`);
         continue;
       }
 
@@ -206,6 +236,8 @@ Deno.serve(async (req) => {
       const selectedLoc = pickByGravity(finalPool, occupancyMap, nowET);
 
       const reason = (isAlreadyOut && needsRotation) ? 'vgc_rotation' : 'vgc_distribution';
+      const nextMoveTime = new Date(now.getTime() + ROTATION_THRESHOLD_MS);
+      const nextMoveET = nextMoveTime.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' });
 
       updates.push({
         id: npc.id,
@@ -222,15 +254,18 @@ Deno.serve(async (req) => {
           valid_from: now.toISOString(),
           valid_until: new Date(now.getTime() + ROTATION_THRESHOLD_MS * 2).toISOString(),
           return_location_id: VGC_ID,
+          current_travel_block: currentBlock,
+          next_move_at: nextMoveTime.toISOString(),
+          vgc_travel_day_active: true,
         }
       });
 
-      log.push(`${npc.name} → ${selectedLoc.name} (${reason})`);
+      log.push(`${npc.name} → ${selectedLoc.name} (${reason}, block: ${currentBlock}, next move: ${nextMoveET})`);
     }
 
     await Promise.all(updates.map(u => base44.entities.Character.update(u.id, u.data)));
 
-    // FINAL STATE VERIFICATION — use asServiceRole for owner_email to bypass RLS on service-created NPCs
+    // FINAL STATE VERIFICATION + SELF-HEAL
     const [freshByCreated, freshByOwner] = await Promise.all([
       base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
       base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
@@ -241,47 +276,66 @@ Deno.serve(async (req) => {
       freshSeen.add(c.id);
       return true;
     });
+    
     const finalNPCStates = [];
-    const nowhereFixUpdates = [];
+    const selfHealUpdates = [];
 
     for (const npc of vgcResidents) {
       const fresh = allFreshChars.find(c => c.id === npc.id) || npc;
       const hasLocation = fresh.resolved_current_location_id && fresh.resolved_current_location_id.length > 0;
+      
+      // SELF-HEAL #1: No location assigned
       if (!hasLocation) {
-        nowhereFixUpdates.push(base44.entities.Character.update(npc.id, {
+        selfHealUpdates.push(base44.entities.Character.update(npc.id, {
           resolved_current_location_id: VGC_ID,
           resolved_current_location_name: 'VGC Towers',
           resolved_presence_status: 'home',
           resolved_location_type: 'home',
-          resolved_source_reason: 'nowhere_fallback',
+          resolved_source_reason: 'self_heal_no_location',
           presence_state: 'home',
           source_of_move: 'system',
           valid_from: now.toISOString(),
+          vgc_travel_day_active: false,
+          current_travel_block: null,
         }));
-        log.push(`${npc.name} → NOWHERE_FIX: restored to VGC Towers`);
-        finalNPCStates.push({ name: npc.name, location: 'VGC Towers (fixed)', presence_state: 'home', flag: 'NOWHERE_FIX' });
-      } else {
-        finalNPCStates.push({
-          name: npc.name,
-          location: fresh.resolved_current_location_name,
-          presence_state: fresh.presence_state,
-          is_traveling: fresh.presence_state === 'social_visit',
-        });
+        log.push(`${npc.name} → SELF-HEAL #1: No location, returned to VGC Towers`);
+        finalNPCStates.push({ name: npc.name, location: 'VGC Towers (self-healed)', presence_state: 'home', flag: 'SELF_HEAL_NO_LOCATION' });
+        continue;
       }
+      
+      // SELF-HEAL #2: Away but no valid_from timestamp
+      if (fresh.presence_state === 'social_visit' && !fresh.valid_from) {
+        selfHealUpdates.push(base44.entities.Character.update(npc.id, {
+          valid_from: now.toISOString(),
+          next_move_at: new Date(now.getTime() + ROTATION_THRESHOLD_MS).toISOString(),
+          current_travel_block: currentBlock,
+        }));
+        log.push(`${npc.name} → SELF-HEAL #2: Missing valid_from, reset movement timer`);
+      }
+      
+      finalNPCStates.push({
+        name: npc.name,
+        location: fresh.resolved_current_location_name,
+        presence_state: fresh.presence_state,
+        is_traveling: fresh.presence_state === 'social_visit',
+        block: fresh.current_travel_block,
+        next_move: fresh.next_move_at ? new Date(fresh.next_move_at).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) : 'N/A',
+      });
     }
-    if (nowhereFixUpdates.length > 0) await Promise.all(nowhereFixUpdates);
+    if (selfHealUpdates.length > 0) await Promise.all(selfHealUpdates);
 
     return Response.json({
       success: true,
       mode: 'active',
       timestamp: now.toISOString(),
       hoursET: hour,
+      currentBlock,
       preflightFixed: preflightFixes.length,
       totalVGCResidents: vgcResidents.length,
       eligible: eligible.length,
       ineligible,
-      distributed: updates.length,
-      nowhereFixed: nowhereFixUpdates.length,
+      moved: updates.length,
+      selfHealed: selfHealUpdates.length,
       socialLocationsAvailable: socialLocations.map(l => l.name),
       finalNPCStates,
       log,

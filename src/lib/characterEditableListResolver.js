@@ -379,6 +379,7 @@ export function resolveCharacterPresenceAtLocation(character, location, currentT
 /**
  * Get all world-presence entities at a location (includes family characters).
  * 
+ * UNIFIED RESOLVER: Map, popup, side panel, travel cards all use this.
  * Returns array of { character, presence } tuples.
  */
 export function getLocationPresence(location, characters = []) {
@@ -386,7 +387,7 @@ export function getLocationPresence(location, characters = []) {
 
   const presence = [];
 
-  // Active characters and npc_fictitious at this location
+  // All character types at this location
   characters.forEach(char => {
     if (!['active_created_character', 'npc_fictitious', 'npc_family_member'].includes(char.character_type || resolveCharacterType(char))) {
       return;
@@ -433,6 +434,60 @@ export function getLocationPresence(location, characters = []) {
   });
 
   return presence;
+}
+
+/**
+ * UNIFIED TRAVEL PRESENCE RESOLVER FOR VGC TOWERS
+ * 
+ * Used exclusively by all Travel UI components (map, popup, side panel, travel cards).
+ * Ensures all components agree on who is where and why.
+ * 
+ * Returns:
+ * {
+ *   currentlyAt: [{ character, presence }],
+ *   count: number,
+ *   vgcTowerResidents: [character],
+ *   travelingOut: [character]
+ * }
+ */
+export function resolveTravelPresenceForUserScope(location, characters = []) {
+  if (!location) {
+    return { currentlyAt: [], count: 0, vgcTowerResidents: [], travelingOut: [] };
+  }
+
+  // Use unified resolver to get all presence at this location
+  const allPresence = getLocationPresence(location, characters);
+
+  // For VGC Towers specifically, identify residents vs travelers
+  const isVGCTowers = location.name === 'VGC Towers';
+
+  if (isVGCTowers) {
+    const vgcTowerResidents = allPresence.filter(p => 
+      p.presence.isResident && p.presence.isPresent
+    ).map(p => p.character);
+
+    const travelingOut = characters.filter(c =>
+      (c.character_type === 'npc_fictitious' || c.character_type === 'npc_family_member') &&
+      c.current_home_location_id === location.id &&
+      c.resolved_current_location_id &&
+      c.resolved_current_location_id !== location.id
+    );
+
+    return {
+      currentlyAt: allPresence,
+      count: allPresence.length,
+      vgcTowerResidents,
+      travelingOut,
+    };
+  }
+
+  // For non-VGC locations
+  return {
+    currentlyAt: allPresence,
+    count: allPresence.length,
+    vgcTowerResidents: [],
+    travelingOut: [],
+  };
 }
 
 /**

@@ -114,6 +114,14 @@ export default function Travel() {
   // For map display: include all character types + location residents
   const mapCharacters = travelCompanions;
 
+  // Unified VGC Towers presence: includes all traveling npc_fictitious residents
+  const vgcTowersResidents = mapCharacters.filter(c =>
+    c.character_type === 'npc_fictitious' &&
+    c.current_home_location_id === locationsData.find(l => l.name === 'VGC Towers')?.id
+  );
+  
+  const vgcTowers = locationsData.find(l => l.name === 'VGC Towers');
+
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
     queryFn: async () => {
@@ -587,6 +595,22 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     </div>
                   ) : null;
 
+                  // Special VGC Towers logic: show occupancy difference when residents are away
+                  let vgcTowersNote = null;
+                  if (isHome && vgcTowersResidents.length > 0) {
+                    const residentsPresent = vgcTowersResidents.filter(r => 
+                      !r.resolved_current_location_id || r.resolved_current_location_id === vgcTowers?.id
+                    ).length;
+                    const residentsAway = vgcTowersResidents.length - residentsPresent;
+                    if (residentsAway > 0) {
+                      vgcTowersNote = (
+                        <p className="text-xs text-amber-400 mt-2">
+                          {residentsAway} resident{residentsAway > 1 ? 's' : ''} out traveling
+                        </p>
+                      );
+                    }
+                  }
+
                   if (isHome && !homeAccess.canVisit) {
                     return (
                       <div className="space-y-2">
@@ -601,6 +625,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   return (
                     <>
                       {presenceSummary}
+                      {vgcTowersNote}
                       <Button onClick={handleTravel} disabled={isTraveling} className="w-full h-12 rounded-xl gap-2">
                         <Navigation className="w-4 h-4" />
                         {isTraveling ? "Traveling..." : travelLabel}

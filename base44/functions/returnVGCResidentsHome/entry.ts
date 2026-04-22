@@ -79,6 +79,10 @@ Deno.serve(async (req) => {
           valid_from: now.toISOString(),
           valid_until: null,
           return_location_id: null,
+          vgc_travel_day_active: false,
+          current_travel_block: null,
+          next_move_at: null,
+          travel_visibility_status: 'at_home',
         });
       });
 
