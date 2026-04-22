@@ -341,6 +341,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     const location = locationsData.find(l => l.id === locationId);
     if (!location) return;
 
+    const isOpen = isLocationActiveNow(location);
+    if (isOpen === false) {
+      const hoursStr = formatOperatingHours(location);
+      setUnavailablePopup([{
+        character: { id: "closed", name: location.name, avatar_url: null },
+        reason: { iconType: "out", message: `${location.name} is closed right now.`, color: "text-amber-400" },
+        availableAt: hoursStr ? `Hours: ${hoursStr}` : "Check back later",
+      }]);
+      return;
+    }
+
     setIsTraveling(true);
     const travelMs = 2000 + Math.random() * 4000;
     await new Promise(r => setTimeout(r, travelMs));

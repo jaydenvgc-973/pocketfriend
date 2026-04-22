@@ -232,7 +232,7 @@ function LocationDot({ location, isActive, onClick, occupants = 0 }) {
 }
 
 // ─── Side detail panel ────────────────────────────────────────────────────────
-function LocationDetailPanel({ location, occupants, onClose, onGoHere }) {
+function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocationClosed }) {
   if (!location) return null;
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
@@ -402,24 +402,29 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere }) {
       <div style={{ padding: "12px 14px" }}>
         <button
           onClick={() => onGoHere?.(location.id)}
+          disabled={isLocationClosed}
           style={{
             width: "100%",
             padding: "10px 14px",
-            background: colors.pin,
+            background: isLocationClosed ? "#64748b" : colors.pin,
             color: "#fff",
             border: "none",
             borderRadius: 10,
             fontSize: 13,
             fontWeight: 700,
-            cursor: "pointer",
+            cursor: isLocationClosed ? "not-allowed" : "pointer",
             transition: "opacity 0.2s",
-            opacity: 1,
+            opacity: isLocationClosed ? 0.5 : 1,
           }}
-          onMouseEnter={(e) => e.target.style.opacity = "0.9"}
-          onMouseLeave={(e) => e.target.style.opacity = "1"}
+          onMouseEnter={(e) => !isLocationClosed && (e.target.style.opacity = "0.9")}
+          onMouseLeave={(e) => !isLocationClosed && (e.target.style.opacity = "1")}
+          title={isLocationClosed ? "Location is closed" : ""}
         >
-          Go Here
+          {isLocationClosed ? "Closed" : "Go Here"}
         </button>
+        {isLocationClosed && (
+          <p style={{ fontSize: 10, color: "#94a3b8", marginTop: 6, textAlign: "center" }}>Open during business hours</p>
+        )}
       </div>
     </motion.div>
   );
@@ -746,6 +751,26 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
             occupants={groupedByLocation.get(activeLocation.id) ?? []}
             onClose={() => setActiveLocationId(null)}
             onGoHere={onLocationPanelGoHere}
+            isLocationClosed={(() => {
+              const now = new Date();
+              const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+              if (!activeLocation.operating_hours || activeLocation.operating_hours.length === 0) return false;
+              const dayOfWeek = nowET.getDay();
+              const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
+              const todayEntries = activeLocation.operating_hours.filter(h => h.day_of_week === dayOfWeek);
+              const dayAgnostic = activeLocation.operating_hours.filter(h => h.day_of_week == null);
+              const entries = todayEntries.length > 0 ? todayEntries : dayAgnostic;
+              if (entries.length === 0) return false;
+              return !entries.some(h => {
+                if (!h.open_time || !h.close_time) return true;
+                const [oh, om] = h.open_time.split(':').map(Number);
+                const [ch, cm] = h.close_time.split(':').map(Number);
+                const openMin = oh * 60 + om;
+                const closeMin = ch * 60 + cm;
+                if (openMin <= closeMin) return currentMinutes >= openMin && currentMinutes <= closeMin;
+                return currentMinutes >= openMin || currentMinutes <= closeMin;
+              });
+            })()}
           />
         )}
       </AnimatePresence>
