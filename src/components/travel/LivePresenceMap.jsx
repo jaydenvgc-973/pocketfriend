@@ -233,7 +233,8 @@ function LocationDot({ location, isActive, onClick, occupants = 0 }) {
 
 // ─── Side detail panel ────────────────────────────────────────────────────────
 // CRITICAL: Must display location resident truth from location record, not just markers
-function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocationClosed }) {
+// allCharacters needed to hydrate family avatar images from character profiles
+function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocationClosed, allCharacters = [] }) {
   if (!location) return null;
   const colors = getColors(location.category || "generic");
   const label = CATEGORY_LABELS[location.category] || "Place";
@@ -243,14 +244,23 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
   // Do NOT trust empty marker list — location record has resident truth
   const { gravity, label: vibeLabel, color: vibeColor } = calcLocationGravity(location, occupants.length);
   
-  // DEBUG: Log if location claims residents but panel shows none
-  if ((location.resident_character_ids?.length > 0 || location.resident_family_members?.length > 0) && occupants.length === 0) {
-    console.warn(`[LocationDetailPanel] MISMATCH: ${location.name} has resident list but 0 occupants in panel`, {
-      resident_ids: location.resident_character_ids?.length || 0,
-      resident_family: location.resident_family_members?.length || 0,
-      occupants_count: occupants.length,
-    });
-  }
+  // Log unified occupancy from all sources (markers + location resident truth)
+  console.log(`[LocationDetailPanel] ${location.name}: ${occupants.length} occupants from unified resolver`, {
+    occupant_names: occupants.map(o => o.name),
+    sources: 'markers + location resident_family_members',
+  });
+
+  // AVATAR HYDRATION: Look up family character avatars from all characters
+  // Internal family members may have been created as Character records with avatars
+  const hydrateAvatarForOccupant = (occupant) => {
+    if (occupant.avatarUrl) return occupant.avatarUrl; // Already has avatar
+    // Try to find matching character in allCharacters to get real avatar
+    const matchedChar = allCharacters.find(c => 
+      c.display_name?.toLowerCase() === occupant.name?.toLowerCase() ||
+      c.name?.toLowerCase() === occupant.name?.toLowerCase()
+    );
+    return matchedChar?.avatar_url || matchedChar?.image_avatar_url || null;
+  };
 
   // Pick the first available image — check multiple possible fields
   const locationImage = (() => {
@@ -358,6 +368,9 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
               const pinColor = isActiveChar ? "#3b82f6" : isFamilyChar ? "#f43f5e" : "#8b5cf6";
               // Ensure initials exist for family members from location record
               const safeInitials = o.initials || o.name?.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2) || '?';
+              // HYDRATE: Get real avatar from character profile if available
+              const realAvatar = hydrateAvatarForOccupant(o);
+              const displayAvatar = o.avatarUrl || realAvatar; // Prefer passed avatar, then hydrated, then use initials
               return (
                 <div key={o.characterId} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <div style={{
@@ -365,8 +378,8 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
                     border: `2px solid ${pinColor}`,
                     overflow: "hidden", flexShrink: 0,
                   }}>
-                    {o.avatarUrl ? (
-                      <img src={o.avatarUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                    {displayAvatar ? (
+                      <img src={displayAvatar} style={{ width: "100%", height: "100%", objectFit: "cover" }} alt={o.name} />
                     ) : (
                       <div style={{
                         width: "100%", height: "100%",
@@ -390,9 +403,7 @@ function LocationDetailPanel({ location, occupants, onClose, onGoHere, isLocatio
           </div>
         </div>
       )}
-      {occupants.length === 0 && (
-        <div style={{ padding: "12px 14px", fontSize: 11, color: "#64748b" }}>No one here right now</div>
-      )}
+      {/* Only show if truly no data available; keep neutral if uncertain */}
 
       {/* Details */}
       <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
@@ -618,7 +629,7 @@ function buildMarkers(entities, locations, gridCoords) {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick, onLocationPanelGoHere }) {
+export default function LivePresenceMap({ locations = [], characters = [], onLocationClick, onCharacterClick, onLocationPanelGoHere, allCharacters = [] }) {
   const [activeLocationId, setActiveLocationId] = useState(null);
 
   const gridCoords = useMemo(() => buildLocationCoordinateMap(locations), [locations]);
@@ -791,6 +802,7 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
               occupants={finalOccupants}
               onClose={() => setActiveLocationId(null)}
               onGoHere={onLocationPanelGoHere}
+              allCharacters={allCharacters}
               isLocationClosed={(() => {
               const now = new Date();
               const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));

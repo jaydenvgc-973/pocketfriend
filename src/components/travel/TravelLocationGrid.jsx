@@ -31,7 +31,6 @@ export default function TravelLocationGrid({
         // UNIFIED: Use same resolver as map/popup to ensure consistent presence
         const presentEntities = getPresenceAtLocation(loc, presenceEntities);
         const allOccupants = presentEntities.map(e => e.display_name);
-        const isVacant = allOccupants.length === 0;
 
         return (
           <button
@@ -56,11 +55,9 @@ export default function TravelLocationGrid({
             {/* Name */}
             <div className="absolute bottom-0 left-0 right-0 p-2.5 pointer-events-none">
               <p className="text-xs font-semibold text-white leading-tight truncate">{loc.name}</p>
-              {allOccupants.length > 0 ? (
+              {allOccupants.length > 0 && (
                 <p className="text-[10px] text-white/70 truncate">{allOccupants.slice(0, 2).join(", ")}</p>
-              ) : isVacant ? (
-                <p className="text-[10px] text-white/40 italic">Vacant</p>
-              ) : null}
+              )}
             </div>
 
             {/* Closed badge */}

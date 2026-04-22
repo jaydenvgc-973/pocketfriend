@@ -496,14 +496,15 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
               <div className="space-y-2 pb-2">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Live World Map</p>
                 <LivePresenceMap
-                  locations={locationsData}
-                  characters={mapCharacters}
-                  onLocationClick={(locationId) => {
-                    const loc = locationsData.find(l => l.id === locationId);
-                    if (loc) setSelectedLocation(loc);
-                  }}
-                  onLocationPanelGoHere={handleSoloTravel}
-                />
+                   locations={locationsData}
+                   characters={mapCharacters}
+                   allCharacters={[...activeCharacters, ...npcCharacters, ...npcFamilyMembers]}
+                   onLocationClick={(locationId) => {
+                     const loc = locationsData.find(l => l.id === locationId);
+                     if (loc) setSelectedLocation(loc);
+                   }}
+                   onLocationPanelGoHere={handleSoloTravel}
+                 />
                 <p className="text-[10px] text-muted-foreground text-center">Tap a location to select it · Character pins show real-time presence</p>
               </div>
             </motion.div>
