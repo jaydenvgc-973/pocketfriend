@@ -564,72 +564,39 @@ function buildLocationCoordinateMap(locations) {
   return coordMap;
 }
 
-function resolveCharacterLocation(char) {
-  // Support both raw Character records and normalized presence entities
-  // Normalized presence entity shape (from travelPresenceResolver)
-  if (char.resolved_current_location_id)
-    return { locId: char.resolved_current_location_id };
-  // Internal family with only residence
-  if (char.residence_location_id && char.is_currently_present)
-    return { locId: char.residence_location_id };
-  // Raw character record fallbacks
-  if (char.travel_destination_location_id)
-    return { locId: char.travel_destination_location_id };
-  if (char.resolved_presence_status === "at_work" || char.location_status === "at_location") {
-    if (char.current_work_location_id) return { locId: char.current_work_location_id };
-    if (char.occupation_location_id) return { locId: char.occupation_location_id };
-  }
-  if (char.resolved_presence_status === "at_school") {
-    if (char.current_school_location_id) return { locId: char.current_school_location_id };
-    if (char.education_location_id) return { locId: char.education_location_id };
-  }
-  if (char.current_home_location_id) return { locId: char.current_home_location_id };
-  if (char.current_work_location_id) return { locId: char.current_work_location_id };
-  if (char.occupation_location_id) return { locId: char.occupation_location_id };
-  return null;
-}
+// Normalized presence entities provide all location/display info directly — no fallback resolvers needed
 
-function resolveCharacterDisplayName(char) {
-  // Support both shapes: raw record and normalized presence entity
-  return char.display_name || char.primary_name || char.full_name || char.name || 'Unknown';
-}
-
-function resolveCharacterAvatar(char) {
-  return char.avatar_url || char.image_avatar_url || null;
-}
-
-function resolveInitials(char) {
-  const name = resolveCharacterDisplayName(char);
-  return name.split(' ').map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase();
-}
-
-function buildMarkers(characters, locations, gridCoords) {
+function buildMarkers(entities, locations, gridCoords) {
   const locationMap = new Map(locations.map((l) => [l.id, l]));
   const markers = [];
   const seenIds = new Set();
-  for (const char of characters) {
-    if (seenIds.has(char.id)) continue;
-    const resolved = resolveCharacterLocation(char);
-    if (!resolved) continue;
-    const location = locationMap.get(resolved.locId);
+  
+  for (const entity of entities) {
+    if (seenIds.has(entity.id)) continue;
+    
+    // NORMALIZED ENTITY: always has resolved_current_location_id if is_currently_present
+    const locId = entity.resolved_current_location_id;
+    if (!locId || !entity.is_currently_present) continue;
+    
+    const location = locationMap.get(locId);
     if (!location) continue;
+    
     const coordinates = gridCoords[location.id];
     if (!coordinates) continue;
-    seenIds.add(char.id);
-    const avatarUrl = resolveCharacterAvatar(char);
-    const displayName = resolveCharacterDisplayName(char);
-    const initials = resolveInitials(char);
+    
+    seenIds.add(entity.id);
+    
     markers.push({
-      characterId: char.id,
-      name: displayName,
-      initials,
-      type: char.character_type || char.effective_presence_type || 'npc_fictitious',
-      avatarUrl,
-      locationId: resolved.locId,
+      characterId: entity.id,
+      name: entity.display_name,
+      initials: entity.initials,
+      type: entity.effective_presence_type || entity.character_type || 'npc_fictitious',
+      avatarUrl: entity.avatar_url,
+      locationId: locId,
       locationName: location.name,
       coordinates,
-      isAsleep: char.resolved_presence_status === "sleeping" || char.resolved_presence_status === "napping",
-      isFamilyMember: char.character_type === 'npc_family_member' || char.effective_presence_type === 'npc_family_member' || char.source_type === 'internal_family',
+      isAsleep: entity.resolved_presence_status === "sleeping" || entity.resolved_presence_status === "napping",
+      isFamilyMember: entity.effective_presence_type === 'npc_family_member',
     });
   }
   return markers;

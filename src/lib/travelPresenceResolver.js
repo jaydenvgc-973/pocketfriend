@@ -32,44 +32,58 @@ export function resolveTravelPresenceEntities({
   const normalized = [];
   const seenIds = new Set();
 
+  // DEBUG LOGGING
+  const debugLog = (msg) => {
+    console.log(`[travelPresenceResolver] ${msg}`);
+  };
+
+  debugLog(`Starting resolution: user=${currentUser?.id}, active=${activeCharacters.length}, npc_fict=${npcFictitious.length}, npc_fam=${npcFamilyMembers.length}, locs=${locations.length}`);
+
   // 1. Include explicit npc_family_member Character records
   npcFamilyMembers.forEach(char => {
     if (seenIds.has(char.id)) return;
     seenIds.add(char.id);
-    normalized.push({
+    const normalized_entity = {
       ...normalizeCharacterToPresenceEntity(char, locationMap),
       source_type: 'character_record',
       effective_presence_type: 'npc_family_member',
-    });
+    };
+    debugLog(`+ npc_family_member: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
+    normalized.push(normalized_entity);
   });
 
   // 2. Include npc_fictitious records (normal world NPCs)
   npcFictitious.forEach(char => {
     if (seenIds.has(char.id)) return;
     seenIds.add(char.id);
-    normalized.push({
+    const normalized_entity = {
       ...normalizeCharacterToPresenceEntity(char, locationMap),
       source_type: 'character_record',
       effective_presence_type: 'npc_fictitious',
-    });
+    };
+    debugLog(`+ npc_fictitious: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
+    normalized.push(normalized_entity);
   });
 
   // 3. Include active_created_character records
   activeCharacters.forEach(char => {
     if (seenIds.has(char.id)) return;
     seenIds.add(char.id);
-    normalized.push({
+    const normalized_entity = {
       ...normalizeCharacterToPresenceEntity(char, locationMap),
       source_type: 'character_record',
       effective_presence_type: 'active_created_character',
-    });
+    };
+    debugLog(`+ active_created: ${char.name} (${char.id}) → ${normalized_entity.resolved_current_location_name || '[no location]'}`);
+    normalized.push(normalized_entity);
   });
 
   // 4. Internal family members from family_members[] arrays are metadata only
   // They should not be included as world-presence entities automatically.
   // They only appear on the world if they're explicit Character records (npc_family_member type).
-  // Skip synthesizing internal family entities from parent character arrays.
+  debugLog(`SKIPPING internal family synthesis: ${allCharacters.length} parent characters checked, 0 internal family entities created`);
 
+  debugLog(`FINAL: ${normalized.length} presence entities resolved, ${normalized.filter(e => e.is_currently_present).length} present now`);
   return normalized;
 }
 

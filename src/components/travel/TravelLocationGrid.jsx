@@ -1,5 +1,6 @@
 import { MapPin } from "lucide-react";
 import { isLocationActiveNow } from "@/lib/workScheduleUtils";
+import { getPresenceAtLocation } from "@/lib/travelPresenceResolver";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -7,7 +8,13 @@ const CATEGORY_EMOJIS = {
   medical: "🏨", business: "🏢", government: "🏛️", public: "🗺️", generic: "📍",
 };
 
-export default function TravelLocationGrid({ locations, selectedLocation, onSelect, characters = [] }) {
+export default function TravelLocationGrid({ 
+  locations, 
+  selectedLocation, 
+  onSelect, 
+  characters = [],
+  presenceEntities = [] // UNIFIED: pass normalized presence entities from parent
+}) {
   if (locations.length === 0) return null;
 
   return (
@@ -21,22 +28,10 @@ export default function TravelLocationGrid({ locations, selectedLocation, onSele
         const openStatus = isLocationActiveNow(loc); // true = open, false = closed, null = no hours
         const isClosed = openStatus === false;
 
-        // For residential (home) locations: check who is a resident (current_home_location_id)
-        let allOccupants = [];
-        let isVacant = false;
-
-        if (loc.category === 'home') {
-          // Get residents by current_home_location_id OR home_location_id (both field names used)
-          const residents = characters
-            .filter(c => c.current_home_location_id === loc.id || c.home_location_id === loc.id)
-            .map(c => c.name);
-          const npcResidents = (loc.resident_family_members || []).map(m => m.name);
-          allOccupants = [...new Set([...residents, ...npcResidents])];
-          isVacant = allOccupants.length === 0;
-        } else {
-          // For non-residential locations, just map character names at their resolved location
-          allOccupants = [];
-        }
+        // UNIFIED: Use same resolver as map/popup to ensure consistent presence
+        const presentEntities = getPresenceAtLocation(loc, presenceEntities);
+        const allOccupants = presentEntities.map(e => e.display_name);
+        const isVacant = allOccupants.length === 0;
 
         return (
           <button

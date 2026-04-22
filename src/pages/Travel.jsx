@@ -175,9 +175,9 @@ export default function Travel() {
     locationsData.length,
   ]);
 
-  // mapCharacters: raw character records fed to LivePresenceMap pin builder
-  // Includes all character types — family members now included
-  const mapCharacters = allCharactersForFamilyScan;
+  // mapCharacters: UNIFIED PRESENCE ENTITIES (normalized, with home fallback applied)
+  // Fed directly to LivePresenceMap — ensures map matches popup/counts exactly
+  const mapCharacters = allPresenceEntities;
 
   // VGC Towers residents (for travel-away count)
   const vgcTowers = locationsData.find(l => l.name === 'VGC Towers');
@@ -550,6 +550,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             selectedLocation={selectedLocation}
             onSelect={setSelectedLocation}
             characters={mapCharacters}
+            presenceEntities={allPresenceEntities}
           />
           <Button onClick={() => setShowRealLocationModal(true)} variant="outline" size="sm" className="w-full rounded-xl gap-2">
             <Plus className="w-4 h-4" />
