@@ -206,13 +206,23 @@ function LocationDetailPanel({ location, occupants, onClose }) {
   const label = CATEGORY_LABELS[location.category] || "Place";
   const icon = CATEGORY_ICONS[location.category] || "📍";
 
-  // Pick the first available image from zones
+  // Pick the first available image — check multiple possible fields
   const locationImage = (() => {
+    // Direct image fields
+    if (location.image_url) return location.image_url;
+    if (location.cover_image_url) return location.cover_image_url;
+    if (location.thumbnail_url) return location.thumbnail_url;
+    // Zones array
     const zones = location.zones || [];
     for (const zone of zones) {
       const imgs = zone.image_urls || [];
       if (imgs.length > 0) return imgs[0];
+      if (zone.image_url) return zone.image_url;
     }
+    // Top-level image_urls array
+    if (Array.isArray(location.image_urls) && location.image_urls.length > 0) return location.image_urls[0];
+    // Photos array
+    if (Array.isArray(location.photos) && location.photos.length > 0) return location.photos[0]?.url || location.photos[0];
     return null;
   })();
 
