@@ -160,7 +160,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             exit={{ height: 0, opacity: 0 }}
             className="border-t border-border overflow-hidden"
           >
-            <LocationDetailPanel location={location} characters={characters} />
+            <LocationDetailPanel location={location} characters={characters} currentUserId={currentUser?.id} currentUserEmail={currentUser?.email} />
                     {isShared && !isAdmin && (
                       <div className="mx-4 mb-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
                         <p className="text-xs text-amber-400">🔒 This is a shared location. Only admins can edit it. Your characters can visit but cannot be permanently assigned here.</p>
@@ -765,7 +765,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
                 {form.worker_character_ids.map((workerId, idx) => {
                    const worker = characters.find(c => c.id === workerId);
-                   const npcWorker = !worker ? [...activeChars, ...npcFictitious, ...npcFamily].find(n => n.id === workerId) : null;
+                   const npcWorker = !worker ? [...activeChars, ...npcFictitious].find(n => n.id === workerId) : null;
                   const workerName = worker?.name || npcWorker?.name || workerId;
                   return (
                     <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">

@@ -18,6 +18,7 @@ import ThomasAndersonFix from "@/components/home/ThomasAndersonFix";
 import InviteOutModal from "@/components/home/InviteOutModal";
 import NPCContactPanel from "@/components/home/NPCContactPanel";
 import { DEFAULT_CHARACTER_DATA, buildSystemPrompt } from "@/lib/defaultCharacter";
+import { getCharactersForHomepage } from "@/lib/characterEditableListResolver";
 
 export default function Home() {
   const navigate = useNavigate();
@@ -200,26 +201,17 @@ export default function Home() {
   const defaultChar = characters.find(c => c.is_default);
   const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
   
-  // Homepage shows ONLY active_created_character type OR legacy active characters without type (for backward compat on murqart).
-  // Exclude all NPC types.
-  const isMurqart = currentUser?.email === 'murqart@gmail.com';
-  const allActiveCreated = customChars.filter(c => {
-    if ((c.status !== "active" && c.status) || c.name === "Leo Parker") return false;
-    // Exclude any NPC types
-    if (c.character_type?.startsWith('npc_')) return false;
-    // Strict: must be active_created_character type
-    if (c.character_type === "active_created_character") return true;
-    // For murqart only, show legacy active characters without character_type
-    if (isMurqart && !c.character_type) return true;
-    return false;
-  });
+  // Use unified resolver to get homepage-eligible characters
+  const { activeCharacters } = getCharactersForHomepage(customChars, currentUser?.id, currentUser?.email);
   
   // Sort remaining active created characters alphabetically
-  const activeCustomChars = allActiveCreated.sort((a, b) => {
-    const nameA = (a.display_name || a.name || '').toLowerCase();
-    const nameB = (b.display_name || b.name || '').toLowerCase();
-    return nameA.localeCompare(nameB);
-  });
+  const activeCustomChars = activeCharacters
+    .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker")
+    .sort((a, b) => {
+      const nameA = (a.display_name || a.name || '').toLowerCase();
+      const nameB = (b.display_name || b.name || '').toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
   const movedAwayChars = customChars.filter(c => c.status === "moved_away");
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;

@@ -26,6 +26,7 @@ import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesM
 import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
 import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubleshootingPanel";
 import EditCharacterType from "@/components/settings/EditCharacterType";
+import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
   const queryClient = useQueryClient();
@@ -68,7 +69,7 @@ export default function Settings() {
   });
 
   // Merge: regular characters + npc_fictitious from backend, deduplicated
-  const characters = (() => {
+  const allCharacters = (() => {
     const seen = new Set();
     return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
       if (seen.has(c.id)) return false;
@@ -76,6 +77,9 @@ export default function Settings() {
       return true;
     });
   })();
+
+  // Use resolver for proper ordering and filtering
+  const characters = getCharactersForSettingsList(allCharacters, user?.id, user?.email, user);
 
   const isAdmin = user?.email === ADMIN_EMAIL;
 

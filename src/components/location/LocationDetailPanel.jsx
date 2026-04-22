@@ -2,6 +2,7 @@ import { Home, Briefcase, GraduationCap, Dumbbell, ShoppingCart, Heart, User, Us
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
+import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -23,7 +24,7 @@ function SectionHeader({ icon: Icon, label }) {
   );
 }
 
-export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null }) {
+export default function LocationDetailPanel({ location, characters = [], allLocations = [], onResidentsChanged = null, currentUserId = null, currentUserEmail = null }) {
   const [confirmMove, setConfirmMove] = useState(null);
   const [isMoving, setIsMoving] = useState(false);
 
@@ -34,10 +35,11 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
     ? Object.values(location.utility_costs).reduce((s, v) => s + (v || 0), 0)
     : 0;
 
-  const activeResidents = (location.resident_character_ids || []).map(id => {
-    const c = characters.find(ch => ch.id === id);
-    return c ? c.name : null;
-  }).filter(Boolean);
+  // Hydrate resident character IDs to full character objects with names and avatars
+  const activeResidents = (location.resident_character_ids || [])
+    .map(id => hydrateCharacterReference(id, characters, currentUserId, currentUserEmail))
+    .filter(Boolean);
+  
   const npcResidents = (location.resident_family_members || []).map(r => r.name).filter(Boolean);
 
   const allResidentCount = activeResidents.length + npcResidents.length;
@@ -103,13 +105,23 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
           {(activeResidents.length > 0 || npcResidents.length > 0) && (
             <>
               <SectionHeader icon={Users} label="Residents" />
-              {activeResidents.map(name => {
-                const char = characters.find(c => c.name === name);
+              {activeResidents.map(resident => {
+                if (!resident) return null;
+                const char = characters.find(c => c.id === resident.id);
                 const isResident = char?.current_home_location_id === location.id;
                 return (
-                  <div key={name} className="flex items-center gap-2 py-0.5 group">
+                  <div key={resident.id} className="flex items-center gap-2 py-0.5 group">
                     <div className="w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
-                    <span className="text-xs text-foreground">{name}</span>
+                    <div className="flex items-center gap-2 flex-1">
+                      {resident.avatarUrl ? (
+                        <img src={resident.avatarUrl} alt={resident.name} className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-4 h-4 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-[8px] font-bold text-primary">
+                          {resident.initials}
+                        </div>
+                      )}
+                      <span className="text-xs text-foreground">{resident.name}</span>
+                    </div>
                     <span className="text-[10px] text-muted-foreground ml-auto">active character</span>
                     {isResident && char && otherHomes.length > 0 && (
                       <button

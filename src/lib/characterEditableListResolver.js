@@ -1,8 +1,12 @@
 /**
- * SHARED CHARACTER RESOLVER FOR SETTINGS MODULES
+ * UNIFIED CHARACTER RESOLVER
  * 
  * Enforces strict user scope isolation, character type filtering, and legacy fallbacks.
- * Use this across ALL Settings edit screens.
+ * Use this across ALL character discovery:
+ * - Settings modules
+ * - Homepage character cards and NPC contacts
+ * - Residency hydration
+ * - Character listing and filtering
  * 
  * Rules:
  * - User scope comes FIRST (owner_user_id, owner_email, or assigned scope)
@@ -10,7 +14,31 @@
  * - Legacy records are safely resolved via fallback chain
  * - NO created_by primary filtering
  * - NO cross-account contamination
+ * - Service-created records are included if user-owned
  */
+
+/**
+ * CORE RESOLVER: Get all user-scoped characters with resolved types.
+ * This is the foundation for ALL character discovery.
+ * 
+ * @param {Array} allCharacters - raw character list from query
+ * @param {string} currentUserId - logged-in user ID
+ * @param {string} currentUserEmail - logged-in user email
+ * @returns {Array} all characters owned by current user with resolved types
+ */
+export function resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail) {
+  if (!allCharacters || !Array.isArray(allCharacters)) return [];
+  if (!currentUserId && !currentUserEmail) return [];
+
+  return allCharacters
+    .filter(char => isCharacterOwnedByCurrentUser(char, currentUserId, currentUserEmail))
+    .map(char => ({
+      ...char,
+      _resolvedType: resolveCharacterType(char),
+      _displayName: resolveDisplayName(char),
+      _avatarUrl: resolveAvatarUrl(char),
+    }));
+}
 
 /**
  * Resolve which characters are eligible for editing in a given Settings module.
@@ -22,22 +50,53 @@
  * @returns {Array} filtered and validated characters eligible for editing
  */
 export function getEditableCharactersForModule(allCharacters, currentUserId, currentUserEmail, moduleType) {
-  if (!allCharacters || !Array.isArray(allCharacters)) return [];
-  if (!currentUserId && !currentUserEmail) return [];
+  const scoped = resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail);
+  
+  return scoped.filter(char => isCharacterEligibleForModule(char._resolvedType, moduleType));
+}
 
-  return allCharacters
-    .filter(char => {
-      // STEP 1: STRICT USER SCOPE VALIDATION (before anything else)
-      if (!isCharacterOwnedByCurrentUser(char, currentUserId, currentUserEmail)) {
-        return false;
-      }
+/**
+ * Get characters for homepage display.
+ * 
+ * @returns {Object} { activeCharacters, npcFictitious }
+ */
+export function getCharactersForHomepage(allCharacters, currentUserId, currentUserEmail) {
+  const scoped = resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail);
+  
+  return {
+    activeCharacters: scoped.filter(c => c._resolvedType === 'active_created_character'),
+    npcFictitious: scoped.filter(c => c._resolvedType === 'npc_fictitious'),
+  };
+}
 
-      // STEP 2: RESOLVE CHARACTER TYPE (only if scope is valid)
-      const resolvedType = resolveCharacterType(char);
-
-      // STEP 3: APPLY MODULE-LEVEL CHARACTER TYPE RULES
-      return isCharacterEligibleForModule(resolvedType, moduleType);
-    });
+/**
+ * Get settings character list with strict type ordering.
+ * Order: user, active_created_character, npc_fictitious, npc_family_member
+ * 
+ * @returns {Array} ordered list suitable for Settings → Manage Characters
+ */
+export function getCharactersForSettingsList(allCharacters, currentUserId, currentUserEmail, currentUserObject) {
+  const scoped = resolveUserScopedCharacters(allCharacters, currentUserId, currentUserEmail);
+  
+  // Define sort order
+  const typeOrder = {
+    'user': 0,
+    'active_created_character': 1,
+    'npc_fictitious': 2,
+    'npc_family_member': 3,
+    'npc_regular': 4,
+    'unknown': 5,
+  };
+  
+  const userCharacters = scoped.filter(c => c._resolvedType === 'active_created_character' || c._resolvedType === 'npc_fictitious' || c._resolvedType === 'npc_family_member');
+  
+  // Sort by type order, then by name
+  return userCharacters.sort((a, b) => {
+    const aOrder = typeOrder[a._resolvedType] ?? 99;
+    const bOrder = typeOrder[b._resolvedType] ?? 99;
+    if (aOrder !== bOrder) return aOrder - bOrder;
+    return (a._displayName || '').localeCompare(b._displayName || '');
+  });
 }
 
 /**
@@ -130,6 +189,33 @@ function hasFullEditableProfile(character) {
 }
 
 /**
+ * Safely resolve display name for a character.
+ */
+function resolveDisplayName(character) {
+  return character.display_name || character.primary_name || character.full_name || character.name || 'Unknown';
+}
+
+/**
+ * Safely resolve avatar URL for a character.
+ */
+function resolveAvatarUrl(character) {
+  return character.avatar_url || character.image_avatar_url || null;
+}
+
+/**
+ * Resolve initials for fallback avatar display.
+ */
+function resolveInitials(character) {
+  const name = resolveDisplayName(character);
+  return name
+    .split(' ')
+    .map(n => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2);
+}
+
+/**
  * Determine if a resolved character type is eligible for a specific Settings module.
  */
 function isCharacterEligibleForModule(resolvedType, moduleType) {
@@ -158,6 +244,32 @@ function isCharacterEligibleForModule(resolvedType, moduleType) {
     default:
       return false;
   }
+}
+
+/**
+ * Helper: Hydrate a character ID to a displayable character object.
+ * Used for residency lists, relationship displays, etc.
+ * 
+ * Returns { name, avatarUrl, type, fallback } suitable for UI rendering.
+ */
+export function hydrateCharacterReference(characterId, allCharacters, currentUserId, currentUserEmail) {
+  const char = allCharacters.find(c => c.id === characterId);
+  if (!char) {
+    return null;
+  }
+  
+  // Validate it's in current user scope
+  if (!isCharacterOwnedByCurrentUser(char, currentUserId, currentUserEmail)) {
+    return null;
+  }
+  
+  return {
+    id: char.id,
+    name: resolveDisplayName(char),
+    avatarUrl: resolveAvatarUrl(char),
+    type: resolveCharacterType(char),
+    initials: resolveInitials(char),
+  };
 }
 
 /**
