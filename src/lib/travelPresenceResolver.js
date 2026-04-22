@@ -65,51 +65,10 @@ export function resolveTravelPresenceEntities({
     });
   });
 
-  // 4. Discover and normalize internal family entities from parent characters
-  // These are family_members[] arrays on Character records
-  allCharacters.forEach(parentChar => {
-    if (!parentChar.family_members || !Array.isArray(parentChar.family_members)) return;
-    
-    parentChar.family_members.forEach((familyMember, idx) => {
-      if (!familyMember.name) return;
-      
-      const syntheticId = `internal_family_${parentChar.id}_${idx}`;
-      if (seenIds.has(syntheticId)) return;
-      seenIds.add(syntheticId);
-
-      // Internal family members inherit parent's home location unless assigned elsewhere
-      const homeLocationId = parentChar.current_home_location_id;
-      const isHomeResident = homeLocationId ? true : false;
-
-      normalized.push({
-        id: syntheticId,
-        display_name: familyMember.name,
-        name: familyMember.name,
-        character_type: 'npc_family_member',
-        effective_presence_type: 'npc_family_member',
-        avatar_url: null,
-        image_avatar_url: null,
-        initials: familyMember.name.split(' ').map(p => p[0]).filter(Boolean).slice(0, 2).join('').toUpperCase(),
-        
-        // Presence truth: internal family defaults to parent's home
-        resolved_current_location_id: homeLocationId,
-        resolved_current_location_name: homeLocationId ? locationMap[homeLocationId]?.name : null,
-        resolved_presence_status: 'home',
-        residence_location_id: homeLocationId,
-        
-        is_home_resident: isHomeResident,
-        is_currently_present: isHomeResident, // default to home unless proven away
-        is_away: false,
-        is_home: true,
-        
-        // Metadata
-        source_type: 'internal_family',
-        parent_character_id: parentChar.id,
-        parent_character_name: parentChar.name || parentChar.display_name,
-        relationship_type: familyMember.relationship_type,
-      });
-    });
-  });
+  // 4. Internal family members from family_members[] arrays are metadata only
+  // They should not be included as world-presence entities automatically.
+  // They only appear on the world if they're explicit Character records (npc_family_member type).
+  // Skip synthesizing internal family entities from parent character arrays.
 
   return normalized;
 }
