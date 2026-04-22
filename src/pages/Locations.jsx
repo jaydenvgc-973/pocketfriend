@@ -105,9 +105,7 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
               const allNames = [...residentNames, ...legacyActiveNames, ...npcNames];
               return allNames.length > 0 ? (
                 <span className="text-xs text-blue-400/80 font-medium">{allNames.join(', ')}</span>
-              ) : (
-                <span className="text-xs text-muted-foreground/60 italic">vacant</span>
-              );
+              ) : null;
             })()}
             {location.category !== 'home' && location.category !== 'generic' && location.resident_character_ids?.length > 0 && (
               <span className="text-xs text-blue-400/80 font-medium">
