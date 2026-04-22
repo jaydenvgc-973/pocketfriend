@@ -42,8 +42,25 @@ function getColors(category) {
   return CATEGORY_COLORS[category] || CATEGORY_COLORS.generic;
 }
 
-// ─── City Map SVG background ──────────────────────────────────────────────────
+// ─── City Map image background ───────────────────────────────────────────────
 function CityMapBackground() {
+  return (
+    <img
+      src="https://media.base44.com/images/public/69bfd8da2f47364437a2deaa/258fa5f5d_file_00000000185071fd8b67fe302065fb1f.png"
+      style={{
+        position: "absolute", inset: 0,
+        width: "100%", height: "100%",
+        objectFit: "cover",
+        objectPosition: "center",
+        pointerEvents: "none",
+      }}
+      alt="city map"
+    />
+  );
+}
+
+// ─── UNUSED SVG (kept for reference) ─────────────────────────────────────────
+function _CityMapBackgroundSVG_unused() {
   return (
     <svg
       viewBox="0 0 800 420"
@@ -143,6 +160,7 @@ function CityMapBackground() {
     </svg>
   );
 }
+
 
 // ─── Zone tab bar ─────────────────────────────────────────────────────────────
 const ZONE_TABS = [
