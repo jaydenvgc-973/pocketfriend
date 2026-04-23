@@ -297,23 +297,66 @@ function buildSceneActionLockBlock(promptText) {
 // These functions build structured subject objects from raw data.
 // Images and prompts are assembled FROM these records — never the other way around.
 
-// ── PUBLIC URL FILTER ────────────────────────────────────────────────────────
-// The generation provider can ONLY fetch media.base44.com CDN URLs and external CDNs.
-// base44.app/api/apps/ paths (including /files/mp/public/) are served through the
-// base44 API and are NOT accessible to the generation provider — it receives a 403/404.
-// Only URLs served directly by the CDN (media.base44.com) or external hosts pass.
+// ── PROVIDER ACCESSIBILITY FILTER ────────────────────────────────────────────
+// CRITICAL: Generation provider can ONLY fetch:
+// 1. media.base44.com CDN URLs (public storage, no auth required)
+// 2. External HTTPS CDNs (public, no auth required)
 //
-// This filter is applied at SUBJECT BUILD TIME so identity refs are pre-validated.
-// Also applied at STEP 6.5 as a final safety net on location refs.
-function isPublicUrl(url) {
+// CANNOT fetch:
+// 1. base44.app/api/apps/ paths — require API auth + session, provider has none
+// 2. Signed/expiring URLs with ?token=, ?signed=, X-Amz-Signature — unstable
+//
+// /files/mp/public/ inside base44.app paths is still API-gated — provider cannot reach it.
+// /files/mp/private/ is explicitly private storage — doubly inaccessible.
+//
+// This filter is applied at SUBJECT BUILD TIME (Step 1) and STEP 6.5 (safety net).
+function isProviderAccessible(url) {
   if (!url || typeof url !== 'string') return false;
   if (!url.startsWith('https://')) return false;
-  // base44 API paths — NOT accessible to the generation provider (API auth required)
-  if (url.includes('base44.app/api/apps/')) return false;
-  // Signed / time-limited URLs — expire and are not stable references
+  // Truly private storage — requires authentication
+  if (url.includes('/files/mp/private/')) return false;
+  if (url.includes('/files/private/')) return false;
+  // Signed / time-limited URLs — provider cannot use them
   if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
-  // media.base44.com CDN and all external HTTPS CDN URLs pass
+  // base44 API paths — require session/auth, provider has neither
+  // CRITICAL: even /files/mp/public/ inside base44.app is API-gated
+  if (url.includes('base44.app/api/apps/')) return false;
+  // media.base44.com CDN and all external HTTPS CDN URLs are provider-accessible
   return true;
+}
+
+/**
+ * MANDATORY CHARACTER FILE RESOLUTION
+ * Check character file fields in strict priority order.
+ * Do NOT skip levels or use avatar background as fallback.
+ */
+async function resolveCharacterLocationFromFile(charRecord) {
+  const result = {
+    locationId: null,
+    source: null,
+    presence: charRecord?.resolved_presence_status || 'home',
+  };
+
+  // STRICT PRIORITY ORDER — do not skip or reorder
+  if (charRecord?.resolved_current_location_id) {
+    result.locationId = charRecord.resolved_current_location_id;
+    result.source = 'character.resolved_current_location_id (PRIMARY)';
+  } else if (charRecord?.current_home_location_id) {
+    result.locationId = charRecord.current_home_location_id;
+    result.source = 'character.current_home_location_id (SECONDARY)';
+  } else if (charRecord?.home_location_id) {
+    result.locationId = charRecord.home_location_id;
+    result.source = 'character.home_location_id (TERTIARY)';
+  } else if (charRecord?.current_work_location_id) {
+    result.locationId = charRecord.current_work_location_id;
+    result.source = 'character.current_work_location_id (WORK)';
+  } else if (charRecord?.occupation_location_id) {
+    result.locationId = charRecord.occupation_location_id;
+    result.source = 'character.occupation_location_id (FALLBACK)';
+  }
+
+  console.log(`[LOC_RESOLVE] Character file: ${result.source || 'NOT FOUND'} | locId=${result.locationId || 'null'}`);
+  return result;
 }
 
 function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext = '') {
@@ -322,16 +365,16 @@ function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext 
   // and would be silently stripped later, reducing identity ref count without warning.
   // By filtering here we know exactly how many valid identity refs we have BEFORE dispatch.
   const serverRefs = [];
-  if (charRecord.avatar_url && isPublicUrl(charRecord.avatar_url)) serverRefs.push(charRecord.avatar_url);
-  else if (charRecord.avatar_url) console.warn(`[SUBJECT] avatar_url is private/internal URL — excluded from identity refs: ${charRecord.avatar_url?.substring(0, 60)}`);
+  if (charRecord.avatar_url && isProviderAccessible(charRecord.avatar_url)) serverRefs.push(charRecord.avatar_url);
+  else if (charRecord.avatar_url) console.warn(`[SUBJECT] avatar_url is inaccessible to provider — excluded: ${charRecord.avatar_url?.substring(0, 60)}`);
   if (charRecord.reference_image_urls?.length > 0) {
     for (const url of charRecord.reference_image_urls) {
-      if (isPublicUrl(url)) serverRefs.push(url);
-      else console.warn(`[SUBJECT] reference_image_url is private/internal — excluded: ${url?.substring(0, 60)}`);
+      if (isProviderAccessible(url)) serverRefs.push(url);
+      else console.warn(`[SUBJECT] reference_image_url inaccessible to provider — excluded: ${url?.substring(0, 60)}`);
     }
   }
-  // Client refs are fallback only — also filter for public URLs
-  const publicClientRefs = (clientRefs || []).filter(isPublicUrl);
+  // Client refs are fallback only — also filter for provider-accessible URLs
+  const publicClientRefs = (clientRefs || []).filter(isProviderAccessible);
   const faceRefs = serverRefs.length > 0 ? serverRefs : publicClientRefs;
   console.log(`[SUBJECT] Character identity refs: server=${serverRefs.length} | clientFallback=${publicClientRefs.length} | using=${faceRefs.length}`);
 
@@ -523,10 +566,10 @@ function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext 
 
 function buildUserSubject(sett, clientRefs = [], worldName = null) {
   // Priority: uploaded reference photos → generated avatars — public URLs only
-  const uploadedRefs = (sett.reference_image_urls || []).filter(isPublicUrl);
-  const generatedRefs = (sett.generated_avatar_urls || []).filter(isPublicUrl);
+  const uploadedRefs = (sett.reference_image_urls || []).filter(isProviderAccessible);
+  const generatedRefs = (sett.generated_avatar_urls || []).filter(isProviderAccessible);
   const faceRefs = [...uploadedRefs, ...generatedRefs];
-  const publicClientRefs = (clientRefs || []).filter(isPublicUrl);
+  const publicClientRefs = (clientRefs || []).filter(isProviderAccessible);
   const resolvedFaceRefs = faceRefs.length > 0 ? faceRefs : publicClientRefs;
   console.log(`[SUBJECT] User identity refs: uploaded=${uploadedRefs.length} | generated=${generatedRefs.length} | clientFallback=${publicClientRefs.length} | using=${resolvedFaceRefs.length}`);
 
@@ -827,12 +870,13 @@ Deno.serve(async (req) => {
           // Client refs MUST also be filtered to public URLs only
           const publicClientRefs = (characterReferenceImages || []).filter(isPublicUrl);
           console.warn(`[SUBJECT] Character ${characterId} not found in DB | clientRefs total=${characterReferenceImages?.length || 0} | publicClientRefs=${publicClientRefs.length}`);
-          if (publicClientRefs.length > 0) {
+          const filteredClientRefs = (characterReferenceImages || []).filter(isProviderAccessible);
+          if (filteredClientRefs.length > 0) {
             characterSubject = {
               subject_type: 'character',
               subject_id: characterId,
               canonical_name: characterName || 'the character',
-              face_refs: publicClientRefs.slice(0, 3),
+              face_refs: filteredClientRefs.slice(0, 3),
               outfit_desc: null,
               outfit_owner_id: characterId,
               appearance_text: '',
@@ -882,6 +926,17 @@ Deno.serve(async (req) => {
     const finalUserSubject = subjects.find(s => s.subject_type === 'user');
 
     // ── STEP 3: RESOLVE LOCATION ─────────────────────────────────────────────
+    // MANDATORY MULTI-SOURCE LOCATION RESOLUTION
+    // Before any image generation, the system MUST resolve where the character is
+    // by checking authoritative records in order:
+    // 1. Character file location fields (primary truth)
+    // 2. LocationReference records (zone/image authority)
+    // 3. Manual user selections (override when provided)
+    // 4. Live presence context (fallback to current state)
+    //
+    // CRITICAL: Do NOT infer room type from character avatar background.
+    // Avatar images are for character identity only (face, skin, hair, body type).
+    // Environment comes ONLY from location resources and location records.
     let locationImages = [];
     let locationNote = "";
     let resolvedLocationName = null;
@@ -901,9 +956,9 @@ Deno.serve(async (req) => {
         // PRESENCE SCENE MODE: full truth chain
         //   1. rabbit hole → context-true AI-generated scene, NO home fallback
         //   2. manual location override → built or real-world reference imagery
-        //   3. live presence gate → authoritative location from character state
+        //   3. character file + location records → authoritative location truth
         //   4. unresolved → text-based parse against saved locations
-        //   5. home with no images → residential text lock (never a venue fallback)
+        //   5. home with no images → HALT (do not use avatar background)
         // ══════════════════════════════════════════════════════════════════════
 
         if (imageMode === 'creative') {
@@ -1171,42 +1226,53 @@ The environment must feel real, functional, and original.
             }
 
             if (locationImages.length === 0) {
-              // ── AUTHORITATIVE PRESENCE GATE ─────────────────────────────────────
-              // No past-event override resolved — use live presence as the scene truth.
-              // Future-intent phrases in the prompt DO NOT relocate the scene.
+              // ── MANDATORY MULTI-SOURCE LOCATION RESOLUTION ───────────────────────
+              // CRITICAL: Must check character file fields in strict priority order FIRST.
+              // Do NOT infer room type from avatar background or prompt furniture hints.
+              // Character file is the AUTHORITATIVE source of location truth.
               const livePresence = charRecord?.resolved_presence_status || 'home';
               const isHome = ['home', 'sleeping', 'napping'].includes(livePresence);
               const isAtWork = livePresence === 'at_work';
               const isTraveling = livePresence === 'traveling';
 
+              // STRICT PRIORITY ORDER — all fields checked, do not skip levels
               let authorizedLocId = null;
-              if (isHome || (!isAtWork && !isTraveling)) {
-                authorizedLocId = charRecord?.current_home_location_id || charRecord?.resolved_current_location_id;
-                if (isHome) console.log(`[LOCATION] 🏠 PRESENCE GATE: Character is "${livePresence}" — forcing home location`);
-              } else if (isAtWork) {
-                authorizedLocId = charRecord?.resolved_current_location_id || charRecord?.occupation_location_id;
-                console.log(`[LOCATION] 💼 PRESENCE GATE: Character is at_work — using work location`);
-              } else if (isTraveling) {
-                authorizedLocId = charRecord?.travel_destination_location_id || charRecord?.resolved_current_location_id;
-                console.log(`[LOCATION] 🚗 PRESENCE GATE: Character is traveling`);
+              let authSource = null;
+              if (charRecord?.resolved_current_location_id) {
+                authorizedLocId = charRecord.resolved_current_location_id;
+                authSource = 'character.resolved_current_location_id (PRIMARY)';
+              } else if (charRecord?.current_home_location_id) {
+                authorizedLocId = charRecord.current_home_location_id;
+                authSource = 'character.current_home_location_id (SECONDARY)';
+              } else if (charRecord?.home_location_id) {
+                authorizedLocId = charRecord.home_location_id;
+                authSource = 'character.home_location_id (TERTIARY)';
+              } else if (isAtWork && charRecord?.current_work_location_id) {
+                authorizedLocId = charRecord.current_work_location_id;
+                authSource = 'character.current_work_location_id (WORK)';
+              } else if (charRecord?.occupation_location_id) {
+                authorizedLocId = charRecord.occupation_location_id;
+                authSource = 'character.occupation_location_id (FALLBACK)';
               }
+              console.log(`[LOCATION] 🔍 Multi-source check: ${authSource || 'NO LOCATION FOUND IN CHARACTER FILE'} | locId=${authorizedLocId || 'null'} | presence="${livePresence}"`);
 
-              // ── ZONE HINT FROM PROMPT (home context) ────────────────────────────────
-              // CRITICAL: the zone hint MUST match what the prompt describes.
-              // If the prompt says "bathroom" but we lock the zone to "living room",
-              // the provider receives conflicting instructions and hard-refuses (400 error).
-              // Bathroom and bedroom checks come FIRST to prevent the default overriding them.
+              // ── ZONE HINT FROM PROMPT ────────────────────────────────────────────────
+              // Derive zone hint from prompt KEYWORDS only.
+              // These keywords tell us which room the prompt describes.
+              // CRITICAL: The zone hint must match what the prompt says.
+              // If the prompt says "bathroom", hint must be "bathroom" — NOT "living room".
+              // DO NOT infer zone from furniture visible in character avatar photos.
               let liveZoneHint = null;
               if (livePresence === 'sleeping' || livePresence === 'napping') {
-                liveZoneHint = 'bedroom';
-              } else if (isHome) {
-                // Detect room type from the prompt — SPECIFIC rooms first, default last
+                liveZoneHint = 'bedroom'; // state-based, not image-based
+              } else {
                 const promptZoneCheck = cleanPrompt.toLowerCase();
-                if (/\b(bathroom|shower|bathtub|toilet|vanity|steamy|steam|fogged|fogged-up mirror)\b/.test(promptZoneCheck)) {
+                // Check SPECIFIC rooms first — most specific wins
+                if (/\b(bathroom|shower|bathtub|toilet|vanity|steamy|fogged mirror)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'bathroom';
-                } else if (/\b(bedroom|in bed|lying in bed|waking up|nightstand|closet|duvet|mattress)\b/.test(promptZoneCheck)) {
+                } else if (/\b(bedroom|in bed|lying in bed|waking up|nightstand|duvet|mattress)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'bedroom';
-                } else if (/\b(kitchen|stove|fridge|refrigerator|counter|oven|microwave|sink|cooking)\b/.test(promptZoneCheck)) {
+                } else if (/\b(kitchen|stove|fridge|refrigerator|oven|microwave|cooking|pancake|breakfast)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'kitchen';
                 } else if (/\b(backyard|patio|deck|yard|garden|grill|outside)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'backyard';
@@ -1214,39 +1280,28 @@ The environment must feel real, functional, and original.
                   liveZoneHint = 'dining room';
                 } else if (/\b(office|desk|workspace|home office)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'office';
-                } else {
-                  // Default for home — only used when NO specific room is mentioned in the prompt
+                } else if (/\b(living room|couch|sofa|tv room|lounge)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'living room';
                 }
-                console.log(`[LOCATION] 🏠 Zone hint from prompt: "${liveZoneHint}" | prompt keywords checked against: "${promptZoneCheck.substring(0, 80)}"`);
+                // If no room keyword detected, liveZoneHint stays null — resolveZoneImages will use first zone
+                console.log(`[LOCATION] 🔍 Zone hint from prompt keywords: "${liveZoneHint || 'null (no room keyword detected — will use first zone)'}" | checked: "${promptZoneCheck.substring(0, 80)}"`);
               }
 
-              // ── AUTHORITATIVE HOME LOCATION LOOKUP ──────────────────────────────────
-              // Try every home-assignment field in priority order before giving up.
-              // This is the critical gate that was silently skipping home lookup.
-              if (!authorizedLocId && (isHome || (!isAtWork && !isTraveling))) {
-                authorizedLocId =
-                  charRecord?.current_home_location_id ||
-                  charRecord?.resolved_current_location_id ||
-                  charRecord?.home_location_id ||
-                  null;
-                if (authorizedLocId) {
-                  console.log(`[LOCATION] 🏠 Fallback home lookup succeeded: authorizedLocId=${authorizedLocId}`);
-                } else {
-                  // Last resort: scan savedLocations for a home where this character is a resident
-                  const residentHome = savedLocations.find(l =>
-                    l.category === 'home' &&
-                    (
-                      (l.resident_character_ids || []).includes(characterId) ||
-                      (l.residents || []).some(r => r.character_id === characterId)
-                    )
-                  );
-                  if (residentHome) {
-                    authorizedLocId = residentHome.id;
-                    console.log(`[LOCATION] 🏠 Resident scan found home: "${residentHome.name}" (${residentHome.id})`);
-                  } else {
-                    console.warn(`[LOCATION] ⚠ No home location found for character ${characterId} — will use text lock`);
-                  }
+              // ── RESIDENT SCAN FALLBACK (only if character file had no location IDs) ──
+              // This scans LocationReference records for homes that list this character as a resident.
+              // This is a backend self-discovery lookup — do NOT ask the user for this information.
+              if (!authorizedLocId) {
+                const residentHome = savedLocations.find(l =>
+                  l.category === 'home' &&
+                  (
+                    (l.resident_character_ids || []).includes(characterId) ||
+                    (l.residents || []).some(r => r.character_id === characterId)
+                  )
+                );
+                if (residentHome) {
+                  authorizedLocId = residentHome.id;
+                  authSource = `LocationReference resident scan — found "${residentHome.name}" (RESIDENT_SCAN)`;
+                  console.log(`[LOCATION] 🏠 Resident scan found home: "${residentHome.name}" (${residentHome.id})`);
                 }
               }
 
@@ -1272,14 +1327,21 @@ The environment must feel real, functional, and original.
                 }
               }
 
-              // ── RUNTIME LOCATION INVESTIGATION AUDIT ─────────────────────────────────
-              // This log proves exactly what location ID was sought, what was found,
-              // and what zone/image resolution path was taken. NOT comments — runtime truth.
-              console.log(`[LOC_AUDIT] ── HOME/LOCATION INVESTIGATION ──────────────────────`);
-              console.log(`[LOC_AUDIT] livePresence="${livePresence}" | isHome=${isHome} | isAtWork=${isAtWork} | isTraveling=${isTraveling}`);
-              console.log(`[LOC_AUDIT] authorizedLocId="${authorizedLocId || 'NOT FOUND'}" | realTimeLoc="${realTimeLoc?.name || 'NULL'}" | realTimeLoc.id="${realTimeLoc?.id || 'NULL'}"`);
-              console.log(`[LOC_AUDIT] charRecord fields: current_home_location_id="${charRecord?.current_home_location_id || 'null'}" | resolved_current_location_id="${charRecord?.resolved_current_location_id || 'null'}" | home_location_id="${charRecord?.home_location_id || 'null'}"`);
-              console.log(`[LOC_AUDIT] liveZoneHint="${liveZoneHint || 'null'}" | savedLocations.length=${savedLocations.length}`);
+              // ── MANDATORY LOCATION RESOLUTION AUDIT ─────────────────────────────────
+              // Runtime proof of multi-source resolution — which fields were checked, what was found.
+              console.log(`[LOC_AUDIT] ═══ MANDATORY LOCATION RESOLUTION TRACE ═══`);
+              console.log(`[LOC_AUDIT] character_id="${characterId}" | presence="${livePresence}" | isHome=${isHome} | isAtWork=${isAtWork} | isTraveling=${isTraveling}`);
+              console.log(`[LOC_AUDIT] FIELDS CHECKED (strict priority order):`);
+              console.log(`[LOC_AUDIT]   1. character.resolved_current_location_id = "${charRecord?.resolved_current_location_id || 'null'}"`);
+              console.log(`[LOC_AUDIT]   2. character.current_home_location_id = "${charRecord?.current_home_location_id || 'null'}"`);
+              console.log(`[LOC_AUDIT]   3. character.home_location_id = "${charRecord?.home_location_id || 'null'}"`);
+              console.log(`[LOC_AUDIT]   4. character.current_work_location_id = "${charRecord?.current_work_location_id || 'null'}"`);
+              console.log(`[LOC_AUDIT]   5. character.occupation_location_id = "${charRecord?.occupation_location_id || 'null'}"`);
+              console.log(`[LOC_AUDIT] SELECTED SOURCE: ${authSource || 'NONE — no location found in character file or resident scan'}`);
+              console.log(`[LOC_AUDIT] AUTHORIZED LOC ID: "${authorizedLocId || 'NOT FOUND'}"`);
+              console.log(`[LOC_AUDIT] LOCATION RECORD: "${realTimeLoc?.name || 'NULL'}" (id=${realTimeLoc?.id || 'null'})`);
+              console.log(`[LOC_AUDIT] ZONE HINT (from prompt keywords only): "${liveZoneHint || 'null'}"`);
+              console.log(`[LOC_AUDIT] savedLocations.length=${savedLocations.length}`);
 
               if (realTimeLoc) {
                 // ALWAYS try to resolve zone images first, using sensible defaults
@@ -1699,13 +1761,12 @@ No character identity images provided — render the character from the text des
     }
 
     // ── STEP 6.5: FINAL SAFETY SANITIZE ─────────────────────────────────────
-    // Character and user identity refs are already filtered to public URLs at subject build time.
-    // This pass is a final safety net for any location images that may have slipped through.
-    // If any non-public URLs remain here, they came from location records — log and strip.
-    const sanitizedReferenceImages = referenceImages.filter(isPublicUrl);
+    // Character and user identity refs are already filtered at subject build time.
+    // This pass is the final safety net for any location images that slipped through.
+    const sanitizedReferenceImages = referenceImages.filter(isProviderAccessible);
     if (sanitizedReferenceImages.length !== referenceImages.length) {
       const stripped = referenceImages.length - sanitizedReferenceImages.length;
-      console.warn(`[generateImageAsync] ⚠ Final sanitize stripped ${stripped} non-public URLs. This indicates a location reference image is stored as a private URL. Remaining: ${sanitizedReferenceImages.length}`);
+      console.warn(`[generateImageAsync] ⚠ Final sanitize stripped ${stripped} inaccessible URLs. Remaining: ${sanitizedReferenceImages.length}`);
     }
     console.log(`[generateImageAsync] REFERENCE SUMMARY: loc_imgs=${LOC_SLOT} | char_identity=${CHAR_SLOT} | user_identity=${USER_SLOT} | total_after_sanitize=${sanitizedReferenceImages.length} | avatar_bg=0%`);
 

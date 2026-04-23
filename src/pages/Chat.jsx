@@ -24,8 +24,8 @@ import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
 import ApprovalPopup from "@/components/approvals/ApprovalPopup";
-import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import ShoppingApp from "@/components/chat/ShoppingApp";
+import { dispatchImageGeneration } from "@/components/chat/ChatImageDispatch";
 import BirthApprovalPopup from "@/components/approvals/BirthApprovalPopup";
 import NarrativeActionButton from "@/components/chat/NarrativeActionButton";
 import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApproval";
@@ -1515,35 +1515,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
       }
-      const targetMsgId = imgMsg.id; // capture at creation — never use closure over mutable ref
+      const targetMsgId = imgMsg.id;
       console.log(`[Chat] Image msg created: ${targetMsgId} | char=${character.name} | subject=${subjectType} | prompt="${imageGenPrompt.substring(0, 80)}"`);
-      setTimeout(() => {
-        base44.functions.invoke('generateImageAsync', {
-          messageId: targetMsgId,
-          prompt: imageGenPrompt,
-          characterReferenceImages: charRefs,
-          userReferenceImages: useUserRefs ? userRefImages : [],
-          characterName: character.name,
-          userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
-          subjectType,
-          characterId,
-          characterEmotionalState: character.emotional_state || 'calm',
-          // Explicit location + zone binding from live presence state
-          manualLocationId: character.resolved_current_location_id || character.current_home_location_id || null,
-          manualZoneId: (character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping') ? 'bedroom' : null,
-          liveLocationContext: buildLiveLocationContext(character, {}, true),
-        }).then((res) => {
-          const returnedMsgId = res?.data?.messageId;
-          if (returnedMsgId && returnedMsgId !== targetMsgId) {
-            console.error(`[Chat] ⛔ LINEAGE MISMATCH: sent=${targetMsgId} got=${returnedMsgId}`);
-          }
-          base44.entities.Conversation.update(convoId, {
-            last_message_preview: "(photo)",
-            last_message_date: new Date().toISOString(),
-          }).catch(() => {});
-          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-        }).catch(() => {});
-      }, delayMs);
+      // dispatchImageGeneration resolves location from character file + LocationReference records
+      // It does NOT pass manualLocationId — see ChatImageDispatch.js for the critical fix details
+      setTimeout(() => dispatchImageGeneration({
+        targetMsgId, imageGenPrompt, charRefs, userRefImages, useUserRefs,
+        character, userSettings, currentUser, subjectType, characterId,
+        isMountedRef, setMessages, convoId, queryClient,
+      }), delayMs);
       return imgMsg;
     };
 
