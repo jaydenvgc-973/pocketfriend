@@ -149,36 +149,54 @@ Deno.serve(async (req) => {
     }
 
     // Fetch location reference images from the resolved location + zone
-    let locationRefImages = originalLocationRefs;
+    // HIERARCHY: Location Record → Zone within Location → Zone Images
+    let locationRefImages = originalLocationRefs.filter(isProviderAccessible);
     if (locationRefImages.length === 0 && currentLocationId) {
       try {
+        // STEP 1: Load the location record
         const loc = await base44.asServiceRole.entities.LocationReference.get(currentLocationId).catch(() => null);
-        if (loc) {
-          // Try to find the exact zone
+        if (!loc) {
+          console.warn(`[regen] ⚠️ Location record NOT FOUND for id=${currentLocationId}`);
+        } else {
+          console.log(`[regen] ✓ Loaded location: "${loc.name}" (id=${currentLocationId})`);
+          console.log(`[regen]   └─ zones=${loc.zones?.length || 0} | flat_images=${loc.image_urls?.length || 0}`);
+
+          // STEP 2: Find the zone within this location
           if (currentZoneName && loc.zones?.length > 0) {
             const zone = loc.zones.find(z => z.zone_name?.toLowerCase() === currentZoneName.toLowerCase());
-            if (zone?.image_urls?.length > 0) {
-              locationRefImages = zone.image_urls.slice(0, 6);
-              console.log(`[regen] Matched zone "${currentZoneName}" at "${loc.name}": ${locationRefImages.length} images`);
+            if (!zone) {
+              console.warn(`[regen] ⚠️ Zone "${currentZoneName}" NOT FOUND in location "${loc.name}"`);
+            } else {
+              console.log(`[regen] ✓ Found zone "${zone.zone_name}" in location`);
+
+              // STEP 3: Extract provider-accessible images from zone
+              if (zone.image_urls?.length > 0) {
+                locationRefImages = zone.image_urls.filter(isProviderAccessible).slice(0, 6);
+                console.log(`[regen]   └─ zone_images=${zone.image_urls.length} | provider_accessible=${locationRefImages.length}`);
+              } else {
+                console.warn(`[regen] ⚠️ Zone "${zone.zone_name}" has NO images`);
+              }
             }
           }
-          // Fallback: first zone with images
+
+          // Fallback: if no zone matched, use first zone with images
           if (locationRefImages.length === 0 && loc.zones?.length > 0) {
-            const firstZone = loc.zones.find(z => z.image_urls?.length > 0);
+            const firstZone = loc.zones.find(z => z.image_urls?.some(img => isProviderAccessible(img)));
             if (firstZone) {
-              locationRefImages = firstZone.image_urls.slice(0, 6);
+              locationRefImages = firstZone.image_urls.filter(isProviderAccessible).slice(0, 6);
               currentZoneName = firstZone.zone_name;
-              console.log(`[regen] Auto-resolved zone "${currentZoneName}" at "${loc.name}": ${locationRefImages.length} images`);
+              console.log(`[regen] ✓ Fallback: Using first zone "${currentZoneName}" | images=${locationRefImages.length}`);
             }
           }
-          // Fallback: location flat images
+
+          // Last fallback: use flat location images
           if (locationRefImages.length === 0 && loc.image_urls?.length > 0) {
-            locationRefImages = loc.image_urls.slice(0, 6);
-            console.log(`[regen] Using location flat images at "${loc.name}": ${locationRefImages.length}`);
+            locationRefImages = loc.image_urls.filter(isProviderAccessible).slice(0, 6);
+            console.log(`[regen] ✓ Fallback: Using location flat images | images=${locationRefImages.length}`);
           }
         }
       } catch (err) {
-        console.warn('[regen] Location image fetch failed:', err.message);
+        console.error('[regen] Location image fetch FAILED:', err.message);
       }
     }
 
