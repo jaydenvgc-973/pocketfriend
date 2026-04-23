@@ -544,7 +544,14 @@ Deno.serve(async (req) => {
 
     console.log(`[generateImageAsync] ▶ REQUEST: messageId=${messageId} | characterId=${characterId || 'none'} | subjectType=${subjectType || 'none'} | isCreativeGeneration=${isCreativeGeneration} | promptStart="${(prompt || '').substring(0, 100)}"`);
 
-    const message = await base44.entities.Message.get(messageId);
+    // Use asServiceRole so this works regardless of who created the message (RLS safe)
+    let message = null;
+    try {
+      message = await base44.asServiceRole.entities.Message.get(messageId);
+    } catch (_) {
+      const list = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
+      message = list?.[0] || null;
+    }
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
     }
@@ -615,6 +622,7 @@ Deno.serve(async (req) => {
     // Never infer identity from scene text.
     let characterSubject = null;
     let userSubject = null;
+    let _cachedCharRecord = null; // shared — avoids duplicate DB calls in rabbit hole + presence gates
 
     // Resolve character subject — use filter fallback if .get() throws (RLS / cross-account)
     if (characterId) {
@@ -627,6 +635,7 @@ Deno.serve(async (req) => {
           const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
           charRecord = charList?.[0] || null;
         }
+        _cachedCharRecord = charRecord; // cache for reuse below
         if (charRecord) {
           characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], scenePrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
@@ -657,8 +666,8 @@ Deno.serve(async (req) => {
     const needsUserSubject = resolvedSubjectType === "user" || resolvedSubjectType === "joint" || includesUser === true;
     if (needsUserSubject) {
       try {
-        const msgRecord = await base44.entities.Message.get(messageId).catch(() => null);
-        const createdBy = msgRecord?.created_by;
+        // Reuse already-fetched message record — avoids second DB call and RLS issues
+        const createdBy = message?.created_by;
         if (createdBy) {
           const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: createdBy }, null, 1).catch(() => []);
           const sett = settingsList?.[0] || {};
@@ -722,17 +731,9 @@ Deno.serve(async (req) => {
         } else {
 
         // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
-        // Reuse the already-fetched character record — no second DB call needed.
-        // characterSubject was built from the same record; use it directly.
-        let charForRabbitCheck = null;
-        if (characterId) {
-          try {
-            charForRabbitCheck = await base44.asServiceRole.entities.Character.get(characterId);
-          } catch (_) {
-            const list = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
-            charForRabbitCheck = list?.[0] || null;
-          }
-        }
+        // Reuse the already-fetched character record from Step 1 — no second DB call needed.
+        // _cachedCharRecord is set below from the same characterSubject lookup.
+        const charForRabbitCheck = _cachedCharRecord;
         console.log(`[generateImageAsync] Character for rabbit/location check: id=${charForRabbitCheck?.id || 'none'} | name=${charForRabbitCheck?.name || 'none'} | presence=${charForRabbitCheck?.resolved_presence_status || 'unknown'}`);
 
         const isRabbitHole = charForRabbitCheck?.resolved_presence_status === 'rabbit_hole'
@@ -883,7 +884,8 @@ The environment must feel real, functional, and original.
             console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName || 'none'}" | Images: ${imgs.length}`);
           }
         } else {
-          const charRecord = characterId ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null) : null;
+          // Reuse the cached character record from Step 1 — no extra DB call needed
+          const charRecord = _cachedCharRecord;
           const createdBy = charRecord?.created_by;
           if (createdBy) {
             const savedLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: createdBy }, '-created_date', 100);
