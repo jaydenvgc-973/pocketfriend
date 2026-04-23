@@ -87,10 +87,14 @@ async function resolveLocationImages(base44, locationId, zoneName) {
     }
   }
 
-  // STEP 2: First zone with accessible images (only if STEP 1 failed and zoneName was provided)
-  if (images.length === 0 && zoneName && loc.zones?.length > 0) {
-    console.log(`[regen] STEP 1 YIELDED ZERO IMAGES — STEP 2 BLOCKED: zoneName was requested but not found, not using fallback`);
-  } else if (images.length === 0 && !zoneName && loc.zones?.length > 0) {
+  // STEP 2: First zone with accessible images (ONLY if NO zoneName was requested)
+  // CRITICAL: If user explicitly selected a zone and STEP 1 failed, DO NOT fall back to other zones.
+  // This prevents the system from compositing images from multiple zones.
+  if (zoneName && images.length === 0) {
+    // User explicitly requested a zone but it has zero images — STOP here. No fallback.
+    console.log(`[regen] ⛔ STRICT ZONE LOCK: User requested zone="${zoneName}" but it has no accessible images. NO FALLBACK to other zones.`);
+    return { images: [], zoneName: null, locationName: loc.name };
+  } else if (images.length === 0 && loc.zones?.length > 0) {
     console.log(`[regen] STEP 2: No zoneName requested. Finding first zone with accessible images...`);
     const firstZone = loc.zones.find(z => (z.image_urls || []).map(toPublicCDN).some(isProviderAccessible));
     if (firstZone) {
@@ -103,9 +107,11 @@ async function resolveLocationImages(base44, locationId, zoneName) {
     }
   }
 
-  // STEP 3: Flat location images (only if Steps 1-2 failed)
-  if (images.length === 0 && loc.image_urls?.length > 0) {
-    console.log(`[regen] STEP 3: Steps 1-2 failed. Using flat location.image_urls...`);
+  // STEP 3: Flat location images (ONLY if NO zoneName was requested)
+  // If user explicitly selected a zone, we already returned early above. So STEP 3 only fires
+  // when zoneName was null/empty and no zone-based images were found.
+  if (images.length === 0 && !zoneName && loc.image_urls?.length > 0) {
+    console.log(`[regen] STEP 3: No zoneName requested. Using flat location.image_urls...`);
     const rawUrls = loc.image_urls;
     images = rawUrls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
     console.log(`[regen] ✓ STEP 3 RESULT: flat_images | raw=${rawUrls.length} | accessible=${images.length}`);
