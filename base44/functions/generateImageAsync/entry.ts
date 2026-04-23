@@ -1192,30 +1192,33 @@ The environment must feel real, functional, and original.
               }
 
               // ── ZONE HINT FROM PROMPT (home context) ────────────────────────────────
-              // If the prompt says "kitchen", override liveZoneHint to kitchen so the
-              // correct zone images are fetched from the home location record.
+              // CRITICAL: the zone hint MUST match what the prompt describes.
+              // If the prompt says "bathroom" but we lock the zone to "living room",
+              // the provider receives conflicting instructions and hard-refuses (400 error).
+              // Bathroom and bedroom checks come FIRST to prevent the default overriding them.
               let liveZoneHint = null;
               if (livePresence === 'sleeping' || livePresence === 'napping') {
                 liveZoneHint = 'bedroom';
               } else if (isHome) {
-                // Detect room type from the prompt — prompt takes priority over default 'living room'
+                // Detect room type from the prompt — SPECIFIC rooms first, default last
                 const promptZoneCheck = cleanPrompt.toLowerCase();
-                if (/\b(kitchen|stove|fridge|counter|oven|microwave|sink)\b/.test(promptZoneCheck)) {
-                  liveZoneHint = 'kitchen';
-                } else if (/\b(bedroom|bed|sleeping|nightstand|closet|duvet)\b/.test(promptZoneCheck)) {
-                  liveZoneHint = 'bedroom';
-                } else if (/\b(bathroom|shower|bathtub|toilet|vanity)\b/.test(promptZoneCheck)) {
+                if (/\b(bathroom|shower|bathtub|toilet|vanity|steamy|steam|fogged|fogged-up mirror)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'bathroom';
-                } else if (/\b(backyard|patio|deck|yard|garden|grill)\b/.test(promptZoneCheck)) {
+                } else if (/\b(bedroom|in bed|lying in bed|waking up|nightstand|closet|duvet|mattress)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'bedroom';
+                } else if (/\b(kitchen|stove|fridge|refrigerator|counter|oven|microwave|sink|cooking)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'kitchen';
+                } else if (/\b(backyard|patio|deck|yard|garden|grill|outside)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'backyard';
-                } else if (/\b(dining|dinner table|dining room|eating)\b/.test(promptZoneCheck)) {
+                } else if (/\b(dining room|dinner table|dining table)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'dining room';
-                } else if (/\b(office|desk|workspace)\b/.test(promptZoneCheck)) {
+                } else if (/\b(office|desk|workspace|home office)\b/.test(promptZoneCheck)) {
                   liveZoneHint = 'office';
                 } else {
+                  // Default for home — only used when NO specific room is mentioned in the prompt
                   liveZoneHint = 'living room';
                 }
-                console.log(`[LOCATION] 🏠 Zone hint from prompt: "${liveZoneHint}"`);
+                console.log(`[LOCATION] 🏠 Zone hint from prompt: "${liveZoneHint}" | prompt keywords checked against: "${promptZoneCheck.substring(0, 80)}"`);
               }
 
               // ── AUTHORITATIVE HOME LOCATION LOOKUP ──────────────────────────────────
