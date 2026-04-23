@@ -298,14 +298,30 @@ function buildSceneActionLockBlock(promptText) {
 // Images and prompts are assembled FROM these records — never the other way around.
 
 // ── PUBLIC URL FILTER ────────────────────────────────────────────────────────
-// The generation provider only accepts public HTTPS CDN URLs.
-// Private internal base44 app file URLs cannot be accessed by the provider.
+// The generation provider accepts any externally-reachable HTTPS URL.
+//
+// base44.app/api/apps/.../files/mp/public/ paths ARE publicly accessible —
+// the "/mp/public/" path segment is public storage. These must NOT be blocked.
+//
+// Only genuinely private/expiring URLs must be blocked:
+//   - /files/mp/private/ — requires auth, inaccessible externally
+//   - /files/private/    — same
+//   - Signed/expiring URLs with token/signature query params
+//
+// media.base44.com is the CDN and always passes.
+// base44.app/api/apps/.../files/mp/public/ also passes.
+//
 // This filter is applied at SUBJECT BUILD TIME so identity refs are pre-validated.
+// Also applied at STEP 6.5 as a final safety net on location refs.
 function isPublicUrl(url) {
   if (!url || typeof url !== 'string') return false;
   if (!url.startsWith('https://')) return false;
-  if (url.includes('base44.app/api/apps/')) return false;
-  if (url.includes('/api/apps/') && url.includes('/files/')) return false;
+  // Truly private storage — requires auth, cannot be reached by the provider
+  if (url.includes('/files/mp/private/')) return false;
+  if (url.includes('/files/private/')) return false;
+  // Signed / time-limited URLs — expire and are not stable references
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  // Everything else (media.base44.com CDN, /files/mp/public/, external CDNs) is accessible
   return true;
 }
 

@@ -1,15 +1,21 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Helper: check if URL is private (base44.app/api/apps/) vs public CDN
+// Helper: check if a URL is truly private/inaccessible to the generation provider.
+// /files/mp/public/ paths in base44.app ARE publicly accessible — do NOT flag them.
+// Only private storage and signed/expiring URLs are truly inaccessible.
 function isPrivateURL(url) {
   if (!url || typeof url !== 'string') return false;
-  return url.includes('base44.app/api/apps/');
+  if (url.includes('/files/mp/private/')) return true;
+  if (url.includes('/files/private/')) return true;
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return true;
+  return false;
 }
 
-// Helper: fetch private file and re-upload to get public CDN URL
+// Helper: fetch a private file and re-upload to get a stable public CDN URL.
+// Only call this for URLs where isPrivateURL() returned true.
 async function convertPrivateURLToPublic(privateURL, base44) {
   if (!isPrivateURL(privateURL)) {
-    console.log(`[repairPrivateURLs] URL is already public or invalid: ${privateURL?.substring(0, 60)}`);
+    console.log(`[repairPrivateURLs] URL is already public — no conversion needed: ${privateURL?.substring(0, 60)}`);
     return null; // no conversion needed
   }
 
