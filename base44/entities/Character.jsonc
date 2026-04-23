@@ -44,7 +44,7 @@
         "npc_fictitious"
       ],
       "default": "active_created_character",
-      "description": "World-behavior and system-routing class. Determines visibility, lists, presence rules, and housing."
+      "description": "World-behavior and system-routing class."
     },
     "status": {
       "type": "string",
@@ -755,6 +755,20 @@
       },
       "default": []
     },
+    "is_homeless": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if character has no stable home \u2014 set when assigned homeless context at a location"
+    },
+    "housing_context": {
+      "type": "string",
+      "enum": [
+        "stable_home",
+        "temporary_shelter",
+        "homeless_unsheltered"
+      ],
+      "description": "Character's current housing situation. Drives narrative, sleep, scene, and travel logic."
+    },
     "pending_invite_id": {
       "type": "string"
     },
@@ -1122,18 +1136,15 @@
           },
           "trust_level": {
             "type": "number",
-            "default": 50,
-            "description": "How safe, reliable, and honest this person feels (0-100)"
+            "default": 50
           },
           "relational_jealousy": {
             "type": "number",
-            "default": 0,
-            "description": "Fear of losing their attention/closeness to someone else (0-100)"
+            "default": 0
           },
           "envy_jealousy": {
             "type": "number",
-            "default": 0,
-            "description": "Comparison-driven envy \u2014 they have something I want (0-100)"
+            "default": 0
           }
         }
       }
@@ -1390,8 +1401,7 @@
     },
     "user_respect_level": {
       "type": "number",
-      "default": 50,
-      "description": "How much this character values the user's character, judgment, dignity, and worth (0-100)"
+      "default": 50
     },
     "friendship_level": {
       "type": "number",
@@ -1411,18 +1421,15 @@
     },
     "trust_level": {
       "type": "number",
-      "default": 50,
-      "description": "How safe, reliable, and honest the user feels to this character \u2014 separate from respect (0-100)"
+      "default": 50
     },
     "relational_jealousy": {
       "type": "number",
-      "default": 0,
-      "description": "Fear of losing the user's attention or closeness to someone else \u2014 modulated by trust (0-100)"
+      "default": 0
     },
     "envy_jealousy": {
       "type": "number",
-      "default": 0,
-      "description": "Comparison-driven envy \u2014 the user has something this character wants (0-100)"
+      "default": 0
     },
     "is_active_character": {
       "type": "boolean",

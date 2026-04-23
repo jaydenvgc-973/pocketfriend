@@ -44,22 +44,33 @@ export default function EditCharacterPhotos() {
 
   const handleAvatarGenerated = async (newAvatarUrl, newRefUrls, newGenerationPrompt, newDescriptionText) => {
     if (!selectedChar) return;
-    const updated = {
-      ...selectedChar,
-      avatar_url: newAvatarUrl,
-      reference_image_urls: newRefUrls,
-      avatar_generation_prompt: newGenerationPrompt || selectedChar.avatar_generation_prompt,
-      avatar_description_text: newDescriptionText !== undefined ? newDescriptionText : selectedChar.avatar_description_text,
-    };
-    await base44.entities.Character.update(selectedChar.id, {
-      avatar_url: newAvatarUrl,
-      reference_image_urls: newRefUrls,
-      ...(newGenerationPrompt ? { avatar_generation_prompt: newGenerationPrompt } : {}),
-      ...(newDescriptionText !== undefined ? { avatar_description_text: newDescriptionText } : {}),
-    });
-    setSelectedChar(updated);
-    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+    setAvatarSaveStatus('saving');
+    try {
+      console.log(`[AVATAR] Generated avatar saving for character ${selectedChar.id} — url: ${newAvatarUrl?.substring(0, 60)}`);
+      const updated = {
+        ...selectedChar,
+        avatar_url: newAvatarUrl,
+        reference_image_urls: newRefUrls,
+        avatar_generation_prompt: newGenerationPrompt || selectedChar.avatar_generation_prompt,
+        avatar_description_text: newDescriptionText !== undefined ? newDescriptionText : selectedChar.avatar_description_text,
+      };
+      await base44.entities.Character.update(selectedChar.id, {
+        avatar_url: newAvatarUrl,
+        reference_image_urls: newRefUrls,
+        ...(newGenerationPrompt ? { avatar_generation_prompt: newGenerationPrompt } : {}),
+        ...(newDescriptionText !== undefined ? { avatar_description_text: newDescriptionText } : {}),
+      });
+      console.log(`[AVATAR] Generated avatar saved successfully for character ${selectedChar.id}`);
+      setSelectedChar(updated);
+      setAvatarSaveStatus('saved');
+      queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+      setTimeout(() => setAvatarSaveStatus('idle'), 3000);
+    } catch (err) {
+      console.error(`[AVATAR] Generated avatar save failed for character ${selectedChar.id}:`, err.message);
+      setAvatarSaveStatus('failed');
+      setTimeout(() => setAvatarSaveStatus('idle'), 4000);
+    }
   };
 
   return (
