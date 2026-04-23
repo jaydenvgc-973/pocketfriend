@@ -110,11 +110,26 @@ Deno.serve(async (req) => {
     const charName = character?.name || 'the character';
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
-    // Build character reference images
-    const serverCharRefs = [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean).filter(isProviderAccessible);
+    // Build character reference images — EXCLUDE avatar_url (it contains background scenery that bleeds into environment)
+    // avatar_url is a generated composite image — its background contaminates the scene at 0% authority
+    // Only use dedicated reference_image_urls (real photos of the person, no synthetic backgrounds)
+    const avatarUrl = character?.avatar_url || null;
+    const referenceOnlyUrls = (character?.reference_image_urls || []).filter(Boolean).filter(isProviderAccessible);
     const ctxCharRefs = (ctx.character_reference_images || []).filter(Boolean).filter(isProviderAccessible);
-    const charRefImages = serverCharRefs.length > 0 ? serverCharRefs : ctxCharRefs;
-    console.log(`[regen] charRefImages: ${charRefImages.length} (server=${serverCharRefs.length}, ctx=${ctxCharRefs.length})`);
+    // Priority: dedicated reference photos > context refs > avatar as last resort only if nothing else exists
+    let charRefImages = [];
+    if (referenceOnlyUrls.length > 0) {
+      charRefImages = referenceOnlyUrls.slice(0, 3);
+      console.log(`[regen] ✓ Using reference_image_urls (no avatar background): ${charRefImages.length}`);
+    } else if (ctxCharRefs.length > 0) {
+      charRefImages = ctxCharRefs.slice(0, 3);
+      console.log(`[regen] ✓ Using ctx charRefs (no avatar): ${charRefImages.length}`);
+    } else if (avatarUrl && isProviderAccessible(avatarUrl)) {
+      // Last resort: avatar only — explicitly suppress its background in prompt
+      charRefImages = [avatarUrl];
+      console.log(`[regen] ⚠ LAST RESORT: using avatar_url — background will be explicitly suppressed`);
+    }
+    console.log(`[regen] charRefImages FINAL: ${charRefImages.length} (referenceOnly=${referenceOnlyUrls.length}, ctx=${ctxCharRefs.length}, avatarUrl=${avatarUrl ? 'present' : 'absent'})`);
 
     // ══════════════════════════════════════════════════════════════════════════
     // LOCATION RESOLUTION — STRICT PRIORITY ORDER
@@ -203,31 +218,61 @@ Deno.serve(async (req) => {
 
     const hasLocation = locationRefImages.length > 0;
     const locationLabel = [effectiveLocationName, effectiveZoneName].filter(Boolean).join(' → ');
-    
+
+    // Slot allocation — mirrors generateImageAsync strict role separation
+    const LOC_SLOT  = Math.min(locationRefImages.length, 4);
+    const CHAR_SLOT = Math.min(charRefImages.length, 2);
+    const locIdxStart  = 1;
+    const locIdxEnd    = LOC_SLOT;
+    const charIdxStart = LOC_SLOT + 1;
+    const charIdxEnd   = LOC_SLOT + CHAR_SLOT;
+
     console.log(`[regen] ═══ FINAL RESOLUTION ═══`);
-    console.log(`[regen] hasLocation=${hasLocation} | locationLabel="${locationLabel}" | images=${locationRefImages.length}`);
-    console.log(`[regen] charRefImages=${charRefImages.length}`);
+    console.log(`[regen] hasLocation=${hasLocation} | locationLabel="${locationLabel}" | loc_images=${locationRefImages.length} (LOC_SLOT=${LOC_SLOT})`);
+    console.log(`[regen] charRefImages=${charRefImages.length} (CHAR_SLOT=${CHAR_SLOT})`);
+    console.log(`[regen] ref_roles: loc=idx${locIdxStart}-${locIdxEnd} | char=idx${charIdxStart}-${charIdxEnd}`);
+
+    // ── ROLE PREAMBLE — must be the FIRST thing the model reads ──────────────
+    // Explicit index-to-role assignment prevents avatar background from bleeding into environment.
+    let rolePreamble = '';
+    if (LOC_SLOT > 0 && CHAR_SLOT > 0) {
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT:
+Images 1-${LOC_SLOT}: SCENE ENVIRONMENT ONLY. Photographs of the actual location (${locationLabel}). Use only for: flooring, walls, furniture, layout, windows, curtains, lighting. Environment authority: 80%.
+Images ${charIdxStart}-${charIdxEnd}: CHARACTER IDENTITY ONLY. Photos of the person who must appear. Use only for: face, skin, hair, body type, markings. Identity authority: 90-100%.
+IMPORTANT: Any background, room, or scenery visible behind the person in images ${charIdxStart}-${charIdxEnd} is irrelevant to this scene and must be ignored. The scene environment comes only from images 1-${LOC_SLOT}.
+
+`;
+    } else if (LOC_SLOT === 0 && CHAR_SLOT > 0) {
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT:
+Images 1-${CHAR_SLOT}: CHARACTER IDENTITY ONLY. Use only for: face, skin, hair, body type. The background behind the person in these photos is unrelated to this scene - ignore it completely. Build the environment from the text prompt.
+
+`;
+    } else if (LOC_SLOT > 0 && CHAR_SLOT === 0) {
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT:
+Images 1-${LOC_SLOT}: SCENE ENVIRONMENT ONLY (${locationLabel}). Use for: flooring, walls, furniture, layout, windows. No character identity images provided - render the character from the text description.
+
+`;
+    }
+
+    const qualityFooter = `\nABSOLUTE RULES: No floating text, no overlays, no watermarks. Photorealistic photograph only.`;
 
     // ── ROOM LOCK BLOCK ───────────────────────────────────────────────────────
     const roomLock = hasLocation ? `
 
 ════════════════════════════════════════════════════════════
-ENVIRONMENT IDENTITY LOCK: ${locationLabel}
+ENVIRONMENT LOCK: ${locationLabel}
 ════════════════════════════════════════════════════════════
-The first ${locationRefImages.length} reference image(s) are GROUND TRUTH photographs of this exact room.
-YOU MUST REPRODUCE THIS EXACT SPACE. Match: flooring, walls, furniture, lighting, window treatments, decor.
+Reference images 1–${LOC_SLOT} ARE ground-truth photographs of this exact room/zone.
+REPRODUCE THIS EXACT SPACE: flooring, walls, furniture, lighting, window treatments, decor.
 ONLY camera angle and subject placement may differ.
-⛔ DO NOT substitute any other room. ⛔ DO NOT use avatar background as environment.
+⛔ DO NOT substitute any other room. ⛔ AVATAR BACKGROUND = 0% scene influence.
 ════════════════════════════════════════════════════════════` : '';
 
-    const qualityFooter = `\nABSOLUTE RULES: No floating text, no overlays, no watermarks. Photorealistic photograph only.`;
-
     // ── BUILD PROMPT BY REASON ────────────────────────────────────────────────
-    let prompt = '';
-    let referenceImages = [];
+    let corePrompt = '';
 
     if (reason === 'wrong_location' || reason === 'flawed') {
-      const scenePrompt = (reason === 'wrong_location' && hasLocation)
+      const sceneDesc = (reason === 'wrong_location' && hasLocation)
         ? `${charName} in the ${effectiveZoneName || 'room'} at ${effectiveLocationName}.`
         : (reason === 'wrong_location')
           ? `${charName} in a scene.`
@@ -236,60 +281,46 @@ ONLY camera angle and subject placement may differ.
       const locationOverride = (reason === 'wrong_location' && hasLocation) ? `
 
 ════════════════════════════════════════════════════════════
-⛔ LOCATION OVERRIDE — HARD ENVIRONMENT RESET ⛔
+⛔ EXPLICIT LOCATION OVERRIDE — HARD ENVIRONMENT RESET ⛔
 ════════════════════════════════════════════════════════════
-The user explicitly selected this location: ${locationLabel}
-The first ${locationRefImages.length} reference image(s) ARE the exact room to use.
-CRITICAL:
-✗ IGNORE any room from the character avatar photos
-✗ IGNORE the previous wrong room entirely
-✓ BUILD the scene entirely from the provided location reference images
-✓ This exact room, these exact furnishings, this exact environment
+The user explicitly selected this location and zone: ${locationLabel}
+Reference images 1–${LOC_SLOT} ARE the exact room to use.
+✗ IGNORE any room visible behind the character in their reference photos
+✗ IGNORE any previously generated room — it was wrong
+✓ BUILD the scene ENTIRELY from location reference images 1–${LOC_SLOT}
+✓ Use these exact walls, floor, furniture, and lighting
 ════════════════════════════════════════════════════════════` : '';
 
-      prompt = `${scenePrompt}${roomLock}${locationOverride}
+      corePrompt = `${sceneDesc}${roomLock}${locationOverride}
 
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-
-AVATAR SEPARATION RULE — MANDATORY:
-Character reference images = PERSON IDENTITY ONLY (face, skin, hair, body).
-Character reference images ≠ background, room, or environment.
-Environment comes ONLY from location reference images.
-
 Ultra high-resolution photorealistic photograph.${qualityFooter}`;
-
-      referenceImages = [...locationRefImages.slice(0, 4), ...charRefImages.slice(0, 2)].filter(Boolean);
 
     } else if (reason === 'no_avatar') {
       const isMultiPerson = originalSubjectType === 'joint';
-      prompt = `${originalPrompt || `${charName} in a natural candid scene`}${roomLock}
+      corePrompt = `${originalPrompt || `${charName} in a natural candid scene`}${roomLock}
 
 EXTREME CHARACTER LIKENESS REQUIREMENT for ${charName}:
 Match exactly: face structure, eyes, nose, mouth, skin tone, hair (color/texture/LENGTH/style), body type.
 Do NOT invent or approximate. The reference photos ARE this person.${isMultiPerson ? '\nMULTI-PERSON: Each person must have a distinctly different face from the reference photos.' : ''}
-
-AVATAR SEPARATION: Reference photos define the PERSON ONLY, not the room/background.
-Room comes ONLY from location reference images: ${locationLabel || 'as described in prompt'}.
-
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
-      referenceImages = [...locationRefImages.slice(0, 4), ...charRefImages.slice(0, 2)].filter(Boolean);
-
     } else if ((reason === 'dont_like' || reason === 'custom_prompt') && customPrompt) {
-      prompt = `${customPrompt}${roomLock}
+      corePrompt = `${customPrompt}${roomLock}
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-${hasLocation ? `ENVIRONMENT: Use reference images 1–${locationRefImages.slice(0,4).length} for room/environment (80% authority). Character reference images = person identity only.` : `Character identity: ${charName}. Avatar background = 0% scene influence.`}
+${hasLocation ? `Environment authority: reference images 1–${LOC_SLOT} (80% on room). Character identity: reference images ${charIdxStart}–${charIdxEnd} (person only).` : `Character identity: ${charName}. Avatar background = 0% scene influence.`}
 Photorealistic photograph.${qualityFooter}`;
-
-      referenceImages = [...locationRefImages.slice(0, 4), ...charRefImages.slice(0, 2)].filter(Boolean);
 
     } else {
-      prompt = `${originalPrompt || `${charName} in a natural candid scene`}${roomLock}
+      corePrompt = `${originalPrompt || `${charName} in a natural candid scene`}${roomLock}
 CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-${hasLocation ? `Reference images 1–${locationRefImages.slice(0,4).length}: ENVIRONMENT. Remaining: CHARACTER IDENTITY only.` : `Character identity only. Avatar background = 0% scene influence.`}
+${hasLocation ? `Environment: images 1–${LOC_SLOT}. Character identity: images ${charIdxStart}–${charIdxEnd} (person only, background ignored).` : `Character identity only. Avatar background = 0% scene influence.`}
 Photorealistic photograph.${qualityFooter}`;
-      referenceImages = [...locationRefImages.slice(0, 4), ...charRefImages.slice(0, 2)].filter(Boolean);
     }
+
+    // Role preamble goes FIRST — model must read role assignments before anything else
+    const prompt = rolePreamble + corePrompt;
+    const referenceImages = [...locationRefImages.slice(0, LOC_SLOT), ...charRefImages.slice(0, CHAR_SLOT)].filter(Boolean);
 
     console.log(`[regen] ▶ GENERATING: reason=${reason} | refs=${referenceImages.length} (loc=${Math.min(locationRefImages.length,4)}, char=${Math.min(charRefImages.length,2)}) | locationLabel="${locationLabel}"`);
 
