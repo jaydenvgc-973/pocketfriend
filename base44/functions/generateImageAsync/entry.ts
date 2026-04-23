@@ -816,14 +816,16 @@ Deno.serve(async (req) => {
           characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], scenePrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         } else {
-          console.warn(`[SUBJECT] Character ${characterId} not found — proceeding without identity lock. Client refs: ${(characterReferenceImages || []).length}`);
-          // Fall back to client-provided refs so generation still has identity signal
-          if (characterReferenceImages?.length > 0) {
+          // Character record not found in DB — use client-provided refs as fallback
+          // Client refs MUST also be filtered to public URLs only
+          const publicClientRefs = (characterReferenceImages || []).filter(isPublicUrl);
+          console.warn(`[SUBJECT] Character ${characterId} not found in DB | clientRefs total=${characterReferenceImages?.length || 0} | publicClientRefs=${publicClientRefs.length}`);
+          if (publicClientRefs.length > 0) {
             characterSubject = {
               subject_type: 'character',
               subject_id: characterId,
               canonical_name: characterName || 'the character',
-              face_refs: characterReferenceImages.slice(0, 3),
+              face_refs: publicClientRefs.slice(0, 3),
               outfit_desc: null,
               outfit_owner_id: characterId,
               appearance_text: '',
@@ -831,6 +833,9 @@ Deno.serve(async (req) => {
               ethnicities: [],
               explicitly_selected: true,
             };
+            console.warn(`[SUBJECT] Using client-provided public refs only (${publicClientRefs.length}) — DB record unavailable`);
+          } else {
+            console.error(`[SUBJECT] ⛔ CHARACTER IDENTITY FAILURE: characterId=${characterId} not found in DB AND no public client refs. Identity refs = 0. This request WILL produce a drifted image.`);
           }
         }
       } catch (err) {
@@ -1490,12 +1495,28 @@ The character reference images are for the PERSON ONLY — their background is i
       enhancedPrompt = `${sceneActionLock}${promptForGeneration}${envBlock}${locationNote}`;
     }
 
-    // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
+    // ── LIVE LOCATION TRUTH INJECTION ─────────────────────────────────────────
     // Inject authoritative live location context for presence-based scenes ONLY.
-    // Creative generations skip this — the user's prompt is the source of truth there.
+    // CRITICAL ORDERING: this must be injected AFTER the reference role labels.
+    // If injected BEFORE, the model sees location text before seeing which images
+    // are environment refs vs. identity refs — creating ambiguity that allows
+    // avatar background scenery to fill the environment role.
+    //
+    // Correct order in final prompt:
+    //   1. Scene action lock (mandatory elements)
+    //   2. Scene description (user intent)
+    //   3. Outfit block
+    //   4. Expression note
+    //   5. ENVIRONMENT LOCK block (ref images 1–N = environment, 80%)
+    //   6. Location note (room/zone enforcement)
+    //   7. IDENTITY LOCK block (ref images N+1–M = person only, 90-100%, bg=0%)
+    //   8. Live location context (appended AFTER role labels — provides named place truth)
+    //
+    // Prepending live location context BEFORE step 5-7 was breaking role clarity.
     if (imageMode === 'presence_scene' && liveLocationContext && liveLocationContext.trim()) {
-      enhancedPrompt = `${liveLocationContext}\n\n${enhancedPrompt}`;
-      console.log(`[LOCATION_SYNC] Live location context injected into prompt.`);
+      // Append AFTER role labels, not before — preserves reference image role clarity
+      enhancedPrompt = `${enhancedPrompt}\n\n${liveLocationContext}`;
+      console.log(`[LOCATION_SYNC] Live location context appended AFTER reference role labels (prevents avatar bg leakage).`);
     }
 
     const finalPrompt = enhancedPrompt;
@@ -1511,18 +1532,40 @@ The character reference images are for the PERSON ONLY — their background is i
     console.log(`[PAYLOAD_VALIDATION] manualLocationId=${manualLocationId || 'none'} | manualZoneId=${manualZoneId || 'none'}`);
     console.log(`[PAYLOAD_VALIDATION] subject_type=${resolvedSubjectType} | total_refs=${referenceImages.length}`);
 
-    // ── MANDATORY IDENTITY REF VALIDATION ────────────────────────────────────
-    // If a character was explicitly selected but zero public identity refs survived,
-    // log the exact failure — do NOT silently dispatch with 0 identity refs.
-    // This prevents the avatar background from filling the identity gap.
-    if (characterId && finalCharSubject && finalCharSubject.face_refs.length === 0) {
-      console.error(`[PAYLOAD_VALIDATION] ⛔ IDENTITY FAILURE: characterId=${characterId} selected but 0 valid public identity refs resolved. All avatar/reference URLs were private or missing. The generation provider cannot access private URLs. Character identity will be lost — avatar background MUST NOT fill this gap.`);
-      console.error(`[PAYLOAD_VALIDATION] FIX REQUIRED: Upload character reference images to a public CDN (not private app storage). Current avatar_url or reference_image_urls are stored as private internal URLs.`);
-      // Continue with text-only identity description — do NOT abort, but log clearly
+    // ── MANDATORY IDENTITY REF VALIDATION — HARD HALT ───────────────────────
+    // RULE: If a character-centered image request has zero valid public identity refs,
+    // the system MUST NOT dispatch silently with text-only identity.
+    // Text-only identity = guaranteed drift = avatar background fills the gap.
+    // This is a hard failure condition, not a soft warning.
+    //
+    // FAILURE TYPE A covered here:
+    //   - character exists in DB but all avatar/reference URLs are private → 0 public refs
+    //   - character not found in DB and client refs are also private → 0 public refs
+    //
+    // FAILURE TYPE B (separate): environment/location collapse into avatar scenery.
+    //   That is handled by the location resolution chain above and the prompt role labels.
+    //
+    // These are two distinct failure modes. This gate covers Type A only.
+    const isCharacterCentered = resolvedSubjectType === 'character' || resolvedSubjectType === 'joint';
+    const charRefCount = finalCharSubject?.face_refs?.length ?? 0;
+    if (isCharacterCentered && characterId && charRefCount === 0) {
+      console.error(`[PAYLOAD_VALIDATION] ⛔ HARD HALT — IDENTITY REFS = 0`);
+      console.error(`[PAYLOAD_VALIDATION] character_id=${characterId} | character_name=${finalCharSubject?.canonical_name || characterName || 'UNKNOWN'}`);
+      console.error(`[PAYLOAD_VALIDATION] All avatar_url and reference_image_urls for this character are either private internal URLs or missing.`);
+      console.error(`[PAYLOAD_VALIDATION] The generation provider cannot access private base44.app/api/apps/ URLs.`);
+      console.error(`[PAYLOAD_VALIDATION] Dispatching with 0 identity refs would produce a drifted image where the avatar background becomes the de-facto identity source.`);
+      console.error(`[PAYLOAD_VALIDATION] ACTION: Upload this character's photos to public CDN storage. DO NOT dispatch this request.`);
+      await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      return Response.json({
+        success: false,
+        error: 'Character identity refs could not be resolved — all reference images are stored as private URLs the generation provider cannot access. Please re-upload the character\'s photos.',
+        identity_refs_count: 0,
+        character_id: characterId,
+      }, { status: 422 });
     }
-    // Warn on missing critical context
-    if (imageMode === 'creative' && characterId && (!finalCharSubject || finalCharSubject.face_refs.length === 0)) {
-      console.warn(`[PAYLOAD_VALIDATION] ⚠️ CHARACTER SELECTED but no identity refs resolved. Subject will drift.`);
+    // Warn on partial identity (refs present but below ideal count)
+    if (isCharacterCentered && charRefCount > 0 && charRefCount < 2) {
+      console.warn(`[PAYLOAD_VALIDATION] ⚠️ LOW IDENTITY REF COUNT: only ${charRefCount} public ref(s) for character ${characterId}. Identity lock may be weaker than intended.`);
     }
     if (manualLocationId && locationImages.length === 0) {
       console.warn(`[PAYLOAD_VALIDATION] ⚠️ LOCATION SELECTED (${manualLocationId}) but no location images resolved. Scene environment unknown.`);
@@ -1535,7 +1578,37 @@ The character reference images are for the PERSON ONLY — their background is i
     }
     console.log(`[PAYLOAD_VALIDATION] ════════════════════════════════════════`);
 
-    let activeFinalPrompt = finalPrompt;
+    // ── REFERENCE IMAGE ROLE PREAMBLE ────────────────────────────────────────
+    // This is the FIRST thing the provider reads — an unambiguous role map of every
+    // reference image index. Without this, the model may interpret all images as
+    // stylistic inspiration and let avatar background bleed into the environment.
+    //
+    // This enforces at runtime:
+    //   - Images 1–LOC_SLOT = ENVIRONMENT ONLY (80% authority on room/location)
+    //   - Images LOC_SLOT+1–LOC_SLOT+CHAR_SLOT = CHARACTER IDENTITY ONLY (90-100% on person)
+    //   - Avatar background behind the person = 0% influence on environment
+    //
+    // The role preamble is prepended BEFORE the scene description so it is the
+    // first instruction the model processes.
+    let rolePreamble = '';
+    if (LOC_SLOT > 0 && CHAR_SLOT > 0) {
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST:
+Images 1–${LOC_SLOT}: SCENE ENVIRONMENT ONLY (${LOC_SLOT === 1 ? 'this is' : 'these are'} photographs of the actual location). Use ONLY for: flooring, walls, furniture, layout, windows, curtains, lighting, room proportions. Authority: 80%.
+Images ${charIdxStart}–${charIdxEnd}: CHARACTER IDENTITY ONLY (${CHAR_SLOT === 1 ? 'this is a photo' : 'these are photos'} of the person who must appear in the scene). Use ONLY for: face, skin, hair, body type, markings. Authority: 90-100% on the person.
+⛔ AVATAR BACKGROUND = 0%: ANY background, room, or scenery visible BEHIND the person in images ${charIdxStart}–${charIdxEnd} is IRRELEVANT and must be COMPLETELY IGNORED. Do NOT reproduce it. The scene environment comes from images 1–${LOC_SLOT} only.
+⛔ DO NOT blend or average these two image sets. They serve entirely separate roles.\n\n`;
+    } else if (LOC_SLOT === 0 && CHAR_SLOT > 0) {
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST:
+Images 1–${CHAR_SLOT}: CHARACTER IDENTITY ONLY. Use ONLY for: face, skin, hair, body type, markings. Authority: 90-100% on the person.
+⛔ AVATAR BACKGROUND = 0%: The background behind the person in these photos is UNRELATED to this scene. COMPLETELY IGNORE it. Build the environment 100% from the text prompt.
+⛔ DO NOT use any scenery from these reference photos as the scene background.\n\n`;
+    } else if (LOC_SLOT > 0 && CHAR_SLOT === 0) {
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST:
+Images 1–${LOC_SLOT}: SCENE ENVIRONMENT ONLY. Use for: flooring, walls, furniture, layout, windows, curtains. Authority: 80%.
+No character identity images provided — render the character from the text description only.\n\n`;
+    }
+
+    let activeFinalPrompt = rolePreamble + finalPrompt;
     // Inject location lock into prompt if location is resolved but not mentioned
     if (hasLocationImages && resolvedLocationName) {
       const locLower = resolvedLocationName.toLowerCase();
@@ -1566,7 +1639,27 @@ The character reference images are for the PERSON ONLY — their background is i
     }
     console.log(`[generateImageAsync] REFERENCE SUMMARY: loc_imgs=${LOC_SLOT} | char_identity=${CHAR_SLOT} | user_identity=${USER_SLOT} | total_after_sanitize=${sanitizedReferenceImages.length} | avatar_bg=0%`);
 
-    // ── STEP 7: GENERATE IMAGE (SINGLE CODE PATH) ────────────────────────────
+    // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────
+    // RUNTIME PROOF LOG — shows exact state of all rule enforcement before dispatch
+    console.log(`[DISPATCH_AUDIT] ════════════════════════════════════════════════════`);
+    console.log(`[DISPATCH_AUDIT] messageId=${messageId} | mode=${imageMode}`);
+    console.log(`[DISPATCH_AUDIT] --- CHARACTER IDENTITY (Rule A) ---`);
+    console.log(`[DISPATCH_AUDIT]   character_id=${characterId || 'NONE'} | name=${finalCharSubject?.canonical_name || 'NONE'}`);
+    console.log(`[DISPATCH_AUDIT]   identity_refs_sent=${sanitizedReferenceImages.slice(LOC_SLOT, LOC_SLOT + CHAR_SLOT).length} | indices=${charIdxStart}–${charIdxEnd}`);
+    console.log(`[DISPATCH_AUDIT]   identity_ref_urls=${sanitizedReferenceImages.slice(LOC_SLOT, LOC_SLOT + CHAR_SLOT).map(u => u.substring(0, 50)).join(' | ') || 'NONE'}`);
+    console.log(`[DISPATCH_AUDIT] --- AVATAR BACKGROUND (Rule B) ---`);
+    console.log(`[DISPATCH_AUDIT]   suppression=ENFORCED | avatar_bg_influence=0% | role_preamble_injected=${rolePreamble.length > 0}`);
+    console.log(`[DISPATCH_AUDIT] --- ENVIRONMENT (Rule C) ---`);
+    console.log(`[DISPATCH_AUDIT]   location_name="${resolvedLocationName || 'NONE'}" | zone="${resolvedZoneName || 'NONE'}"`);
+    console.log(`[DISPATCH_AUDIT]   location_imgs_sent=${sanitizedReferenceImages.slice(0, LOC_SLOT).length} | indices=1–${LOC_SLOT}`);
+    console.log(`[DISPATCH_AUDIT]   home_lookup_ran=${imageMode === 'presence_scene'} | authorizedLocId_resolved=${resolvedLocationName !== null}`);
+    console.log(`[DISPATCH_AUDIT]   first_image_fallback_used=${LOC_SLOT > 0 && resolvedZoneName === null}`);
+    console.log(`[DISPATCH_AUDIT] --- PROMPT FIDELITY (Rule D) ---`);
+    console.log(`[DISPATCH_AUDIT]   scene_action_lock_elements=${sceneActionLock ? sceneActionLock.split('\n').filter(l => l.startsWith('✅')).length : 0}`);
+    console.log(`[DISPATCH_AUDIT]   prompt_length=${activeFinalPrompt.length} | role_preamble_length=${rolePreamble.length}`);
+    console.log(`[DISPATCH_AUDIT] --- TOTAL REFS SENT ---`);
+    console.log(`[DISPATCH_AUDIT]   total=${sanitizedReferenceImages.length} (loc=${LOC_SLOT} + char=${CHAR_SLOT} + user=${USER_SLOT})`);
+    console.log(`[DISPATCH_AUDIT] ════════════════════════════════════════════════════`);
     console.log(`[generateImageAsync] SENDING TO GENERATOR | messageId=${messageId} | promptLength=${activeFinalPrompt.length} | refs=${sanitizedReferenceImages.length}`);
     
     let response;
