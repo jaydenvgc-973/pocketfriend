@@ -59,7 +59,7 @@ async function resolveLocationImages(base44, locationId, zoneName) {
   // STEP 1: Exact zone match (MANDATORY when zoneName provided)
   if (zoneName && loc.zones?.length > 0) {
     console.log(`[regen] STEP 1: Searching for exact zone match: "${zoneName}"`);
-    const zone = loc.zones.find(z => z.zone_name?.toLowerCase() === zoneName.toLowerCase());
+    const zone = loc.zones.find(z => z.zone_name && z.zone_name.toLowerCase() === zoneName.toLowerCase());
     if (zone) {
       console.log(`[regen] ✓ EXACT MATCH FOUND: zone.zone_name="${zone.zone_name}"`);
       const rawUrls = zone.image_urls || [];
