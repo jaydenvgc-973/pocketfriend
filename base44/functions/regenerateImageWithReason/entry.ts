@@ -46,16 +46,30 @@ Deno.serve(async (req) => {
     const originalCharRefs = ctx.character_reference_images || [];
     const originalSubjectType = ctx.subject_type || 'character';
 
-    // Fetch character — try filter directly (more reliable than .get() for RLS/cross-account)
+    // Fetch character — user-scoped client first (RLS allows this since request carries user token)
+    // asServiceRole alone cannot read Character records due to RLS on owner_email/created_by
     let character = null;
     if (originalCharId) {
       try {
-        // Use filter as the primary method — more robust than .get() for service role lookups
-        const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
-        character = charList?.[0] || null;
-        // If filter failed, try get() as last resort
+        // Primary: user-scoped (naturally passes RLS)
+        const charListUser = await base44.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+        character = charListUser?.[0] || null;
+        if (character) console.log(`[regen] ✓ Character found via user-scoped filter: "${character.name}"`);
+
+        // Fallback 1: asServiceRole .get()
         if (!character) {
           character = await base44.asServiceRole.entities.Character.get(originalCharId).catch(() => null);
+        }
+        // Fallback 2: asServiceRole filter by id
+        if (!character) {
+          const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+          character = charList?.[0] || null;
+        }
+        // Fallback 3: asServiceRole filter by id + created_by
+        if (!character && message?.created_by) {
+          const charList2 = await base44.asServiceRole.entities.Character.filter({ id: originalCharId, created_by: message.created_by }, null, 1).catch(() => []);
+          character = charList2?.[0] || null;
+          if (character) console.log(`[regen] ✓ Character found via created_by filter: "${character.name}"`);
         }
       } catch (charErr) {
         console.error(`[regen] Character lookup failed for ${originalCharId}: ${charErr.message}`);

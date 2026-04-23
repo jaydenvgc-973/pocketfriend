@@ -53,13 +53,24 @@ Deno.serve(async (req) => {
       why_avatar_background_not_used: null,
     };
 
-    // Step 1: Fetch character record
+    // Step 1: Fetch character record — RLS requires created_by, plain id filter is blocked
     let character = null;
-    try {
-      character = await base44.asServiceRole.entities.Character.get(characterId);
-    } catch (_) {
+    // Try .get()
+    character = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
+    // Filter by id
+    if (!character) {
       const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
       character = charList?.[0] || null;
+    }
+    // Filter by id + created_by (the authenticated user is the owner)
+    if (!character) {
+      const charList2 = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: user.email }, null, 1).catch(() => []);
+      character = charList2?.[0] || null;
+    }
+    // owner_email scan
+    if (!character) {
+      const charList3 = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email }, null, 100).catch(() => []);
+      character = charList3?.find(c => c.id === characterId) || null;
     }
 
     if (!character) {

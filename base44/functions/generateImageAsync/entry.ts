@@ -850,26 +850,43 @@ Deno.serve(async (req) => {
     let userSubject = null;
     let _cachedCharRecord = null; // shared — avoids duplicate DB calls in rabbit hole + presence gates
 
-    // Resolve character subject — use filter fallback if .get() throws (RLS / cross-account)
+    // Resolve character subject — RLS on Character entity blocks asServiceRole by id alone.
+    // Use user-scoped client (base44.entities) as the primary method since the request
+    // carries the user's auth token via createClientFromRequest(req).
     if (characterId) {
       try {
         let charRecord = null;
-        try {
-          charRecord = await base44.asServiceRole.entities.Character.get(characterId);
-        } catch (getErr) {
-          console.warn(`[SUBJECT] Character.get(${characterId}) threw (${getErr.message}) — trying filter fallback`);
+        // Primary: user-scoped filter (respects RLS naturally, finds chars owned by this user)
+        const charListUser = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+        charRecord = charListUser?.[0] || null;
+        if (charRecord) console.log(`[SUBJECT] ✓ Character found via user-scoped filter: "${charRecord.name}"`);
+
+        // Fallback 1: asServiceRole .get()
+        if (!charRecord) {
+          charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
+          if (charRecord) console.log(`[SUBJECT] ✓ Character found via asServiceRole.get(): "${charRecord.name}"`);
+        }
+        // Fallback 2: asServiceRole filter by id
+        if (!charRecord) {
           const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
           charRecord = charList?.[0] || null;
+          if (charRecord) console.log(`[SUBJECT] ✓ Character found via asServiceRole filter: "${charRecord.name}"`);
         }
+        // Fallback 3: asServiceRole filter by id + created_by
+        if (!charRecord && message?.created_by) {
+          const charList2 = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: message.created_by }, null, 1).catch(() => []);
+          charRecord = charList2?.[0] || null;
+          if (charRecord) console.log(`[SUBJECT] ✓ Character found via created_by filter: "${charRecord.name}"`);
+        }
+
         _cachedCharRecord = charRecord; // cache for reuse below
         if (charRecord) {
           characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], scenePrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         } else {
           // Character record not found in DB — use client-provided refs as fallback
-          // Client refs MUST also be filtered to public URLs only
           const publicClientRefs = (characterReferenceImages || []).filter(isPublicUrl);
-          console.warn(`[SUBJECT] Character ${characterId} not found in DB | clientRefs total=${characterReferenceImages?.length || 0} | publicClientRefs=${publicClientRefs.length}`);
+          console.warn(`[SUBJECT] Character ${characterId} not found in DB via any method | clientRefs total=${characterReferenceImages?.length || 0} | publicClientRefs=${publicClientRefs.length}`);
           const filteredClientRefs = (characterReferenceImages || []).filter(isProviderAccessible);
           if (filteredClientRefs.length > 0) {
             characterSubject = {
@@ -886,7 +903,7 @@ Deno.serve(async (req) => {
             };
             console.warn(`[SUBJECT] Using client-provided public refs only (${publicClientRefs.length}) — DB record unavailable`);
           } else {
-            console.error(`[SUBJECT] ⛔ CHARACTER IDENTITY FAILURE: characterId=${characterId} not found in DB AND no public client refs. Identity refs = 0. This request WILL produce a drifted image.`);
+            console.warn(`[SUBJECT] ⚠ CHARACTER IDENTITY: characterId=${characterId} not found via any DB method AND no public client refs. Generation proceeds with text-only identity.`);
           }
         }
       } catch (err) {
