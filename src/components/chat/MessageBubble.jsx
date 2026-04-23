@@ -73,20 +73,17 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
     setIsRegenerating(true);
     setRegenError(null);
-    let hadError = false;
     try {
       const res = await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
       if (res?.data?.success === false) {
         setRegenError(res.data.error || 'Failed to regenerate. Please try again.');
-        hadError = true;
         return;
       }
       if (res?.data?.filtered) {
         setRegenError(res.data.error || 'Image was blocked by content filter. Try a different description.');
-        hadError = true;
         return;
       }
-      // Immediately hydrate local state from the returned URL — no subscription wait
+      // Success — hydrate local state and close modal
       const returnedUrl = res?.data?.image_url;
       const returnedMsgId = res?.data?.messageId;
       if (returnedUrl && returnedUrl.startsWith('http')) {
@@ -97,12 +94,11 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
           onImageLoaded?.(message.id, returnedUrl);
         }
       }
+      setShowRegenModal(false);
     } catch (err) {
       setRegenError(err.message || 'Failed to regenerate. Please try again.');
-      hadError = true;
     } finally {
       setIsRegenerating(false);
-      if (!hadError) setShowRegenModal(false);
     }
   };
 

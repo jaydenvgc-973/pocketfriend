@@ -1,5 +1,22 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Only pass URLs that the generation provider can actually fetch.
+// The provider accepts media.base44.com CDN URLs and any external HTTPS CDN.
+// It CANNOT access base44.app/api/apps/ paths (private internal API, not a CDN).
+// This includes /files/mp/public/ paths — despite the "public" in the name,
+// these are served through the base44 API (auth-gated at network level).
+// Only media.base44.com and external CDN URLs are truly provider-accessible.
+function isProviderAccessible(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('https://')) return false;
+  // base44.app API paths — NOT accessible to the generation provider
+  if (url.includes('base44.app/api/apps/')) return false;
+  // Signed/expiring URLs
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  // media.base44.com CDN and all other external HTTPS URLs pass
+  return true;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -51,12 +68,12 @@ Deno.serve(async (req) => {
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
     // Build character reference images — always prefer server-side avatar + refs over stored context refs
-    // This ensures identity is locked to the actual character record, not a stale snapshot
-    const serverCharRefs = [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean);
-    let charRefImages = serverCharRefs.length > 0
-      ? serverCharRefs
-      : originalCharRefs.filter(Boolean);
-    console.log(`[regen] charRefImages: ${charRefImages.length} (server=${serverCharRefs.length}, ctx=${originalCharRefs.length})`);
+    // Filter to provider-accessible URLs only (media.base44.com CDN, external CDNs)
+    // base44.app/api/apps/ paths are NOT accessible to the generation provider
+    const serverCharRefs = [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean).filter(isProviderAccessible);
+    const ctxCharRefs = originalCharRefs.filter(Boolean).filter(isProviderAccessible);
+    let charRefImages = serverCharRefs.length > 0 ? serverCharRefs : ctxCharRefs;
+    console.log(`[regen] charRefImages: ${charRefImages.length} (server=${serverCharRefs.length}, ctx=${ctxCharRefs.length})`);
 
     // ── AUTHORITATIVE LOCATION INVESTIGATION ─────────────────────────────────
     // Priority order:
@@ -191,6 +208,8 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Filter location refs to provider-accessible URLs only
+    locationRefImages = locationRefImages.filter(isProviderAccessible);
     let hasLocation = locationRefImages.length > 0;
     const locationLabel = [effectiveLocationName, effectiveZoneName].filter(Boolean).join(' → ');
 
