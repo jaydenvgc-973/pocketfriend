@@ -16,7 +16,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -31,18 +31,38 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
+  // Local image URL — updated immediately from retry response, no subscription wait needed
+  const [localImageUrl, setLocalImageUrl] = useState(message.image_url || null);
+
+  // Sync if parent passes a new image_url (e.g. from real-time subscription)
+  const prevImageUrl = message.image_url;
+  if (prevImageUrl && prevImageUrl !== localImageUrl) {
+    setLocalImageUrl(prevImageUrl);
+  }
 
   // Placeholder: no image yet (content is empty = still generating, or [IMAGE_FAILED] = generation failed)
-  const isImageFailed = !isUser && !isNarrative && !message.image_url && message.content === '[IMAGE_FAILED]';
-  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && (message.content === "" || isImageFailed);
+  const isImageFailed = !isUser && !isNarrative && !localImageUrl && message.content === '[IMAGE_FAILED]';
+  const isImagePlaceholder = !isUser && !isNarrative && !localImageUrl && (message.content === "" || isImageFailed);
 
   const handleImageRetry = async (forceRegenerate = false) => {
     setImageRetrying(true);
     setImageRetryFailed(false);
     setImageRetryStatus(forceRegenerate ? 'regenerating' : 'recovering');
     try {
-      await base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate });
-    } catch {
+      const res = await base44.functions.invoke('recoverSingleImage', { messageId: message.id, forceRegenerate });
+      // Immediately hydrate from the response — do NOT wait for subscription
+      const url = res?.data?.image_url;
+      if (url && url.startsWith('http')) {
+        console.log(`[MessageBubble] ✓ Image URL received from retry: ${url.substring(0, 60)}...`);
+        setLocalImageUrl(url);
+        // Also notify parent so its messages array stays in sync
+        onImageLoaded?.(message.id, url);
+      } else {
+        console.warn(`[MessageBubble] ✗ Retry returned no valid URL:`, res?.data);
+        setImageRetryFailed(true);
+      }
+    } catch (err) {
+      console.error(`[MessageBubble] ✗ Retry failed:`, err.message);
       setImageRetryFailed(true);
     } finally {
       setImageRetrying(false);
@@ -185,14 +205,14 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 )}
               </div>
             )}
-            {message.image_url && (
+            {localImageUrl && (
               <div
                 className="relative group/image"
                 onMouseEnter={() => setShowImageDelete(true)}
                 onMouseLeave={() => setShowImageDelete(false)}
               >
                 <img
-                  src={message.image_url}
+                  src={localImageUrl}
                   alt="shared photo"
                   className="w-full max-w-xs rounded-t-2xl object-cover"
                 />

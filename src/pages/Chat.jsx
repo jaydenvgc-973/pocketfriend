@@ -1886,6 +1886,7 @@ Reply with ONLY the single emoji or the word "none".`,
               isPlayingVoice={playingAudioId === msg.id}
               voiceError={voiceErrors[msg.id]}
               onForward={!msg.is_narrative ? (msg) => setForwardTarget(msg) : null}
+              onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))}
             />
           ))}
         </AnimatePresence>
