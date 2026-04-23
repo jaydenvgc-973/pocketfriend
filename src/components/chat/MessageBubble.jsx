@@ -71,6 +71,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   };
 
   const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
+    console.log(`[MessageBubble.handleRegenSelect] ▶ INVOKING regenerateImageWithReason with:`, { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
     setIsRegenerating(true);
     setRegenError(null);
     try {

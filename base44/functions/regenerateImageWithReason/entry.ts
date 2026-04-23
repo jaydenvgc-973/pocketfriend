@@ -216,28 +216,61 @@ Deno.serve(async (req) => {
     }
     
     // If user manually selected a different location, override
-    if (manualLocationId && manualLocationId !== effectiveLocationId) {
+    if (manualLocationId) {
+      console.log(`[regen] MANUAL LOCATION OVERRIDE: manualLocationId=${manualLocationId} | manualZoneId=${manualZoneId || 'none'}`);
       effectiveLocationId = manualLocationId;
       effectiveZoneName = manualZoneId || null;
       locationRefImages = [];
       const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
-      if (manualLoc) {
+      
+      if (!manualLoc) {
+        console.error(`[regen] ⛔ CRITICAL: Manual location NOT FOUND for id=${manualLocationId}`);
+      } else {
+        console.log(`[regen] ✓ Manual location loaded: "${manualLoc.name}"`);
+        console.log(`[regen]   Total zones: ${manualLoc.zones?.length || 0}`);
+        manualLoc.zones?.forEach((z, i) => {
+          console.log(`[regen]     Zone ${i}: "${z.zone_name}" | images=${z.image_urls?.length || 0}`);
+        });
+        
         effectiveLocationName = manualLoc.name;
-        if (effectiveZoneName && manualLoc.zones?.length > 0) {
-          const zone = manualLoc.zones.find(z => z.zone_name?.toLowerCase() === effectiveZoneName.toLowerCase());
-          if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.filter(isProviderAccessible).slice(0, 6);
-        }
-        if (locationRefImages.length === 0 && manualLoc.zones?.length > 0) {
-          const firstZone = manualLoc.zones.find(z => z.image_urls?.length > 0);
-          if (firstZone) {
-            locationRefImages = firstZone.image_urls.filter(isProviderAccessible).slice(0, 6);
-            effectiveZoneName = firstZone.zone_name;
+        
+        // STEP 1: Try to find the user-selected zone
+        if (effectiveZoneName) {
+          console.log(`[regen] Searching for zone: "${effectiveZoneName}"`);
+          const zone = manualLoc.zones?.find(z => z.zone_name?.toLowerCase() === effectiveZoneName.toLowerCase());
+          if (zone) {
+            console.log(`[regen] ✓ Zone FOUND: "${zone.zone_name}" | total_images=${zone.image_urls?.length || 0}`);
+            const filtered = zone.image_urls?.filter(isProviderAccessible) || [];
+            locationRefImages = filtered.slice(0, 6);
+            console.log(`[regen]   Extracted ${locationRefImages.length} provider-accessible images from zone`);
+          } else {
+            console.warn(`[regen] ⚠️ Zone "${effectiveZoneName}" NOT FOUND in location zones`);
+            const zoneNames = manualLoc.zones?.map(z => z.zone_name).join(', ') || 'none';
+            console.log(`[regen]   Available zones: ${zoneNames}`);
           }
         }
+        
+        // STEP 2: Fallback - first zone with images
+        if (locationRefImages.length === 0 && manualLoc.zones?.length > 0) {
+          console.log(`[regen] No images from selected zone, trying first zone with images...`);
+          const firstZone = manualLoc.zones.find(z => z.image_urls?.length > 0);
+          if (firstZone) {
+            const filtered = firstZone.image_urls.filter(isProviderAccessible);
+            locationRefImages = filtered.slice(0, 6);
+            effectiveZoneName = firstZone.zone_name;
+            console.log(`[regen] ✓ Fallback: Using zone "${effectiveZoneName}" | ${locationRefImages.length} images`);
+          }
+        }
+        
+        // STEP 3: Fallback - flat location images
         if (locationRefImages.length === 0 && manualLoc.image_urls?.length > 0) {
-          locationRefImages = manualLoc.image_urls.filter(isProviderAccessible).slice(0, 6);
+          const filtered = manualLoc.image_urls.filter(isProviderAccessible);
+          locationRefImages = filtered.slice(0, 6);
+          console.log(`[regen] ✓ Fallback: Using location flat images | ${locationRefImages.length} images`);
         }
       }
+      
+      console.log(`[regen] MANUAL OVERRIDE COMPLETE: locationRefImages=${locationRefImages.length} | zoneName="${effectiveZoneName}"`);
     }
 
     // Filter location refs to provider-accessible URLs only
@@ -467,6 +500,21 @@ Photorealistic photograph. Real photo, not illustration. Natural lighting.${qual
     }
 
     console.log(`[regen] reason=${reason} | hasLocation=${hasLocation} | locationLabel="${locationLabel}" | manualLocationId=${manualLocationId || 'none'} | originalPrompt="${(originalPrompt || '').substring(0, 80)}" | refs=${referenceImages.length}`);
+    
+    // ── CRITICAL ASSERTION ──────────────────────────────────────────────────────
+    // If user manually selected a location with a zone, locationRefImages MUST have images
+    if (manualLocationId && manualZoneId && locationRefImages.length === 0) {
+      console.error(`[regen] ⛔⛔⛔ CRITICAL FAILURE: Manual zone selected but NO IMAGES extracted`);
+      console.error(`[regen] manualLocationId=${manualLocationId} | manualZoneId=${manualZoneId}`);
+      console.error(`[regen] This is a BYPASS FAILURE — the zone image extraction failed completely`);
+      console.error(`[regen] Falling back to text-only generation — image will be WRONG`);
+    }
+    
+    // If any manual location was selected but we have zero location images, log warning
+    if (manualLocationId && locationRefImages.length === 0) {
+      console.warn(`[regen] ⚠️⚠️⚠️ WARNING: Manual location=${manualLocationId} selected, zone="${manualZoneId || 'none'}", but locationRefImages=${locationRefImages.length}`);
+      console.warn(`[regen] This means the generation will use NO environment reference — AI will invent a generic room`);
+    }
 
     // ── PRE-GENERATION VALIDATION ─────────────────────────────────────────────
     // CRITICAL: Verify prompt matches resolved location before generation

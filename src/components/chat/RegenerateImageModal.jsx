@@ -120,7 +120,9 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
 
   const handleLocationConfirm = () => {
     if (!selectedLocation) return;
-    onSelect('wrong_location', null, selectedLocation.id, selectedZone?.zone_name || null);
+    const zoneName = selectedZone?.zone_name || null;
+    console.log(`[RegenerateModal] LocationConfirm: location="${selectedLocation.name}" (${selectedLocation.id}) | zone="${zoneName}"`);
+    onSelect('wrong_location', null, selectedLocation.id, zoneName);
   };
 
   const promptTitle = promptMode === "dont_like"
