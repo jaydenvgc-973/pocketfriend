@@ -39,45 +39,85 @@ async function resolveLocationImages(base44, locationId, zoneName) {
     return { images: [], zoneName: null, locationName: null };
   }
 
-  console.log(`[regen] ✓ Location loaded: "${loc.name}" | zones=${loc.zones?.length || 0} | flat_images=${loc.image_urls?.length || 0}`);
+  console.log(`[regen] ═══ LOCATION LOADED ═══`);
+  console.log(`[regen] location.id="${locationId}" | location.name="${loc.name}" | zones=${loc.zones?.length || 0} | flat_images=${loc.image_urls?.length || 0}`);
+  console.log(`[regen] zoneName REQUESTED: "${zoneName || 'null'}"`);
+  
+  // AUDIT: log all zones in this location
   loc.zones?.forEach((z, i) => {
-    console.log(`[regen]   Zone[${i}]: "${z.zone_name}" | images=${z.image_urls?.length || 0}`);
+    console.log(`[regen]   Zone[${i}]: name="${z.zone_name}" | image_urls count=${z.image_urls?.length || 0}`);
+    if (z.image_urls?.length > 0) {
+      z.image_urls.slice(0, 2).forEach((url, ui) => {
+        console.log(`[regen]     Image[${ui}]: ${url.substring(0, 80)}`);
+      });
+    }
   });
 
   let images = [];
   let resolvedZone = null;
 
-  // STEP 1: Exact zone match
+  // STEP 1: Exact zone match (MANDATORY when zoneName provided)
   if (zoneName && loc.zones?.length > 0) {
+    console.log(`[regen] STEP 1: Searching for exact zone match: "${zoneName}"`);
     const zone = loc.zones.find(z => z.zone_name?.toLowerCase() === zoneName.toLowerCase());
     if (zone) {
-      const filtered = (zone.image_urls || []).map(toPublicCDN).filter(isProviderAccessible);
+      console.log(`[regen] ✓ EXACT MATCH FOUND: zone.zone_name="${zone.zone_name}"`);
+      const rawUrls = zone.image_urls || [];
+      console.log(`[regen]   Raw zone.image_urls count: ${rawUrls.length}`);
+      
+      const filtered = rawUrls.map(url => {
+        const converted = toPublicCDN(url);
+        const accessible = isProviderAccessible(converted);
+        console.log(`[regen]   URL: ${url.substring(0, 50)}... → ${accessible ? '✓ accessible' : '✗ NOT accessible'}`);
+        return converted;
+      }).filter(isProviderAccessible);
+      
       images = filtered.slice(0, 6);
       resolvedZone = zone.zone_name;
-      console.log(`[regen] ✓ Zone MATCHED: "${zone.zone_name}" | total=${zone.image_urls?.length || 0} | accessible=${images.length}`);
+      console.log(`[regen] ✓ ZONE MATCH RESULT: zone="${zone.zone_name}" | raw_urls=${rawUrls.length} | accessible=${images.length} | final_slot=${images.length}`);
     } else {
-      const available = loc.zones?.map(z => z.zone_name).join(', ');
-      console.warn(`[regen] ⚠️ Zone "${zoneName}" not found. Available: ${available}`);
+      const available = loc.zones?.map(z => z.zone_name).join(', ') || '(no zones)';
+      console.error(`[regen] ⛔ STEP 1 FAILED: Zone "${zoneName}" NOT FOUND in location. Available zones: ${available}`);
+    }
+  } else {
+    if (zoneName) {
+      console.warn(`[regen] ⚠️ zoneName="${zoneName}" provided but no zones in location`);
+    } else {
+      console.log(`[regen] zoneName is null/empty — will use STEP 2 fallback`);
     }
   }
 
-  // STEP 2: First zone with accessible images
-  if (images.length === 0 && loc.zones?.length > 0) {
+  // STEP 2: First zone with accessible images (only if STEP 1 failed and zoneName was provided)
+  if (images.length === 0 && zoneName && loc.zones?.length > 0) {
+    console.log(`[regen] STEP 1 YIELDED ZERO IMAGES — STEP 2 BLOCKED: zoneName was requested but not found, not using fallback`);
+  } else if (images.length === 0 && !zoneName && loc.zones?.length > 0) {
+    console.log(`[regen] STEP 2: No zoneName requested. Finding first zone with accessible images...`);
     const firstZone = loc.zones.find(z => (z.image_urls || []).map(toPublicCDN).some(isProviderAccessible));
     if (firstZone) {
-      images = (firstZone.image_urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
+      const rawUrls = firstZone.image_urls || [];
+      images = rawUrls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
       resolvedZone = firstZone.zone_name;
-      console.log(`[regen] ✓ Fallback zone: "${resolvedZone}" | images=${images.length}`);
+      console.log(`[regen] ✓ STEP 2 RESULT: using first zone="${resolvedZone}" | raw_urls=${rawUrls.length} | accessible=${images.length}`);
+    } else {
+      console.warn(`[regen] ⚠️ STEP 2 FAILED: no zone with accessible images found`);
     }
   }
 
-  // STEP 3: Flat location images
+  // STEP 3: Flat location images (only if Steps 1-2 failed)
   if (images.length === 0 && loc.image_urls?.length > 0) {
-    images = loc.image_urls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
-    console.log(`[regen] ✓ Fallback flat images: ${images.length}`);
+    console.log(`[regen] STEP 3: Steps 1-2 failed. Using flat location.image_urls...`);
+    const rawUrls = loc.image_urls;
+    images = rawUrls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
+    console.log(`[regen] ✓ STEP 3 RESULT: flat_images | raw=${rawUrls.length} | accessible=${images.length}`);
   }
 
-  console.log(`[regen] resolveLocationImages RESULT: name="${loc.name}" | zone="${resolvedZone || 'none'}" | images=${images.length}`);
+  console.log(`[regen] ═══ resolveLocationImages FINAL RESULT ═══`);
+  console.log(`[regen] location="${loc.name}" | resolvedZone="${resolvedZone || '(none — fallback used)'}" | images_count=${images.length}`);
+  if (images.length > 0) {
+    images.slice(0, 3).forEach((url, i) => {
+      console.log(`[regen]   Image[${i}]: ${url.substring(0, 80)}`);
+    });
+  }
   return { images, zoneName: resolvedZone, locationName: loc.name };
 }
 
@@ -156,7 +196,7 @@ Deno.serve(async (req) => {
       // ── PATH A: USER EXPLICITLY SELECTED A LOCATION (AND OPTIONALLY ZONE) ─
       // This is the HIGHEST PRIORITY. Do NOT mix with original context.
       console.log(`[regen] ═══ PATH A: MANUAL LOCATION SELECTED ═══`);
-      console.log(`[regen] manualLocationId=${manualLocationId} | manualZoneId=${manualZoneId || 'none (auto)'}`);
+      console.log(`[regen] manualLocationId="${manualLocationId}" | manualZoneId="${manualZoneId || '(none — will auto-detect if multiple zones)'}" | reason="${reason}"`);
       
       effectiveLocationId = manualLocationId;
       const resolved = await resolveLocationImages(base44, manualLocationId, manualZoneId || null);
@@ -164,9 +204,25 @@ Deno.serve(async (req) => {
       effectiveZoneName = resolved.zoneName || manualZoneId || null;
       effectiveLocationName = resolved.locationName;
 
+      // CRITICAL VALIDATION: if user explicitly selected a zone but got zero images, HALT
+      if (manualZoneId && locationRefImages.length === 0) {
+        console.error(`[regen] ⛔ CRITICAL FAILURE: User selected zone "${manualZoneId}" in location "${effectiveLocationName}", but resolveLocationImages returned ZERO images`);
+        console.error(`[regen] This means zone.image_urls is empty or all URLs are inaccessible`);
+        console.error(`[regen] SYSTEM RULE: Cannot fall back to generic or different zone when user explicitly selected "${manualZoneId}"`);
+        return Response.json({
+          success: false,
+          error: `Zone "${manualZoneId}" in "${effectiveLocationName}" has no reference images. Add photos to this zone before regenerating.`,
+          location_id: manualLocationId,
+          location_name: effectiveLocationName,
+          zone_requested: manualZoneId,
+          zone_has_images: false,
+          environment_refs_count: 0,
+        }, { status: 422 });
+      }
+
       if (locationRefImages.length === 0) {
         console.error(`[regen] ⛔ HARD HALT: Manual location "${effectiveLocationName}" (${manualLocationId}) resolved ZERO accessible images`);
-        console.error(`[regen] Zone requested: "${manualZoneId || 'none'}"`);
+        console.error(`[regen] Zone requested: "${manualZoneId || 'none (auto-detect will use first zone with images)'}"`) ;
         console.error(`[regen] SYSTEM RULE: Cannot generate without environment reference images. This is a data issue with the location record.`);
         return Response.json({
           success: false,
@@ -177,9 +233,9 @@ Deno.serve(async (req) => {
           environment_refs_count: 0,
         }, { status: 422 });
       } else {
-        console.log(`[regen] ✓ MANUAL LOCATION RESOLVED: "${effectiveLocationName}" → zone="${effectiveZoneName}" | ${locationRefImages.length} images`);
-        locationRefImages.forEach((url, i) => {
-          console.log(`[regen]   Image ${i}: ${url}`);
+        console.log(`[regen] ✓ MANUAL LOCATION RESOLVED: "${effectiveLocationName}" → zone="${effectiveZoneName || '(first auto-detected)'}" | ${locationRefImages.length} images loaded`);
+        locationRefImages.slice(0, 3).forEach((url, i) => {
+          console.log(`[regen]   Image[${i}]: ${url.substring(0, 80)}`);
         });
       }
 
