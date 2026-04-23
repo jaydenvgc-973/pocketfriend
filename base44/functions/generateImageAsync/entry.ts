@@ -912,29 +912,65 @@ The environment must feel real, functional, and original.
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
             let imgs = [];
+
+            // ── ZONE RESOLUTION PRIORITY ──────────────────────────────────────────
+            // 1. Explicit zone selected → use that zone's images
+            // 2. No zone selected → use first zone with images
+            // 3. No zones at all → use flat location image_urls
+            // 4. Nothing found → use strong text-only environment lock (never avatar background)
             if (manualZoneId && manualLoc.zones?.length > 0) {
               const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId)
                         || manualLoc.zones.find(z => z.zone_name?.toLowerCase() === manualZoneId?.toLowerCase());
               if (zone?.image_urls?.length > 0) {
                 imgs = zone.image_urls.slice(0, 6);
                 resolvedZoneName = zone.zone_name;
-                console.log(`[LOCATION] ✓ MANUAL ZONE: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
+                console.log(`[LOCATION] ✓ MANUAL ZONE (explicit): "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
+              } else {
+                console.warn(`[LOCATION] ⚠ MANUAL ZONE "${manualZoneId}" selected but has no images — falling back to first zone with images`);
               }
             }
-            if (imgs.length === 0) {
-              if (manualLoc.image_urls?.length > 0) { imgs = manualLoc.image_urls.slice(0, 6); resolvedZoneName = null; }
-              else {
-                const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
-                imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || [];
-                resolvedZoneName = firstZoneWithImages?.zone_name || null;
+
+            // No zone selected or zone had no images — use first zone with images
+            if (imgs.length === 0 && manualLoc.zones?.length > 0) {
+              const firstZoneWithImages = manualLoc.zones.find(z => z.image_urls?.length > 0);
+              if (firstZoneWithImages) {
+                imgs = firstZoneWithImages.image_urls.slice(0, 6);
+                resolvedZoneName = firstZoneWithImages.zone_name;
+                console.log(`[LOCATION] ✓ MANUAL first-zone fallback: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
               }
             }
+
+            // No zones at all — use flat location images
+            if (imgs.length === 0 && manualLoc.image_urls?.length > 0) {
+              imgs = manualLoc.image_urls.slice(0, 6);
+              resolvedZoneName = null;
+              console.log(`[LOCATION] ✓ MANUAL flat images: "${resolvedLocationName}" | Images: ${imgs.length}`);
+            }
+
             locationImages = imgs;
-            locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
-            if (resolvedZoneName) {
-              locationNote += `\n\n🔒 ZONE ENFORCEMENT: The scene MUST take place in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene in any other room or area within this location.`;
+
+            if (imgs.length > 0) {
+              locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
+              if (resolvedZoneName) {
+                locationNote += `\n\n🔒 ZONE ENFORCEMENT: The scene MUST take place in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene in any other room or area within this location.`;
+              }
+            } else {
+              // Location exists but has NO reference images — use strong text-only lock
+              // CRITICAL: Do NOT let avatar background fill this gap
+              const locCategory = (manualLoc.category || 'generic').toLowerCase();
+              const locDesc = manualLoc.description || '';
+              console.warn(`[LOCATION] ⚠ MANUAL location "${resolvedLocationName}" has NO reference images — using text-only environment lock. Avatar background suppressed.`);
+              locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — "${resolvedLocationName}"${manualZoneId ? ` → ${manualZoneId}` : ''}:
+This scene takes place inside ${resolvedLocationName}. ${locDesc ? `Description: ${locDesc}.` : ''}
+Category: ${locCategory}. Generate an accurate, realistic environment for this type of location.
+⛔ CRITICAL: Do NOT use the background from any character reference image as the scene environment.
+⛔ Do NOT invent a different location. The scene must be set at ${resolvedLocationName}.
+The character reference images are for the PERSON ONLY — their background is irrelevant and must be ignored.`;
             }
-            console.log(`[LOCATION] ✓ MANUAL: "${resolvedLocationName}" → Zone: "${resolvedZoneName || 'none'}" | Images: ${imgs.length}`);
+
+            console.log(`[LOCATION] ✓ MANUAL RESOLVED: "${resolvedLocationName}" → zone="${resolvedZoneName || 'none'}" | imgs=${locationImages.length}`);
+          } else {
+            console.warn(`[LOCATION] ⚠ manualLocationId="${manualLocationId}" not found in DB — location resolution failed`);
           }
         } else {
           // Reuse the cached character record from Step 1 — no extra DB call needed
@@ -1004,10 +1040,11 @@ The environment must feel real, functional, and original.
                 const defaultZoneHint = liveZoneHint || getDefaultZoneHint(realTimeLoc.category);
                 const { zoneImages, zoneName, matchType } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, defaultZoneHint);
                 const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
+                resolvedLocationName = realTimeLoc.name;
+                resolvedZoneName = zoneName || defaultZoneHint;
+
                 if (imgs.length > 0) {
                   locationImages = imgs;
-                  resolvedLocationName = realTimeLoc.name;
-                  resolvedZoneName = zoneName || defaultZoneHint;
                   locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
                   const locCat = (realTimeLoc.category || '').toLowerCase();
                   if (locCat === 'home') {
@@ -1021,18 +1058,21 @@ The environment must feel real, functional, and original.
                     locationNote += `\n\n📍 PUBLIC/COMMERCIAL LOCATION: Background NPCs and ambient crowd are ALLOWED and ENCOURAGED. Diversity in background people is required.`;
                   }
                   console.log(`[LOCATION] ✓ REALTIME: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Presence: "${livePresence}" | Images: ${imgs.length}`);
-                } else if (isHome) {
-                  locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
-                  resolvedLocationName = realTimeLoc.name;
-                  resolvedZoneName = liveZoneHint;
                 } else {
-                  // Home with a location record but no images
-                  resolvedLocationName = realTimeLoc.name;
-                  resolvedZoneName = liveZoneHint;
-                  locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home — specifically ${realTimeLoc.name}. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
+                  // Location resolved but has NO images — use strong text-only lock.
+                  // CRITICAL: avatar background must NOT fill this gap.
+                  const locCat = (realTimeLoc.category || 'home').toLowerCase();
+                  const isHomeCategory = locCat === 'home' || isHome;
+                  console.warn(`[LOCATION] ⚠ REALTIME location "${resolvedLocationName}" has NO images — text-only lock applied. Avatar background suppressed.`);
+                  if (isHomeCategory) {
+                    const zoneDesc = livePresence === 'sleeping' || livePresence === 'napping' ? 'BEDROOM — character is sleeping, show bed and bedroom furniture only' : (liveZoneHint ? liveZoneHint : 'living room or common area');
+                    locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — "${resolvedLocationName}" (${zoneDesc}):\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior matching the zone above.\n⛔ Do NOT use the background from character reference images as the scene environment.\n⛔ Do NOT generate any commercial, bar, club, restaurant, gym, or office elements.\nCharacter reference images define the PERSON ONLY — their background is irrelevant.`;
+                  } else {
+                    locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — "${resolvedLocationName}" (${locCat}):\nThis scene takes place at ${resolvedLocationName}. Generate a realistic, authentic environment for this type of location.\n⛔ Do NOT use the background from character reference images as the scene environment.\nCharacter reference images define the PERSON ONLY — their background is irrelevant.`;
+                  }
                 }
               } else if (!isHome) {
-                // No authorized location found and not home — parse from scene text
+                // No authorized location found and character is NOT home — parse from scene text
                 const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(scenePrompt, savedLocations, characterId);
                 if (imgs.length > 0 && confidenceScore >= 0.7) {
                   locationImages = imgs;
@@ -1040,22 +1080,16 @@ The environment must feel real, functional, and original.
                   resolvedZoneName = zoneName;
                   locationNote = buildRoomLockNote(locationName, zoneName);
                   console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
-                }
-              } else if (isHome && realTimeLoc) {
-                // Home with a location but no images — still try zone resolution
-                const defaultZoneHint = liveZoneHint || 'living room';
-                const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, defaultZoneHint);
-                if (zoneImages.length > 0) {
-                  locationImages = zoneImages;
-                  resolvedZoneName = zoneName || defaultZoneHint;
-                  resolvedLocationName = realTimeLoc.name;
-                  locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
                 } else {
-                  locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT (NO REFERENCE IMAGES):\nThis scene takes place inside a private residential home — specifically ${realTimeLoc.name}. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. The character is sleeping. Show a bedroom environment ONLY.' : 'Zone: living room or common area.'}\nABSOLUTELY NO commercial elements. No bar. No workplace. No venue. Only home interior.`;
+                  // No location resolved at all and not home — environment unknown, suppress avatar background
+                  console.warn(`[LOCATION] ⚠ No location resolved for non-home presence "${livePresence}" — avatar background suppressed`);
+                  locationNote = `\n\n⛔ AVATAR BACKGROUND SUPPRESSION:\nThe character reference images are for PERSON IDENTITY ONLY. Do NOT reproduce their background as the scene.\nGenerate a natural environment appropriate for the character's current context.`;
                 }
               } else {
-                // Home with no location record at all
-                locationNote = `\n\n🏠 RESIDENTIAL HOME ENVIRONMENT:\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior.\n${livePresence === 'sleeping' || livePresence === 'napping' ? 'Zone: BEDROOM. Character is sleeping. Bedroom environment ONLY. NO commercial elements whatsoever.' : ''}\nABSOLUTELY NO bar, club, workplace, restaurant, gym, or any commercial environment.`;
+                // isHome = true but realTimeLoc is null — character is home but no home location assigned
+                console.warn(`[LOCATION] ⚠ Character is home but no home location record found — text-only home lock applied. Avatar background suppressed.`);
+                const zoneDesc = livePresence === 'sleeping' || livePresence === 'napping' ? 'BEDROOM (character is sleeping)' : 'living room or common area';
+                locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — Home (${zoneDesc}):\nThis scene takes place inside a private residential home interior.\n⛔ Do NOT use the background from character reference images as the scene environment.\n⛔ ABSOLUTELY NO commercial, bar, club, restaurant, gym, or office elements.\nCharacter reference images define the PERSON ONLY — their background is irrelevant and must be ignored.`;
               }
             }
           }
