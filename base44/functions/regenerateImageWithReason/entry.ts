@@ -9,9 +9,13 @@ Deno.serve(async (req) => {
     const { messageId, reason, customPrompt, manualLocationId, manualZoneId } = await req.json();
     if (!messageId || !reason) return Response.json({ error: 'messageId and reason required' }, { status: 400 });
 
-    // Fetch the message — use direct get for exact message ID binding (no wrong-message substitution)
-    const message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
-    if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
+    // Fetch the message — try get() first, then filter() fallback (same pattern as generateImageAsync)
+    let message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
+    if (!message) {
+      const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
+      message = msgList?.[0] || null;
+    }
+    if (!message) return Response.json({ error: 'Message not found — the original image record may have been deleted', filtered: false, success: false }, { status: 404 });
     console.log(`[regen] REQUEST: messageId=${messageId} | reason=${reason} | message.character_id=${message.character_id || 'none'} | has_generation_context=${!!message.generation_context}`);
 
     // ── RESTORE ORIGINAL GENERATION CONTEXT ──────────────────────────────────

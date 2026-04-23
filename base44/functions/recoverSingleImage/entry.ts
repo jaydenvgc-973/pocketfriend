@@ -23,9 +23,17 @@ Deno.serve(async (req) => {
     }
 
     // Fetch character for reference images — must match message.character_id exactly
-    const character = message.character_id
-      ? await base44.asServiceRole.entities.Character.get(message.character_id).catch(() => null)
-      : null;
+    // Use filter fallback: asServiceRole.Character.get() can 404 even when the record exists
+    let character = null;
+    if (message.character_id) {
+      try {
+        character = await base44.asServiceRole.entities.Character.get(message.character_id).catch(() => null);
+        if (!character) {
+          const charList = await base44.asServiceRole.entities.Character.filter({ id: message.character_id }, null, 1).catch(() => []);
+          character = charList?.[0] || null;
+        }
+      } catch (_) {}
+    }
     console.log(`[recoverSingleImage] messageId=${messageId} | character_id=${message.character_id || 'none'} | character_name=${character?.name || 'none'} | forceRegenerate=${forceRegenerate}`);
 
     // Build reference images list
