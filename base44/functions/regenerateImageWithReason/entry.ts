@@ -25,18 +25,34 @@ Deno.serve(async (req) => {
     const originalCharRefs = ctx.character_reference_images || [];
     const originalSubjectType = ctx.subject_type || 'character';
 
-    // Fetch character for appearance metadata
-    const character = originalCharId
-      ? (await base44.asServiceRole.entities.Character.get(originalCharId).catch(() => null))
-      : null;
+    // Fetch character for appearance metadata — use filter not get() to avoid 404 throws on RLS/missing records
+    let character = null;
+    if (originalCharId) {
+      try {
+        // .get() can throw on 404 even with .catch() in some SDK versions — use filter as safe fallback
+        character = await base44.asServiceRole.entities.Character.get(originalCharId);
+      } catch (charErr) {
+        console.warn(`[regen] Character ${originalCharId} not accessible via get (${charErr.message}) — trying filter`);
+        try {
+          const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1);
+          character = charList?.[0] || null;
+        } catch (_) {
+          character = null;
+        }
+      }
+    }
+    console.log(`[regen] Character resolved: ${character?.name || 'NOT FOUND'} (id=${originalCharId || 'none'})`);
 
     const charName = character?.name || 'the character';
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
-    // Build character reference images
-    let charRefImages = originalCharRefs.length > 0
-      ? originalCharRefs
-      : [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean);
+    // Build character reference images — always prefer server-side avatar + refs over stored context refs
+    // This ensures identity is locked to the actual character record, not a stale snapshot
+    const serverCharRefs = [character?.avatar_url, ...(character?.reference_image_urls || [])].filter(Boolean);
+    let charRefImages = serverCharRefs.length > 0
+      ? serverCharRefs
+      : originalCharRefs.filter(Boolean);
+    console.log(`[regen] charRefImages: ${charRefImages.length} (server=${serverCharRefs.length}, ctx=${originalCharRefs.length})`);
 
     // Fetch the character's current location and zone to resolve proper imagery
     let currentLocationId = originalLocationId || manualLocationId || null;
@@ -390,10 +406,17 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
       return Response.json({ success: false, error: 'Generation returned no URL' }, { status: 500 });
     }
 
+    // Write ONLY to the exact message that was requested — verify ID before write
+    const targetMsg = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
+    if (!targetMsg || targetMsg.id !== messageId) {
+      console.error(`[regen] ⛔ ID MISMATCH before write: requested=${messageId} got=${targetMsg?.id || 'null'}`);
+      return Response.json({ success: false, error: 'Message ID mismatch — aborting write' }, { status: 400 });
+    }
     await base44.asServiceRole.entities.Message.update(messageId, { image_url: genRes.url });
+    console.log(`[regen] ✓ Updated message ${messageId} with new image_url`);
 
     if (character?.id) {
-      await base44.asServiceRole.entities.Memory.create({
+      base44.asServiceRole.entities.Memory.create({
         character_id: character.id,
         title: `Sent a regenerated photo`,
         description: `The user asked to regenerate one of your photos (reason: ${reason}). You sent a new version.`,
@@ -403,7 +426,7 @@ CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photog
       }).catch(() => {});
     }
 
-    return Response.json({ success: true, image_url: genRes.url, reason });
+    return Response.json({ success: true, image_url: genRes.url, messageId, reason });
   } catch (error) {
     console.error('[regenerateImageWithReason]', error);
     return Response.json({ success: false, error: error.message }, { status: 500 });

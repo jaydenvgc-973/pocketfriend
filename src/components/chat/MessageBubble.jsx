@@ -86,6 +86,17 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         hadError = true;
         return;
       }
+      // Immediately hydrate local state from the returned URL — no subscription wait
+      const returnedUrl = res?.data?.image_url;
+      const returnedMsgId = res?.data?.messageId;
+      if (returnedUrl && returnedUrl.startsWith('http')) {
+        if (returnedMsgId && returnedMsgId !== message.id) {
+          console.error(`[MessageBubble] ⛔ REGEN LINEAGE MISMATCH: requested=${message.id} got=${returnedMsgId}`);
+        } else {
+          setLocalImageUrl(returnedUrl);
+          onImageLoaded?.(message.id, returnedUrl);
+        }
+      }
     } catch (err) {
       setRegenError(err.message || 'Failed to regenerate. Please try again.');
       hadError = true;
