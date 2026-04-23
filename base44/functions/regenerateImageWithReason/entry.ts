@@ -108,7 +108,9 @@ Deno.serve(async (req) => {
     console.log(`[regen] Character: ${character?.name || 'NOT FOUND'} (id=${originalCharId || 'none'})`);
 
     const charName = character?.name || 'the character';
-    const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
+    // Build safe appearance description — strip outfit/clothing entirely (it may contain sensitive content
+    // that triggers content filters). Only use physical/demographic descriptors.
+    const charDesc = [character?.appearance_notes, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
     // Build character reference images
     // STRATEGY: Use only the stored generation_context character refs (already vetted for provider use)
@@ -263,15 +265,16 @@ Reference images 1-${LOC_SLOT} are photographs of this exact location. Match the
     let corePrompt = '';
 
     if (reason === 'wrong_location' || reason === 'flawed') {
-      const sceneDesc = (reason === 'wrong_location' && hasLocation)
-        ? `${charName} in the ${effectiveZoneName || 'room'} at ${effectiveLocationName}.`
-        : (reason === 'wrong_location')
-          ? `${charName} in a scene.`
-          : (originalPrompt || `${charName} in a natural candid scene`);
+      // When a manual location is explicitly provided (wrong_location OR flawed + manual override):
+      // ALWAYS rebuild scene description from the selected location. NEVER reuse the old prompt.
+      // The old prompt described the WRONG room — reusing it fights the correct location reference images.
+      const sceneDesc = hasLocation
+        ? `${charName} in the ${effectiveZoneName || effectiveLocationName || 'room'}.`
+        : (originalPrompt || `${charName} in a natural candid scene`);
 
-      const locationOverride = (reason === 'wrong_location' && hasLocation) ? `
+      const locationOverride = hasLocation ? `
 
-LOCATION CORRECTION: The user selected "${locationLabel}" as the correct location. Reference images 1-${LOC_SLOT} show the exact room to use. Build the scene entirely from those location reference images. Use those exact walls, floor, furniture, and lighting. Do not use any room visible in the character identity photos.` : '';
+LOCATION CORRECTION: The environment is "${locationLabel}". Reference images 1-${LOC_SLOT} are photographs of this exact room. Reproduce those exact walls, floor, furniture, lighting, and decor. Do not use any room or background visible in the character identity photos.` : '';
 
       corePrompt = `${sceneDesc}${roomLock}${locationOverride}
 
