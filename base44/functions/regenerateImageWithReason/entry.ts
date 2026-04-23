@@ -165,9 +165,17 @@ Deno.serve(async (req) => {
       effectiveLocationName = resolved.locationName;
 
       if (locationRefImages.length === 0) {
-        console.error(`[regen] ⛔ CRITICAL: Manual location "${effectiveLocationName}" (${manualLocationId}) resolved ZERO accessible images`);
+        console.error(`[regen] ⛔ HARD HALT: Manual location "${effectiveLocationName}" (${manualLocationId}) resolved ZERO accessible images`);
         console.error(`[regen] Zone requested: "${manualZoneId || 'none'}"`);
-        console.error(`[regen] The AI will generate a generic room — this is a data issue with the location record`);
+        console.error(`[regen] SYSTEM RULE: Cannot generate without environment reference images. This is a data issue with the location record.`);
+        return Response.json({
+          success: false,
+          error: `Location "${effectiveLocationName}" has no accessible reference images. Add photos to this location's zones before generating from it.`,
+          location_id: manualLocationId,
+          location_name: effectiveLocationName,
+          zone_requested: manualZoneId || null,
+          environment_refs_count: 0,
+        }, { status: 422 });
       } else {
         console.log(`[regen] ✓ MANUAL LOCATION RESOLVED: "${effectiveLocationName}" → zone="${effectiveZoneName}" | ${locationRefImages.length} images`);
         locationRefImages.forEach((url, i) => {
@@ -224,6 +232,23 @@ Deno.serve(async (req) => {
           effectiveLocationId = fallbackLocationId;
         }
       }
+    }
+
+    // ── HARD HALT: no location images resolved at all ─────────────────────────
+    // If we reach here with zero location images, we have no environment authority.
+    // Avatar background WILL fill the vacuum — this violates the core system rule.
+    // STOP immediately instead of generating a generic room.
+    if (locationRefImages.length === 0) {
+      console.error(`[regen] ⛔ HARD HALT — zero location images resolved`);
+      console.error(`[regen] PATH=${manualLocationId ? 'A (manual)' : 'B (auto)'} | char=${character?.name || 'unknown'} | effectiveLocationId=${effectiveLocationId || 'null'}`);
+      console.error(`[regen] Without environment reference images, the provider has no room authority.`);
+      console.error(`[regen] FIX: Add reference photos to the character's assigned location, or select a different location with images.`);
+      return Response.json({
+        success: false,
+        error: 'No environment reference images could be found for this character. Assign a location with zone photos before regenerating.',
+        location_name: effectiveLocationName || null,
+        environment_refs_count: 0,
+      }, { status: 422 });
     }
 
     const hasLocation = locationRefImages.length > 0;

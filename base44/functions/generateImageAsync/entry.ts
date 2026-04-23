@@ -1021,6 +1021,7 @@ Deno.serve(async (req) => {
     let locationNote = "";
     let resolvedLocationName = null;
     let resolvedZoneName = null;
+    let authorizedLocId = null; // hoisted so generation_context can save it regardless of branch
 
     if (resolvedSubjectType !== "user") {
       try {
@@ -1316,7 +1317,7 @@ The environment must feel real, functional, and original.
               const isTraveling = livePresence === 'traveling';
 
               // STRICT PRIORITY ORDER — all fields checked, do not skip levels
-              let authorizedLocId = null;
+              // authorizedLocId is hoisted above so generation_context can access it after this block
               let authSource = null;
               if (charRecord?.resolved_current_location_id) {
                 authorizedLocId = charRecord.resolved_current_location_id;
@@ -1891,13 +1892,19 @@ No character identity images provided — render the character from the text des
     }
 
     if (response?.url) {
+      // CRITICAL: always store the RESOLVED location ID (not just manualLocationId).
+      // For presence_scene mode, manualLocationId is null but authorizedLocId was resolved
+      // from character file. If we only save manualLocationId, regeneration PATH B has
+      // no location_id to look up — causing it to fall back to generic.
+      // We capture it here from the outer scope where it was resolved.
+      const savedLocationId = manualLocationId || authorizedLocId || null;
       const generationContext = {
         message_id: messageId, // explicit lineage — this context belongs to THIS message only
         prompt: cleanPrompt,
         character_id: characterId || null,
         character_name: finalCharSubject?.canonical_name || null,
         character_reference_images: finalCharSubject?.face_refs.slice(0, 4) || [],
-        location_id: manualLocationId || null,
+        location_id: savedLocationId,
         zone_name: resolvedZoneName || null,
         location_name: resolvedLocationName || null,
         location_reference_images: locationImages.slice(0, 3),
