@@ -1,6 +1,65 @@
 {
   "name": "LocationReference",
   "type": "object",
+  "required": [
+    "name",
+    "location_type"
+  ],
+  "rls": {
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "read": {
+      "$or": [
+        {
+          "data.scope": "shared"
+        },
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        }
+      ]
+    }
+  },
   "properties": {
     "name": {
       "type": "string",
@@ -23,36 +82,29 @@
         "account_global",
         "character_specific"
       ],
-      "default": "account_global",
-      "description": "shared = admin-created, visible to all users (read-only for regular users). account_global = belongs to one user account, visible only to that account. character_specific = tied to a single character within an account."
+      "default": "account_global"
     },
     "owner_user_id": {
-      "type": "string",
-      "description": "ID of the User record who owns this location. Null/absent for truly shared (admin-created) locations."
+      "type": "string"
     },
     "owner_email": {
-      "type": "string",
-      "description": "Email of the owning user \u2014 mirrors created_by for legacy compatibility but is explicitly set on creation. Null for shared locations."
+      "type": "string"
     },
     "created_by_role": {
       "type": "string",
       "enum": [
         "admin",
         "user"
-      ],
-      "description": "Role of the account that originally created this location. Admin-created = can be shared; user-created = account_global or character_specific only."
+      ]
     },
     "assigned_character_id": {
-      "type": "string",
-      "description": "If scope=character_specific, the ID of the character this location belongs to."
+      "type": "string"
     },
     "assigned_character_name": {
-      "type": "string",
-      "description": "Display name of the assigned character if scope=character_specific."
+      "type": "string"
     },
     "source_shared_location_id": {
-      "type": "string",
-      "description": "If this is a user-claimed copy of a shared location, the ID of the original shared record."
+      "type": "string"
     },
     "category": {
       "type": "string",
@@ -184,12 +236,10 @@
       "default": []
     },
     "character_id": {
-      "type": "string",
-      "description": "Legacy: If character_specific, the ID of the character this belongs to. Use assigned_character_id instead."
+      "type": "string"
     },
     "character_name": {
-      "type": "string",
-      "description": "Legacy: Display name of the character if character_specific."
+      "type": "string"
     },
     "owner_character_id": {
       "type": "string"
@@ -312,6 +362,13 @@
         "required": [
           "name"
         ]
+      }
+    },
+    "resident_housing_context": {
+      "type": "object",
+      "description": "Maps character_id to their housing context at this location: 'homeless' or 'shelter'",
+      "additionalProperties": {
+        "type": "string"
       }
     },
     "worker_character_ids": {
@@ -508,65 +565,6 @@
     "is_user_created": {
       "type": "boolean",
       "default": true
-    }
-  },
-  "required": [
-    "name",
-    "location_type"
-  ],
-  "rls": {
-    "create": {
-      "$or": [
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        },
-        {
-          "user_condition": {
-            "role": "user"
-          }
-        }
-      ]
-    },
-    "read": {
-      "$or": [
-        {
-          "data.scope": "shared"
-        },
-        {
-          "created_by": "{{user.email}}"
-        },
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        }
-      ]
-    },
-    "update": {
-      "$or": [
-        {
-          "created_by": "{{user.email}}"
-        },
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        }
-      ]
-    },
-    "delete": {
-      "$or": [
-        {
-          "created_by": "{{user.email}}"
-        },
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        }
-      ]
     }
   }
 }
