@@ -71,7 +71,18 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   };
 
   const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
+    // CRITICAL VALIDATION: ensure location/zone parameters are not accidentally null when user selected them
+    // The modal calls onSelect('wrong_location', null, locId, zoneName)
+    // If customPrompt is null but manualLocationId is passed, they are in CORRECT positions
     console.log(`[MessageBubble.handleRegenSelect] ▶ INVOKING regenerateImageWithReason with:`, { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
+    
+    // HARD VALIDATION: wrong_location reason MUST have a locationId
+    if (reason === 'wrong_location' && !manualLocationId) {
+      setRegenError('Please select a location to regenerate');
+      setIsRegenerating(false);
+      return;
+    }
+    
     setIsRegenerating(true);
     setRegenError(null);
     try {
