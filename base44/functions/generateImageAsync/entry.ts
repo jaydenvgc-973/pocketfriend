@@ -1116,21 +1116,27 @@ The environment must feel real, functional, and original.
               if (resolvedZoneName) {
                 locationNote += `\n\n🔒 ZONE ENFORCEMENT: The scene MUST take place in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene in any other room or area within this location.`;
               }
+              console.log(`[LOCATION] ✓ MANUAL RESOLVED: "${resolvedLocationName}" → zone="${resolvedZoneName || 'none'}" | imgs=${locationImages.length}`);
             } else {
-              // Location exists but has NO reference images — use strong text-only lock
-              // CRITICAL: Do NOT let avatar background fill this gap
-              const locCategory = (manualLoc.category || 'generic').toLowerCase();
-              const locDesc = manualLoc.description || '';
-              console.warn(`[LOCATION] ⚠ MANUAL location "${resolvedLocationName}" has NO reference images — using text-only environment lock. Avatar background suppressed.`);
-              locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — "${resolvedLocationName}"${manualZoneId ? ` → ${manualZoneId}` : ''}:
-This scene takes place inside ${resolvedLocationName}. ${locDesc ? `Description: ${locDesc}.` : ''}
-Category: ${locCategory}. Generate an accurate, realistic environment for this type of location.
-⛔ CRITICAL: Do NOT use the background from any character reference image as the scene environment.
-⛔ Do NOT invent a different location. The scene must be set at ${resolvedLocationName}.
-The character reference images are for the PERSON ONLY — their background is irrelevant and must be ignored.`;
+              // ── HARD HALT: manually selected location has NO reference images ──────────
+              // This is the same failure as the presence_scene case: without real reference
+              // images, the provider has no environment authority. Avatar background WILL
+              // fill the vacuum. Text-only lock is not sufficient — it is not enforced.
+              console.error(`[LOCATION] ⛔ HARD HALT — manually selected location "${resolvedLocationName}" (id=${manualLocationId}) has ZERO images.`);
+              console.error(`[LOCATION] zones=${manualLoc.zones?.length || 0} | zones_with_images=${(manualLoc.zones || []).filter(z => z.image_urls?.length > 0).length} | flat_image_urls=${(manualLoc.image_urls || []).length}`);
+              console.error(`[LOCATION] manualZoneId="${manualZoneId || 'none'}" | A text-only lock CANNOT enforce 80% environment authority.`);
+              console.error(`[LOCATION] Without location reference images, the provider will anchor on avatar background. This is not acceptable.`);
+              console.error(`[LOCATION] FIX: Add reference photos (zone images or flat images) to this location record.`);
+              await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+              return Response.json({
+                success: false,
+                error: `Location "${resolvedLocationName}" has no reference images. Add photos to this location (or its zones) before generating images from it.`,
+                location_id: manualLocationId,
+                location_name: resolvedLocationName,
+                zone_requested: manualZoneId || null,
+                environment_refs_count: 0,
+              }, { status: 422 });
             }
-
-            console.log(`[LOCATION] ✓ MANUAL RESOLVED: "${resolvedLocationName}" → zone="${resolvedZoneName || 'none'}" | imgs=${locationImages.length}`);
           } else {
             console.warn(`[LOCATION] ⚠ manualLocationId="${manualLocationId}" not found in DB — location resolution failed`);
           }
