@@ -507,7 +507,14 @@ function buildSubjectOutfitBlock(subject) {
     /topless/gi,
     /no (shirt|top|clothes)/gi,
     /bare (chest|torso|skin|body)/gi,
-    /slight sheen of moisture on (his|her) skin/gi,
+    /slight sheen of moisture/gi,
+    /boxer/gi,
+    /underwear/gi,
+    /bra\b/gi,
+    /naked/gi,
+    /nude/gi,
+    /lingerie/gi,
+    /bikini/gi,
   ];
   const isSensitive = sensitivePatterns.some(p => p.test(outfitDesc));
   if (isSensitive) {

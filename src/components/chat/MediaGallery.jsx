@@ -255,7 +255,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       let charOutfitSuffix = '';
       if (activeCharOutfit) {
         const parts = [activeCharOutfit.top, activeCharOutfit.bottom, activeCharOutfit.shoes, activeCharOutfit.outerwear, activeCharOutfit.accessories].filter(Boolean);
-        const desc = activeCharOutfit.full_description || parts.join(', ');
+        const rawDesc = activeCharOutfit.full_description || parts.join(', ');
+        // Filter sensitive/revealing outfit descriptions to prevent AI provider rejections
+        const sensitiveOutfitPatterns = [/wearing only/i, /shirtless/i, /topless/i, /no shirt/i, /bare (chest|torso|skin)/i, /slight sheen of moisture/i, /boxer/i, /underwear/i, /\bbra\b/i, /naked/i, /nude/i, /lingerie/i, /bikini/i];
+        const outfitIsSensitive = sensitiveOutfitPatterns.some(p => p.test(rawDesc));
+        const desc = outfitIsSensitive ? null : rawDesc;
         if (desc) charOutfitSuffix = ` OUTFIT LOCK: ${character.name} is wearing: ${desc}. Reproduce this exact outfit — do NOT use the clothing visible in the avatar/reference photo.`;
       }
 
@@ -270,6 +274,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       const subjectType = userIncluded ? (hasOtherChars ? "joint" : "user") : "character";
 
       // Build per-character outfit notes for all selected characters
+      const SENSITIVE_OUTFIT_RE = [/wearing only/i, /shirtless/i, /topless/i, /no shirt/i, /bare (chest|torso|skin)/i, /slight sheen of moisture/i, /boxer/i, /underwear/i, /\bbra\b/i, /naked/i, /nude/i, /lingerie/i, /bikini/i];
+      const isOutfitSensitive = (desc) => SENSITIVE_OUTFIT_RE.some(p => p.test(desc));
       const buildOutfitNote = (char) => {
         const outfit = char.current_outfit;
         const closetOutfits = (char.character_closet || []).filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
@@ -277,7 +283,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         if (!activeOutfit) return null;
         const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
         const desc = activeOutfit.full_description || parts.join(', ');
-        return desc ? `${char.name} is wearing: ${desc}` : null;
+        if (!desc || isOutfitSensitive(desc)) return null;
+        return `${char.name} is wearing: ${desc}`;
       };
 
       // Build outfit instructions for all selected characters
@@ -352,9 +359,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         throw new Error('Image blocked by content filter. Try a different description.');
       }
 
-      if (!genRes?.data?.imageUrl) {
+      if (!genRes?.data?.success || !genRes?.data?.imageUrl) {
         await base44.entities.Message.delete(newMsg.id).catch(() => {});
-        throw new Error('No image URL returned');
+        const errMsg = genRes?.data?.error || 'Image generation failed. Try a different description or remove the reference image.';
+        throw new Error(errMsg);
       }
 
       // Store memory so character remembers sending this
@@ -397,8 +405,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       let userOutfitSuffix = '';
       if (userCurrentOutfit?.label) {
         const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
-        const desc = userCurrentOutfit.full_description || parts.join(', ');
-        if (desc) userOutfitSuffix = ` OUTFIT LOCK: ${userName} is wearing: ${desc}. Reproduce this exact outfit — do NOT default to the clothing in the reference photo.`;
+        const rawUserDesc = userCurrentOutfit.full_description || parts.join(', ');
+        const userSensitiveRe = [/wearing only/i, /shirtless/i, /topless/i, /no shirt/i, /bare (chest|torso|skin)/i, /slight sheen of moisture/i, /boxer/i, /underwear/i, /\bbra\b/i, /naked/i, /nude/i, /lingerie/i, /bikini/i];
+        const userOutfitOk = rawUserDesc && !userSensitiveRe.some(p => p.test(rawUserDesc));
+        if (userOutfitOk) userOutfitSuffix = ` OUTFIT LOCK: ${userName} is wearing: ${rawUserDesc}. Reproduce this exact outfit — do NOT default to the clothing in the reference photo.`;
       }
 
       // Enforce photorealistic quality on all prompts. NSFW allowed.
