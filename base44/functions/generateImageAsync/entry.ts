@@ -1248,10 +1248,18 @@ The environment must feel real, functional, and original.
     // ── STEP 7: GENERATE IMAGE (SINGLE CODE PATH) ────────────────────────────
     console.log(`[generateImageAsync] SENDING TO GENERATOR | messageId=${messageId} | promptLength=${activeFinalPrompt.length} | refs=${sanitizedReferenceImages.length}`);
     
-    const response = await base44.integrations.Core.GenerateImage({
-      prompt: activeFinalPrompt,
-      existing_image_urls: sanitizedReferenceImages.length > 0 ? sanitizedReferenceImages : undefined,
-    });
+    let response;
+    try {
+      response = await base44.integrations.Core.GenerateImage({
+        prompt: activeFinalPrompt,
+        existing_image_urls: sanitizedReferenceImages.length > 0 ? sanitizedReferenceImages : undefined,
+      });
+    } catch (genErr) {
+      // AI provider refused or failed — mark message as failed and return clean error
+      console.error(`[generateImageAsync] Provider error for ${messageId}: ${genErr.message}`);
+      await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      return Response.json({ success: false, error: genErr.message }, { status: 400 });
+    }
 
     if (response?.url) {
       const generationContext = {
@@ -1296,11 +1304,12 @@ The environment must feel real, functional, and original.
   } catch (error) {
     console.error('[generateImageAsync] Fatal error:', error.message);
     // Mark the message as failed so the real-time subscription fires and the UI can react
-    try {
+    // Guard: messageId may be undefined if req.json() itself threw
+    if (typeof messageId === 'string' && messageId.length > 0) {
       await base44.entities.Message.update(messageId, {
         content: '[IMAGE_FAILED]',
       }).catch(() => {});
-    } catch (_) {}
+    }
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
