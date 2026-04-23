@@ -161,7 +161,9 @@ Deno.serve(async (req) => {
         console.error(`[regen] The AI will generate a generic room — this is a data issue with the location record`);
       } else {
         console.log(`[regen] ✓ MANUAL LOCATION RESOLVED: "${effectiveLocationName}" → zone="${effectiveZoneName}" | ${locationRefImages.length} images`);
-        console.log(`[regen] Image URLs:`, locationRefImages.map(u => u.substring(0, 70)));
+        locationRefImages.forEach((url, i) => {
+          console.log(`[regen]   Image ${i}: ${url}`);
+        });
       }
 
     } else {
