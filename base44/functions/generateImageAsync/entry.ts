@@ -529,7 +529,19 @@ function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd) {
   const ethnicityWarning = subject.ethnicities?.length > 0
     ? `Ethnicity: ${subject.ethnicities.join(', ')}.`
     : '';
-  return `\nSubject: ${name} (reference images ${imageIndexStart}–${imageIndexEnd}). Match facial features, skin tone, hair, and body type from reference photos. ${ethnicityWarning} ${subject.appearance_text ? `Additional context: ${subject.appearance_text}.` : ''} ${lockDesc}`;
+  return `\nSUBJECT IDENTITY LOCK — ${name} (reference images ${imageIndexStart}–${imageIndexEnd}):
+  Extract ONLY the person from these images. Match: face, facial structure, skin tone, hair color/length/style, body type, tattoos/markings.
+  ⚠️ IGNORE THE BACKGROUND in these reference images entirely. The background/scenery of the reference photos is NOT authoritative for this scene.
+  DO NOT reproduce any room, furniture, wall, window, or environment visible behind the subject in these references.
+  ${ethnicityWarning} ${subject.appearance_text ? `Additional context: ${subject.appearance_text}.` : ''} ${lockDesc}`;
+}
+
+function buildEnvironmentLockBlock(locationName, zoneName, envImageIndexStart, envImageIndexEnd) {
+  const place = zoneName ? `${locationName} → ${zoneName}` : locationName;
+  return `\nSCENE ENVIRONMENT LOCK — "${place}" (reference images ${envImageIndexStart}–${envImageIndexEnd}):
+  These images define the EXACT scene environment. Match: flooring, walls, furniture layout, lighting, windows, decor, and spatial arrangement from these references.
+  The scene MUST be set inside this exact location. Do NOT invent a different environment.
+  Do NOT use the background from any character reference image as the scene.`;
 }
 
 Deno.serve(async (req) => {
@@ -1054,35 +1066,57 @@ The environment must feel real, functional, and original.
       }
     }
 
-    // ── STEP 4: ASSEMBLE REFERENCE IMAGES (identity-first ordering) ──────────
-    // Faces ALWAYS come before location images so the model locks identity first.
-    // Outfit notes are separate from identity refs — never mixed.
+    // ── STEP 4: ASSEMBLE REFERENCE IMAGES — STRICT ROLE SEPARATION ──────────
+    // RULE: Location/zone images define the SCENE ENVIRONMENT only.
+    //       Character images define the PERSON IDENTITY only.
+    //       These two roles must never bleed into each other.
+    //
+    // ORDER: environment refs FIRST so the model anchors the scene before the person.
+    //        Character identity refs LAST — extracted person-only, background suppressed.
+    //
+    // INDEX TRACKING: track exact indices so the prompt can name which images serve which role.
     let referenceImages = [];
     const hasLocationImages = locationImages.length > 0;
 
+    // Slot counts (max per role to stay within provider limits)
+    const LOC_SLOT  = hasLocationImages ? Math.min(locationImages.length, 3) : 0;
+    const CHAR_SLOT = finalCharSubject  ? Math.min(finalCharSubject.face_refs.length, 2) : 0;
+    const USER_SLOT = finalUserSubject  ? Math.min(finalUserSubject.face_refs.length, 2) : 0;
+
+    // Index ranges (1-based for prompt readability)
+    const locIdxStart  = 1;
+    const locIdxEnd    = LOC_SLOT;                          // e.g. 1–3
+    const charIdxStart = LOC_SLOT + 1;                     // e.g. 4
+    const charIdxEnd   = LOC_SLOT + CHAR_SLOT;             // e.g. 5
+    const userIdxStart = LOC_SLOT + CHAR_SLOT + 1;         // e.g. 6
+    const userIdxEnd   = LOC_SLOT + CHAR_SLOT + USER_SLOT; // e.g. 7
+
     if (finalCharSubject && finalUserSubject) {
-      // MULTI-SUBJECT MODE: character + user
-      // Order: char face refs (2) → user face refs (2) → location (2)
-      const charSlice = finalCharSubject.face_refs.slice(0, 2);
-      const userSlice = finalUserSubject.face_refs.slice(0, 2);
-      const locSlice = locationImages.slice(0, 2);
-      referenceImages = [...charSlice, ...userSlice, ...locSlice].filter(Boolean);
-      console.log(`[REFS] Multi-subject: char=${charSlice.length} + user=${userSlice.length} + loc=${locSlice.length} = ${referenceImages.length} total`);
+      // MULTI-SUBJECT: location → char identity → user identity
+      const locSlice  = locationImages.slice(0, LOC_SLOT);
+      const charSlice = finalCharSubject.face_refs.slice(0, CHAR_SLOT);
+      const userSlice = finalUserSubject.face_refs.slice(0, USER_SLOT);
+      referenceImages = [...locSlice, ...charSlice, ...userSlice].filter(Boolean);
+      console.log(`[REFS] Multi-subject: loc=${locSlice.length}(idx ${locIdxStart}-${locIdxEnd}) + char=${charSlice.length}(idx ${charIdxStart}-${charIdxEnd}) + user=${userSlice.length}(idx ${userIdxStart}-${userIdxEnd}) = ${referenceImages.length} total`);
     } else if (finalUserSubject && !finalCharSubject) {
-      // USER-ONLY MODE
-      referenceImages = finalUserSubject.face_refs.slice(0, 2);
-      console.log(`[REFS] User-only: ${referenceImages.length} refs`);
+      // USER-ONLY: location → user identity
+      const locSlice  = locationImages.slice(0, LOC_SLOT);
+      const userSlice = finalUserSubject.face_refs.slice(0, USER_SLOT);
+      referenceImages = [...locSlice, ...userSlice].filter(Boolean);
+      console.log(`[REFS] User-only: loc=${locSlice.length}(idx ${locIdxStart}-${locIdxEnd}) + user=${userSlice.length}(idx ${userIdxStart}-${userIdxEnd}) = ${referenceImages.length} total`);
     } else if (finalCharSubject) {
-      // CHARACTER-ONLY MODE
-      // CRITICAL ORDERING: Location images FIRST (environment lock), then character (identity lock)
-      // Avatar background is ignored for scenery by virtue of being AFTER location images in the sequence.
-      const locSlice = locationImages.slice(0, 3);  // Location images first — environment lock
-      const charSlice = finalCharSubject.face_refs.slice(0, 2);  // Max 2 char refs to avoid filter triggers
+      // CHARACTER-ONLY: location FIRST (environment anchor) → char identity
+      const locSlice  = locationImages.slice(0, LOC_SLOT);
+      const charSlice = finalCharSubject.face_refs.slice(0, CHAR_SLOT);
       referenceImages = [...locSlice, ...charSlice].filter(Boolean);
-      console.log(`[REFS] Character-only (location-first): loc=${locSlice.length} + char=${charSlice.length} = ${referenceImages.length} total`);
+      console.log(`[REFS] Character-only: loc=${locSlice.length}(idx ${locIdxStart}-${locIdxEnd}) + char=${charSlice.length}(idx ${charIdxStart}-${charIdxEnd}) = ${referenceImages.length} total`);
     } else {
+      // No subjects — environment only
       referenceImages = locationImages.slice(0, 5);
+      console.log(`[REFS] Environment-only: loc=${referenceImages.length}`);
     }
+
+    console.log(`[REFS] env_imgs_resolved=${LOC_SLOT} | char_identity_refs=${CHAR_SLOT} | user_identity_refs=${USER_SLOT} | avatar_bg_suppressed=true`);
 
     // ── STEP 5: BUILD PROMPT FROM SUBJECT RECORDS ────────────────────────────
     // Outfit overrides FIRST (highest priority), then scene, then identity locks.
@@ -1127,54 +1161,44 @@ The environment must feel real, functional, and original.
     
     let enhancedPrompt = '';
 
+    // Build environment lock block (used whenever location images are present)
+    const envBlock = (hasLocationImages && resolvedLocationName)
+      ? buildEnvironmentLockBlock(resolvedLocationName, resolvedZoneName, locIdxStart, locIdxEnd)
+      : '';
+
     if (finalCharSubject && finalUserSubject) {
       // ── MULTI-SUBJECT PROMPT ────────────────────────────────────────────────
-      const charName = finalCharSubject.canonical_name;
-      const userName = finalUserSubject.canonical_name;
-      const charRefStart = 1, charRefEnd = Math.min(finalCharSubject.face_refs.length, 3);
-      const userRefStart = charRefEnd + 1, userRefEnd = charRefEnd + Math.min(finalUserSubject.face_refs.length, 3);
-      const locRefStart = userRefEnd + 1, locRefEnd = userRefEnd + Math.min(locationImages.length, 2);
-
       const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
       const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
-      const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charRefStart, charRefEnd);
-      const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userRefStart, userRefEnd);
+      const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd);
+      const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd);
+      const refOrderNote = `Two subjects: ${finalCharSubject.canonical_name} and ${finalUserSubject.canonical_name}. Keep their appearances and outfits distinct.`;
 
-      const refOrderNote = `Two subjects: ${charName} and ${userName}. Keep their appearances and outfits distinct.`;
-
-      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
+      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${envBlock}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
 
     } else if (finalUserSubject && !finalCharSubject) {
       // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
-      const userName = finalUserSubject.canonical_name;
       const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
       const userIdentityBlock = finalUserSubject.face_refs.length > 0
-        ? buildSubjectIdentityBlock(finalUserSubject, 1, Math.min(finalUserSubject.face_refs.length, 4))
+        ? buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd)
         : '';
-      enhancedPrompt = `${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${locationNote}${userIdentityBlock}`;
+      enhancedPrompt = `${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${envBlock}${locationNote}${userIdentityBlock}`;
 
     } else if (finalCharSubject) {
       // ── CHARACTER-ONLY PROMPT ───────────────────────────────────────────────
-      const charName = finalCharSubject.canonical_name;
       const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
-      // If no outfit block (sensitive outfit filtered out), add a safe clothing note
-      // so the model doesn't pick up nudity cues from reference images
       const safeClothingNote = !charOutfitBlock && !cleanPrompt.toLowerCase().includes('shirt') && !cleanPrompt.toLowerCase().includes('wear') && !cleanPrompt.toLowerCase().includes('outfit')
         ? `\nNote: Ensure the subject is wearing appropriate casual clothing suitable for the scene.\n`
         : '';
-      const locRefEnd = Math.min(locationImages.length, 3);
-      const charRefStart = locRefEnd + 1;
-      const charRefEnd = locRefEnd + Math.min(finalCharSubject.face_refs.length, 4);
       const charIdentityBlock = finalCharSubject.face_refs.length > 0
-        ? buildSubjectIdentityBlock(finalCharSubject, charRefStart, charRefEnd)
+        ? buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd)
         : '';
 
-      const roomInstruction = '';
-      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${promptForGeneration}${expressionNote}${locationNote}${charIdentityBlock}`;
+      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${promptForGeneration}${expressionNote}${envBlock}${locationNote}${charIdentityBlock}`;
 
     } else {
-      // No subjects resolved — pure environment/text render
-      enhancedPrompt = `${promptForGeneration}${locationNote}`;
+      // No subjects — pure environment/text render
+      enhancedPrompt = `${promptForGeneration}${envBlock}${locationNote}`;
     }
 
     // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
