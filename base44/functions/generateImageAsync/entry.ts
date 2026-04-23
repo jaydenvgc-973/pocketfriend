@@ -1256,13 +1256,28 @@ The character reference images are for the PERSON ONLY — their background is i
                 }
               }
 
+              // ── RUNTIME LOCATION INVESTIGATION AUDIT ─────────────────────────────────
+              // This log proves exactly what location ID was sought, what was found,
+              // and what zone/image resolution path was taken. NOT comments — runtime truth.
+              console.log(`[LOC_AUDIT] ── HOME/LOCATION INVESTIGATION ──────────────────────`);
+              console.log(`[LOC_AUDIT] livePresence="${livePresence}" | isHome=${isHome} | isAtWork=${isAtWork} | isTraveling=${isTraveling}`);
+              console.log(`[LOC_AUDIT] authorizedLocId="${authorizedLocId || 'NOT FOUND'}" | realTimeLoc="${realTimeLoc?.name || 'NULL'}" | realTimeLoc.id="${realTimeLoc?.id || 'NULL'}"`);
+              console.log(`[LOC_AUDIT] charRecord fields: current_home_location_id="${charRecord?.current_home_location_id || 'null'}" | resolved_current_location_id="${charRecord?.resolved_current_location_id || 'null'}" | home_location_id="${charRecord?.home_location_id || 'null'}"`);
+              console.log(`[LOC_AUDIT] liveZoneHint="${liveZoneHint || 'null'}" | savedLocations.length=${savedLocations.length}`);
+
               if (realTimeLoc) {
                 // ALWAYS try to resolve zone images first, using sensible defaults
                 const defaultZoneHint = liveZoneHint || getDefaultZoneHint(realTimeLoc.category);
                 const { zoneImages, zoneName, matchType } = resolveZoneImages(scenePrompt.toLowerCase(), realTimeLoc, defaultZoneHint);
+                // First-image fallback: if zone resolution returned nothing, use flat location images
                 const imgs = zoneImages.length > 0 ? zoneImages : (realTimeLoc.image_urls || []).slice(0, 6);
                 resolvedLocationName = realTimeLoc.name;
                 resolvedZoneName = zoneName || defaultZoneHint;
+
+                console.log(`[LOC_AUDIT] zones_on_location=${realTimeLoc.zones?.length || 0} | zones_with_images=${(realTimeLoc.zones || []).filter(z => z.image_urls?.length > 0).length}`);
+                console.log(`[LOC_AUDIT] zone_resolution: matchType="${matchType || 'none'}" | zoneImages=${zoneImages.length} | flat_images=${(realTimeLoc.image_urls || []).length} | final_imgs=${imgs.length}`);
+                console.log(`[LOC_AUDIT] first_image_fallback_used=${zoneImages.length === 0 && imgs.length > 0}`);
+                console.log(`[LOC_AUDIT] ─────────────────────────────────────────────────────`);
 
                 if (imgs.length > 0) {
                   locationImages = imgs;
@@ -1278,23 +1293,30 @@ The character reference images are for the PERSON ONLY — their background is i
                   } else if (['social','food_drink','gym','medical','education','workplace','school','community','outdoor','public','business'].includes(locCat)) {
                     locationNote += `\n\n📍 PUBLIC/COMMERCIAL LOCATION: Background NPCs and ambient crowd are ALLOWED and ENCOURAGED. Diversity in background people is required.`;
                   }
-                  console.log(`[LOCATION] ✓ REALTIME: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Presence: "${livePresence}" | Images: ${imgs.length}`);
+                  console.log(`[LOCATION] ✓ REALTIME RESOLVED: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Presence: "${livePresence}" | Images: ${imgs.length} | matchType: "${matchType || 'flat_fallback'}"`);
                 } else {
-                  // Location resolved but has NO images — use strong text-only lock.
-                  // CRITICAL: avatar background must NOT fill this gap.
-                  const locCat = (realTimeLoc.category || 'home').toLowerCase();
-                  const isHomeCategory = locCat === 'home' || isHome;
-                  console.warn(`[LOCATION] ⚠ REALTIME location "${resolvedLocationName}" has NO images — text-only lock applied. Avatar background suppressed.`);
-                  if (isHomeCategory) {
-                    const zoneDesc = livePresence === 'sleeping' || livePresence === 'napping' ? 'BEDROOM — character is sleeping, show bed and bedroom furniture only' : (liveZoneHint ? liveZoneHint : 'living room or common area');
-                    locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — "${resolvedLocationName}" (${zoneDesc}):\nThis scene takes place inside a private residential home. Generate a realistic, lived-in home interior matching the zone above.\n⛔ Do NOT use the background from character reference images as the scene environment.\n⛔ Do NOT generate any commercial, bar, club, restaurant, gym, or office elements.\nCharacter reference images define the PERSON ONLY — their background is irrelevant.`;
-                  } else {
-                    locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — "${resolvedLocationName}" (${locCat}):\nThis scene takes place at ${resolvedLocationName}. Generate a realistic, authentic environment for this type of location.\n⛔ Do NOT use the background from character reference images as the scene environment.\nCharacter reference images define the PERSON ONLY — their background is irrelevant.`;
-                  }
+                  // ── HARD HALT: location found but NO images ───────────────────────────
+                  // "Text-only lock" is NOT acceptable. Without location images, the
+                  // provider has no environment authority. Avatar background WILL fill
+                  // the vacuum regardless of what the prompt says. This must fail.
+                  console.error(`[LOCATION] ⛔ HARD HALT — location "${realTimeLoc.name}" (id=${realTimeLoc.id}) has ZERO images.`);
+                  console.error(`[LOCATION] zones=${realTimeLoc.zones?.length || 0} | zones_with_images=${(realTimeLoc.zones || []).filter(z => z.image_urls?.length > 0).length} | flat_image_urls=${(realTimeLoc.image_urls || []).length}`);
+                  console.error(`[LOCATION] A text-only environment lock cannot enforce 80% environment authority.`);
+                  console.error(`[LOCATION] Without reference images, the provider will use avatar background as the scene — environment drift is guaranteed.`);
+                  console.error(`[LOCATION] FIX: Upload reference photos to this location record before generating images from it.`);
+                  await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+                  return Response.json({
+                    success: false,
+                    error: `Location "${realTimeLoc.name}" has no reference images. Add photos to this location before generating images from it.`,
+                    location_id: authorizedLocId,
+                    location_name: realTimeLoc.name,
+                    environment_refs_count: 0,
+                  }, { status: 422 });
                 }
               } else if (!isHome) {
                 // No authorized location found and character is NOT home — parse from scene text
                 const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(scenePrompt, savedLocations, characterId);
+                console.log(`[LOC_AUDIT] Non-home, no authorized loc. Text parse: name="${locationName || 'NONE'}" | score=${confidenceScore?.toFixed(2) || '0'} | imgs=${imgs.length}`);
                 if (imgs.length > 0 && confidenceScore >= 0.7) {
                   locationImages = imgs;
                   resolvedLocationName = locationName;
@@ -1302,15 +1324,43 @@ The character reference images are for the PERSON ONLY — their background is i
                   locationNote = buildRoomLockNote(locationName, zoneName);
                   console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
                 } else {
-                  // No location resolved at all and not home — environment unknown, suppress avatar background
-                  console.warn(`[LOCATION] ⚠ No location resolved for non-home presence "${livePresence}" — avatar background suppressed`);
-                  locationNote = `\n\n⛔ AVATAR BACKGROUND SUPPRESSION:\nThe character reference images are for PERSON IDENTITY ONLY. Do NOT reproduce their background as the scene.\nGenerate a natural environment appropriate for the character's current context.`;
+                  // ── HARD HALT: non-home, no location resolved, no images ──────────────
+                  // Continuing without environment refs = avatar background wins.
+                  console.error(`[LOCATION] ⛔ HARD HALT — non-home character "${livePresence}" has no resolved location AND text parse found no matching location images (score=${confidenceScore?.toFixed(2) || '0'}).`);
+                  console.error(`[LOCATION] Without any location images, the provider has no environment authority source.`);
+                  console.error(`[LOCATION] Avatar background from character refs WILL become the scene. This is not acceptable.`);
+                  console.error(`[LOCATION] FIX: Assign a location to this character (home, work, etc.) and add reference images to that location.`);
+                  await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+                  return Response.json({
+                    success: false,
+                    error: 'No location images could be resolved for this character. Assign a location with reference photos before generating images.',
+                    live_presence: livePresence,
+                    character_id: characterId,
+                    environment_refs_count: 0,
+                  }, { status: 422 });
                 }
               } else {
-                // isHome = true but realTimeLoc is null — character is home but no home location assigned
-                console.warn(`[LOCATION] ⚠ Character is home but no home location record found — text-only home lock applied. Avatar background suppressed.`);
-                const zoneDesc = livePresence === 'sleeping' || livePresence === 'napping' ? 'BEDROOM (character is sleeping)' : 'living room or common area';
-                locationNote = `\n\n🔒 SCENE ENVIRONMENT LOCK — Home (${zoneDesc}):\nThis scene takes place inside a private residential home interior.\n⛔ Do NOT use the background from character reference images as the scene environment.\n⛔ ABSOLUTELY NO commercial, bar, club, restaurant, gym, or office elements.\nCharacter reference images define the PERSON ONLY — their background is irrelevant and must be ignored.`;
+                // ── HARD HALT: character is home but no home location record ─────────────
+                // This is the most common avatar-background-leak case: character is "home"
+                // but no home LocationReference exists with images, so the provider anchors
+                // on whatever is in the character avatar — which is a person's bedroom or
+                // kitchen from their profile photo, not a controlled reference.
+                console.error(`[LOCATION] ⛔ HARD HALT — character is "${livePresence}" (home) but no home LocationReference was found.`);
+                console.error(`[LOCATION] authorizedLocId was: ${authorizedLocId || 'null (no home ID on any character field)'}`);
+                console.error(`[LOCATION] character fields checked: current_home_location_id="${charRecord?.current_home_location_id || 'null'}" | resolved_current_location_id="${charRecord?.resolved_current_location_id || 'null'}" | home_location_id="${charRecord?.home_location_id || 'null'}"`);
+                console.error(`[LOCATION] resident scan result: ${savedLocations.filter(l => l.category === 'home' && ((l.resident_character_ids || []).includes(characterId) || (l.residents || []).some(r => r.character_id === characterId))).length} homes found`);
+                console.error(`[LOCATION] Without a home location record with images, the provider has no environment authority.`);
+                console.error(`[LOCATION] Avatar background from character refs WILL become the scene. This is not acceptable.`);
+                console.error(`[LOCATION] FIX: Create a Home location, add zone photos to it, and assign this character as a resident.`);
+                await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+                return Response.json({
+                  success: false,
+                  error: 'No home location with reference images found for this character. Create a Home location with photos and assign this character as a resident.',
+                  live_presence: livePresence,
+                  character_id: characterId,
+                  character_home_location_id: charRecord?.current_home_location_id || null,
+                  environment_refs_count: 0,
+                }, { status: 422 });
               }
             }
           }
@@ -1608,22 +1658,26 @@ Images 1–${LOC_SLOT}: SCENE ENVIRONMENT ONLY. Use for: flooring, walls, furnit
 No character identity images provided — render the character from the text description only.\n\n`;
     }
 
+    // ── BUILD activeFinalPrompt — role preamble FIRST, then everything else ─────
+    // CRITICAL: all appends below must target activeFinalPrompt (not finalPrompt).
+    // Previously some appends targeted finalPrompt after activeFinalPrompt was already set,
+    // which meant the role preamble was re-prepended to a stale base — losing injections.
     let activeFinalPrompt = rolePreamble + finalPrompt;
-    // Inject location lock into prompt if location is resolved but not mentioned
+
+    // Inject location lock if location is resolved but name does not appear in the body
     if (hasLocationImages && resolvedLocationName) {
       const locLower = resolvedLocationName.toLowerCase();
       const zoneLower = (resolvedZoneName || '').toLowerCase();
-      const promptLower = finalPrompt.toLowerCase();
-      if (!promptLower.includes(locLower) && !promptLower.includes(zoneLower)) {
+      if (!activeFinalPrompt.toLowerCase().includes(locLower) && !activeFinalPrompt.toLowerCase().includes(zoneLower)) {
         console.warn(`[PAYLOAD_VALIDATION] ⚠️ Location not in prompt — injecting location lock`);
-        activeFinalPrompt = finalPrompt + `\n\nSCENE LOCATION (LOCKED): ${resolvedLocationName}${resolvedZoneName ? ` → ${resolvedZoneName}` : ''}. The image MUST depict this exact location.`;
+        activeFinalPrompt += `\n\nSCENE LOCATION (LOCKED): ${resolvedLocationName}${resolvedZoneName ? ` → ${resolvedZoneName}` : ''}. The image MUST depict this exact location.`;
       }
     }
-    // For creative mode: inject explicit character identity statement if character selected but prompt is vague
+    // For creative mode: inject explicit character identity statement if name not present
     if (imageMode === 'creative' && finalCharSubject && finalCharSubject.face_refs.length > 0) {
       const charNameLower = finalCharSubject.canonical_name.toLowerCase();
       if (!activeFinalPrompt.toLowerCase().includes(charNameLower)) {
-        activeFinalPrompt = activeFinalPrompt + `\n\nSUBJECT (LOCKED): ${finalCharSubject.canonical_name}. This person MUST appear as the primary subject. Match facial features, identity, and appearance from the provided reference images.`;
+        activeFinalPrompt += `\n\nSUBJECT (LOCKED): ${finalCharSubject.canonical_name}. This person MUST appear as the primary subject. Match facial features, identity, and appearance from the provided reference images.`;
         console.log(`[PAYLOAD_VALIDATION] Character name injected into prompt for identity lock.`);
       }
     }
@@ -1652,7 +1706,7 @@ No character identity images provided — render the character from the text des
     console.log(`[DISPATCH_AUDIT] --- ENVIRONMENT (Rule C) ---`);
     console.log(`[DISPATCH_AUDIT]   location_name="${resolvedLocationName || 'NONE'}" | zone="${resolvedZoneName || 'NONE'}"`);
     console.log(`[DISPATCH_AUDIT]   location_imgs_sent=${sanitizedReferenceImages.slice(0, LOC_SLOT).length} | indices=1–${LOC_SLOT}`);
-    console.log(`[DISPATCH_AUDIT]   home_lookup_ran=${imageMode === 'presence_scene'} | authorizedLocId_resolved=${resolvedLocationName !== null}`);
+    console.log(`[DISPATCH_AUDIT]   home_lookup_ran=${imageMode === 'presence_scene' && !!characterId} | location_id_found=${resolvedLocationName !== null} | location_record_had_images=${locationImages.length > 0}`);
     console.log(`[DISPATCH_AUDIT]   first_image_fallback_used=${LOC_SLOT > 0 && resolvedZoneName === null}`);
     console.log(`[DISPATCH_AUDIT] --- PROMPT FIDELITY (Rule D) ---`);
     console.log(`[DISPATCH_AUDIT]   scene_action_lock_elements=${sceneActionLock ? sceneActionLock.split('\n').filter(l => l.startsWith('✅')).length : 0}`);
