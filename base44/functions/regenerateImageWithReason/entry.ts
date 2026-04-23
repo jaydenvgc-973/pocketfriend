@@ -3,8 +3,15 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 function isProviderAccessible(url) {
   if (!url || typeof url !== 'string') return false;
   if (!url.startsWith('https://')) return false;
-  if (url.includes('base44.app/api/apps/')) return false;
+  // Private storage — requires authentication, provider cannot access
+  if (url.includes('/files/mp/private/')) return false;
+  if (url.includes('/files/private/')) return false;
+  // Signed/expiring URLs — provider cannot use them
   if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  // Public file storage on base44.app — /files/mp/public/ paths ARE publicly accessible
+  // DO NOT block these — they are the primary storage for user-uploaded location images
+  // Only block API-gated paths that require session auth
+  if (url.includes('base44.app/api/apps/') && !url.includes('/files/mp/public/') && !url.includes('/files/public/')) return false;
   return true;
 }
 
