@@ -225,17 +225,17 @@ Deno.serve(async (req) => {
         effectiveLocationName = manualLoc.name;
         if (effectiveZoneName && manualLoc.zones?.length > 0) {
           const zone = manualLoc.zones.find(z => z.zone_name?.toLowerCase() === effectiveZoneName.toLowerCase());
-          if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.slice(0, 6);
+          if (zone?.image_urls?.length > 0) locationRefImages = zone.image_urls.filter(isProviderAccessible).slice(0, 6);
         }
         if (locationRefImages.length === 0 && manualLoc.zones?.length > 0) {
           const firstZone = manualLoc.zones.find(z => z.image_urls?.length > 0);
           if (firstZone) {
-            locationRefImages = firstZone.image_urls.slice(0, 6);
+            locationRefImages = firstZone.image_urls.filter(isProviderAccessible).slice(0, 6);
             effectiveZoneName = firstZone.zone_name;
           }
         }
         if (locationRefImages.length === 0 && manualLoc.image_urls?.length > 0) {
-          locationRefImages = manualLoc.image_urls.slice(0, 6);
+          locationRefImages = manualLoc.image_urls.filter(isProviderAccessible).slice(0, 6);
         }
       }
     }
