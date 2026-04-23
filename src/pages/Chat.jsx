@@ -48,6 +48,7 @@ import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalSta
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
+import ChatMessageList from "@/components/chat/ChatMessageList";
 
 const voiceCache = new Map();
 const activeAudioRef = new Map();
@@ -1872,34 +1873,25 @@ Reply with ONLY the single emoji or the word "none".`,
           characterBalance={characterFinancial?.current_balance ?? 0}
         />
       )}
-      <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
-        {messages.length > 0 && <ArchiveNotice conversationId={conversationId} characterId={characterId} characterName={character?.name} />}
-        <AnimatePresence>
-          {messages.map(msg => (
-            <MessageBubble 
-              key={msg.id} 
-              message={msg} 
-              onReact={handleReact} 
-              onDelete={handleDeleteMessage} 
-              onDeleteImage={handleDeleteImage}
-              onPlayVoice={msg.sender_type !== "user" && !msg.is_narrative ? () => playCharacterVoice(msg.id, msg.content, character, userSettings, true) : null}
-              isPlayingVoice={playingAudioId === msg.id}
-              voiceError={voiceErrors[msg.id]}
-              onForward={!msg.is_narrative ? (msg) => setForwardTarget(msg) : null}
-              onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))}
-            />
-          ))}
-        </AnimatePresence>
-        <AnimatePresence>
-          {isTyping && character && <TypingIndicator name={character.name} avatarUrl={character.avatar_url} />}
-        </AnimatePresence>
-        {sendError && (
-          <div className="text-center px-4 py-2">
-            <p className="text-xs text-destructive bg-destructive/10 rounded-xl px-4 py-2 inline-block">{sendError} <button className="underline ml-1" onClick={() => setSendError(null)}>Dismiss</button></p>
-          </div>
-        )}
-        <div ref={bottomRef} />
-      </div>
+      <ChatMessageList
+        messages={messages}
+        conversationId={conversationId}
+        characterId={characterId}
+        character={character}
+        userSettings={userSettings}
+        isTyping={isTyping}
+        sendError={sendError}
+        setSendError={setSendError}
+        playingAudioId={playingAudioId}
+        voiceErrors={voiceErrors}
+        bottomRef={bottomRef}
+        onReact={handleReact}
+        onDelete={handleDeleteMessage}
+        onDeleteImage={handleDeleteImage}
+        onPlayVoice={playCharacterVoice}
+        onForward={(msg) => setForwardTarget(msg)}
+        onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))}
+      />
       {activeCharacter && character ? (
         <DialogueSelector
           playingAs={activeCharacter}

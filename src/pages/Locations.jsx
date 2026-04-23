@@ -406,7 +406,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     zones: editingLocation?.zones || [],
     resident_character_ids: editingLocation?.resident_character_ids || [],
     resident_family_members: editingLocation?.resident_family_members || [],
-    resident_housing_context: (() => { const ctx = editingLocation?.resident_housing_context || {}; console.log(`[HOUSING-LOAD] resident_housing_context from DB:`, JSON.stringify(ctx)); return ctx; })(),
+    resident_housing_context: editingLocation?.resident_housing_context || {},
     cost_split_method: editingLocation?.cost_split_method || "even",
     resident_cost_split: editingLocation?.resident_cost_split || {},
     owner_character_id: editingLocation?.owner_character_id || "",
@@ -1128,7 +1128,6 @@ export default function Locations() {
       created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
     };
     if (editingLocationId) {
-      console.log(`[HOUSING-SAVE] resident_housing_context being saved:`, JSON.stringify(formData.resident_housing_context));
       await base44.entities.LocationReference.update(editingLocationId, { ...formData, ...enrichedFields });
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
