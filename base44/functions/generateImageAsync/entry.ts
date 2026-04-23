@@ -542,9 +542,15 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'messageId and prompt required' }, { status: 400 });
     }
 
+    console.log(`[generateImageAsync] ▶ REQUEST: messageId=${messageId} | characterId=${characterId || 'none'} | subjectType=${subjectType || 'none'} | isCreativeGeneration=${isCreativeGeneration} | promptStart="${(prompt || '').substring(0, 100)}"`);
+
     const message = await base44.entities.Message.get(messageId);
     if (!message) {
       return Response.json({ error: 'Message not found' }, { status: 404 });
+    }
+    if (message.id !== messageId) {
+      console.error(`[generateImageAsync] ⛔ ID MISMATCH: requested=${messageId} got=${message.id} — aborting to prevent wrong-asset linkage`);
+      return Response.json({ error: 'Message ID mismatch' }, { status: 400 });
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -692,12 +698,12 @@ Deno.serve(async (req) => {
         } else {
 
         // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
-        // If the character is in a rabbit hole, we MUST use the rabbit hole context.
-        // Saved location imagery is FORBIDDEN. Home fallback is BANNED.
-        // Rabbit hole images are context-true but creatively synthesized (original AI scene, not retrieval).
+        // Reuse the already-fetched character record — no second DB call needed.
+        // characterSubject was built from the same record; use it directly.
         const charForRabbitCheck = characterId
           ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
           : null;
+        console.log(`[generateImageAsync] Character for rabbit/location check: id=${charForRabbitCheck?.id || 'none'} | name=${charForRabbitCheck?.name || 'none'} | presence=${charForRabbitCheck?.resolved_presence_status || 'unknown'}`);
 
         const isRabbitHole = charForRabbitCheck?.resolved_presence_status === 'rabbit_hole'
           || charForRabbitCheck?.is_rabbit_hole === true;
@@ -1108,80 +1114,52 @@ The environment must feel real, functional, and original.
 
     const finalPrompt = enhancedPrompt;
 
-    // ── PRE-GENERATION VALIDATION ─────────────────────────────────────────────
-    // CRITICAL: Verify prompt location truth matches resolved location before generation
+    // ── PRE-GENERATION VALIDATION (log only — no early exit) ─────────────────
+    // Log location truth for traceability. If location name not in prompt, inject it.
+    // CRITICAL: Do NOT branch into a separate generation here — use a single code path only.
+    console.log(`[GENERATION_GATE] messageId=${messageId} | character_id=${characterId || 'none'} | subject_type=${resolvedSubjectType} | imageMode=${imageMode}`);
     console.log(`[GENERATION_GATE] Location truth: resolved="${resolvedLocationName}" | zone="${resolvedZoneName}" | hasLocationImages=${hasLocationImages}`);
-    
+    console.log(`[GENERATION_GATE] Reference images (${referenceImages.length}): ${referenceImages.map(r => r.substring(0, 60)).join(' | ')}`);
+
+    let activeFinalPrompt = finalPrompt;
     if (hasLocationImages && resolvedLocationName) {
       const locLower = resolvedLocationName.toLowerCase();
       const zoneLower = (resolvedZoneName || '').toLowerCase();
       const promptLower = finalPrompt.toLowerCase();
-      
-      // Verify location name or zone appears in final prompt
       if (!promptLower.includes(locLower) && !promptLower.includes(zoneLower)) {
-        console.warn(`[GENERATION_GATE] ⚠️ LOCATION MISMATCH: Prompt does not reference locked location. Force-injecting.`);
-        // Critical: inject location to ensure model knows where the scene is
-        const locContext = `\n\nSCENE LOCATION (LOCKED): ${resolvedLocationName}${resolvedZoneName ? ` → ${resolvedZoneName}` : ''}. The image MUST depict this exact location.`;
-        const finalPromptFixed = finalPrompt + locContext;
-        console.log(`[GENERATION_GATE] Injected location context to ensure scene accuracy`);
-        const response = await base44.integrations.Core.GenerateImage({
-          prompt: finalPromptFixed,
-          existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-        });
-        if (response?.url) {
-          // Continue with normal flow
-          const generationContext = {
-            prompt: cleanPrompt,
-            character_id: characterId || null,
-            character_reference_images: finalCharSubject?.face_refs.slice(0, 4) || [],
-            location_id: manualLocationId || null,
-            zone_name: resolvedZoneName || null,
-            location_name: resolvedLocationName || null,
-            location_reference_images: locationImages.slice(0, 3),
-            subject_type: resolvedSubjectType,
-            user_reference_images: finalUserSubject?.face_refs.slice(0, 4) || [],
-            user_appearance_data: finalUserSubject ? { appearance_text: finalUserSubject.appearance_text, lock_text: finalUserSubject.lock_text } : null,
-            is_user_identity_locked: needsUserSubject,
-            subjects_rendered: subjects.map(s => ({ id: s.subject_id, name: s.canonical_name, type: s.subject_type, ref_count: s.face_refs.length, has_outfit: !!s.outfit_desc })),
-          };
-          await base44.entities.Message.update(messageId, {
-            image_url: response.url,
-            generation_context: generationContext,
-          });
-          return Response.json({
-            success: true,
-            imageUrl: response.url,
-            locationMatched: hasLocationImages,
-            locationName: resolvedLocationName,
-            zoneName: resolvedZoneName,
-          });
-        }
+        console.warn(`[GENERATION_GATE] ⚠️ Location not referenced in prompt — injecting location lock`);
+        activeFinalPrompt = finalPrompt + `\n\nSCENE LOCATION (LOCKED): ${resolvedLocationName}${resolvedZoneName ? ` → ${resolvedZoneName}` : ''}. The image MUST depict this exact location.`;
       }
     }
 
-    // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────
-    console.log(`[generateImageAsync] FULL PROMPT BEING SENT:\n${finalPrompt}\n\n[generateImageAsync] REFERENCE IMAGES (${referenceImages.length}): ${referenceImages.join(' | ')}`);
+    // ── STEP 7: GENERATE IMAGE (SINGLE CODE PATH) ────────────────────────────
+    console.log(`[generateImageAsync] SENDING TO GENERATOR | messageId=${messageId} | promptLength=${activeFinalPrompt.length} | refs=${referenceImages.length}`);
     
     const response = await base44.integrations.Core.GenerateImage({
-      prompt: finalPrompt,
+      prompt: activeFinalPrompt,
       existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
     });
 
     if (response?.url) {
       const generationContext = {
+        message_id: messageId, // explicit lineage — this context belongs to THIS message only
         prompt: cleanPrompt,
         character_id: characterId || null,
+        character_name: finalCharSubject?.canonical_name || null,
         character_reference_images: finalCharSubject?.face_refs.slice(0, 4) || [],
         location_id: manualLocationId || null,
         zone_name: resolvedZoneName || null,
         location_name: resolvedLocationName || null,
         location_reference_images: locationImages.slice(0, 3),
         subject_type: resolvedSubjectType,
+        image_mode: imageMode,
         user_reference_images: finalUserSubject?.face_refs.slice(0, 4) || [],
         user_appearance_data: finalUserSubject ? { appearance_text: finalUserSubject.appearance_text, lock_text: finalUserSubject.lock_text } : null,
         is_user_identity_locked: needsUserSubject,
         subjects_rendered: subjects.map(s => ({ id: s.subject_id, name: s.canonical_name, type: s.subject_type, ref_count: s.face_refs.length, has_outfit: !!s.outfit_desc })),
+        generated_at: new Date().toISOString(),
       };
+      console.log(`[generateImageAsync] ✓ SUCCESS: messageId=${messageId} | character="${generationContext.character_name}" | imageUrl=${response.url.substring(0, 60)}...`);
       await base44.entities.Message.update(messageId, {
         image_url: response.url,
         generation_context: generationContext,
@@ -1189,6 +1167,7 @@ The environment must feel real, functional, and original.
       return Response.json({
         success: true,
         imageUrl: response.url,
+        messageId, // echo back for frontend verification
         locationMatched: hasLocationImages,
         locationName: resolvedLocationName,
         zoneName: resolvedZoneName,

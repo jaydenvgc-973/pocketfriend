@@ -1515,9 +1515,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === imgMsg.id) ? prev : [...prev, imgMsg]);
       }
+      const targetMsgId = imgMsg.id; // capture at creation — never use closure over mutable ref
+      console.log(`[Chat] Image msg created: ${targetMsgId} | char=${character.name} | subject=${subjectType} | prompt="${imageGenPrompt.substring(0, 80)}"`);
       setTimeout(() => {
         base44.functions.invoke('generateImageAsync', {
-          messageId: imgMsg.id,
+          messageId: targetMsgId,
           prompt: imageGenPrompt,
           characterReferenceImages: charRefs,
           userReferenceImages: useUserRefs ? userRefImages : [],
@@ -1525,10 +1527,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
           subjectType,
           characterId,
+          characterEmotionalState: character.emotional_state || 'calm',
           // Use verified live location — prevents home photos when character is at work and vice versa
           manualLocationId: character.resolved_current_location_id || character.current_home_location_id || null,
           liveLocationContext: buildLiveLocationContext(character, {}, true),
-        }).then(() => {
+        }).then((res) => {
+          const returnedMsgId = res?.data?.messageId;
+          if (returnedMsgId && returnedMsgId !== targetMsgId) {
+            console.error(`[Chat] ⛔ LINEAGE MISMATCH: sent=${targetMsgId} got=${returnedMsgId}`);
+          }
           base44.entities.Conversation.update(convoId, {
             last_message_preview: "(photo)",
             last_message_date: new Date().toISOString(),

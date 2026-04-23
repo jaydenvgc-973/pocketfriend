@@ -9,9 +9,13 @@ Deno.serve(async (req) => {
     const { messageId, forceRegenerate = false } = await req.json();
     if (!messageId) return Response.json({ error: 'messageId required' }, { status: 400 });
 
-    const messages = await base44.asServiceRole.entities.Message.filter({ id: messageId });
-    const message = messages[0];
+    // CRITICAL: use .get() not .filter() — filter can return wrong message if ID lookup is fuzzy
+    const message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
     if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
+    if (message.id !== messageId) {
+      console.error(`[recoverSingleImage] ⛔ ID MISMATCH: requested=${messageId} got=${message.id}`);
+      return Response.json({ error: 'Message ID mismatch — wrong asset would be loaded' }, { status: 400 });
+    }
 
     // If already has a valid image URL, return it (unless force regenerating)
     if (message.image_url && message.image_url.startsWith('http') && !forceRegenerate) {

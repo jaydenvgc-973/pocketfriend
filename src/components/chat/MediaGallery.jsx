@@ -207,20 +207,25 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         ? selectedCharacterIds.includes("user")
         : extractMentionedPeople(prompt).userIncluded;
       
-      // Build reference images from selected characters + world people
-      let charReferenceImages = buildReferenceImagesFromMention(selectedChars, userIncluded);
-      
+      // CRITICAL: Always start with the primary character's own identity refs.
+      // These are the authoritative source for who is in the image.
+      // Additional selected characters are appended after — never replace the primary.
+      let charReferenceImages = [];
+      if (character.avatar_url) charReferenceImages.push(character.avatar_url);
+      if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 2));
+
+      // Add additional selected characters' refs (excluding the primary character to avoid duplication)
+      const otherSelectedChars = selectedChars.filter(c => c.id !== character.id);
+      otherSelectedChars.forEach(char => {
+        if (char.avatar_url) charReferenceImages.push(char.avatar_url);
+        if (char.reference_image_urls?.length > 0) charReferenceImages.push(...char.reference_image_urls.slice(0, 1));
+      });
+
       // Add world people avatars if they exist
       selectedWorldPeople.forEach(person => {
         if (person.avatar_url) charReferenceImages.push(person.avatar_url);
       });
-      
-      // If no one selected/mentioned, fall back to character's own avatars
-      if (charReferenceImages.length === 0 && selectedChars.length === 0 && selectedWorldPeople.length === 0 && !userIncluded) {
-        if (character.avatar_url) charReferenceImages.push(character.avatar_url);
-        if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 3));
-      }
-      
+
       if (referenceImageUrl) charReferenceImages.push(referenceImageUrl);
       
       // Build user reference images with strong identity preservation
