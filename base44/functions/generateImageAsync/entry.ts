@@ -1660,38 +1660,14 @@ The environment must feel real, functional, and original.
     console.log(`[PAYLOAD_VALIDATION] manualLocationId=${manualLocationId || 'none'} | manualZoneId=${manualZoneId || 'none'}`);
     console.log(`[PAYLOAD_VALIDATION] subject_type=${resolvedSubjectType} | total_refs=${referenceImages.length}`);
 
-    // ── MANDATORY IDENTITY REF VALIDATION — HARD HALT ───────────────────────
-    // RULE: If a character-centered image request has zero valid public identity refs,
-    // the system MUST NOT dispatch silently with text-only identity.
-    // Text-only identity = guaranteed drift = avatar background fills the gap.
-    // This is a hard failure condition, not a soft warning.
-    //
-    // FAILURE TYPE A covered here:
-    //   - character exists in DB but all avatar/reference URLs are private → 0 public refs
-    //   - character not found in DB and client refs are also private → 0 public refs
-    //
-    // FAILURE TYPE B (separate): environment/location collapse into avatar scenery.
-    //   That is handled by the location resolution chain above and the prompt role labels.
-    //
-    // These are two distinct failure modes. This gate covers Type A only.
+    // ── IDENTITY REF VALIDATION — WARN ONLY ─────────────────────────────────
+    // Log a warning if identity refs are zero but do NOT block generation.
+    // Characters with private-stored photos should still generate (with text-only identity).
     const isCharacterCentered = resolvedSubjectType === 'character' || resolvedSubjectType === 'joint';
     const charRefCount = finalCharSubject?.face_refs?.length ?? 0;
     if (isCharacterCentered && characterId && charRefCount === 0) {
-      console.error(`[PAYLOAD_VALIDATION] ⛔ HARD HALT — IDENTITY REFS = 0`);
-      console.error(`[PAYLOAD_VALIDATION] character_id=${characterId} | character_name=${finalCharSubject?.canonical_name || characterName || 'UNKNOWN'}`);
-      console.error(`[PAYLOAD_VALIDATION] All avatar_url and reference_image_urls for this character are either private internal URLs or missing.`);
-      console.error(`[PAYLOAD_VALIDATION] The generation provider cannot access private base44.app/api/apps/ URLs.`);
-      console.error(`[PAYLOAD_VALIDATION] Dispatching with 0 identity refs would produce a drifted image where the avatar background becomes the de-facto identity source.`);
-      console.error(`[PAYLOAD_VALIDATION] ACTION: Upload this character's photos to public CDN storage. DO NOT dispatch this request.`);
-      await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-      return Response.json({
-        success: false,
-        error: 'Character identity refs could not be resolved — all reference images are stored as private URLs the generation provider cannot access. Please re-upload the character\'s photos.',
-        identity_refs_count: 0,
-        character_id: characterId,
-      }, { status: 422 });
+      console.warn(`[PAYLOAD_VALIDATION] ⚠️ IDENTITY REFS = 0 for character ${characterId} — all reference images may be stored as private URLs. Generation proceeds with text-only identity.`);
     }
-    // Warn on partial identity (refs present but below ideal count)
     if (isCharacterCentered && charRefCount > 0 && charRefCount < 2) {
       console.warn(`[PAYLOAD_VALIDATION] ⚠️ LOW IDENTITY REF COUNT: only ${charRefCount} public ref(s) for character ${characterId}. Identity lock may be weaker than intended.`);
     }
