@@ -1523,13 +1523,14 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           prompt: imageGenPrompt,
           characterReferenceImages: charRefs,
           userReferenceImages: useUserRefs ? userRefImages : [],
-          characterName: character.name.split(' ')[0],
+          characterName: character.name,
           userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
           subjectType,
           characterId,
           characterEmotionalState: character.emotional_state || 'calm',
-          // Use verified live location — prevents home photos when character is at work and vice versa
+          // Explicit location + zone binding from live presence state
           manualLocationId: character.resolved_current_location_id || character.current_home_location_id || null,
+          manualZoneId: (character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping') ? 'bedroom' : null,
           liveLocationContext: buildLiveLocationContext(character, {}, true),
         }).then((res) => {
           const returnedMsgId = res?.data?.messageId;

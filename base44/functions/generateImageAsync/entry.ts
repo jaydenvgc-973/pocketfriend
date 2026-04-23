@@ -718,15 +718,49 @@ Deno.serve(async (req) => {
         //   5. home with no images → residential text lock (never a venue fallback)
         // ══════════════════════════════════════════════════════════════════════
 
-        if (imageMode === 'creative' && !manualLocationId) {
-          // CREATIVE MODE — the user's prompt is the scene truth.
-          // Do NOT force character presence/home location onto a user-directed creative generation.
-          // Only use passed locationReferenceImages if explicitly provided by the caller.
-          if (locationReferenceImages?.length > 0) {
+        if (imageMode === 'creative') {
+          // ── CREATIVE MODE — user-directed generation (media grid, prompt, concept) ──
+          // Priority: explicit manualLocationId selection → caller-provided locationReferenceImages → prompt only.
+          // Never fall through to presence-based location logic in creative mode.
+          if (manualLocationId) {
+            // User explicitly selected a location (and optionally a zone) in Media Grid.
+            // Resolve it directly — do NOT run rabbit hole / presence gate logic.
+            const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
+            if (manualLoc) {
+              resolvedLocationName = manualLoc.name;
+              let imgs = [];
+              if (manualZoneId && manualLoc.zones?.length > 0) {
+                const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId)
+                          || manualLoc.zones.find(z => z.zone_name?.toLowerCase() === manualZoneId?.toLowerCase());
+                if (zone?.image_urls?.length > 0) {
+                  imgs = zone.image_urls.slice(0, 6);
+                  resolvedZoneName = zone.zone_name;
+                  console.log(`[LOCATION] 🎨 CREATIVE+MANUAL ZONE: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
+                }
+              }
+              if (imgs.length === 0 && locationReferenceImages?.length > 0) {
+                // Caller pre-fetched zone images — use them directly
+                imgs = locationReferenceImages.slice(0, 6);
+                resolvedZoneName = manualZoneId || null;
+                console.log(`[LOCATION] 🎨 CREATIVE+MANUAL caller-provided zone refs: ${imgs.length}`);
+              }
+              if (imgs.length === 0) {
+                const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
+                imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || manualLoc.image_urls?.slice(0, 6) || [];
+                resolvedZoneName = firstZoneWithImages?.zone_name || null;
+              }
+              locationImages = imgs;
+              locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
+              if (resolvedZoneName) {
+                locationNote += `\n\n🔒 ZONE LOCK: Scene MUST be in the "${resolvedZoneName}" zone of ${resolvedLocationName}. Do NOT place the scene anywhere else.`;
+              }
+              console.log(`[LOCATION] 🎨 CREATIVE MANUAL RESOLVED: "${resolvedLocationName}" → zone="${resolvedZoneName || 'none'}" | imgs=${locationImages.length}`);
+            }
+          } else if (locationReferenceImages?.length > 0) {
             locationImages = locationReferenceImages.slice(0, 6);
             console.log(`[LOCATION] 🎨 CREATIVE MODE — using caller-provided location reference images: ${locationImages.length}`);
           } else {
-            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location override. User prompt is scene authority.`);
+            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location selected. User prompt is scene authority.`);
           }
         } else {
 
@@ -1146,21 +1180,49 @@ The environment must feel real, functional, and original.
 
     const finalPrompt = enhancedPrompt;
 
-    // ── PRE-GENERATION VALIDATION (log only — no early exit) ─────────────────
-    // Log location truth for traceability. If location name not in prompt, inject it.
-    // CRITICAL: Do NOT branch into a separate generation here — use a single code path only.
-    console.log(`[GENERATION_GATE] messageId=${messageId} | character_id=${characterId || 'none'} | subject_type=${resolvedSubjectType} | imageMode=${imageMode}`);
-    console.log(`[GENERATION_GATE] Location truth: resolved="${resolvedLocationName}" | zone="${resolvedZoneName}" | hasLocationImages=${hasLocationImages}`);
-    console.log(`[GENERATION_GATE] Reference images (${referenceImages.length}): ${referenceImages.map(r => r.substring(0, 60)).join(' | ')}`);
+    // ── PRE-DISPATCH PAYLOAD VALIDATION ─────────────────────────────────────
+    // Mandatory validation: explicit context must survive to this point.
+    // Logs are always emitted. Warnings fire when known context is missing.
+    console.log(`[PAYLOAD_VALIDATION] ════════════════════════════════════════`);
+    console.log(`[PAYLOAD_VALIDATION] origin=${imageMode} | messageId=${messageId}`);
+    console.log(`[PAYLOAD_VALIDATION] character_id=${characterId || 'MISSING'} | character_name=${finalCharSubject?.canonical_name || 'UNRESOLVED'}`);
+    console.log(`[PAYLOAD_VALIDATION] char_refs=${finalCharSubject?.face_refs?.length ?? 0} | user_refs=${finalUserSubject?.face_refs?.length ?? 0}`);
+    console.log(`[PAYLOAD_VALIDATION] location="${resolvedLocationName || 'NONE'}" | zone="${resolvedZoneName || 'NONE'}" | location_imgs=${locationImages.length}`);
+    console.log(`[PAYLOAD_VALIDATION] manualLocationId=${manualLocationId || 'none'} | manualZoneId=${manualZoneId || 'none'}`);
+    console.log(`[PAYLOAD_VALIDATION] subject_type=${resolvedSubjectType} | total_refs=${referenceImages.length}`);
+
+    // Warn on missing critical context
+    if (imageMode === 'creative' && characterId && (!finalCharSubject || finalCharSubject.face_refs.length === 0)) {
+      console.warn(`[PAYLOAD_VALIDATION] ⚠️ CHARACTER SELECTED but no identity refs resolved. Subject will drift.`);
+    }
+    if (manualLocationId && locationImages.length === 0) {
+      console.warn(`[PAYLOAD_VALIDATION] ⚠️ LOCATION SELECTED (${manualLocationId}) but no location images resolved. Scene environment unknown.`);
+    }
+    if (manualZoneId && resolvedZoneName !== manualZoneId) {
+      console.warn(`[PAYLOAD_VALIDATION] ⚠️ ZONE SELECTED "${manualZoneId}" but resolved zone="${resolvedZoneName || 'none'}". Zone may have been substituted.`);
+    }
+    if (imageMode === 'presence_scene' && characterId && !finalCharSubject) {
+      console.warn(`[PAYLOAD_VALIDATION] ⚠️ CHAT SELF-IMAGE: character ${characterId} is sender but subject is unresolved.`);
+    }
+    console.log(`[PAYLOAD_VALIDATION] ════════════════════════════════════════`);
 
     let activeFinalPrompt = finalPrompt;
+    // Inject location lock into prompt if location is resolved but not mentioned
     if (hasLocationImages && resolvedLocationName) {
       const locLower = resolvedLocationName.toLowerCase();
       const zoneLower = (resolvedZoneName || '').toLowerCase();
       const promptLower = finalPrompt.toLowerCase();
       if (!promptLower.includes(locLower) && !promptLower.includes(zoneLower)) {
-        console.warn(`[GENERATION_GATE] ⚠️ Location not referenced in prompt — injecting location lock`);
+        console.warn(`[PAYLOAD_VALIDATION] ⚠️ Location not in prompt — injecting location lock`);
         activeFinalPrompt = finalPrompt + `\n\nSCENE LOCATION (LOCKED): ${resolvedLocationName}${resolvedZoneName ? ` → ${resolvedZoneName}` : ''}. The image MUST depict this exact location.`;
+      }
+    }
+    // For creative mode: inject explicit character identity statement if character selected but prompt is vague
+    if (imageMode === 'creative' && finalCharSubject && finalCharSubject.face_refs.length > 0) {
+      const charNameLower = finalCharSubject.canonical_name.toLowerCase();
+      if (!activeFinalPrompt.toLowerCase().includes(charNameLower)) {
+        activeFinalPrompt = activeFinalPrompt + `\n\nSUBJECT (LOCKED): ${finalCharSubject.canonical_name}. This person MUST appear as the primary subject. Match facial features, identity, and appearance from the provided reference images.`;
+        console.log(`[PAYLOAD_VALIDATION] Character name injected into prompt for identity lock.`);
       }
     }
 
