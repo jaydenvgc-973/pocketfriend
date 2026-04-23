@@ -64,13 +64,14 @@ function zoneMatchScore(zoneName, targetZoneFragment) {
 function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
   const zones = (location.zones || []).filter(z => z.image_urls?.length > 0);
   const MAX = 6;
+  const convertUrls = (urls) => (urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, MAX);
   if (zones.length === 0) {
-    return { zoneImages: (location.image_urls || []).slice(0, MAX), zoneName: null, matchType: "location_flat" };
+    return { zoneImages: convertUrls(location.image_urls), zoneName: null, matchType: "location_flat" };
   }
   const hint = forcedZoneHint?.toLowerCase() || null;
   for (const zone of zones) {
     if (promptLower.includes(zone.zone_name.toLowerCase())) {
-      return { zoneImages: zone.image_urls.slice(0, MAX), zoneName: zone.zone_name, matchType: "exact_zone_name" };
+      return { zoneImages: convertUrls(zone.image_urls), zoneName: zone.zone_name, matchType: "exact_zone_name" };
     }
   }
   if (hint) {
@@ -81,7 +82,7 @@ function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
     }
     if (bestZone && bestScore >= 30) {
       const allMatchingZones = zones.filter(z => zoneMatchScore(z.zone_name, hint) >= 30);
-      const combined = allMatchingZones.flatMap(z => z.image_urls || []).slice(0, MAX);
+      const combined = allMatchingZones.flatMap(z => z.image_urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, MAX);
       return { zoneImages: combined, zoneName: bestZone.zone_name, matchType: "zone_keyword" };
     }
   }
@@ -94,13 +95,13 @@ function resolveZoneImages(promptLower, location, forcedZoneHint = null) {
       }
       if (bestZone && bestScore >= 30) {
         const allMatchingZones = zones.filter(z => zoneMatchScore(z.zone_name, entry.zone) >= 30);
-        const combined = allMatchingZones.flatMap(z => z.image_urls || []).slice(0, MAX);
+        const combined = allMatchingZones.flatMap(z => z.image_urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, MAX);
         return { zoneImages: combined, zoneName: bestZone.zone_name, matchType: "zone_keyword" };
       }
     }
   }
   const first = zones[0];
-  return { zoneImages: first.image_urls.slice(0, MAX), zoneName: first.zone_name, matchType: "first_zone" };
+  return { zoneImages: convertUrls(first.image_urls), zoneName: first.zone_name, matchType: "first_zone" };
 }
 
 function locationNameScore(locNameRaw, promptLower) {
@@ -332,6 +333,20 @@ function buildSceneActionLockBlock(promptText) {
 // ── SUBJECT RECORD BUILDERS ──────────────────────────────────────────────────
 // These functions build structured subject objects from raw data.
 // Images and prompts are assembled FROM these records — never the other way around.
+
+// ── CDN URL CONVERTER ─────────────────────────────────────────────────────────
+// Converts internal base44.app storage URLs to public CDN URLs the provider can access.
+// Pattern: https://base44.app/api/apps/{appId}/files/mp/public/{appId}/{filename}
+//       → https://media.base44.com/images/public/{appId}/{filename}
+function toPublicCDN(url) {
+  if (!url || typeof url !== 'string') return url;
+  if (url.startsWith('https://media.base44.com/')) return url;
+  const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+  if (match) {
+    return `https://media.base44.com/images/public/${match[1]}`;
+  }
+  return url;
+}
 
 // ── PROVIDER ACCESSIBILITY FILTER ────────────────────────────────────────────
 // CRITICAL: Generation provider can ONLY fetch:
@@ -1057,7 +1072,7 @@ Deno.serve(async (req) => {
                 const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId)
                           || manualLoc.zones.find(z => z.zone_name?.toLowerCase() === manualZoneId?.toLowerCase());
                 if (zone?.image_urls?.length > 0) {
-                  imgs = zone.image_urls.slice(0, 6);
+                  imgs = zone.image_urls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
                   resolvedZoneName = zone.zone_name;
                   console.log(`[LOCATION] 🎨 CREATIVE+MANUAL ZONE: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
                 }
@@ -1070,7 +1085,7 @@ Deno.serve(async (req) => {
               }
               if (imgs.length === 0) {
                 const firstZoneWithImages = manualLoc.zones?.find(z => z.image_urls?.length > 0);
-                imgs = firstZoneWithImages?.image_urls?.slice(0, 6) || manualLoc.image_urls?.slice(0, 6) || [];
+                imgs = (firstZoneWithImages?.image_urls || manualLoc.image_urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
                 resolvedZoneName = firstZoneWithImages?.zone_name || null;
               }
               locationImages = imgs;
@@ -1227,7 +1242,7 @@ The environment must feel real, functional, and original.
               const zone = manualLoc.zones.find(z => z.zone_name === manualZoneId)
                         || manualLoc.zones.find(z => z.zone_name?.toLowerCase() === manualZoneId?.toLowerCase());
               if (zone?.image_urls?.length > 0) {
-                imgs = zone.image_urls.slice(0, 6);
+                imgs = zone.image_urls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
                 resolvedZoneName = zone.zone_name;
                 console.log(`[LOCATION] ✓ MANUAL ZONE (explicit): "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
               } else {
@@ -1239,7 +1254,7 @@ The environment must feel real, functional, and original.
             if (imgs.length === 0 && manualLoc.zones?.length > 0) {
               const firstZoneWithImages = manualLoc.zones.find(z => z.image_urls?.length > 0);
               if (firstZoneWithImages) {
-                imgs = firstZoneWithImages.image_urls.slice(0, 6);
+                imgs = firstZoneWithImages.image_urls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
                 resolvedZoneName = firstZoneWithImages.zone_name;
                 console.log(`[LOCATION] ✓ MANUAL first-zone fallback: "${resolvedLocationName}" → Zone: "${resolvedZoneName}" | Images: ${imgs.length}`);
               }
@@ -1247,7 +1262,7 @@ The environment must feel real, functional, and original.
 
             // No zones at all — use flat location images
             if (imgs.length === 0 && manualLoc.image_urls?.length > 0) {
-              imgs = manualLoc.image_urls.slice(0, 6);
+              imgs = manualLoc.image_urls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
               resolvedZoneName = null;
               console.log(`[LOCATION] ✓ MANUAL flat images: "${resolvedLocationName}" | Images: ${imgs.length}`);
             }
