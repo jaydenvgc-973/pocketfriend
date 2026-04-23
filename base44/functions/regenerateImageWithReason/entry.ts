@@ -1,5 +1,22 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Convert internal base44.app storage URL to public CDN URL that external providers can access.
+// Pattern: https://base44.app/api/apps/{appId}/files/mp/public/{appId}/{filename}
+//       → https://media.base44.com/images/public/{appId}/{filename}
+function toPublicCDN(url) {
+  if (!url || typeof url !== 'string') return url;
+  // Already a CDN URL — return as-is
+  if (url.startsWith('https://media.base44.com/')) return url;
+  // Transform internal API file URL to CDN URL
+  const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+  if (match) {
+    const converted = `https://media.base44.com/images/public/${match[1]}`;
+    console.log(`[regen] URL converted: ${url.substring(0, 60)}... → ${converted}`);
+    return converted;
+  }
+  return url;
+}
+
 function isProviderAccessible(url) {
   if (!url || typeof url !== 'string') return false;
   if (!url.startsWith('https://')) return false;
@@ -8,9 +25,7 @@ function isProviderAccessible(url) {
   if (url.includes('/files/private/')) return false;
   // Signed/expiring URLs — provider cannot use them
   if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
-  // Public file storage on base44.app — /files/mp/public/ paths ARE publicly accessible
-  // DO NOT block these — they are the primary storage for user-uploaded location images
-  // Only block API-gated paths that require session auth
+  // Internal API-gated paths that aren't public files — reject
   if (url.includes('base44.app/api/apps/') && !url.includes('/files/mp/public/') && !url.includes('/files/public/')) return false;
   return true;
 }
@@ -36,7 +51,7 @@ async function resolveLocationImages(base44, locationId, zoneName) {
   if (zoneName && loc.zones?.length > 0) {
     const zone = loc.zones.find(z => z.zone_name?.toLowerCase() === zoneName.toLowerCase());
     if (zone) {
-      const filtered = (zone.image_urls || []).filter(isProviderAccessible);
+      const filtered = (zone.image_urls || []).map(toPublicCDN).filter(isProviderAccessible);
       images = filtered.slice(0, 6);
       resolvedZone = zone.zone_name;
       console.log(`[regen] ✓ Zone MATCHED: "${zone.zone_name}" | total=${zone.image_urls?.length || 0} | accessible=${images.length}`);
@@ -48,9 +63,9 @@ async function resolveLocationImages(base44, locationId, zoneName) {
 
   // STEP 2: First zone with accessible images
   if (images.length === 0 && loc.zones?.length > 0) {
-    const firstZone = loc.zones.find(z => (z.image_urls || []).some(isProviderAccessible));
+    const firstZone = loc.zones.find(z => (z.image_urls || []).map(toPublicCDN).some(isProviderAccessible));
     if (firstZone) {
-      images = (firstZone.image_urls || []).filter(isProviderAccessible).slice(0, 6);
+      images = (firstZone.image_urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
       resolvedZone = firstZone.zone_name;
       console.log(`[regen] ✓ Fallback zone: "${resolvedZone}" | images=${images.length}`);
     }
@@ -58,7 +73,7 @@ async function resolveLocationImages(base44, locationId, zoneName) {
 
   // STEP 3: Flat location images
   if (images.length === 0 && loc.image_urls?.length > 0) {
-    images = loc.image_urls.filter(isProviderAccessible).slice(0, 6);
+    images = loc.image_urls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
     console.log(`[regen] ✓ Fallback flat images: ${images.length}`);
   }
 
@@ -113,22 +128,16 @@ Deno.serve(async (req) => {
     const charDesc = [character?.appearance_notes, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
     // Build character reference images
-    // STRATEGY: Use only the stored generation_context character refs (already vetted for provider use)
-    // falling back to avatar_url. Limit strictly to 2 to avoid content filter triggers from bulk refs.
-    // The avatar is a synthesized image — safe for provider. Raw reference_image_urls may contain
-    // real photos that trigger content filters when submitted in bulk.
-    const avatarUrl = character?.avatar_url || null;
-    const ctxCharRefs = (ctx.character_reference_images || []).filter(Boolean).filter(isProviderAccessible);
+    // Use the character's avatar_url (synthesized, safe for provider) as identity ref.
+    // Only use media.base44.com URLs (CDN-accessible). Internal base44.app URLs are NOT accessible externally.
+    const avatarUrl = character?.avatar_url ? toPublicCDN(character.avatar_url) : null;
     let charRefImages = [];
-    if (ctxCharRefs.length > 0) {
-      // Use only the 1-2 refs that were used for the original generation — already provider-safe
-      charRefImages = ctxCharRefs.slice(0, 2);
-      console.log(`[regen] ✓ Using ctx character refs (original generation refs): ${charRefImages.length}`);
-    } else if (avatarUrl && isProviderAccessible(avatarUrl)) {
+    if (avatarUrl && isProviderAccessible(avatarUrl)) {
       charRefImages = [avatarUrl];
-      console.log(`[regen] ✓ Using avatar_url as identity ref`);
+      console.log(`[regen] ✓ Using character avatar_url (CDN): ${avatarUrl.substring(0, 80)}`);
+    } else {
+      console.warn(`[regen] ⚠️ No accessible avatar_url found`);
     }
-    console.log(`[regen] charRefImages FINAL: ${charRefImages.length} (ctx=${ctxCharRefs.length}, avatarUrl=${avatarUrl ? 'present' : 'absent'})`);
 
     // ══════════════════════════════════════════════════════════════════════════
     // LOCATION RESOLUTION — STRICT PRIORITY ORDER
@@ -307,11 +316,23 @@ Photorealistic photograph.${qualityFooter}`;
 
     // Role preamble goes FIRST — model must read role assignments before anything else
     const prompt = rolePreamble + corePrompt;
+    
+    console.log(`[regen] DEBUG-BEFORE-CONCAT: locationRefImages=${locationRefImages.length} (LOC_SLOT=${LOC_SLOT}) | charRefImages=${charRefImages.length} (CHAR_SLOT=${CHAR_SLOT})`);
+    locationRefImages.slice(0, LOC_SLOT).forEach((u, i) => console.log(`[regen]   locRef[${i}]: ${u}`));
+    charRefImages.slice(0, CHAR_SLOT).forEach((u, i) => console.log(`[regen]   charRef[${i}]: ${u}`));
+    
     const referenceImages = [...locationRefImages.slice(0, LOC_SLOT), ...charRefImages.slice(0, CHAR_SLOT)].filter(Boolean);
 
     console.log(`[regen] ▶ GENERATING: reason=${reason} | refs=${referenceImages.length} (loc=${Math.min(locationRefImages.length,4)}, char=${Math.min(charRefImages.length,2)}) | locationLabel="${locationLabel}"`);
 
     // ── GENERATE ──────────────────────────────────────────────────────────────
+    console.log(`[regen] ═══ FINAL PAYLOAD TO PROVIDER ═══`);
+    console.log(`[regen] Prompt (first 200 chars): ${prompt.substring(0, 200)}`);
+    console.log(`[regen] Reference images (count=${referenceImages.length}):`);
+    referenceImages.forEach((url, i) => {
+      console.log(`[regen]   [${i}] ${url}`);
+    });
+    
     let genRes;
     try {
       genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
