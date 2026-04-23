@@ -246,10 +246,11 @@ Deno.serve(async (req) => {
     // Explicit index-to-role assignment prevents avatar background from bleeding into environment.
     let rolePreamble = '';
     if (LOC_SLOT > 0 && CHAR_SLOT > 0) {
-      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT:
-Images 1-${LOC_SLOT}: SCENE ENVIRONMENT ONLY. Photographs of the actual location (${locationLabel}). Use only for: flooring, walls, furniture, layout, windows, curtains, lighting. Environment authority: 80%.
-Images ${charIdxStart}-${charIdxEnd}: CHARACTER IDENTITY ONLY. Photos of the person who must appear. Use only for: face, skin, hair, body type, markings. Identity authority: 90-100%.
-IMPORTANT: Any background, room, or scenery visible behind the person in images ${charIdxStart}-${charIdxEnd} is irrelevant to this scene and must be ignored. The scene environment comes only from images 1-${LOC_SLOT}.
+      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST:
+Images 1-${LOC_SLOT}: ROOM ENVIRONMENT ONLY — photographs of the ACTUAL ROOM ("${locationLabel}"). Authority: 80% on the physical room. Use ONLY for: flooring, walls, furniture pieces and colors, layout, windows, curtains, lighting fixtures, decor. This room must appear IDENTICAL in the output — same sofa color, same rug, same shelves, same artwork, same lamps. Do NOT redesign it.
+Images ${charIdxStart}-${charIdxEnd}: CHARACTER IDENTITY ONLY — photos of the person. Authority: 90-100% on the person. Use ONLY for: face, skin, hair, body type, markings.
+⛔ AVATAR BACKGROUND = 0%: Any room, wall, furniture, or scenery visible BEHIND the person in images ${charIdxStart}-${charIdxEnd} is COMPLETELY IRRELEVANT. The room comes from images 1-${LOC_SLOT} only.
+⛔ DO NOT blend these two image sets. They serve entirely separate roles.
 
 `;
     } else if (LOC_SLOT === 0 && CHAR_SLOT > 0) {
@@ -266,11 +267,43 @@ Images 1-${LOC_SLOT}: SCENE ENVIRONMENT ONLY (${locationLabel}). Use for: floori
 
     const qualityFooter = `\nABSOLUTE RULES: No floating text, no overlays, no watermarks. Photorealistic photograph only.`;
 
-    // ── ROOM LOCK BLOCK ───────────────────────────────────────────────────────
+    // ── ROOM CONTINUITY LOCK ──────────────────────────────────────────────────
     const roomLock = hasLocation ? `
 
-ENVIRONMENT: ${locationLabel}
-Reference images 1-${LOC_SLOT} are photographs of this exact location. Match the flooring, walls, furniture, lighting, window treatments, and decor from these references. Only camera angle and subject placement may differ. Do not substitute a different room or background.` : '';
+════════════════════════════════════════════════════════════
+ROOM CONTINUITY LOCK — "${locationLabel}"
+════════════════════════════════════════════════════════════
+Reference images 1-${LOC_SLOT} are PHOTOGRAPHS OF THIS EXACT ROOM. This is NOT inspiration. This is NOT a style reference. This IS the actual room.
+
+MANDATORY — these must match the reference images exactly:
+  ✅ Sofa/couch: same color, type, shape, placement — DO NOT change color
+  ✅ Coffee table: same type, material, placement
+  ✅ Rug: same pattern, tone, size relationship
+  ✅ Curtains/blinds: same type, color, position
+  ✅ Wall art: same placement, count, frames
+  ✅ Shelving: same type, placement, structure
+  ✅ Lighting fixtures: same ceiling lights, same lamps, same positions
+  ✅ Room layout: same furniture arrangement and spacing
+  ✅ Decor objects: same vases, books, plants, ornaments
+
+ONLY these may vary:
+  ✓ Camera angle and framing
+  ✓ Subject position within the room
+  ✓ Natural lighting intensity
+
+ABSOLUTE BANS:
+  ⛔ DO NOT change the sofa color or replace it with a different sofa
+  ⛔ DO NOT redesign the rug
+  ⛔ DO NOT change curtain style or replace window treatments
+  ⛔ DO NOT remove or replace shelving
+  ⛔ DO NOT swap artwork
+  ⛔ DO NOT change lighting fixtures
+  ⛔ DO NOT rearrange the room layout
+  ⛔ DO NOT rebuild a new room around the character — place the character into THIS room
+  ⛔ DO NOT use the background from character identity photos as the room
+
+SUCCESS: A viewer must look at the reference image and the generated image and recognize THE SAME ROOM.
+FAILURE: If any furniture, decor, or layout element changed — it is a continuity failure, not a creative liberty.` : '';
 
     // ── BUILD PROMPT BY REASON ────────────────────────────────────────────────
     let corePrompt = '';

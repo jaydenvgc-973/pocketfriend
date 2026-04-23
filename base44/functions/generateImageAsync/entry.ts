@@ -229,12 +229,48 @@ function resolveLocationAndZone(prompt, locations, characterId) {
 }
 
 function buildRoomLockNote(locationName, zoneName) {
+  const place = [locationName, zoneName].filter(Boolean).join(' → ');
   return `
-🔒 ENVIRONMENT LOCK — ${[locationName, zoneName].filter(Boolean).join(' → ')}:
-Use the reference photographs to match EXACTLY: flooring material and color, wall color and finish, furniture pieces and positions, lighting fixtures, window treatments, and decorative objects.
-Generate the scene from a natural camera angle. All architectural and furnishing elements must remain identical to the references.
-The subject is placed naturally within this exact space.
-⛔ Do NOT substitute a different room, background, or setting.`;
+
+════════════════════════════════════════════════════════════
+ROOM CONTINUITY LOCK — "${place}"
+════════════════════════════════════════════════════════════
+The reference images define THIS SPECIFIC ROOM. This is NOT a mood board. This is NOT style inspiration.
+This is the actual room. The character must be placed INSIDE THIS EXACT ROOM.
+
+MANDATORY — these elements must match the reference images exactly:
+  ✅ Sofa/couch: same type, same color, same shape, same placement
+  ✅ Coffee table: same type, same material, same placement
+  ✅ Rug: same pattern, same tone, same size relationship
+  ✅ Curtains/blinds: same type, same color, same positioning
+  ✅ Wall art/decor: same placement, same count, same frames
+  ✅ Shelving/bookshelves: same type, same placement, same structure
+  ✅ Lamps/ceiling lights: same fixtures, same positions
+  ✅ Room layout: same furniture arrangement and spacing
+  ✅ Decor objects: same vases, books, plants, ornaments visible
+  ✅ Material language: same wood tones, fabric feel, metal accents
+
+ONLY these may vary:
+  ✓ Camera angle and framing
+  ✓ Subject position within the room
+  ✓ Natural lighting intensity adaptation
+  ✓ Focal distance and crop
+
+ABSOLUTE BANS — these are continuity failures, not creative liberties:
+  ⛔ DO NOT change the sofa color or type
+  ⛔ DO NOT swap or redesign the rug
+  ⛔ DO NOT replace or remove shelving
+  ⛔ DO NOT change curtain style or placement
+  ⛔ DO NOT replace the coffee table
+  ⛔ DO NOT change decor objects wholesale
+  ⛔ DO NOT invent or remove lighting fixtures
+  ⛔ DO NOT change the artwork
+  ⛔ DO NOT redesign the room layout
+  ⛔ DO NOT substitute a generic version of this room type
+  ⛔ DO NOT rebuild the room around the character — place the character into the actual room
+
+SUCCESS CONDITION: A viewer looking at the reference image and the generated image must recognize them as the SAME ROOM — not the same type of room, the same room.
+FAILURE CONDITION: If the furniture, decor, or layout changed — it is a continuity failure regardless of whether it is still a "${zoneName || 'room'}".`;
 }
 
 // ── SCENE ACTION LOCK EXTRACTOR ───────────────────────────────────────────────
@@ -734,21 +770,48 @@ function buildEnvironmentLockBlock(locationName, zoneName, envImageIndexStart, e
   const place = zoneName ? `${locationName} → ${zoneName}` : locationName;
   return `\n\n════════════════════════════════════════════════════════════
 SCENE ENVIRONMENT LOCK — "${place}"
-Reference images ${envImageIndexStart}–${envImageIndexEnd} = ENVIRONMENT AUTHORITY (80% influence on room/location)
+Reference images ${envImageIndexStart}–${envImageIndexEnd} = ROOM AUTHORITY (80% on environment)
 ════════════════════════════════════════════════════════════
-These images define the PHYSICAL ENVIRONMENT of the scene. Match from these references:
-  ✓ Flooring type and material
-  ✓ Wall color, texture, and finish
-  ✓ Furniture pieces, positions, and style
-  ✓ Lighting fixtures and natural light direction
-  ✓ Windows, curtains, window treatments
-  ✓ Decorative objects, plants, art
-  ✓ Spatial layout and room proportions
+WHAT "80% ENVIRONMENT AUTHORITY" MEANS:
+  ✅ The room itself is LOCKED as the same physical room
+  ✅ Same furniture — same sofa color, same table, same rug
+  ✅ Same decor — same artwork, same shelving, same lamps
+  ✅ Same layout — same furniture arrangement and spacing
+  ✅ Same material language — same wood tones, fabrics, finishes
+  ✅ Camera angle, framing, and subject position may vary
+  ✅ Natural lighting intensity may adapt to scene context
 
-Camera angle and subject placement may vary freely.
-Environment (room structure, furniture, walls) must remain consistent with these references.
-⛔ DO NOT use the background from any character reference image as the scene environment.
-⛔ DO NOT substitute a different room, building, or setting.`;
+WHAT "80% ENVIRONMENT AUTHORITY" DOES NOT MEAN:
+  ⛔ It does NOT mean redesign the sofa color
+  ⛔ It does NOT mean swap out furniture
+  ⛔ It does NOT mean rebuild the room with different items
+  ⛔ It does NOT mean "similar room" or "same room type"
+  ⛔ It does NOT mean substitute a generic equivalent
+
+MANDATORY — match these from the reference images:
+  ✓ Sofa/seating: type, color, shape, placement
+  ✓ Tables: coffee table, side tables — type and placement
+  ✓ Rug: pattern, tone, size, placement
+  ✓ Window treatments: curtains, blinds — type, color, position
+  ✓ Wall art and shelving: placement, count, structure
+  ✓ Lighting fixtures: ceiling lights, lamps, positions
+  ✓ Room layout and furniture arrangement
+  ✓ Decor objects: vases, plants, books, ornaments
+
+ABSOLUTE BANS:
+  ⛔ DO NOT change the sofa color or type
+  ⛔ DO NOT redesign the rug or replace it
+  ⛔ DO NOT change curtains, blinds, or window treatments
+  ⛔ DO NOT remove or replace shelving or bookshelves
+  ⛔ DO NOT swap artwork or wall decor
+  ⛔ DO NOT invent new lighting fixtures
+  ⛔ DO NOT rearrange the furniture layout
+  ⛔ DO NOT rebuild a new room around the character — place the character into the actual room
+  ⛔ DO NOT use any background from character identity images as the environment
+  ⛔ DO NOT substitute a different room or setting
+
+SUCCESS: A viewer must recognize the reference image and generated image as THE SAME ROOM.
+FAILURE: If any major furniture, decor, or layout element changed — it is a failure.`;
 }
 
 Deno.serve(async (req) => {
