@@ -25,23 +25,23 @@ Deno.serve(async (req) => {
     const originalCharRefs = ctx.character_reference_images || [];
     const originalSubjectType = ctx.subject_type || 'character';
 
-    // Fetch character for appearance metadata — use filter not get() to avoid 404 throws on RLS/missing records
+    // Fetch character — try filter directly (more reliable than .get() for RLS/cross-account)
     let character = null;
     if (originalCharId) {
       try {
-        // .get() can throw on 404 even with .catch() in some SDK versions — use filter as safe fallback
-        character = await base44.asServiceRole.entities.Character.get(originalCharId);
-      } catch (charErr) {
-        console.warn(`[regen] Character ${originalCharId} not accessible via get (${charErr.message}) — trying filter`);
-        try {
-          const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1);
-          character = charList?.[0] || null;
-        } catch (_) {
-          character = null;
+        // Use filter as the primary method — more robust than .get() for service role lookups
+        const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+        character = charList?.[0] || null;
+        // If filter failed, try get() as last resort
+        if (!character) {
+          character = await base44.asServiceRole.entities.Character.get(originalCharId).catch(() => null);
         }
+      } catch (charErr) {
+        console.error(`[regen] Character lookup failed for ${originalCharId}: ${charErr.message}`);
+        character = null;
       }
     }
-    console.log(`[regen] Character resolved: ${character?.name || 'NOT FOUND'} (id=${originalCharId || 'none'})`);
+    console.log(`[regen] Character resolved: ${character?.name || 'NOT FOUND'} (id=${originalCharId || 'none'}) | avatar=${!!character?.avatar_url} | refs=${character?.reference_image_urls?.length || 0}`);
 
     const charName = character?.name || 'the character';
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
@@ -54,18 +54,63 @@ Deno.serve(async (req) => {
       : originalCharRefs.filter(Boolean);
     console.log(`[regen] charRefImages: ${charRefImages.length} (server=${serverCharRefs.length}, ctx=${originalCharRefs.length})`);
 
-    // Fetch the character's current location and zone to resolve proper imagery
-    let currentLocationId = originalLocationId || manualLocationId || null;
-    let currentZoneName = originalZoneName || manualZoneId || null;
+    // ── AUTHORITATIVE LOCATION INVESTIGATION ─────────────────────────────────
+    // Priority order:
+    // 1. User manually selected a location → use it
+    // 2. Original generation context had a location → use it  
+    // 3. Character's resolved current location from app state
+    // 4. Character's assigned home location (current_home_location_id)
+    // 5. Scan saved locations for where this character is listed as resident
+    let currentLocationId = manualLocationId || originalLocationId || null;
+    let currentZoneName = manualZoneId || originalZoneName || null;
     
-    // If no location specified, fetch character's resolved location
+    console.log(`[regen] LOCATION INVESTIGATION START | manualLocationId=${manualLocationId || 'none'} | originalLocationId=${originalLocationId || 'none'}`);
+
+    // If no location specified yet, investigate character's actual app location truth
     if (!currentLocationId && character) {
-      currentLocationId = character.resolved_current_location_id || character.current_home_location_id;
-      currentZoneName = character.resolved_location_type === 'home' ? 'bedroom' : null;
+      // Check all home/location fields in priority order
+      currentLocationId = 
+        character.resolved_current_location_id ||
+        character.current_home_location_id ||
+        character.home_location_id ||
+        null;
+
+      // Determine zone hint from original prompt or character state
+      const promptForZone = (originalPrompt || '').toLowerCase();
       if (character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping') {
         currentZoneName = 'bedroom';
+      } else if (/\b(kitchen|stove|fridge|counter|oven|microwave|sink|pancake|breakfast|eating|table)\b/.test(promptForZone)) {
+        currentZoneName = 'kitchen';
+      } else if (/\b(bedroom|bed|sleeping|nightstand|closet)\b/.test(promptForZone)) {
+        currentZoneName = 'bedroom';
+      } else if (/\b(bathroom|shower|bathtub|toilet)\b/.test(promptForZone)) {
+        currentZoneName = 'bathroom';
+      } else if (/\b(living room|couch|sofa|tv|lounge)\b/.test(promptForZone)) {
+        currentZoneName = 'living room';
+      } else if (/\b(backyard|patio|deck|yard|outside)\b/.test(promptForZone)) {
+        currentZoneName = 'backyard';
       }
-      console.log(`[regen] Fetched character location: ${currentLocationId} | zone hint: ${currentZoneName}`);
+
+      if (currentLocationId) {
+        console.log(`[regen] ✓ Location found on character file: ${currentLocationId} | zone hint: ${currentZoneName || 'none'}`);
+      } else {
+        console.warn(`[regen] ⚠ No location found on character fields — will scan saved locations`);
+        // Last resort: scan saved locations for where this character is a resident
+        if (character.created_by) {
+          const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ created_by: character.created_by }, '-created_date', 100).catch(() => []);
+          const residentHome = savedLocs.find(l =>
+            l.category === 'home' &&
+            ((l.resident_character_ids || []).includes(originalCharId) ||
+             (l.residents || []).some(r => r.character_id === originalCharId))
+          );
+          if (residentHome) {
+            currentLocationId = residentHome.id;
+            console.log(`[regen] ✓ Resident scan found home: "${residentHome.name}" (${residentHome.id})`);
+          } else {
+            console.warn(`[regen] ⚠ No home found via resident scan — generation will use text-only environment`);
+          }
+        }
+      }
     }
 
     // Fetch location reference images from the resolved location + zone
@@ -145,7 +190,18 @@ Deno.serve(async (req) => {
     let hasLocation = locationRefImages.length > 0;
     const locationLabel = [effectiveLocationName, effectiveZoneName].filter(Boolean).join(' → ');
 
-    // ── ROOM LOCK BLOCK ────────────────────────────────────────────────────────
+    // ── ENFORCED WEIGHTING LOG ────────────────────────────────────────────────
+    console.log(`[regen] ════════════════════════════════════════`);
+    console.log(`[regen] WEIGHTING RULES ENFORCED:`);
+    console.log(`[regen]   A. CHARACTER IDENTITY: 90-100% on person only | refs=${charRefImages.length} | avatar_bg=0%`);
+    console.log(`[regen]   B. AVATAR BACKGROUND: 0% — suppressed`);
+    console.log(`[regen]   C. LOCATION/ENV: 80% | refs=${locationRefImages.length} | location="${locationLabel || 'NONE'}"`);
+    console.log(`[regen]   D. PROMPT: controls action/objects/room-type`);
+    console.log(`[regen] home_investigated=true | currentLocationId=${currentLocationId || 'NOT FOUND'}`);
+    console.log(`[regen] zone_resolved="${effectiveZoneName || 'none'}" | first_image_fallback=${locationRefImages.length > 0 && !effectiveZoneName}`);
+    console.log(`[regen] ════════════════════════════════════════`);
+
+    // ── ROOM LOCK BLOCK ────────────────────────────────────────════════════────
     const roomLock = hasLocation ? `
 
 ════════════════════════════════════════════════════════════
@@ -250,22 +306,12 @@ CHARACTER HAIR — STRICT:
 
 Ultra high-resolution photorealistic photograph. Real photo, not illustration.${qualityFooter}`;
 
-      // For 'wrong_location', LOCATION IMAGES MUST COME FIRST AND BE DOMINANT
-      // This ensures the model locks the space before rendering the character
-      const isWrongLoc = reason === 'wrong_location';
-      if (isWrongLoc && locationRefImages.length > 0) {
-        // LOCATION FIRST: Maximum location images, minimal character refs
-        referenceImages = [
-          ...locationRefImages.slice(0, 6),  // Full location dataset for space lock
-          ...charRefImages.slice(0, 1),      // Minimal char ref after location is locked
-        ].filter(Boolean);
-      } else {
-        // Fallback for 'flawed' or no location
-        referenceImages = [
-          ...locationRefImages.slice(0, isWrongLoc ? 4 : 3),
-          ...charRefImages.slice(0, isWrongLoc ? 3 : 3),
-        ].filter(Boolean);
-      }
+      // WEIGHTING: location images first and dominant (4 slots = 80% env authority)
+      // Character identity after (2 slots = 90-100% person only, 0% background)
+      referenceImages = [
+        ...locationRefImages.slice(0, 4),  // ENVIRONMENT: 80% authority
+        ...charRefImages.slice(0, 2),      // IDENTITY: 90-100% person only
+      ].filter(Boolean);
 
     } else if (reason === 'no_avatar') {
       // Character likeness issue — use ONLY facial/body features from avatar, NOT environment
@@ -319,44 +365,49 @@ Do NOT invent, average, or approximate. The reference photos ARE the people.${mu
 ${charDesc ? `Additional context: ${charDesc}.` : ''}
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
-      // LOCATION IMAGES MUST COME FIRST so model locks the space before rendering character
-      // This prevents avatar background from contaminating the scene
+      // WEIGHTING: location images first and dominant (4 slots = 80% env authority)
       referenceImages = [
-        ...locationRefImages.slice(0, 4),
-        ...charRefImages.slice(0, 3),
+        ...locationRefImages.slice(0, 4),  // ENVIRONMENT: 80% authority
+        ...charRefImages.slice(0, 2),      // IDENTITY: 90-100% person only
       ].filter(Boolean);
 
     } else if (reason === 'dont_like' && customPrompt) {
+      const refNote = hasLocation
+        ? `\nREFERENCE IMAGE ROLES:\n  • Images 1–${locationRefImages.slice(0,4).length}: ENVIRONMENT (80% authority) — room, walls, furniture, layout\n  • Remaining images: CHARACTER IDENTITY (90-100% on person only) — face, skin, hair, body\n  • Avatar background behind the character = 0% influence on environment`
+        : `\nCHARACTER IDENTITY: Subject is ${charName}. Replicate their exact face, features, and appearance from reference images. Avatar background = 0% scene influence.`;
       prompt = `${customPrompt}${roomLock}
-
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-${hasLocation ? `REFERENCE IMAGE ORDER: First ${locationRefImages.length} image(s) = THE ROOM — locked environment. Remaining images = ${charName} — replicate their exact face and appearance.` : `CRITICAL: Subject is ${charName}. Replicate their exact face, features, and appearance.`}
+CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.${refNote}
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
       referenceImages = [
         ...locationRefImages.slice(0, 4),
-        ...charRefImages.slice(0, 3),
+        ...charRefImages.slice(0, 2),
       ].filter(Boolean);
 
     } else if (reason === 'custom_prompt' && customPrompt) {
+      const refNote = hasLocation
+        ? `\nREFERENCE IMAGE ROLES:\n  • Images 1–${locationRefImages.slice(0,4).length}: ENVIRONMENT (80% authority) — room, walls, furniture, layout\n  • Remaining images: CHARACTER IDENTITY (90-100% on person only)\n  • Avatar background = 0% scene influence`
+        : `\nSubject is ${charName}. Replicate their exact appearance. Avatar background = 0% scene influence.`;
       prompt = `${customPrompt}${roomLock}
-
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-${hasLocation ? `REFERENCE IMAGE ORDER: First ${locationRefImages.length} image(s) = THE ROOM. Remaining = ${charName}.` : `Subject is ${charName}. Replicate their exact appearance from reference photos.`}
+CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.${refNote}
 Photorealistic photograph. Natural lighting.${qualityFooter}`;
 
       referenceImages = [
         ...locationRefImages.slice(0, 4),
-        ...charRefImages.slice(0, 3),
+        ...charRefImages.slice(0, 2),
       ].filter(Boolean);
 
     } else {
       const scenePrompt = originalPrompt || `${charName} in a natural candid scene`;
+      const refNote = hasLocation
+        ? `\nREFERENCE IMAGE ROLES:\n  • Images 1–${locationRefImages.slice(0,4).length}: ENVIRONMENT (80% authority)\n  • Remaining: CHARACTER IDENTITY (90-100% person only)\n  • Avatar background = 0% scene influence`
+        : `\nCharacter identity refs define ${charName}'s person only. Avatar background = 0% scene influence.`;
       prompt = `${scenePrompt}${roomLock}
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}. Photorealistic photograph.${qualityFooter}`;
+CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.${refNote}
+Photorealistic photograph. Real photo, not illustration. Natural lighting.${qualityFooter}`;
       referenceImages = [
         ...locationRefImages.slice(0, 4),
-        ...charRefImages.slice(0, 3),
+        ...charRefImages.slice(0, 2),
       ].filter(Boolean);
     }
 

@@ -553,7 +553,24 @@ function dedupeSubjects(subjects) {
 }
 
 // ── PROMPT BUILDERS FOR LOCKED SUBJECTS ─────────────────────────────────────
-function buildSubjectOutfitBlock(subject) {
+
+// ── OUTFIT OVERRIDE DETECTOR ─────────────────────────────────────────────────
+// If the prompt explicitly describes clothing worn by the character, the prompt
+// takes priority over the character's closet outfit. This prevents the closet
+// from overriding what the user explicitly asked for (e.g. "white tank top").
+function promptExplicitlyDescribesOutfit(promptText) {
+  const pl = promptText.toLowerCase();
+  return /\b(wearing|dressed in|in a|has on|sports a|rocking a|wears)\b.{0,60}\b(shirt|tank|top|tee|hoodie|jacket|coat|dress|jeans|shorts|pants|sweat|suit|uniform|outfit|blouse|sweater|vest|cardigan)\b/i.test(pl)
+    || /\b(white|black|grey|gray|blue|red|green|yellow|brown|navy|pink|purple|khaki|beige)\s+(ribbed|fitted|loose|oversized|slim|baggy)?\s*(tank|shirt|tee|top|hoodie|jacket|coat|dress|jeans|shorts|pants)\b/i.test(pl);
+}
+
+function buildSubjectOutfitBlock(subject, promptText = '') {
+  // If the prompt already explicitly describes the outfit, do NOT inject closet outfit
+  // This prevents the closet from overriding what the prompt already specified
+  if (promptText && promptExplicitlyDescribesOutfit(promptText)) {
+    console.log(`[OUTFIT] Prompt explicitly describes clothing — skipping closet outfit injection for ${subject.canonical_name}`);
+    return '';
+  }
   if (!subject.outfit_desc) return '';
   const name = subject.canonical_name;
   let outfitDesc = subject.outfit_desc;
@@ -579,28 +596,83 @@ function buildSubjectOutfitBlock(subject) {
   return `\n${name}'s clothing: ${outfitDesc}\n`;
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// REFERENCE ROLE WEIGHTING RULES — DO NOT MODIFY
+// These rules define the exact influence each reference source has.
+//
+// A. CHARACTER IDENTITY REFS (avatar + character_reference_images):
+//    - Influence: 90–100% on the PERSON's physical identity ONLY
+//    - Includes: face shape, skin tone, hair, body type, tattoos, markings
+//    - EXCLUDES: background, room, environment, scenery, lighting setup
+//
+// B. AVATAR BACKGROUND / SCENERY:
+//    - Influence: 0% — ZERO — NEVER used for environment
+//    - Must be completely ignored as a scene/location signal
+//
+// C. LOCATION / ZONE REFERENCE IMAGES:
+//    - Influence: 80% on the ENVIRONMENT — room, building, furniture, layout
+//    - These images define the place: flooring, walls, furniture, windows, decor
+//    - Camera angle and subject placement may vary; environment must not
+//
+// D. PROMPT SCENE DETAILS:
+//    - Controls: action, pose, objects, expression, framing, room type keyword
+//    - Examples: eating pancakes, syrup on lip, wooden kitchen table, morning sunlight
+// ══════════════════════════════════════════════════════════════════════════════
+
 function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd, hasLocationImages = false) {
   const name = subject.canonical_name;
   const lockDesc = subject.lock_text ? `Appearance details: ${subject.lock_text}.` : '';
   const ethnicityWarning = subject.ethnicities?.length > 0
     ? `Ethnicity: ${subject.ethnicities.join(', ')}.`
     : '';
-  // Stronger background suppression warning when there are no location images (highest leak risk)
-  const bgSuppressionStrength = !hasLocationImages
-    ? `⛔⛔ CRITICAL — NO ENVIRONMENT REFERENCES PROVIDED: The background of these character reference images is RANDOM and UNRELATED to the scene. The background/room/setting visible in these character photos MUST BE COMPLETELY IGNORED. DO NOT use the character's photo background as the scene. Build the scene entirely from the text prompt description above.`
-    : `⚠️ IGNORE THE BACKGROUND in these reference images entirely. The background/scenery behind the subject in these reference photos is NOT the scene. DO NOT reproduce any room, furniture, wall, window, or environment visible behind the subject.`;
-  return `\n\nSUBJECT IDENTITY LOCK — ${name} (reference images ${imageIndexStart}–${imageIndexEnd}):
-  Extract ONLY the PERSON from these images. Use for: face structure, skin tone, hair color/length/style, body type, tattoos/markings ONLY.
-  ${bgSuppressionStrength}
-  ${ethnicityWarning}${subject.appearance_text ? ` Additional context: ${subject.appearance_text}.` : ''}${lockDesc ? ` ${lockDesc}` : ''}`;
+
+  // ALWAYS enforce hard 0% on avatar background — strength does not vary
+  const bgSuppression = hasLocationImages
+    ? `⛔ AVATAR BACKGROUND = 0% INFLUENCE: The room, walls, furniture, window, lighting, or any scenery visible BEHIND the person in these reference photos must be completely ignored. That background is IRRELEVANT. The scene environment is defined by the LOCATION REFERENCE IMAGES above, not by anything behind this person.`
+    : `⛔⛔ AVATAR BACKGROUND = 0% INFLUENCE — NO LOCATION IMAGES PROVIDED: The background behind this person in the reference photos is RANDOM and COMPLETELY UNRELATED to this scene. It must be ENTIRELY IGNORED. DO NOT replicate any room, furniture, wall, window, or background element from these photos. Build the scene 100% from the text prompt above.`;
+
+  return `\n\n════════════════════════════════════════════════════════════
+CHARACTER IDENTITY LOCK — ${name}
+Reference images ${imageIndexStart}–${imageIndexEnd} = PERSON IDENTITY ONLY (90–100% influence on the person)
+════════════════════════════════════════════════════════════
+USE THESE IMAGES FOR (person only):
+  ✓ Face structure, jaw, cheekbones, forehead, chin
+  ✓ Eye shape, size, spacing, color
+  ✓ Nose shape, lip shape, mouth structure  
+  ✓ Skin tone, complexion, texture, marks
+  ✓ Hair color, texture, cut, length, style
+  ✓ Body type, build, height proportions
+  ✓ Facial hair, tattoos, markings
+
+DO NOT USE THESE IMAGES FOR (0% influence):
+  ✗ Room, background, scenery, furniture
+  ✗ Walls, floor, ceiling, windows, curtains
+  ✗ Lighting setup from avatar background
+  ✗ Any environmental element
+
+${bgSuppression}
+${ethnicityWarning}${subject.appearance_text ? ` Additional identity context: ${subject.appearance_text}.` : ''}${lockDesc ? ` ${lockDesc}` : ''}`;
 }
 
 function buildEnvironmentLockBlock(locationName, zoneName, envImageIndexStart, envImageIndexEnd) {
   const place = zoneName ? `${locationName} → ${zoneName}` : locationName;
-  return `\nSCENE ENVIRONMENT LOCK — "${place}" (reference images ${envImageIndexStart}–${envImageIndexEnd}):
-  These images define the EXACT scene environment. Match: flooring, walls, furniture layout, lighting, windows, decor, and spatial arrangement from these references.
-  The scene MUST be set inside this exact location. Do NOT invent a different environment.
-  Do NOT use the background from any character reference image as the scene.`;
+  return `\n\n════════════════════════════════════════════════════════════
+SCENE ENVIRONMENT LOCK — "${place}"
+Reference images ${envImageIndexStart}–${envImageIndexEnd} = ENVIRONMENT AUTHORITY (80% influence on room/location)
+════════════════════════════════════════════════════════════
+These images define the PHYSICAL ENVIRONMENT of the scene. Match from these references:
+  ✓ Flooring type and material
+  ✓ Wall color, texture, and finish
+  ✓ Furniture pieces, positions, and style
+  ✓ Lighting fixtures and natural light direction
+  ✓ Windows, curtains, window treatments
+  ✓ Decorative objects, plants, art
+  ✓ Spatial layout and room proportions
+
+Camera angle and subject placement may vary freely.
+Environment (room structure, furniture, walls) must remain consistent with these references.
+⛔ DO NOT use the background from any character reference image as the scene environment.
+⛔ DO NOT substitute a different room, building, or setting.`;
 }
 
 Deno.serve(async (req) => {
@@ -1230,10 +1302,26 @@ The character reference images are for the PERSON ONLY — their background is i
     let referenceImages = [];
     const hasLocationImages = locationImages.length > 0;
 
-    // Slot counts (max per role to stay within provider limits)
-    const LOC_SLOT  = hasLocationImages ? Math.min(locationImages.length, 3) : 0;
+    // ── REFERENCE SLOT ALLOCATION — enforces the 80% / 90-100% / 0% weighting rules ──
+    // Location gets 4 slots (environment authority = 80% — dominant)
+    // Character identity gets 2 slots (person only = 90-100% on identity, 0% on background)
+    // User identity gets 2 slots (same rules as character)
+    // ORDER: location FIRST so the model anchors the scene before rendering the person
+    const LOC_SLOT  = hasLocationImages ? Math.min(locationImages.length, 4) : 0;
     const CHAR_SLOT = finalCharSubject  ? Math.min(finalCharSubject.face_refs.length, 2) : 0;
     const USER_SLOT = finalUserSubject  ? Math.min(finalUserSubject.face_refs.length, 2) : 0;
+
+    console.log(`[WEIGHTING] ════════════════════════════════════════`);
+    console.log(`[WEIGHTING] ENFORCED REFERENCE ROLE WEIGHTS:`);
+    console.log(`[WEIGHTING]   A. CHARACTER IDENTITY: 90-100% on PERSON ONLY | slots=${CHAR_SLOT} | avatar_background=0%`);
+    console.log(`[WEIGHTING]   B. AVATAR BACKGROUND: 0% — completely suppressed`);
+    console.log(`[WEIGHTING]   C. LOCATION/ZONE ENV: 80% on ENVIRONMENT | slots=${LOC_SLOT}`);
+    console.log(`[WEIGHTING]   D. PROMPT DETAILS: controls action/objects/room-type/expression`);
+    console.log(`[WEIGHTING] character_id=${characterId || 'none'} | character_name=${finalCharSubject?.canonical_name || 'NONE'}`);
+    console.log(`[WEIGHTING] identity_refs_used=${finalCharSubject?.face_refs?.slice(0, CHAR_SLOT).map(u => u?.substring(0, 40)).join(', ') || 'NONE'}`);
+    console.log(`[WEIGHTING] location_name="${resolvedLocationName || 'NONE'}" | zone="${resolvedZoneName || 'NONE'}" | location_imgs_used=${LOC_SLOT}`);
+    console.log(`[WEIGHTING] home_lookup_ran=${!!resolvedLocationName} | first_image_fallback=${LOC_SLOT > 0 && !resolvedZoneName}`);
+    console.log(`[WEIGHTING] ════════════════════════════════════════`);
 
     // Index ranges (1-based for prompt readability)
     const locIdxStart  = 1;
@@ -1341,8 +1429,9 @@ The character reference images are for the PERSON ONLY — their background is i
 
     if (finalCharSubject && finalUserSubject) {
       // ── MULTI-SUBJECT PROMPT ────────────────────────────────────────────────
-      const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
-      const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
+      // Pass cleanPrompt so outfit injection is skipped when prompt already describes clothing
+      const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject, cleanPrompt);
+      const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject, cleanPrompt);
       const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd, hasLocationImages);
       const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd, hasLocationImages);
       const refOrderNote = `Two subjects: ${finalCharSubject.canonical_name} and ${finalUserSubject.canonical_name}. Keep their appearances and outfits distinct.`;
@@ -1351,7 +1440,7 @@ The character reference images are for the PERSON ONLY — their background is i
 
     } else if (finalUserSubject && !finalCharSubject) {
       // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
-      const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
+      const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject, cleanPrompt);
       const userIdentityBlock = finalUserSubject.face_refs.length > 0
         ? buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd, hasLocationImages)
         : '';
@@ -1359,7 +1448,8 @@ The character reference images are for the PERSON ONLY — their background is i
 
     } else if (finalCharSubject) {
       // ── CHARACTER-ONLY PROMPT ───────────────────────────────────────────────
-      const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
+      // Pass cleanPrompt so outfit injection is skipped when prompt already describes clothing
+      const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject, cleanPrompt);
       const safeClothingNote = !charOutfitBlock && !cleanPrompt.toLowerCase().includes('shirt') && !cleanPrompt.toLowerCase().includes('wear') && !cleanPrompt.toLowerCase().includes('outfit')
         ? `\nNote: Ensure the subject is wearing appropriate casual clothing suitable for the scene.\n`
         : '';
