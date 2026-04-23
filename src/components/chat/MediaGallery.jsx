@@ -373,7 +373,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setReferenceImageSource(null);
       setShowGridPicker(false);
       setIsOpen(false);
-      if (onImageGenerated) onImageGenerated(newMsg);
+      // Pass the hydrated message (with image_url already set) so Chat renders the image immediately
+      // without showing a "Load Photo" placeholder
+      if (onImageGenerated) onImageGenerated({ ...newMsg, image_url: genRes.data.imageUrl });
     } catch (err) {
       setGenerateError(err.message || "Failed to generate image");
     } finally {

@@ -616,13 +616,37 @@ Deno.serve(async (req) => {
     let characterSubject = null;
     let userSubject = null;
 
-    // Resolve character subject
+    // Resolve character subject — use filter fallback if .get() throws (RLS / cross-account)
     if (characterId) {
       try {
-        const charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
+        let charRecord = null;
+        try {
+          charRecord = await base44.asServiceRole.entities.Character.get(characterId);
+        } catch (getErr) {
+          console.warn(`[SUBJECT] Character.get(${characterId}) threw (${getErr.message}) — trying filter fallback`);
+          const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+          charRecord = charList?.[0] || null;
+        }
         if (charRecord) {
           characterSubject = buildCharacterSubject(charRecord, characterReferenceImages || [], scenePrompt);
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
+        } else {
+          console.warn(`[SUBJECT] Character ${characterId} not found — proceeding without identity lock. Client refs: ${(characterReferenceImages || []).length}`);
+          // Fall back to client-provided refs so generation still has identity signal
+          if (characterReferenceImages?.length > 0) {
+            characterSubject = {
+              subject_type: 'character',
+              subject_id: characterId,
+              canonical_name: characterName || 'the character',
+              face_refs: characterReferenceImages.slice(0, 3),
+              outfit_desc: null,
+              outfit_owner_id: characterId,
+              appearance_text: '',
+              lock_text: '',
+              ethnicities: [],
+              explicitly_selected: true,
+            };
+          }
         }
       } catch (err) {
         console.error('[SUBJECT] Failed to build character subject:', err.message);
@@ -700,9 +724,15 @@ Deno.serve(async (req) => {
         // ── RABBIT HOLE GATE (PRIORITY OVERRIDE) ──────────────────────────────
         // Reuse the already-fetched character record — no second DB call needed.
         // characterSubject was built from the same record; use it directly.
-        const charForRabbitCheck = characterId
-          ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null)
-          : null;
+        let charForRabbitCheck = null;
+        if (characterId) {
+          try {
+            charForRabbitCheck = await base44.asServiceRole.entities.Character.get(characterId);
+          } catch (_) {
+            const list = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+            charForRabbitCheck = list?.[0] || null;
+          }
+        }
         console.log(`[generateImageAsync] Character for rabbit/location check: id=${charForRabbitCheck?.id || 'none'} | name=${charForRabbitCheck?.name || 'none'} | presence=${charForRabbitCheck?.resolved_presence_status || 'unknown'}`);
 
         const isRabbitHole = charForRabbitCheck?.resolved_presence_status === 'rabbit_hole'
@@ -1132,12 +1162,31 @@ The environment must feel real, functional, and original.
       }
     }
 
+    // ── STEP 6.5: SANITIZE REFERENCE IMAGES ─────────────────────────────────
+    // Strip any private/internal URLs — the generation provider only accepts public HTTPS CDN URLs.
+    // Private app file URLs (/api/apps/... or non-https) will cause "None of the provided image URLs
+    // contained valid image data" errors (400/500). Filter them out before sending.
+    const isPublicImageUrl = (url) => {
+      if (!url || typeof url !== 'string') return false;
+      if (!url.startsWith('https://')) return false;
+      // Reject internal Base44 app file URLs — the generation provider cannot access these
+      // Pattern: https://base44.app/api/apps/{id}/files/...
+      if (url.includes('base44.app/api/apps/')) return false;
+      // Also reject any other /api/apps/ internal path patterns
+      if (url.includes('/api/apps/') && url.includes('/files/')) return false;
+      return true;
+    };
+    const sanitizedReferenceImages = referenceImages.filter(isPublicImageUrl);
+    if (sanitizedReferenceImages.length !== referenceImages.length) {
+      console.warn(`[generateImageAsync] ⚠ Stripped ${referenceImages.length - sanitizedReferenceImages.length} non-public URLs from referenceImages. Remaining: ${sanitizedReferenceImages.length}`);
+    }
+
     // ── STEP 7: GENERATE IMAGE (SINGLE CODE PATH) ────────────────────────────
-    console.log(`[generateImageAsync] SENDING TO GENERATOR | messageId=${messageId} | promptLength=${activeFinalPrompt.length} | refs=${referenceImages.length}`);
+    console.log(`[generateImageAsync] SENDING TO GENERATOR | messageId=${messageId} | promptLength=${activeFinalPrompt.length} | refs=${sanitizedReferenceImages.length}`);
     
     const response = await base44.integrations.Core.GenerateImage({
       prompt: activeFinalPrompt,
-      existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+      existing_image_urls: sanitizedReferenceImages.length > 0 ? sanitizedReferenceImages : undefined,
     });
 
     if (response?.url) {
