@@ -1699,6 +1699,34 @@ No character identity images provided — render the character from the text des
     }
     console.log(`[generateImageAsync] REFERENCE SUMMARY: loc_imgs=${LOC_SLOT} | char_identity=${CHAR_SLOT} | user_identity=${USER_SLOT} | total_after_sanitize=${sanitizedReferenceImages.length} | avatar_bg=0%`);
 
+    // ── STEP 6.6: ENVIRONMENT AUTHORITY ENFORCEMENT ──────────────────────
+    // RUNTIME SAFETY: If this is a location-grounded request (presence_scene mode)
+    // and environment refs have collapsed to zero after sanitization, the system
+    // cannot safely generate because avatar background becomes the de facto environment.
+    // This violates the 0% avatar background rule. BLOCK instead of guessing.
+    const locationGroundedRequest = imageMode === 'presence_scene' && resolvedLocationName !== null;
+    const environmentRefsAfterSanitize = sanitizedReferenceImages.slice(0, LOC_SLOT).length;
+    const hasZeroEnvironmentRefs = environmentRefsAfterSanitize === 0 && LOC_SLOT > 0;
+
+    if (locationGroundedRequest && hasZeroEnvironmentRefs) {
+      console.error(`[generateImageAsync] ⛔ HARD HALT — ENVIRONMENT AUTHORITY COLLAPSE`);
+      console.error(`[generateImageAsync] Location resolved: "${resolvedLocationName}" (id=${resolvedLocationName ? 'found' : 'null'})`);
+      console.error(`[generateImageAsync] Zone resolved: "${resolvedZoneName || 'none'}"`);
+      console.error(`[generateImageAsync] LOC_SLOT expected: ${LOC_SLOT} | LOC_SLOT after sanitize: ${environmentRefsAfterSanitize}`);
+      console.error(`[generateImageAsync] All location reference images are stored as private URLs the generation provider cannot access.`);
+      console.error(`[generateImageAsync] Without environment authority, avatar background would fill the gap — violating 0% avatar background rule.`);
+      console.error(`[generateImageAsync] Generation is blocked. User must repair private URL storage or select a location with public reference images.`);
+      await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      return Response.json({
+        success: false,
+        error: `Location "${resolvedLocationName}" has no usable reference images. All stored images are private URLs. Please contact support to repair private URL storage, or select a different location with public reference images.`,
+        location_id: resolvedLocationName ? 'found_but_private_refs' : 'not_found',
+        location_name: resolvedLocationName,
+        environment_refs_count: environmentRefsAfterSanitize,
+        environment_authority_safe: false,
+      }, { status: 422 });
+    }
+
     // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────
     // RUNTIME PROOF LOG — shows exact state of all rule enforcement before dispatch
     console.log(`[DISPATCH_AUDIT] ════════════════════════════════════════════════════`);
