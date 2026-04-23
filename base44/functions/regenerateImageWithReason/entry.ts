@@ -110,26 +110,23 @@ Deno.serve(async (req) => {
     const charName = character?.name || 'the character';
     const charDesc = [character?.appearance_notes, character?.personality_summary, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
-    // Build character reference images — EXCLUDE avatar_url (it contains background scenery that bleeds into environment)
-    // avatar_url is a generated composite image — its background contaminates the scene at 0% authority
-    // Only use dedicated reference_image_urls (real photos of the person, no synthetic backgrounds)
+    // Build character reference images
+    // STRATEGY: Use only the stored generation_context character refs (already vetted for provider use)
+    // falling back to avatar_url. Limit strictly to 2 to avoid content filter triggers from bulk refs.
+    // The avatar is a synthesized image — safe for provider. Raw reference_image_urls may contain
+    // real photos that trigger content filters when submitted in bulk.
     const avatarUrl = character?.avatar_url || null;
-    const referenceOnlyUrls = (character?.reference_image_urls || []).filter(Boolean).filter(isProviderAccessible);
     const ctxCharRefs = (ctx.character_reference_images || []).filter(Boolean).filter(isProviderAccessible);
-    // Priority: dedicated reference photos > context refs > avatar as last resort only if nothing else exists
     let charRefImages = [];
-    if (referenceOnlyUrls.length > 0) {
-      charRefImages = referenceOnlyUrls.slice(0, 3);
-      console.log(`[regen] ✓ Using reference_image_urls (no avatar background): ${charRefImages.length}`);
-    } else if (ctxCharRefs.length > 0) {
-      charRefImages = ctxCharRefs.slice(0, 3);
-      console.log(`[regen] ✓ Using ctx charRefs (no avatar): ${charRefImages.length}`);
+    if (ctxCharRefs.length > 0) {
+      // Use only the 1-2 refs that were used for the original generation — already provider-safe
+      charRefImages = ctxCharRefs.slice(0, 2);
+      console.log(`[regen] ✓ Using ctx character refs (original generation refs): ${charRefImages.length}`);
     } else if (avatarUrl && isProviderAccessible(avatarUrl)) {
-      // Last resort: avatar only — explicitly suppress its background in prompt
       charRefImages = [avatarUrl];
-      console.log(`[regen] ⚠ LAST RESORT: using avatar_url — background will be explicitly suppressed`);
+      console.log(`[regen] ✓ Using avatar_url as identity ref`);
     }
-    console.log(`[regen] charRefImages FINAL: ${charRefImages.length} (referenceOnly=${referenceOnlyUrls.length}, ctx=${ctxCharRefs.length}, avatarUrl=${avatarUrl ? 'present' : 'absent'})`);
+    console.log(`[regen] charRefImages FINAL: ${charRefImages.length} (ctx=${ctxCharRefs.length}, avatarUrl=${avatarUrl ? 'present' : 'absent'})`);
 
     // ══════════════════════════════════════════════════════════════════════════
     // LOCATION RESOLUTION — STRICT PRIORITY ORDER
@@ -259,14 +256,8 @@ Images 1-${LOC_SLOT}: SCENE ENVIRONMENT ONLY (${locationLabel}). Use for: floori
     // ── ROOM LOCK BLOCK ───────────────────────────────────────────────────────
     const roomLock = hasLocation ? `
 
-════════════════════════════════════════════════════════════
-ENVIRONMENT LOCK: ${locationLabel}
-════════════════════════════════════════════════════════════
-Reference images 1–${LOC_SLOT} ARE ground-truth photographs of this exact room/zone.
-REPRODUCE THIS EXACT SPACE: flooring, walls, furniture, lighting, window treatments, decor.
-ONLY camera angle and subject placement may differ.
-⛔ DO NOT substitute any other room. ⛔ AVATAR BACKGROUND = 0% scene influence.
-════════════════════════════════════════════════════════════` : '';
+ENVIRONMENT: ${locationLabel}
+Reference images 1-${LOC_SLOT} are photographs of this exact location. Match the flooring, walls, furniture, lighting, window treatments, and decor from these references. Only camera angle and subject placement may differ. Do not substitute a different room or background.` : '';
 
     // ── BUILD PROMPT BY REASON ────────────────────────────────────────────────
     let corePrompt = '';
@@ -280,16 +271,7 @@ ONLY camera angle and subject placement may differ.
 
       const locationOverride = (reason === 'wrong_location' && hasLocation) ? `
 
-════════════════════════════════════════════════════════════
-⛔ EXPLICIT LOCATION OVERRIDE — HARD ENVIRONMENT RESET ⛔
-════════════════════════════════════════════════════════════
-The user explicitly selected this location and zone: ${locationLabel}
-Reference images 1–${LOC_SLOT} ARE the exact room to use.
-✗ IGNORE any room visible behind the character in their reference photos
-✗ IGNORE any previously generated room — it was wrong
-✓ BUILD the scene ENTIRELY from location reference images 1–${LOC_SLOT}
-✓ Use these exact walls, floor, furniture, and lighting
-════════════════════════════════════════════════════════════` : '';
+LOCATION CORRECTION: The user selected "${locationLabel}" as the correct location. Reference images 1-${LOC_SLOT} show the exact room to use. Build the scene entirely from those location reference images. Use those exact walls, floor, furniture, and lighting. Do not use any room visible in the character identity photos.` : '';
 
       corePrompt = `${sceneDesc}${roomLock}${locationOverride}
 
