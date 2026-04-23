@@ -168,15 +168,26 @@ Deno.serve(async (req) => {
     const charDesc = [character?.appearance_notes, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
     // Build character reference images
-    // Use the character's avatar_url (synthesized, safe for provider) as identity ref.
-    // Only use media.base44.com URLs (CDN-accessible). Internal base44.app URLs are NOT accessible externally.
+    // For flawed: use ALL available refs (avatar + reference_image_urls) for max identity lock.
+    // For other reasons: avatar_url only.
+    const isFlawed = reason === 'flawed';
     const avatarUrl = character?.avatar_url ? toPublicCDN(character.avatar_url) : null;
     let charRefImages = [];
     if (avatarUrl && isProviderAccessible(avatarUrl)) {
-      charRefImages = [avatarUrl];
+      charRefImages.push(avatarUrl);
       console.log(`[regen] ✓ Using character avatar_url (CDN): ${avatarUrl.substring(0, 80)}`);
     } else {
       console.warn(`[regen] ⚠️ No accessible avatar_url found`);
+    }
+    // For flawed regeneration: add all accessible reference_image_urls for maximum identity fidelity
+    if (isFlawed && character?.reference_image_urls?.length > 0) {
+      for (const ref of character.reference_image_urls) {
+        const converted = toPublicCDN(ref);
+        if (isProviderAccessible(converted) && !charRefImages.includes(converted)) {
+          charRefImages.push(converted);
+        }
+      }
+      console.log(`[regen] FLAWED mode: expanded charRefImages to ${charRefImages.length} (avatar + reference_image_urls)`);
     }
 
     // ══════════════════════════════════════════════════════════════════════════
@@ -389,10 +400,41 @@ FAILURE: If any furniture, decor, or layout element changed — it is a continui
     // ── BUILD PROMPT BY REASON ────────────────────────────────────────────────
     let corePrompt = '';
 
-    if (reason === 'wrong_location' || reason === 'flawed') {
-      // When a manual location is explicitly provided (wrong_location OR flawed + manual override):
-      // ALWAYS rebuild scene description from the selected location. NEVER reuse the old prompt.
-      // The old prompt described the WRONG room — reusing it fights the correct location reference images.
+    if (reason === 'flawed') {
+      // FLAWED = maximum fidelity re-render. Something fundamental broke — body morphing,
+      // wrong room, incorrect furniture, texture glitches, or both environment and character
+      // were corrupted simultaneously. This is a hard restart with every fidelity constraint
+      // cranked to maximum. Keep the original scene intent but enforce everything strictly.
+      const sceneDesc = originalPrompt || `${charName} in a natural candid scene`;
+
+      corePrompt = `${sceneDesc}${roomLock}
+
+════════════════════════════════════════════════════════════
+MAXIMUM FIDELITY RE-RENDER — FLAWED IMAGE CORRECTION
+════════════════════════════════════════════════════════════
+The previous image had fundamental rendering failures (body morphing, incorrect room layout,
+furniture in wrong positions, texture glitches, or mixed environment/character corruption).
+This is a HARD RESTART. Every constraint below is NON-NEGOTIABLE.
+
+ROOM FIDELITY — ZERO TOLERANCE FOR DRIFT:
+  ⛔ Every piece of furniture must match the reference photos in color, shape, and position
+  ⛔ No floating objects, no warped geometry, no merged surfaces
+  ⛔ Walls, floor, and ceiling must be flat, clean, and consistent
+  ⛔ No duplicate furniture elements or impossible room geometry
+  ⛔ Lighting must be coherent — no impossible shadows or multiple conflicting light sources
+
+CHARACTER FIDELITY — EXACT MATCH REQUIRED:
+  ⛔ Body proportions must be anatomically correct — no extra limbs, no fused fingers, no elongated necks
+  ⛔ Face must match the identity reference exactly — same bone structure, skin tone, eye shape, hair
+  ⛔ Clothing must sit naturally on the body — no texture bleeding, no clipping
+  ⛔ Hands and feet must have correct finger/toe counts and natural proportions
+  ⛔ No body parts merged with furniture or environment
+
+CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
+Ultra high-resolution photorealistic photograph. No artifacts, no distortion, no rendering errors.${qualityFooter}`;
+
+    } else if (reason === 'wrong_location') {
+      // WRONG LOCATION: rebuild scene from the correct location reference images.
       const sceneDesc = hasLocation
         ? `${charName} in the ${effectiveZoneName || effectiveLocationName || 'room'}.`
         : (originalPrompt || `${charName} in a natural candid scene`);

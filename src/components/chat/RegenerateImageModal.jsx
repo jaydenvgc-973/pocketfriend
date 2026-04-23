@@ -9,7 +9,7 @@ const REASONS = [
     id: "flawed",
     icon: AlertTriangle,
     label: "Image is flawed",
-    description: "Wrong anatomy, wrong location/zone, or rendering artifacts — retry with strict environment & character fidelity",
+    description: "Major failure — body morphing, wrong room layout, furniture glitches, texture errors, or both environment and character corrupted. Full maximum-fidelity re-render.",
     color: "text-amber-400",
     bg: "bg-amber-500/10 border-amber-500/30 hover:border-amber-500/60",
   },
