@@ -229,12 +229,68 @@ function resolveLocationAndZone(prompt, locations, characterId) {
 }
 
 function buildRoomLockNote(locationName, zoneName) {
-  const placeLabel = [locationName, zoneName].filter(Boolean).join(' → ');
   return `
-The scene is set in the ${zoneName || 'space'} of ${locationName}.
-Use the reference photographs to match: flooring material and color, wall color and finish, furniture pieces and positions, lighting fixtures, window treatments, and decorative objects.
-Generate the scene from a different camera angle. Only the viewpoint changes—all architectural and furnishing elements remain identical.
-Place the subject naturally within the space.`;
+🔒 ENVIRONMENT LOCK — ${[locationName, zoneName].filter(Boolean).join(' → ')}:
+Use the reference photographs to match EXACTLY: flooring material and color, wall color and finish, furniture pieces and positions, lighting fixtures, window treatments, and decorative objects.
+Generate the scene from a natural camera angle. All architectural and furnishing elements must remain identical to the references.
+The subject is placed naturally within this exact space.
+⛔ Do NOT substitute a different room, background, or setting.`;
+}
+
+// ── SCENE ACTION LOCK EXTRACTOR ───────────────────────────────────────────────
+// Extracts specific scene-critical actions and objects from the prompt and
+// generates an explicit enforcement block that is prepended to the final prompt.
+// This prevents the model from collapsing a detailed action scene into a generic portrait.
+function buildSceneActionLockBlock(promptText) {
+  const pl = promptText.toLowerCase();
+  const mandatoryElements = [];
+
+  // Food / eating actions
+  if (/\b(pancake|waffle|toast|egg|bacon|cereal|oatmeal|breakfast|brunch)\b/.test(pl)) {
+    const food = pl.match(/\b(stack of pancakes?|pancakes?|waffles?|toast|eggs?|bacon|cereal|oatmeal|breakfast food)\b/)?.[0] || 'breakfast food';
+    mandatoryElements.push(`✅ FOOD OBJECT REQUIRED: ${food} must be visibly present in the scene`);
+  }
+  if (/\b(eating|mid.bite|biting into|chewing|taking a bite|fork|spoon|mug|coffee|drink|sip|drinking)\b/.test(pl)) {
+    const action = pl.match(/\b(mid.bite|eating|biting into|taking a bite|sipping|drinking)\b/)?.[0] || 'eating/drinking';
+    mandatoryElements.push(`✅ ACTION REQUIRED: character must be shown ${action}`);
+  }
+  if (/\b(syrup|sauce|drip|dripping|glaze)\b/.test(pl)) {
+    mandatoryElements.push(`✅ DETAIL REQUIRED: syrup/sauce dripping or visible on food/lip/face as described`);
+  }
+
+  // Furniture / room-specific objects
+  if (/\b(kitchen table|dining table|wooden table|table)\b/.test(pl)) {
+    mandatoryElements.push(`✅ SETTING REQUIRED: character must be seated at a table`);
+  }
+  if (/\b(kitchen|stove|counter|refrigerator|fridge|microwave)\b/.test(pl)) {
+    mandatoryElements.push(`✅ ROOM REQUIRED: scene must be set in a kitchen — not a living room, bedroom, or generic indoor space`);
+  }
+  if (/\b(couch|sofa|bed|floor)\b/.test(pl) && !/\b(kitchen|table|eating)\b/.test(pl)) {
+    mandatoryElements.push(`✅ FURNITURE: character is on/near ${pl.match(/\b(couch|sofa|bed|floor)\b/)?.[0]}`);
+  }
+
+  // Lighting / time of day
+  if (/\b(morning|sunrise|dawn|golden hour|afternoon|sunset|night|evening|sunlight|natural light)\b/.test(pl)) {
+    const lighting = pl.match(/\b(morning sunlight|golden hour|afternoon light|evening light|soft natural light|bright morning|sunlight streaming)\b/)?.[0]
+      || pl.match(/\b(morning|afternoon|evening|night|sunrise|sunset)\b/)?.[0];
+    if (lighting) mandatoryElements.push(`✅ LIGHTING: scene lighting must reflect "${lighting}"`);
+  }
+
+  // Style directives
+  if (/\b(smartphone|phone photo|candid|selfie|portrait mode)\b/.test(pl)) {
+    mandatoryElements.push(`✅ STYLE: photorealistic smartphone-photo look — natural grain, real-world depth, NOT studio lighting`);
+  }
+
+  // Expressions
+  if (/\b(smiling|laughing|playful|warm|serious|looking up|looking at camera|glancing)\b/.test(pl)) {
+    const expr = pl.match(/\b(warm.*smile|playful.*expression|looking up at camera|glancing|laughing)\b/)?.[0]
+      || pl.match(/\b(smiling|laughing|playful|warm|looking up|looking at camera)\b/)?.[0];
+    if (expr) mandatoryElements.push(`✅ EXPRESSION: "${expr}" must be visible`);
+  }
+
+  if (mandatoryElements.length === 0) return '';
+
+  return `\n\n🎬 SCENE ACTION LOCK — ALL ELEMENTS BELOW ARE MANDATORY. DO NOT OMIT ANY:\n${mandatoryElements.join('\n')}\nIf ANY of the above elements are missing from the generated image, the result is WRONG. Generate the complete scene as described.\n`;
 }
 
 // ── SUBJECT RECORD BUILDERS ──────────────────────────────────────────────────
@@ -523,17 +579,20 @@ function buildSubjectOutfitBlock(subject) {
   return `\n${name}'s clothing: ${outfitDesc}\n`;
 }
 
-function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd) {
+function buildSubjectIdentityBlock(subject, imageIndexStart, imageIndexEnd, hasLocationImages = false) {
   const name = subject.canonical_name;
   const lockDesc = subject.lock_text ? `Appearance details: ${subject.lock_text}.` : '';
   const ethnicityWarning = subject.ethnicities?.length > 0
     ? `Ethnicity: ${subject.ethnicities.join(', ')}.`
     : '';
-  return `\nSUBJECT IDENTITY LOCK — ${name} (reference images ${imageIndexStart}–${imageIndexEnd}):
-  Extract ONLY the person from these images. Match: face, facial structure, skin tone, hair color/length/style, body type, tattoos/markings.
-  ⚠️ IGNORE THE BACKGROUND in these reference images entirely. The background/scenery of the reference photos is NOT authoritative for this scene.
-  DO NOT reproduce any room, furniture, wall, window, or environment visible behind the subject in these references.
-  ${ethnicityWarning} ${subject.appearance_text ? `Additional context: ${subject.appearance_text}.` : ''} ${lockDesc}`;
+  // Stronger background suppression warning when there are no location images (highest leak risk)
+  const bgSuppressionStrength = !hasLocationImages
+    ? `⛔⛔ CRITICAL — NO ENVIRONMENT REFERENCES PROVIDED: The background of these character reference images is RANDOM and UNRELATED to the scene. The background/room/setting visible in these character photos MUST BE COMPLETELY IGNORED. DO NOT use the character's photo background as the scene. Build the scene entirely from the text prompt description above.`
+    : `⚠️ IGNORE THE BACKGROUND in these reference images entirely. The background/scenery behind the subject in these reference photos is NOT the scene. DO NOT reproduce any room, furniture, wall, window, or environment visible behind the subject.`;
+  return `\n\nSUBJECT IDENTITY LOCK — ${name} (reference images ${imageIndexStart}–${imageIndexEnd}):
+  Extract ONLY the PERSON from these images. Use for: face structure, skin tone, hair color/length/style, body type, tattoos/markings ONLY.
+  ${bgSuppressionStrength}
+  ${ethnicityWarning}${subject.appearance_text ? ` Additional context: ${subject.appearance_text}.` : ''}${lockDesc ? ` ${lockDesc}` : ''}`;
 }
 
 function buildEnvironmentLockBlock(locationName, zoneName, envImageIndexStart, envImageIndexEnd) {
@@ -1016,13 +1075,72 @@ The character reference images are for the PERSON ONLY — their background is i
                 console.log(`[LOCATION] 🚗 PRESENCE GATE: Character is traveling`);
               }
 
+              // ── ZONE HINT FROM PROMPT (home context) ────────────────────────────────
+              // If the prompt says "kitchen", override liveZoneHint to kitchen so the
+              // correct zone images are fetched from the home location record.
               let liveZoneHint = null;
-              if (livePresence === 'sleeping' || livePresence === 'napping') liveZoneHint = 'bedroom';
-              else if (isHome) liveZoneHint = 'living room';
+              if (livePresence === 'sleeping' || livePresence === 'napping') {
+                liveZoneHint = 'bedroom';
+              } else if (isHome) {
+                // Detect room type from the prompt — prompt takes priority over default 'living room'
+                const promptZoneCheck = cleanPrompt.toLowerCase();
+                if (/\b(kitchen|stove|fridge|counter|oven|microwave|sink)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'kitchen';
+                } else if (/\b(bedroom|bed|sleeping|nightstand|closet|duvet)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'bedroom';
+                } else if (/\b(bathroom|shower|bathtub|toilet|vanity)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'bathroom';
+                } else if (/\b(backyard|patio|deck|yard|garden|grill)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'backyard';
+                } else if (/\b(dining|dinner table|dining room|eating)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'dining room';
+                } else if (/\b(office|desk|workspace)\b/.test(promptZoneCheck)) {
+                  liveZoneHint = 'office';
+                } else {
+                  liveZoneHint = 'living room';
+                }
+                console.log(`[LOCATION] 🏠 Zone hint from prompt: "${liveZoneHint}"`);
+              }
+
+              // ── AUTHORITATIVE HOME LOCATION LOOKUP ──────────────────────────────────
+              // Try every home-assignment field in priority order before giving up.
+              // This is the critical gate that was silently skipping home lookup.
+              if (!authorizedLocId && (isHome || (!isAtWork && !isTraveling))) {
+                authorizedLocId =
+                  charRecord?.current_home_location_id ||
+                  charRecord?.resolved_current_location_id ||
+                  charRecord?.home_location_id ||
+                  null;
+                if (authorizedLocId) {
+                  console.log(`[LOCATION] 🏠 Fallback home lookup succeeded: authorizedLocId=${authorizedLocId}`);
+                } else {
+                  // Last resort: scan savedLocations for a home where this character is a resident
+                  const residentHome = savedLocations.find(l =>
+                    l.category === 'home' &&
+                    (
+                      (l.resident_character_ids || []).includes(characterId) ||
+                      (l.residents || []).some(r => r.character_id === characterId)
+                    )
+                  );
+                  if (residentHome) {
+                    authorizedLocId = residentHome.id;
+                    console.log(`[LOCATION] 🏠 Resident scan found home: "${residentHome.name}" (${residentHome.id})`);
+                  } else {
+                    console.warn(`[LOCATION] ⚠ No home location found for character ${characterId} — will use text lock`);
+                  }
+                }
+              }
 
               let realTimeLoc = authorizedLocId
                 ? await base44.asServiceRole.entities.LocationReference.get(authorizedLocId).catch(() => null)
                 : null;
+
+              // If .get() returned null, try filter as fallback
+              if (!realTimeLoc && authorizedLocId) {
+                const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: authorizedLocId }, null, 1).catch(() => []);
+                realTimeLoc = locList?.[0] || null;
+                if (realTimeLoc) console.log(`[LOCATION] 🏠 Location resolved via filter fallback: "${realTimeLoc.name}"`);
+              }
 
               // SAFETY: reject venue location when character is home
               if (realTimeLoc && isHome) {
@@ -1165,6 +1283,13 @@ The character reference images are for the PERSON ONLY — their background is i
     }
     
     let promptForGeneration = cleanPrompt;
+
+    // ── SCENE ACTION LOCK — extract and enforce mandatory scene elements ───────
+    // Must be built from cleanPrompt (the raw user intent), not scenePrompt (stripped).
+    const sceneActionLock = buildSceneActionLockBlock(cleanPrompt);
+    if (sceneActionLock) {
+      console.log(`[SCENE_LOCK] Scene action lock applied. Elements: ${sceneActionLock.split('\n').filter(l => l.startsWith('✅')).length}`);
+    }
     
     // ── EMOTIONAL EXPRESSION DIRECTIVE ────────────────────────────────────────
     const emotionalStateMap = {
@@ -1200,23 +1325,37 @@ The character reference images are for the PERSON ONLY — their background is i
       ? buildEnvironmentLockBlock(resolvedLocationName, resolvedZoneName, locIdxStart, locIdxEnd)
       : '';
 
+    // ── PROMPT ASSEMBLY ORDER ─────────────────────────────────────────────────
+    // ORDER (most-to-least authoritative for model anchoring):
+    //   1. SCENE ACTION LOCK (mandatory elements — model reads FIRST)
+    //   2. SCENE DESCRIPTION (the actual user intent)
+    //   3. OUTFIT block (clothing override for the subject)
+    //   4. EXPRESSION note
+    //   5. ENVIRONMENT LOCK block (reference image roles for scene)
+    //   6. LOCATION NOTE (room-lock / zone enforcement)
+    //   7. IDENTITY LOCK (character refs — person only, background ignored)
+    //
+    // This order ensures the model treats the scene as primary and identity/env as secondary.
+    // Previously outfit was FIRST — that caused the model to treat outfit metadata as the
+    // primary prompt context, pushing the actual scene description down.
+
     if (finalCharSubject && finalUserSubject) {
       // ── MULTI-SUBJECT PROMPT ────────────────────────────────────────────────
       const charOutfitBlock = buildSubjectOutfitBlock(finalCharSubject);
       const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
-      const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd);
-      const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd);
+      const charIdentityBlock = buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd, hasLocationImages);
+      const userIdentityBlock = buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd, hasLocationImages);
       const refOrderNote = `Two subjects: ${finalCharSubject.canonical_name} and ${finalUserSubject.canonical_name}. Keep their appearances and outfits distinct.`;
 
-      enhancedPrompt = `${charOutfitBlock}${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${envBlock}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
+      enhancedPrompt = `${sceneActionLock}${promptForGeneration}${expressionNote}\n\n${charOutfitBlock}${userOutfitBlock}${envBlock}${locationNote}${charIdentityBlock}${userIdentityBlock}\n\n${refOrderNote}`;
 
     } else if (finalUserSubject && !finalCharSubject) {
       // ── USER-ONLY PROMPT ────────────────────────────────────────────────────
       const userOutfitBlock = buildSubjectOutfitBlock(finalUserSubject);
       const userIdentityBlock = finalUserSubject.face_refs.length > 0
-        ? buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd)
+        ? buildSubjectIdentityBlock(finalUserSubject, userIdxStart, userIdxEnd, hasLocationImages)
         : '';
-      enhancedPrompt = `${userOutfitBlock}\n\n${promptForGeneration}${expressionNote}${envBlock}${locationNote}${userIdentityBlock}`;
+      enhancedPrompt = `${sceneActionLock}${promptForGeneration}${expressionNote}\n\n${userOutfitBlock}${envBlock}${locationNote}${userIdentityBlock}`;
 
     } else if (finalCharSubject) {
       // ── CHARACTER-ONLY PROMPT ───────────────────────────────────────────────
@@ -1225,14 +1364,14 @@ The character reference images are for the PERSON ONLY — their background is i
         ? `\nNote: Ensure the subject is wearing appropriate casual clothing suitable for the scene.\n`
         : '';
       const charIdentityBlock = finalCharSubject.face_refs.length > 0
-        ? buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd)
+        ? buildSubjectIdentityBlock(finalCharSubject, charIdxStart, charIdxEnd, hasLocationImages)
         : '';
 
-      enhancedPrompt = `${charOutfitBlock}${safeClothingNote}\n\n${promptForGeneration}${expressionNote}${envBlock}${locationNote}${charIdentityBlock}`;
+      enhancedPrompt = `${sceneActionLock}${promptForGeneration}${expressionNote}\n\n${charOutfitBlock}${safeClothingNote}${envBlock}${locationNote}${charIdentityBlock}`;
 
     } else {
       // No subjects — pure environment/text render
-      enhancedPrompt = `${promptForGeneration}${envBlock}${locationNote}`;
+      enhancedPrompt = `${sceneActionLock}${promptForGeneration}${envBlock}${locationNote}`;
     }
 
     // ── LIVE LOCATION TRUTH INJECTION ────────────────────────────────────────
