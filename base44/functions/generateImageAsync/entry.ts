@@ -680,44 +680,14 @@ Deno.serve(async (req) => {
         // ══════════════════════════════════════════════════════════════════════
 
         if (imageMode === 'creative' && !manualLocationId) {
-          // Creative mode STILL REQUIRES location lock if character presence exists
-          // Try to resolve from character presence first before allowing prompt-only generation
-          const charRecord = characterId ? await base44.asServiceRole.entities.Character.get(characterId).catch(() => null) : null;
-          const createdBy = charRecord?.created_by;
-          
-          if (charRecord && createdBy) {
-            const savedLocations = await base44.asServiceRole.entities.LocationReference.filter({ created_by: createdBy }, '-created_date', 100);
-            const livePresence = charRecord?.resolved_presence_status || 'home';
-            const isHome = ['home', 'sleeping', 'napping'].includes(livePresence);
-            
-            // Try to resolve from character presence even in creative mode
-            if (isHome || !['at_work', 'traveling'].includes(livePresence)) {
-              const presenceLocId = charRecord?.current_home_location_id || charRecord?.resolved_current_location_id;
-              if (presenceLocId) {
-                const presenceLoc = await base44.asServiceRole.entities.LocationReference.get(presenceLocId).catch(() => null);
-                if (presenceLoc) {
-                  // For home locations, try to resolve to kitchen zone
-                  const zoneHint = isHome ? 'kitchen' : null;
-                  const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), presenceLoc, zoneHint);
-                  const imgs = zoneImages.length > 0 ? zoneImages : (presenceLoc.image_urls || []).slice(0, 6);
-                  if (imgs.length > 0) {
-                    locationImages = imgs;
-                    resolvedLocationName = presenceLoc.name;
-                    resolvedZoneName = zoneName || zoneHint;
-                    locationNote = buildRoomLockNote(presenceLoc.name, resolvedZoneName);
-                    console.log(`[LOCATION] 🎨 CREATIVE MODE — character home locked: "${presenceLoc.name}" → Zone: "${resolvedZoneName || 'default'}"`);
-                  }
-                }
-              }
-            }
-          }
-          
-          // Only use passed location refs if NO character presence was available
-          if (locationImages.length === 0 && locationReferenceImages?.length > 0) {
+          // CREATIVE MODE — the user's prompt is the scene truth.
+          // Do NOT force character presence/home location onto a user-directed creative generation.
+          // Only use passed locationReferenceImages if explicitly provided by the caller.
+          if (locationReferenceImages?.length > 0) {
             locationImages = locationReferenceImages.slice(0, 6);
-            console.log(`[LOCATION] 🎨 CREATIVE MODE — using passed location reference images: ${locationImages.length}`);
-          } else if (locationImages.length === 0) {
-            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location resolved. Generating from prompt only.`);
+            console.log(`[LOCATION] 🎨 CREATIVE MODE — using caller-provided location reference images: ${locationImages.length}`);
+          } else {
+            console.log(`[LOCATION] 🎨 CREATIVE MODE — no location override. User prompt is scene authority.`);
           }
         } else {
 

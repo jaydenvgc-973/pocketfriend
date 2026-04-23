@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
   try {
@@ -9,10 +9,10 @@ Deno.serve(async (req) => {
     const { messageId, reason, customPrompt, manualLocationId, manualZoneId } = await req.json();
     if (!messageId || !reason) return Response.json({ error: 'messageId and reason required' }, { status: 400 });
 
-    // Fetch the message
-    const messages = await base44.asServiceRole.entities.Message.filter({ id: messageId });
-    const message = messages[0];
+    // Fetch the message — use direct get for exact message ID binding (no wrong-message substitution)
+    const message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
     if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
+    console.log(`[regen] REQUEST: messageId=${messageId} | reason=${reason} | message.character_id=${message.character_id || 'none'} | has_generation_context=${!!message.generation_context}`);
 
     // ── RESTORE ORIGINAL GENERATION CONTEXT ──────────────────────────────────
     const ctx = message.generation_context || {};
@@ -126,7 +126,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    const hasLocation = locationRefImages.length > 0;
+    let hasLocation = locationRefImages.length > 0;
     const locationLabel = [effectiveLocationName, effectiveZoneName].filter(Boolean).join(' → ');
 
     // ── ROOM LOCK BLOCK ────────────────────────────────────────────────────────

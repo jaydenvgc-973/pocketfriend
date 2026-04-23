@@ -1,4 +1,4 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
   try {
@@ -18,10 +18,11 @@ Deno.serve(async (req) => {
       return Response.json({ success: true, image_url: message.image_url, source: 'existing' });
     }
 
-    // Fetch character for reference images
+    // Fetch character for reference images — must match message.character_id exactly
     const character = message.character_id
-      ? (await base44.asServiceRole.entities.Character.filter({ id: message.character_id }))[0]
+      ? await base44.asServiceRole.entities.Character.get(message.character_id).catch(() => null)
       : null;
+    console.log(`[recoverSingleImage] messageId=${messageId} | character_id=${message.character_id || 'none'} | character_name=${character?.name || 'none'} | forceRegenerate=${forceRegenerate}`);
 
     // Build reference images list
     const referenceImages = [];
