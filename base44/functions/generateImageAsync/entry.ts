@@ -297,12 +297,36 @@ function buildSceneActionLockBlock(promptText) {
 // These functions build structured subject objects from raw data.
 // Images and prompts are assembled FROM these records — never the other way around.
 
+// ── PUBLIC URL FILTER ────────────────────────────────────────────────────────
+// The generation provider only accepts public HTTPS CDN URLs.
+// Private internal base44 app file URLs cannot be accessed by the provider.
+// This filter is applied at SUBJECT BUILD TIME so identity refs are pre-validated.
+function isPublicUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('https://')) return false;
+  if (url.includes('base44.app/api/apps/')) return false;
+  if (url.includes('/api/apps/') && url.includes('/files/')) return false;
+  return true;
+}
+
 function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext = '') {
+  // Build server refs — filter to PUBLIC URLS ONLY at source
+  // Private internal URLs (base44.app/api/apps/...) cannot be accessed by the generation provider
+  // and would be silently stripped later, reducing identity ref count without warning.
+  // By filtering here we know exactly how many valid identity refs we have BEFORE dispatch.
   const serverRefs = [];
-  if (charRecord.avatar_url) serverRefs.push(charRecord.avatar_url);
-  if (charRecord.reference_image_urls?.length > 0) serverRefs.push(...charRecord.reference_image_urls);
-  // Always use server-side refs as authoritative; client refs are fallback only
-  const faceRefs = serverRefs.length > 0 ? serverRefs : clientRefs;
+  if (charRecord.avatar_url && isPublicUrl(charRecord.avatar_url)) serverRefs.push(charRecord.avatar_url);
+  else if (charRecord.avatar_url) console.warn(`[SUBJECT] avatar_url is private/internal URL — excluded from identity refs: ${charRecord.avatar_url?.substring(0, 60)}`);
+  if (charRecord.reference_image_urls?.length > 0) {
+    for (const url of charRecord.reference_image_urls) {
+      if (isPublicUrl(url)) serverRefs.push(url);
+      else console.warn(`[SUBJECT] reference_image_url is private/internal — excluded: ${url?.substring(0, 60)}`);
+    }
+  }
+  // Client refs are fallback only — also filter for public URLs
+  const publicClientRefs = (clientRefs || []).filter(isPublicUrl);
+  const faceRefs = serverRefs.length > 0 ? serverRefs : publicClientRefs;
+  console.log(`[SUBJECT] Character identity refs: server=${serverRefs.length} | clientFallback=${publicClientRefs.length} | using=${faceRefs.length}`);
 
   // ── OUTFIT ROTATION ENGINE ───────────────────────────────────────────────
   // Resolves the contextually correct outfit using presence, activity, location,
@@ -491,11 +515,13 @@ function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext 
 }
 
 function buildUserSubject(sett, clientRefs = [], worldName = null) {
-  // Priority: uploaded reference photos → generated avatars (real face before stylized)
-  const uploadedRefs = sett.reference_image_urls || [];
-  const generatedRefs = sett.generated_avatar_urls || [];
-  const faceRefs = [...uploadedRefs, ...generatedRefs].filter(Boolean);
-  const resolvedFaceRefs = faceRefs.length > 0 ? faceRefs : clientRefs;
+  // Priority: uploaded reference photos → generated avatars — public URLs only
+  const uploadedRefs = (sett.reference_image_urls || []).filter(isPublicUrl);
+  const generatedRefs = (sett.generated_avatar_urls || []).filter(isPublicUrl);
+  const faceRefs = [...uploadedRefs, ...generatedRefs];
+  const publicClientRefs = (clientRefs || []).filter(isPublicUrl);
+  const resolvedFaceRefs = faceRefs.length > 0 ? faceRefs : publicClientRefs;
+  console.log(`[SUBJECT] User identity refs: uploaded=${uploadedRefs.length} | generated=${generatedRefs.length} | clientFallback=${publicClientRefs.length} | using=${resolvedFaceRefs.length}`);
 
   const userCurrentOutfit = sett.user_current_outfit;
   let outfitDesc = null;
@@ -1485,6 +1511,15 @@ The character reference images are for the PERSON ONLY — their background is i
     console.log(`[PAYLOAD_VALIDATION] manualLocationId=${manualLocationId || 'none'} | manualZoneId=${manualZoneId || 'none'}`);
     console.log(`[PAYLOAD_VALIDATION] subject_type=${resolvedSubjectType} | total_refs=${referenceImages.length}`);
 
+    // ── MANDATORY IDENTITY REF VALIDATION ────────────────────────────────────
+    // If a character was explicitly selected but zero public identity refs survived,
+    // log the exact failure — do NOT silently dispatch with 0 identity refs.
+    // This prevents the avatar background from filling the identity gap.
+    if (characterId && finalCharSubject && finalCharSubject.face_refs.length === 0) {
+      console.error(`[PAYLOAD_VALIDATION] ⛔ IDENTITY FAILURE: characterId=${characterId} selected but 0 valid public identity refs resolved. All avatar/reference URLs were private or missing. The generation provider cannot access private URLs. Character identity will be lost — avatar background MUST NOT fill this gap.`);
+      console.error(`[PAYLOAD_VALIDATION] FIX REQUIRED: Upload character reference images to a public CDN (not private app storage). Current avatar_url or reference_image_urls are stored as private internal URLs.`);
+      // Continue with text-only identity description — do NOT abort, but log clearly
+    }
     // Warn on missing critical context
     if (imageMode === 'creative' && characterId && (!finalCharSubject || finalCharSubject.face_refs.length === 0)) {
       console.warn(`[PAYLOAD_VALIDATION] ⚠️ CHARACTER SELECTED but no identity refs resolved. Subject will drift.`);
@@ -1520,24 +1555,16 @@ The character reference images are for the PERSON ONLY — their background is i
       }
     }
 
-    // ── STEP 6.5: SANITIZE REFERENCE IMAGES ─────────────────────────────────
-    // Strip any private/internal URLs — the generation provider only accepts public HTTPS CDN URLs.
-    // Private app file URLs (/api/apps/... or non-https) will cause "None of the provided image URLs
-    // contained valid image data" errors (400/500). Filter them out before sending.
-    const isPublicImageUrl = (url) => {
-      if (!url || typeof url !== 'string') return false;
-      if (!url.startsWith('https://')) return false;
-      // Reject internal Base44 app file URLs — the generation provider cannot access these
-      // Pattern: https://base44.app/api/apps/{id}/files/...
-      if (url.includes('base44.app/api/apps/')) return false;
-      // Also reject any other /api/apps/ internal path patterns
-      if (url.includes('/api/apps/') && url.includes('/files/')) return false;
-      return true;
-    };
-    const sanitizedReferenceImages = referenceImages.filter(isPublicImageUrl);
+    // ── STEP 6.5: FINAL SAFETY SANITIZE ─────────────────────────────────────
+    // Character and user identity refs are already filtered to public URLs at subject build time.
+    // This pass is a final safety net for any location images that may have slipped through.
+    // If any non-public URLs remain here, they came from location records — log and strip.
+    const sanitizedReferenceImages = referenceImages.filter(isPublicUrl);
     if (sanitizedReferenceImages.length !== referenceImages.length) {
-      console.warn(`[generateImageAsync] ⚠ Stripped ${referenceImages.length - sanitizedReferenceImages.length} non-public URLs from referenceImages. Remaining: ${sanitizedReferenceImages.length}`);
+      const stripped = referenceImages.length - sanitizedReferenceImages.length;
+      console.warn(`[generateImageAsync] ⚠ Final sanitize stripped ${stripped} non-public URLs. This indicates a location reference image is stored as a private URL. Remaining: ${sanitizedReferenceImages.length}`);
     }
+    console.log(`[generateImageAsync] REFERENCE SUMMARY: loc_imgs=${LOC_SLOT} | char_identity=${CHAR_SLOT} | user_identity=${USER_SLOT} | total_after_sanitize=${sanitizedReferenceImages.length} | avatar_bg=0%`);
 
     // ── STEP 7: GENERATE IMAGE (SINGLE CODE PATH) ────────────────────────────
     console.log(`[generateImageAsync] SENDING TO GENERATOR | messageId=${messageId} | promptLength=${activeFinalPrompt.length} | refs=${sanitizedReferenceImages.length}`);
