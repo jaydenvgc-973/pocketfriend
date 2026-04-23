@@ -40,7 +40,23 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
     .map(id => hydrateCharacterReference(id, characters, currentUserId, currentUserEmail))
     .filter(Boolean);
   
-  const npcResidents = (location.resident_family_members || []).map(r => r.name).filter(Boolean);
+  // Normalize NPC/family residents with avatar resolution
+  // Fallback order: matched character entity avatar_url → embedded photo_url/avatar_url → initials
+  const npcResidents = (location.resident_family_members || [])
+    .filter(r => r.name)
+    .map(r => {
+      const matchedChar = characters.find(c =>
+        c.name?.trim().toLowerCase() === r.name?.trim().toLowerCase()
+      );
+      const resolvedAvatar = matchedChar?.avatar_url || r.photo_url || r.avatar_url || null;
+      console.log(`[DETAIL-FAM] name="${r.name}" | matched=${matchedChar?.id || 'none'} | photo_url=${r.photo_url || 'none'} | resolved=${resolvedAvatar ? resolvedAvatar.substring(0,60) : 'INITIALS'}`);
+      return {
+        name: r.name,
+        relationship_type: r.relationship_type,
+        avatarUrl: resolvedAvatar,
+        initials: r.name?.[0]?.toUpperCase() || '?',
+      };
+    });
 
   const allResidentCount = activeResidents.length + npcResidents.length;
   const householdSize = location.grocery_household_size || allResidentCount || 1;
@@ -135,11 +151,17 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                   </div>
                 );
               })}
-              {npcResidents.map(name => (
-                <div key={name} className="flex items-center gap-2 py-0.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/40 flex-shrink-0" />
-                  <span className="text-xs text-muted-foreground">{name}</span>
-                  <span className="text-[10px] text-muted-foreground/60 ml-auto">NPC</span>
+              {npcResidents.map(npc => (
+                <div key={npc.name} className="flex items-center gap-2 py-0.5">
+                  {npc.avatarUrl ? (
+                    <img src={npc.avatarUrl} alt={npc.name} className="w-4 h-4 rounded-full object-cover flex-shrink-0" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full bg-muted-foreground/20 flex items-center justify-center flex-shrink-0 text-[8px] font-bold text-muted-foreground">
+                      {npc.initials}
+                    </div>
+                  )}
+                  <span className="text-xs text-muted-foreground">{npc.name}</span>
+                  <span className="text-[10px] text-muted-foreground/60 ml-auto capitalize">{npc.relationship_type || 'family'}</span>
                 </div>
               ))}
               <DetailRow label="Household Size" value={householdSize} />

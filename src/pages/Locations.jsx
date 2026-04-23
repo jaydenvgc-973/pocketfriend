@@ -675,9 +675,20 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                       </div>
                     );
                   })}
-                  {form.resident_family_members?.map((fam, idx) => (
+                  {form.resident_family_members?.map((fam, idx) => {
+                    // Resolve avatar: match by name against character entities first, then use embedded photo_url
+                    const matchedChar = [...activeChars, ...npcFictitious].find(c =>
+                      c.name?.trim().toLowerCase() === fam.name?.trim().toLowerCase()
+                    );
+                    const resolvedAvatar = matchedChar?.avatar_url || fam.photo_url || fam.avatar_url || null;
+                    console.log(`[LOCATION-FAM] name="${fam.name}" | matchedChar=${matchedChar?.id || 'none'} | photo_url=${fam.photo_url || 'none'} | resolvedAvatar=${resolvedAvatar ? resolvedAvatar.substring(0,60) : 'INITIALS FALLBACK'}`);
+                    return (
                     <div key={`fam-${idx}`} className="flex items-center gap-2 p-2 rounded-lg bg-secondary border border-border">
-                      <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{fam.name?.[0]?.toUpperCase() || "?"}</div>
+                      {resolvedAvatar ? (
+                        <img src={resolvedAvatar} alt={fam.name} className="w-7 h-7 rounded-full object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0 text-xs font-semibold text-primary">{fam.name?.[0]?.toUpperCase() || "?"}</div>
+                      )}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm text-foreground">{fam.name}</p>
                         <p className="text-xs text-muted-foreground/70 capitalize">{fam.relationship_type}</p>
@@ -686,7 +697,8 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {(form.category === 'home' || form.category === 'generic') && (form.resident_character_ids.length + (form.residents?.length || 0) + (form.resident_family_members?.length || 0)) > 1 && (
                   <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20 space-y-2">
