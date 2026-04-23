@@ -1142,6 +1142,41 @@ export default function Locations() {
       locationId = created.id;
       setNewlyCreatedLocation({ id: created.id, name: formData.name, category: formData.category });
     }
+
+    // ── HOMELESS / SHELTER PERSISTENCE ─────────────────────────────────────────
+    // Write housing context from the location form back to each affected Character record.
+    // This ensures the character's own entity reflects their housing truth, not just the location.
+    const housingContext = formData.resident_housing_context || {};
+    const residentIds = formData.resident_character_ids || [];
+    for (const charId of residentIds) {
+      if (!charId || charId === currentUser?.id) continue; // skip user player slot
+      const ctx = housingContext[charId];
+      if (ctx === 'homeless') {
+        console.log(`[HOUSING] Writing homeless status to character ${charId} at location ${locationId}`);
+        base44.entities.Character.update(charId, {
+          is_homeless: true,
+          housing_context: 'homeless_unsheltered',
+          current_home_location_id: locationId, // still track the base location
+        }).catch(err => console.error(`[HOUSING] Failed to update character ${charId}:`, err.message));
+      } else if (ctx === 'shelter') {
+        console.log(`[HOUSING] Writing shelter status to character ${charId} at location ${locationId}`);
+        base44.entities.Character.update(charId, {
+          is_homeless: false,
+          housing_context: 'temporary_shelter',
+          current_home_location_id: locationId,
+        }).catch(err => console.error(`[HOUSING] Failed to update character ${charId}:`, err.message));
+      } else if (ctx === undefined || ctx === null) {
+        // Standard resident — ensure housing flags are cleared if previously homeless/shelter
+        const existingChar = characters.find(c => c.id === charId);
+        if (existingChar?.is_homeless || existingChar?.housing_context) {
+          base44.entities.Character.update(charId, {
+            is_homeless: false,
+            housing_context: 'stable_home',
+          }).catch(() => {});
+        }
+      }
+    }
+
     const workerIds = formData.worker_character_ids || [];
     const isEducation = formData.category === 'school' || formData.category === 'education';
     for (const charId of workerIds) {
@@ -1149,6 +1184,7 @@ export default function Locations() {
       base44.functions.invoke('syncLocationJobToCharacter', { locationId, characterId: charId, syncType: isEducation ? 'education' : 'work' }).catch(() => {});
     }
     queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
     setShowAddForm(false);
     setInlineEditId(null);
   };

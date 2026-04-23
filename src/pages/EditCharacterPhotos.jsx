@@ -14,6 +14,7 @@ export default function EditCharacterPhotos() {
   const queryClient = useQueryClient();
   const [selectedChar, setSelectedChar] = useState(null);
   const [uploadingAvatarId, setUploadingAvatarId] = useState(null);
+  const [avatarSaveStatus, setAvatarSaveStatus] = useState('idle'); // idle | saving | saved | failed
 
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
@@ -110,6 +111,16 @@ export default function EditCharacterPhotos() {
                       </div>
                     </div>
                   )}
+                  {avatarSaveStatus === 'saved' && (
+                    <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/30 text-green-400 text-xs font-medium">
+                      <Check className="w-3.5 h-3.5 flex-shrink-0" /> Avatar saved successfully
+                    </div>
+                  )}
+                  {avatarSaveStatus === 'failed' && (
+                    <div className="px-3 py-2 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs font-medium">
+                      ✗ Save failed — please try again
+                    </div>
+                  )}
                   <label className="block">
                     <input
                       type="file"
@@ -120,15 +131,25 @@ export default function EditCharacterPhotos() {
                        const file = e.target.files?.[0];
                        if (!file) return;
                        setUploadingAvatarId(selectedChar.id);
+                       setAvatarSaveStatus('saving');
                        try {
+                         console.log(`[AVATAR] Upload started for character ${selectedChar.id} — old url: ${selectedChar.avatar_url?.substring(0, 60)}`);
                          const result = await base44.integrations.Core.UploadFile({ file });
                          await base44.functions.invoke('updateCharacterAvatar', {
                            characterId: selectedChar.id,
                            avatarUrl: result.file_url,
+                           referenceImageUrls: [result.file_url],
                          });
+                         console.log(`[AVATAR] Save succeeded for character ${selectedChar.id} — new url: ${result.file_url.substring(0, 60)}`);
                          setSelectedChar({ ...selectedChar, avatar_url: result.file_url, reference_image_urls: [result.file_url] });
+                         setAvatarSaveStatus('saved');
                          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
                          queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+                         setTimeout(() => setAvatarSaveStatus('idle'), 3000);
+                       } catch (err) {
+                         console.error(`[AVATAR] Save failed for character ${selectedChar.id}:`, err.message);
+                         setAvatarSaveStatus('failed');
+                         setTimeout(() => setAvatarSaveStatus('idle'), 4000);
                        } finally {
                          setUploadingAvatarId(null);
                        }
