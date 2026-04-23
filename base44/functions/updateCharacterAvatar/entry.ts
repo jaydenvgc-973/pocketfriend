@@ -11,23 +11,36 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Missing characterId' }, { status: 400 });
     }
 
-    // AUTHORIZATION: Fetch character and verify ownership
+    // AUTHORIZATION: Fetch character with service role to bypass RLS read issues
     const character = await base44.asServiceRole.entities.Character.read(characterId);
     if (!character) {
       console.log(`[updateCharacterAvatar] Character not found: ${characterId}`);
       return Response.json({ error: 'Character not found' }, { status: 404 });
     }
 
-    // Ownership check: user must own the character
-    const ownsCharacter = 
-      character.owner_email === user.email || 
-      character.created_by === user.email ||
-      character.owner_user_id === user.id;
+    // OWNERSHIP RULE: Edit rights follow ownership, NOT created_by.
+    // created_by is creator metadata only. A service account may create records on
+    // behalf of a user — that does not strip the user of edit rights over their own character.
+    //
+    // Priority order:
+    //   1. owner_email match  — explicit ownership field (primary)
+    //   2. owner_user_id match — explicit ownership by user ID (primary)
+    //   3. created_by match   — user created it themselves (fallback for legacy records)
+    const ownerEmail = character.owner_email;
+    const ownerUserId = character.owner_user_id;
+    const createdBy = character.created_by;
 
-    console.log(`[updateCharacterAvatar] Authorization check - User: ${user.email}, CharID: ${characterId}, OwnerEmail: ${character.owner_email}, CreatedBy: ${character.created_by}, Owns: ${ownsCharacter}`);
+    const ownsViaEmail = ownerEmail && ownerEmail === user.email;
+    const ownsViaUserId = ownerUserId && ownerUserId === user.id;
+    const ownsViaCreatedBy = createdBy && createdBy === user.email;
+    const ownsCharacter = ownsViaEmail || ownsViaUserId || ownsViaCreatedBy;
+
+    console.log(`[updateCharacterAvatar] AuthCheck — User: ${user.email} (id: ${user.id})`);
+    console.log(`[updateCharacterAvatar] Character: ${characterId} | owner_email: ${ownerEmail} | owner_user_id: ${ownerUserId} | created_by: ${createdBy}`);
+    console.log(`[updateCharacterAvatar] Ownership match — via owner_email: ${ownsViaEmail}, via owner_user_id: ${ownsViaUserId}, via created_by: ${ownsViaCreatedBy}`);
+    console.log(`[updateCharacterAvatar] Decision: ${ownsCharacter ? 'ALLOWED (ownership confirmed)' : 'DENIED (no ownership match)'}`);
 
     if (!ownsCharacter) {
-      console.log(`[updateCharacterAvatar] DENIED - User does not own character`);
       return Response.json({ error: 'Forbidden: You do not own this character' }, { status: 403 });
     }
 
