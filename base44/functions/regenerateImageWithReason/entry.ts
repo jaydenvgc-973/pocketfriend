@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
       effectiveLocationId = manualLocationId;
       const resolved = await resolveLocationImages(base44, manualLocationId, manualZoneId || null);
       locationRefImages = resolved.images;
-      effectiveZoneName = resolved.zoneName || manualZoneId || null;
+      effectiveZoneName = resolved.zoneName;
       effectiveLocationName = resolved.locationName;
 
       // CRITICAL VALIDATION: if user explicitly selected a zone but got zero images, HALT
