@@ -100,11 +100,17 @@ Based on this context, write a vivid, specific image generation prompt (1-3 sent
     }
 
     // --- STEP 5: Clean content and save ---
-    const cleanedContent = (message.content || '').replace(/\[IMAGE:\s*[\s\S]+?\]/gi, '').trim();
+    // Also strip [IMAGE_FAILED] marker so the UI transitions from failed/placeholder to loaded
+    const cleanedContent = (message.content || '')
+      .replace(/\[IMAGE:\s*[\s\S]+?\]/gi, '')
+      .replace(/\[IMAGE_FAILED\]/gi, '')
+      .trim();
+    console.log(`[recoverSingleImage] Writing image_url to message ${messageId}: ${genRes.url.substring(0, 60)}...`);
     await base44.asServiceRole.entities.Message.update(messageId, {
       image_url: genRes.url,
-      content: cleanedContent || message.content || '',
+      content: cleanedContent,
     });
+    console.log(`[recoverSingleImage] ✓ DB updated — real-time subscription should fire image_url for message ${messageId}`);
 
     console.log(`[recoverSingleImage] ✓ Image recovered/regenerated for message ${messageId}`);
     return Response.json({ success: true, image_url: genRes.url, source: forceRegenerate ? 'regenerated' : 'recovered' });

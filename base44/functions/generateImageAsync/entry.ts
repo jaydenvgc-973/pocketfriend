@@ -1225,9 +1225,20 @@ The environment must feel real, functional, and original.
       });
     }
 
+    // No image URL returned — mark the message so the frontend knows generation failed
+    console.error(`[generateImageAsync] Generation returned no URL for message ${messageId}`);
+    await base44.entities.Message.update(messageId, {
+      content: '[IMAGE_FAILED]',
+    }).catch(() => {});
     return Response.json({ success: false, error: 'No image URL generated' });
   } catch (error) {
-    console.error('[generateImageAsync]', error);
+    console.error('[generateImageAsync] Fatal error:', error.message);
+    // Mark the message as failed so the real-time subscription fires and the UI can react
+    try {
+      await base44.entities.Message.update(messageId, {
+        content: '[IMAGE_FAILED]',
+      }).catch(() => {});
+    } catch (_) {}
     return Response.json({ error: error.message }, { status: 500 });
   }
 });

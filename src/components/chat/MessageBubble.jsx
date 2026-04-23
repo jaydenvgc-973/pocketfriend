@@ -32,7 +32,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
 
-  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && message.content === "";
+  // Placeholder: no image yet (content is empty = still generating, or [IMAGE_FAILED] = generation failed)
+  const isImageFailed = !isUser && !isNarrative && !message.image_url && message.content === '[IMAGE_FAILED]';
+  const isImagePlaceholder = !isUser && !isNarrative && !message.image_url && (message.content === "" || isImageFailed);
 
   const handleImageRetry = async (forceRegenerate = false) => {
     setImageRetrying(true);
@@ -161,8 +163,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                   </>
                 ) : (
                   <>
-                    <ImageIcon className="w-7 h-7 text-muted-foreground/50" />
-                    <p className="text-xs text-muted-foreground text-center">Photo incoming</p>
+                    <ImageIcon className={`w-7 h-7 ${isImageFailed ? "text-destructive/40" : "text-muted-foreground/50"}`} />
+                    <p className="text-xs text-muted-foreground text-center">
+                      {isImageFailed ? "Photo failed to load" : "Photo incoming"}
+                    </p>
                     <div className="flex flex-col gap-1.5 mt-1 w-full">
                       <button
                         onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
