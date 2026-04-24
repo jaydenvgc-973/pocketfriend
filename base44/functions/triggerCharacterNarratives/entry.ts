@@ -35,11 +35,15 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
   const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
   const results = [];
 
-  // ACCOUNT-SCOPED: fetch only this user's active_created_characters
-  const userChars = await base44SR.entities.Character.filter(
-    { created_by: userEmail, status: 'active', character_type: 'active_created_character' },
-    null, 50
+  // ACCOUNT-SCOPED: fetch this user's characters, filter in JS (compound DB filters can be unreliable)
+  const rawChars = await base44SR.entities.Character.filter(
+    { created_by: userEmail },
+    null, 100
   ).catch(() => []);
+  const userChars = rawChars.filter(c =>
+    c.character_type === 'active_created_character' &&
+    (!c.status || c.status === 'active')
+  );
 
   log.push(`[${runId}] User: ${userEmail} | eligible chars found: ${userChars.length}`);
   console.log(`[triggerCharacterNarratives] ${log[log.length - 1]}`);
@@ -48,10 +52,14 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
     const skipBase = { characterId: character.id, name: character.name, userEmail, status: 'skipped' };
 
     // ── 1. Find the most recent direct conversation (scoped to this user) ──
-    const convos = await base44SR.entities.Conversation.filter(
-      { character_ids: character.id, type: 'direct', created_by: userEmail },
-      '-last_message_date', 1
+    // character_ids is an array field — filter in JS after fetching by created_by
+    const allUserConvos = await base44SR.entities.Conversation.filter(
+      { type: 'direct', created_by: userEmail },
+      '-last_message_date', 50
     ).catch(() => []);
+    const convos = allUserConvos.filter(c =>
+      Array.isArray(c.character_ids) && c.character_ids.includes(character.id)
+    ).slice(0, 1);
 
     if (!convos.length) {
       const reason = 'no direct conversation found for this user';
@@ -264,17 +272,20 @@ Deno.serve(async (req) => {
       allResults.push(...results);
     } else {
       // SCHEDULER MODE: iterate distinct user emails from Character records
-      // Get all active_created_character records and extract unique owner emails
-      const allChars = await base44SR.entities.Character.filter(
-        { status: 'active', character_type: 'active_created_character' },
-        null, 500
-      ).catch(() => []);
+      // Fetch all characters (service role) and filter in JS — compound filters may be unreliable
+      const allChars = await base44SR.entities.Character.list(null, 500).catch(() => []);
+      const eligibleChars = allChars.filter(c =>
+        c.character_type === 'active_created_character' &&
+        (!c.status || c.status === 'active')
+      );
 
       const userEmails = [...new Set(
-        allChars
+        eligibleChars
           .map(c => c.owner_email || c.created_by)
           .filter(Boolean)
       )];
+
+      console.log(`[triggerCharacterNarratives] Scheduler: ${allChars.length} total chars → ${eligibleChars.length} eligible → ${userEmails.length} unique users`);
 
       console.log(`[triggerCharacterNarratives] Scheduler mode — found ${userEmails.length} unique user accounts`);
 

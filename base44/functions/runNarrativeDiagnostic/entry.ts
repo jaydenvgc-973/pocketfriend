@@ -34,11 +34,12 @@ Deno.serve(async (req) => {
       summary: { total: 0, eligible: 0, skipped: 0, sent: 0, errors: 0 },
     };
 
-    // ACCOUNT-SCOPED: only this user's characters
-    const userChars = await base44.entities.Character.filter(
-      { created_by: user.email, status: 'active' },
+    // ACCOUNT-SCOPED: fetch this user's characters, filter in JS
+    const rawChars = await base44.entities.Character.filter(
+      { created_by: user.email },
       null, 100
     ).catch(() => []);
+    const userChars = rawChars.filter(c => !c.status || c.status === 'active');
 
     report.summary.total = userChars.length;
     console.log(`[runNarrativeDiagnostic] Found ${userChars.length} total active characters for ${user.email}`);
@@ -74,10 +75,14 @@ Deno.serve(async (req) => {
       }
 
       // Check 2: has conversation
-      const convos = await base44.entities.Conversation.filter(
-        { character_ids: character.id, type: 'direct', created_by: user.email },
-        '-last_message_date', 1
+      // character_ids is an array field — filter in JS after fetching by created_by
+      const allConvos = await base44.entities.Conversation.filter(
+        { type: 'direct', created_by: user.email },
+        '-last_message_date', 50
       ).catch(() => []);
+      const convos = allConvos.filter(c =>
+        Array.isArray(c.character_ids) && c.character_ids.includes(character.id)
+      ).slice(0, 1);
       charReport.checks.hasConversation = convos.length > 0;
       if (!charReport.checks.hasConversation) {
         charReport.status = 'skipped';
