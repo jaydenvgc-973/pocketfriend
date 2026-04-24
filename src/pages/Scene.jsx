@@ -819,15 +819,14 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      // ── RESIDENTIAL SCENE — ONLY SHOW EXPLICITLY SELECTED PEOPLE ─────────────
-      // For residential scenes, the rule is STRICT:
-      // - ONLY include: broughtCharacters (who the user traveled with) + selectedNpcs (who user explicitly picked)
-      // - NEVER include: residents who just live there but weren't explicitly brought/selected
-      // This respects the "Who's here" dropdown selection as the authority on who appears
+      // ── RESIDENTIAL SCENE — SINGLE SOURCE OF TRUTH ────────────────────────────
+      // Use allPossibleNpcs (WHO'S HERE SOURCE) + selectedNpcIds to resolve final render list
+      // This ensures IDENTICAL people objects and avatars as Who's Here dropdown
       
-      // CRITICAL: Use allPossibleNpcs as source of truth for avatar data.
-      // selectedNpcs may have been filtered and lost full character context.
-      // Match selected NPC IDs back to allPossibleNpcs to recover avatar_url and age data.
+      // Build residential people using SAME pipeline as Who's Here:
+      // - Resolve selected IDs → full objects from allPossibleNpcs
+      // - Add brought characters (user travel companions)
+      // - No limit, no silent filtering
       const selectedNpcsFull = (selectedNpcIds || [])
         .map(npcId => allPossibleNpcs.find(n => n.id === npcId))
         .filter(Boolean);
@@ -835,21 +834,33 @@ export default function Scene() {
       const residentialPeople = [
         ...broughtCharacters,
         ...selectedNpcsFull,
-      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i).slice(0, 4);
+      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
 
+      // DIAGNOSTIC LOG: Show WHO'S HERE count vs scene count
       console.log(
-        `[Scene image] RESIDENTIAL PEOPLE (explicit selection only):`,
-        `broughtCharacters: ${broughtCharacters.map(c => `${c.name}(avatar:${!!c.avatar_url})`).join(', ') || 'none'} |`,
-        `selectedNpcs: ${(selectedNpcs || []).map(n => `${n.name}(avatar:${!!n.avatar_url})`).join(', ') || 'none'} |`,
-        `final render people: ${residentialPeople.map(p => `${p.name}(avatar:${!!p.avatar_url})`).join(', ') || 'empty'}`
+        `[Scene] RESIDENTIAL GENERATION:`,
+        `allPossibleNpcs: ${allPossibleNpcs.length} total |`,
+        `selectedNpcIds: ${(selectedNpcIds || []).length} selected |`,
+        `broughtCharacters: ${broughtCharacters.length} |`,
+        `residentialPeople for render: ${residentialPeople.length} |`,
+        `people: ${residentialPeople.map(p => `${p.name}(id:${p.id},avatar:${!!(p.avatar_url || p.image_avatar_url)})`).join(', ')}`
       );
+
+      // VALIDATION: Verify all selected people have avatars
+      const missingAvatars = residentialPeople.filter(p => !p.avatar_url && !p.image_avatar_url);
+      if (missingAvatars.length > 0) {
+        console.error(
+          `[Scene] MISSING AVATARS — Generation will fail:`,
+          missingAvatars.map(p => `${p.name} (id: ${p.id})`).join(', ')
+        );
+      }
 
       const visibleNames = residentialPeople.map(c => c.name);
       
       const identityLockBlock = buildIdentityLockBlock(residentialPeople, currentUser);
       
       const strictPeopleRule = visibleNames.length > 0
-        ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No residents, no family members, no NPCs who are merely present. ONLY those listed.`
+        ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other residents, no unselected family members, no NPCs. ONLY those named above.`
         : `STRICT RULE: This space is completely empty — nobody is present. Do not render any people, no silhouettes, no background figures. Empty room only.`;
 
       const atmosphereSuffix = residentialPeople.length > 0
@@ -862,24 +873,24 @@ export default function Scene() {
       // Build the residential constraint using the correct people list
       const residentialConstraint = buildResidentialImageConstraint(location, residentialPeople);
 
-      // Extract avatar URLs directly from the characters we're rendering
+      // Extract avatar URLs DIRECTLY from resolved people (allPossibleNpcs matched)
       const residentAvatarUrls = residentialPeople
         .map(c => c.avatar_url || c.image_avatar_url)
         .filter(url => url && url.trim().length > 0);
       
-      console.log('[Scene] Residential avatar URLs being sent to generator:', residentAvatarUrls);
+      console.log('[Scene] Avatar URLs from allPossibleNpcs source:', residentAvatarUrls);
 
       // Build final visual refs: avatar images FIRST (identity authority), then environment
       const residentialVisualRefs = [
         ...residentAvatarUrls,
         ...envRefs.filter(u => !residentAvatarUrls.includes(u))
-      ].slice(0, 6);
+      ];
 
       prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
 
-      // ── SEND DIRECTLY with the correct residential visual refs ────────────────
+      // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
-        console.log('[Scene residential] Final visual refs:', residentialVisualRefs, '| prompt preview:', prompt.substring(0, 200));
+        console.log('[Scene residential] Avatar refs:', residentialVisualRefs.length, '| people:', residentialPeople.map(p => p.name).join(', ') || 'none');
         const result = await base44.integrations.Core.GenerateImage({
           prompt,
           existing_image_urls: residentialVisualRefs.length > 0 ? residentialVisualRefs : undefined,
