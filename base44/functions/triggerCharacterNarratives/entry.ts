@@ -61,12 +61,18 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
     const skipBase = { characterId: character.id, name: character.name, userEmail, status: 'skipped' };
 
     // ── 1. Find the most recent direct conversation (scoped to this user) ──
-    // character_ids is an array field — filter in JS after fetching by owner
-    // Fetch once per character loop using service role (already account-scoped by userEmail filter)
-    const allUserConvos = await base44SR.entities.Conversation.filter(
-      { type: 'direct', created_by: userEmail },
-      '-last_message_date', 100
-    ).catch(() => []);
+    // Fetch by BOTH created_by AND owner_email — conversations may be stored under either
+    const [convosByCreatedBy, convosByOwnerEmail] = await Promise.all([
+      base44SR.entities.Conversation.filter({ type: 'direct', created_by: userEmail }, '-last_message_date', 100).catch(() => []),
+      base44SR.entities.Conversation.filter({ type: 'direct', owner_email: userEmail }, '-last_message_date', 100).catch(() => []),
+    ]);
+    // Deduplicate by id, then filter for this character
+    const seenConvoIds = new Set();
+    const allUserConvos = [...convosByCreatedBy, ...convosByOwnerEmail].filter(c => {
+      if (seenConvoIds.has(c.id)) return false;
+      seenConvoIds.add(c.id);
+      return true;
+    });
     const convos = allUserConvos
       .filter(c => Array.isArray(c.character_ids) && c.character_ids.includes(character.id))
       .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))
