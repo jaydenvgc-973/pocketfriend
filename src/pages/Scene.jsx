@@ -680,7 +680,7 @@ export default function Scene() {
   // RABBIT HOLE MODE: Skip scene generation for real-world locations
   useEffect(() => {
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
-      generateSceneImage(activeZone, resolvedWhosHereList, characters);
+      generateSceneImage();
     }
   }, [location?.id, sceneImage, activeZone, resolvedWhosHereList]);
 
@@ -813,41 +813,82 @@ export default function Scene() {
 
     let prompt;
     if (isHomeLocation) {
-      // ── RESIDENTIAL SCENE FILTERING + IDENTITY LOCK ────────────────────────
-      // Use resolvedWhosHereList directly — already contains all properly-resolved residents
-      // with avatars loaded. No re-resolution. No re-matching.
-      const validResidentialPeople = resolveSceneImagePeople(
-        location,
-        resolvedWhosHereList,
-        currentUser,
-        true // include user
-      );
+      // ── RESIDENTIAL SCENE — STRICT RESIDENT-ONLY RULE ────────────────────────
+      // For residential scenes:
+      // - ALLOWED: characters in resolvedWhosHereList (residents present + traveled-with companions)
+      // - NOT ALLOWED: any random people, strangers, or background figures
+      // resolvedWhosHereList already contains the correct people with their avatars.
+      
+      // Build the definitive resident people list for this image:
+      // 1. All residents physically present (homeResidentsPresent — full Character objects with avatar_url)
+      // 2. Family NPCs present (familyNpcSceneObjects — enriched with photo_url as avatar_url)
+      // 3. Characters explicitly traveled here with the user (broughtCharacters)
+      // Note: NO extra filtering — trust the source lists directly.
+      const residentialPeople = [
+        ...homeResidentsPresent,
+        ...familyNpcSceneObjects,
+        ...broughtCharacters.filter(c => !homeResidentsPresent.find(r => r.id === c.id)),
+      ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i).slice(0, 4);
 
       console.log(
-        `[Scene image] RESIDENTIAL PEOPLE:`,
-        `input count: ${resolvedWhosHereList.length} |`,
-        `validated count: ${validResidentialPeople.length} |`,
-        `names: ${validResidentialPeople.map(p => `${p.name}`).join(', ')}`
+        `[Scene image] RESIDENTIAL PEOPLE (direct source):`,
+        `homeResidentsPresent: ${homeResidentsPresent.map(r => `${r.name}(avatar:${!!r.avatar_url})`).join(', ')} |`,
+        `familyNpcSceneObjects: ${familyNpcSceneObjects.map(f => `${f.name}(avatar:${!!f.avatar_url})`).join(', ')} |`,
+        `broughtCharacters: ${broughtCharacters.map(c => `${c.name}(avatar:${!!c.avatar_url})`).join(', ')} |`,
+        `final residential people: ${residentialPeople.map(p => `${p.name}(avatar:${!!p.avatar_url})`).join(', ')}`
       );
 
-      const visibleNames = validResidentialPeople.slice(0, 3).map(c => c.name);
+      const visibleNames = residentialPeople.map(c => c.name);
       
-      const residentialConstraint = buildResidentialImageConstraint(location, validResidentialPeople);
-      const identityLockBlock = buildIdentityLockBlock(validResidentialPeople, currentUser);
+      const identityLockBlock = buildIdentityLockBlock(residentialPeople, currentUser);
       
       const strictPeopleRule = visibleNames.length > 0
-        ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
-        : `STRICT RULE: This space is completely empty — no people, no silhouettes, only the room.`;
+        ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures. No random characters.`
+        : `STRICT RULE: This space is completely empty — no people, no silhouettes, no background figures, only the room itself.`;
 
-      const atmosphereSuffix = (location.resident_family_members?.length > 0 || homeResidents.length > 0)
+      const atmosphereSuffix = residentialPeople.length > 0
         ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
       // IDENTITY LOCK ENFORCEMENT: Each character's avatar is the sole visual source of truth
-      const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(validResidentialPeople);
+      const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(residentialPeople);
+
+      // Build the residential constraint using the correct people list
+      const residentialConstraint = buildResidentialImageConstraint(location, residentialPeople);
+
+      // Use residential people avatars as the primary visual reference stack
+      const residentAvatarUrls = residentialPeople
+        .map(c => c.avatar_url || c.image_avatar_url)
+        .filter(url => url && url.trim().length > 0);
+      
+      console.log('[Scene] Residential avatar URLs being sent to generator:', residentAvatarUrls);
+
+      // Build final visual refs: resident avatars FIRST (identity), then environment
+      const residentialVisualRefs = [
+        ...residentAvatarUrls,
+        ...envRefs.filter(u => !residentAvatarUrls.includes(u))
+      ].slice(0, 6);
 
       prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
-    } else {
+
+      // ── SEND DIRECTLY with the correct residential visual refs ────────────────
+      try {
+        console.log('[Scene residential] Final visual refs:', residentialVisualRefs, '| prompt preview:', prompt.substring(0, 200));
+        const result = await base44.integrations.Core.GenerateImage({
+          prompt,
+          existing_image_urls: residentialVisualRefs.length > 0 ? residentialVisualRefs : undefined,
+        });
+        setSceneImage(result.url);
+      } catch {
+        setSceneImage(firstImage);
+      } finally {
+        setIsGeneratingImage(false);
+      }
+      return; // ← exit early, do NOT fall through to the generic path below
+    }
+
+    // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────────
+    {
       if (isGlobal) {
         const charNames = sceneCharacters.slice(0, 3).map(c => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
@@ -1290,7 +1331,7 @@ Return JSON:
         ? presentPeople.map(c => c.name).join(" and ")
         : "no one — the space is empty";
       const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
-      generateSceneImage(activeZone, resolvedWhosHereList, characters, imagePrompt);
+      generateSceneImage(imagePrompt);
     }
 
     const payerNote = payer === "character" && broughtCharacters[0] && cost > 0
@@ -1568,7 +1609,7 @@ Return JSON:
         )}
 
         <button
-          onClick={() => generateSceneImage(activeZone, resolvedWhosHereList, characters)}
+          onClick={() => { setSceneImage(null); }}
           disabled={isGeneratingImage}
           className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 text-white hover:bg-black/60 transition-colors"
           title="Refresh scene image"
