@@ -256,8 +256,14 @@ export default function Scene() {
       )
     : [];
 
-  const homeResidentsPresent = homeResidents.filter(p => isCharacterHome(characters.find(c => c.id === p.source_id), locationMap));
-  const homeResidentsAway = homeResidents.filter(p => !isCharacterHome(characters.find(c => c.id === p.source_id), locationMap));
+  const homeResidentsPresent = homeResidents.filter(p => {
+    const char = characters?.find(c => c?.id === p.source_id);
+    return char ? isCharacterHome(char, locationMap) : false;
+  });
+  const homeResidentsAway = homeResidents.filter(p => {
+    const char = characters?.find(c => c?.id === p.source_id);
+    return char ? !isCharacterHome(char, locationMap) : false;
+  });
 
   // For backward compatibility with existing scene roster logic
   // Map resolved people back to character objects for sceneCharacters list
