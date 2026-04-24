@@ -178,13 +178,13 @@ export default function Scene() {
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
   const { data: settingsList = [] } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => base44.entities.UserSettings.filter({ created_by: currentUser.email }),
+    queryFn: () => currentUser?.email ? base44.entities.UserSettings.filter({ created_by: currentUser.email }) : Promise.resolve([]),
     enabled: !!currentUser?.email,
   });
-  const settings = settingsList[0] || {};
+  const settings = settingsList?.[0] || {};
   // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
   // Never derive it from shared/cached settings that may belong to another account.
-  const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
+  const displayName = settings?.fictional_world_name || currentUser?.full_name || "You";
 
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -198,12 +198,13 @@ export default function Scene() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
     queryFn: async () => {
+      if (!currentUser?.email) return [];
       const all = await base44.entities.Character.filter({ created_by: currentUser.email, status: "active" });
       // DIAGNOSTIC FILTER: exclude test/diagnostic entities from all scene queries
-      return all.filter(c =>
-        c.is_test_character !== true &&
-        c.diagnostic_only !== true &&
-        c.exclude_from_default_scene_queries !== true
+      return (all || []).filter(c =>
+        c?.is_test_character !== true &&
+        c?.diagnostic_only !== true &&
+        c?.exclude_from_default_scene_queries !== true
       );
     },
     enabled: !!currentUser?.email,
