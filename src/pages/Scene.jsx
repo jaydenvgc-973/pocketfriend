@@ -1807,7 +1807,7 @@ Return JSON:
         {showPhotoModal && (
           <ScenePhotoModal
             location={location}
-            characters={displayCharacters}
+            characters={allSceneChars}
             currentUser={currentUser}
             displayName={displayName}
             onClose={() => setShowPhotoModal(false)}
