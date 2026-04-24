@@ -12,7 +12,7 @@ Deno.serve(async (req) => {
     }
 
     // AUTHORIZATION: Fetch character with service role to bypass RLS read issues
-    const character = await base44.asServiceRole.entities.Character.read(characterId);
+    const character = await base44.asServiceRole.entities.Character.get(characterId);
     if (!character) {
       console.log(`[updateCharacterAvatar] Character not found: ${characterId}`);
       return Response.json({ error: 'Character not found' }, { status: 404 });
