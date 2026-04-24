@@ -774,9 +774,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             {form.worker_character_ids?.length > 0 ? (
               <div className="space-y-2 max-h-48 overflow-y-auto rounded-xl border border-border bg-card p-2">
                 {form.worker_character_ids.map((workerId, idx) => {
-                   const worker = characters.find(c => c.id === workerId);
-                   const npcWorker = !worker ? [...activeChars, ...npcFictitious].find(n => n.id === workerId) : null;
-                  const workerName = worker?.name || npcWorker?.name || workerId;
+                     const worker = allCharacters.find(c => c.id === workerId);
+                     const npcWorker = !worker ? allCharacters.find(n => n.id === workerId) : null;
+                    const workerName = worker?.name || npcWorker?.name || workerId;
                   return (
                     <div key={idx} className="bg-secondary/50 border border-border rounded-lg p-3 space-y-2">
                       <div className="flex items-center gap-2 justify-between">
