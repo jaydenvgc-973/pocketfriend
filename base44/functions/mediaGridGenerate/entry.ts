@@ -150,55 +150,98 @@ Deno.serve(async (req) => {
     const userStart = ENV_SLOTS + CHAR_SLOTS + 1;
     const userEnd   = ENV_SLOTS + CHAR_SLOTS + USER_SLOTS;
 
-    // Role preamble — first thing the model reads
-    let rolePreamble = 'REFERENCE IMAGE ROLES — READ THIS FIRST:\n';
+    // ── ROLE PREAMBLE — first thing the model reads ───────────────────────────
+    let rolePreamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST, APPLY STRICTLY\n════════════════════════════════════════════════════════════\n';
     if (hasEnv) {
-      rolePreamble += `Images 1–${envEnd}: ENVIRONMENT ONLY — the actual room/location "${locationName}${zoneName ? ` → ${zoneName}` : ''}". Use ONLY for: walls, floor, furniture, layout, lighting, decor. Authority: 80% on the room.\n`;
+      rolePreamble += `Images 1–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nThese are PHOTOGRAPHS of the actual room: "${locationName}${zoneName ? ` → ${zoneName}` : ''}"\nUse EXCLUSIVELY for: walls, floor, ceiling, furniture, rug, curtains, lighting fixtures, wall art, shelving, decor objects, room layout.\nYou MUST replicate this room with exact fidelity. This is not a style reference. This is the room itself.\n\n`;
     }
     if (hasChar) {
-      rolePreamble += `Images ${charStart}–${charEnd}: CHARACTER IDENTITY ONLY — "${characterName}". Use ONLY for: face, skin, hair, body type, markings. Authority: 90-100% on the person.\n`;
+      rolePreamble += `Images ${charStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON ONLY\n"${characterName}" — Use ONLY for: face, skin tone, hair, body type, markings. Nothing else.\n\n`;
     }
     if (hasUser) {
-      rolePreamble += `Images ${userStart}–${userEnd}: USER IDENTITY ONLY — "${userName}". Use ONLY for: face, skin, hair, body type. Authority: 90-100% on this person.\n`;
+      rolePreamble += `Images ${userStart}–${userEnd}: USER IDENTITY — 90-100% AUTHORITY ON THIS PERSON ONLY\n"${userName}" — Use ONLY for: face, skin tone, hair, body type. Nothing else.\n\n`;
     }
-    rolePreamble += '⛔ AVATAR BACKGROUND = 0%: Any background visible behind a person in identity images is IRRELEVANT — ignore it completely. The room comes from environment images only.\n⛔ DO NOT blend image sets. Each set has one exclusive role.\n\n';
+    rolePreamble += `⛔ AVATAR/IDENTITY BACKGROUND = 0% AUTHORITY: Any room, wall, furniture, or scenery visible BEHIND a person in images ${hasEnv ? charStart : 1}–${hasChar ? charEnd : (hasUser ? userEnd : 1)} is COMPLETELY IRRELEVANT. Do NOT use it. Do NOT replicate it. The room comes from environment images ONLY.\n⛔ DO NOT blend these image sets. Each set has one exclusive, non-overlapping role.\n════════════════════════════════════════════════════════════\n\n`;
 
-    // Environment lock
+    // ── ENVIRONMENT LOCK — 90% AUTHORITY, ZERO OBJECT DRIFT ─────────────────
     let envLock = '';
     if (hasEnv) {
       const place = [locationName, zoneName].filter(Boolean).join(' → ');
-      envLock = `\n\nENVIRONMENT LOCK — "${place}":
-The environment images are photographs of this exact room. Reproduce it exactly:
-✅ Same furniture (color, shape, placement)
-✅ Same decor (art, shelving, lamps, rugs, curtains)
-✅ Same layout and proportions
-⛔ Do NOT redesign, substitute, or generically recreate this room
-⛔ Do NOT use any background from character photos as the room
-SUCCESS: A viewer must recognize the output and the reference as the SAME ROOM.`;
+      envLock = `
+
+════════════════════════════════════════════════════════════
+ENVIRONMENT LOCK — "${place}" — 90% VISUAL AUTHORITY
+════════════════════════════════════════════════════════════
+The environment reference images are PHOTOGRAPHS of this exact room.
+This is NOT inspiration. This is NOT a mood board. This IS the room.
+You must REPLICATE it. Insert the character into it. Do NOT redesign it.
+
+MANDATORY — every element below MUST match the reference photographs exactly:
+  ✅ Furniture types — same sofa, chairs, tables (exact models, not similar)
+  ✅ Furniture colors and materials — exact match, no recoloring
+  ✅ Furniture shapes and proportions — exact match
+  ✅ Furniture placement — same positions relative to walls and each other
+  ✅ Wall color and finish — exact match
+  ✅ Flooring type — same material (wood, tile, carpet, etc.), same color/pattern
+  ✅ Rug — same presence, same color, same pattern, same placement
+  ✅ Curtains and window treatments — same style, same color, same position
+  ✅ Ceiling lights and lamps — same fixtures, same positions
+  ✅ Wall art — same pieces, same frames, same positions on the wall
+  ✅ Shelves and shelving layout — same type, same placement
+  ✅ All decor objects — same items, same placement, same density
+  ✅ Room layout and spatial structure — same arrangement, same proportions
+  ✅ Visual identity of the room — must be unmistakably the SAME room
+
+ZERO OBJECT DRIFT — no object may be:
+  ⛔ Replaced with a different object
+  ⛔ Restyled or recolored
+  ⛔ Removed
+  ⛔ Added (do not invent new items)
+  ⛔ Repositioned (unless strictly required by camera angle perspective)
+
+WHAT 10% FLEXIBILITY ALLOWS (ONLY):
+  ✓ Camera angle and framing
+  ✓ Natural lighting intensity and softness
+  ✓ Depth of field and focal distance
+  ✓ Photorealistic rendering quality
+
+THE 10% DOES NOT ALLOW:
+  ⛔ Different furniture
+  ⛔ Different decor
+  ⛔ Different colors
+  ⛔ "Similar looking" substitutions
+  ⛔ Generic room generation of this room type
+
+FAILURE CONDITION: If ANY environmental element differs from the reference photos — different sofa color, missing rug, different curtains, swapped art — the generation is a FAILURE.
+SUCCESS CONDITION: A viewer doing a side-by-side comparison of the reference photo and the output must immediately recognize them as THE IDENTICAL ROOM.`;
     }
 
-    // Identity lock
+    // ── IDENTITY LOCK ─────────────────────────────────────────────────────────
     let identityLock = '';
     if (hasChar) {
-      identityLock += `\n\nCHARACTER IDENTITY LOCK — "${characterName}":
-Reference images ${charStart}–${charEnd} define this person's exact appearance.
-Match: face structure, eyes, nose, skin tone, hair color/length/texture, body type.
-⛔ Do NOT generate a generic or random person.`;
+      identityLock += `
+
+CHARACTER IDENTITY LOCK — "${characterName}":
+Reference images ${charStart}–${charEnd} are photographs of this exact person.
+Match precisely: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.
+⛔ Do NOT generate a generic or approximate person. This is a specific individual.`;
     }
     if (hasUser) {
-      identityLock += `\n\nUSER IDENTITY LOCK — "${userName}":
-Reference images ${userStart}–${userEnd} define this person's exact appearance.
-Match: face structure, eyes, nose, skin tone, hair color/length/texture, body type.
-⛔ Do NOT generate a generic or random person.`;
+      identityLock += `
+
+USER IDENTITY LOCK — "${userName}":
+Reference images ${userStart}–${userEnd} are photographs of this exact person.
+Match precisely: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.
+⛔ Do NOT generate a generic or approximate person. This is a specific individual.`;
     }
 
-    const finalPrompt = `${rolePreamble}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Natural lighting. Real human proportions. Not an illustration.${envLock}${identityLock}`;
+    const finalPrompt = `${rolePreamble}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. No illustration, no painting, no render — photograph only.${envLock}${identityLock}`;
 
     // ── 6. ASSEMBLE REFERENCE IMAGES ─────────────────────────────────────────
     // Order: env first (scene anchor), then char, then user
     const referenceImages = [...envRefs, ...charRefs, ...userRefs].filter(Boolean);
 
-    console.log(`[mediaGridGenerate] DISPATCH: env=${envRefs.length} char=${charRefs.length} user=${userRefs.length} total=${referenceImages.length}`);
+    console.log(`[mediaGridGenerate] DISPATCH: env=${envRefs.length} (90% authority) char=${charRefs.length} user=${userRefs.length} total=${referenceImages.length}`);
     console.log(`[mediaGridGenerate] Prompt (first 200): ${finalPrompt.substring(0, 200)}`);
 
     // ── 7. GENERATE ───────────────────────────────────────────────────────────
