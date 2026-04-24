@@ -72,6 +72,7 @@ export function resolveSceneImagePeople(
     const isLivingHere = char.current_home_location_id === sceneLocation.id;
     const isPhysicallyHere = char.resolved_current_location_id === sceneLocation.id;
     if (isLivingHere || isPhysicallyHere) {
+      console.log(`[residentialSceneFiltering] CHARACTER RESIDENT: "${char.name}" (${char.id}) | livingHere: ${isLivingHere} | physicallyHere: ${isPhysicallyHere} | avatar: ${!!(char.avatar_url)} | included: true`);
       add(char);
     }
   });
@@ -81,28 +82,33 @@ export function resolveSceneImagePeople(
     if (!resident?.character_id) return;
     const charObj = allCharactersInScene.find(c => c.id === resident.character_id);
     if (charObj) {
+      console.log(`[residentialSceneFiltering] LISTED RESIDENT: "${charObj.name}" (${resident.character_id}) | avatar: ${!!(charObj.avatar_url)} | included: true`);
       add(charObj);
     } else {
-      // Listed resident not in scene array — stub so their name appears in the constraint
+      console.warn(`[residentialSceneFiltering] LISTED RESIDENT: "${resident.character_name}" (${resident.character_id}) | NOT in scene array | included as stub: true`);
       add({ id: resident.character_id, name: resident.character_name || 'Resident', isResident: true });
     }
   });
 
   // SOURCE 3: resident_family_members listed on the location record
   // These ARE residents by definition. Include them directly from the location record.
-  // The caller (Scene.jsx) passes familyNpcSceneObjects in allCharactersInScene — match by name
-  // to get avatar_url. If not found, still include them so their name blocks random-person generation.
+  // The caller (Scene.jsx) passes familyNpcSceneObjects (enriched with avatar_url from parent
+  // active_created_character's family_members[].photo_url) in allCharactersInScene.
+  // Match by name to get the enriched object; stub with name only if not found.
   (sceneLocation.resident_family_members || []).forEach(fm => {
     if (!fm?.name) return;
-    // Look for their enriched object (with avatar_url) in the scene array
+    // Match against enriched familyNpcSceneObjects (passed in by Scene.jsx)
     const fmObj = allCharactersInScene.find(c =>
       c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
     );
+    const avatarFound = !!(fmObj?.avatar_url);
     if (fmObj) {
+      console.log(`[residentialSceneFiltering] FAMILY RESIDENT: "${fm.name}" | source_character_id: ${fm.source_character_id || 'unknown'} | avatar_url found: ${avatarFound} | included: true`);
       add(fmObj);
     } else {
-      // Not in scene array — still add as a named stub so the constraint lists them
+      // Not in scene array — add as named stub so the constraint still lists them
       const fmId = `npc_family_${fm.name.replace(/\s+/g, '_')}`;
+      console.warn(`[residentialSceneFiltering] FAMILY RESIDENT: "${fm.name}" | source_character_id: ${fm.source_character_id || 'unknown'} | NOT FOUND in scene array (no avatar) | included as stub: true | reason: familyNpcSceneObjects did not contain this person`);
       add({ id: fmId, name: fm.name, isNpc: true, character_type: 'family_npc', isResident: true });
     }
   });

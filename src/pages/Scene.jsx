@@ -835,9 +835,11 @@ export default function Scene() {
 
       if (!isGlobal) {
         // Apply residential filtering for home locations — residents only, plus user
+        // Use familyNpcSceneObjects (enriched with avatar_url) not raw familyMemberNpcsPresent
         const rawPresent = [
           ...homeResidentsPresent,
           ...broughtCharacters,
+          ...familyNpcSceneObjects,
         ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
 
         const physicallyPresent = isHomeLocation
@@ -880,9 +882,11 @@ export default function Scene() {
     if (isHomeLocation) {
       // ── RESIDENTIAL SCENE FILTERING + IDENTITY LOCK ────────────────────────
       // Strict residence occupant-only rule + 100% face match to avatars
+      // Pass familyNpcSceneObjects (enriched, with avatar_url from parent character's family_members)
+      // NOT familyMemberNpcsPresent (raw location record entries with no avatar_url or id)
       const validResidentialPeople = resolveSceneImagePeople(
         location,
-        [...homeResidentsPresent, ...broughtCharacters, ...familyMemberNpcsPresent],
+        [...homeResidentsPresent, ...broughtCharacters, ...familyNpcSceneObjects],
         currentUser,
         true // include user
       );
