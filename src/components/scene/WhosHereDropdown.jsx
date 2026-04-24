@@ -58,24 +58,11 @@ export default function WhosHereDropdown({
 
   // Separate allPossibleNpcs into categories
   const realCharacters = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType !== 'present');
-  const presentChars = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'present');
   const staffChars = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'staff');
   const residentChars = allPossibleNpcs.filter(n => n.isNpc === false && n.npcType === 'resident');
   const residentNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "resident");
   const staffNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "staff");
   const customerNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "customer");
-
-  // Merge unified presence with any already-selected NPCs
-  const mergedPresentChars = useMemo(() => {
-    const merged = [...presentRealCharacters];
-    // Add any from allPossibleNpcs that aren't already in unified set
-    presentChars.forEach(npc => {
-      if (!merged.find(m => m.id === npc.id)) {
-        merged.push(npc);
-      }
-    });
-    return merged;
-  }, [presentRealCharacters, presentChars]);
 
   const renderNpcWrapper = (npc) => {
     if (renderNpc) return renderNpc(npc);
@@ -122,12 +109,12 @@ export default function WhosHereDropdown({
             </div>
             <div className="max-h-72 overflow-y-auto py-1">
               {/* SECTION 1: Real characters PRESENT at this location (from unified resolver) */}
-              {mergedPresentChars.length > 0 && (
+              {presentRealCharacters.length > 0 && (
                 <>
                   <div className="px-3 py-1.5 border-b border-border/50">
                     <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Here Now</p>
                   </div>
-                  {mergedPresentChars.map(renderNpcWrapper)}
+                  {presentRealCharacters.map(renderNpcWrapper)}
                 </>
               )}
 
