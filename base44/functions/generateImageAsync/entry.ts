@@ -39,40 +39,50 @@ function cdnFilter(urls) {
 }
 
 // ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
-// Given a location record and an optional zone hint from the prompt,
-// return the best accessible zone images.
+// STRICT ZONE ISOLATION: only the matched zone's images are ever used.
+// No cross-zone fallback. No "first available zone" fallback.
+// If a zone cannot be identified from the prompt, returns the single first zone (if only one exists),
+// or null images (forcing no environment rather than wrong environment).
 
 const ZONE_KEYWORD_MAP = [
-  { keywords: ['bedroom', 'bed ', 'sleeping', 'woke up', 'waking up', 'nightstand', 'duvet', 'pillow', 'mattress'], zone: 'bedroom' },
-  { keywords: ['kitchen', 'cooking', 'stove', 'fridge', 'oven', 'microwave', 'counter', 'pancake', 'breakfast'], zone: 'kitchen' },
-  { keywords: ['bathroom', 'shower', 'bathtub', 'toilet', 'vanity', 'mirror'], zone: 'bathroom' },
-  { keywords: ['living room', 'couch', 'sofa', 'tv ', 'lounge', 'sectional'], zone: 'living room' },
-  { keywords: ['backyard', 'patio', 'deck', 'yard', 'garden', 'grill', 'outside'], zone: 'backyard' },
-  { keywords: ['dining room', 'dining table', 'dinner table'], zone: 'dining room' },
-  { keywords: ['office', 'desk', 'home office', 'workspace'], zone: 'office' },
-  { keywords: ['gym', 'workout', 'weights', 'treadmill', 'lifting', 'training'], zone: 'gym' },
-  { keywords: ['vip', 'vip section', 'vip lounge'], zone: 'vip' },
-  { keywords: ['bar area', 'behind the bar', 'bartending'], zone: 'bar area' },
-  { keywords: ['dance floor', 'main floor', 'dancefloor'], zone: 'main floor' },
-  { keywords: ['rooftop', 'roof deck', 'rooftop bar'], zone: 'rooftop' },
+  { keywords: ['bedroom', 'in bed', 'on the bed', 'sleeping', 'woke up', 'waking up', 'nightstand', 'duvet', 'pillow', 'mattress', 'my room', 'her room', 'his room'], zone: 'bedroom' },
+  { keywords: ['kitchen', 'cooking', 'stove', 'fridge', 'oven', 'microwave', 'counter', 'pancake', 'breakfast', 'making food', 'grabbing food'], zone: 'kitchen' },
+  { keywords: ['bathroom', 'shower', 'bathtub', 'toilet', 'vanity', 'brushing teeth', 'getting ready'], zone: 'bathroom' },
+  { keywords: ['living room', 'couch', 'sofa', 'tv ', 'on the couch', 'lounge', 'sectional', 'watching tv', 'watching a movie'], zone: 'living room' },
+  { keywords: ['backyard', 'patio', 'deck', 'yard', 'garden', 'grill', 'fire pit', 'outside at home'], zone: 'backyard' },
+  { keywords: ['dining room', 'dining table', 'dinner table', 'eating at the table'], zone: 'dining room' },
+  { keywords: ['office', 'desk', 'home office', 'workspace', 'working from home'], zone: 'office' },
+  { keywords: ['gym', 'workout', 'weights', 'treadmill', 'lifting', 'training', 'exercise'], zone: 'gym' },
+  { keywords: ['vip', 'vip section', 'vip lounge', 'vip area'], zone: 'vip' },
+  { keywords: ['bar area', 'behind the bar', 'bartending', 'bar counter'], zone: 'bar area' },
+  { keywords: ['dance floor', 'main floor', 'dancefloor', 'on the floor'], zone: 'main floor' },
+  { keywords: ['rooftop', 'roof deck', 'rooftop bar', 'on the roof'], zone: 'rooftop' },
+  { keywords: ['hallway', 'corridor', 'entryway', 'front door', 'foyer'], zone: 'hallway' },
+  { keywords: ['balcony', 'on the balcony', 'balcony view'], zone: 'balcony' },
+  { keywords: ['laundry', 'laundry room', 'washer', 'dryer'], zone: 'laundry' },
 ];
 
 function resolveZoneFromLocation(location, promptLower) {
-  const zones = (location.zones || []).filter(z => (z.image_urls || []).length > 0);
+  const zones = (location.zones || []).filter(z => cdnFilter(z.image_urls || []).length > 0);
+
   if (zones.length === 0) {
-    // No zones — use flat image_urls
-    return { images: cdnFilter(location.image_urls || []).slice(0, 4), zoneName: null };
+    // No zones with images at all — use flat image_urls (last resort, no zone name)
+    const flat = cdnFilter(location.image_urls || []).slice(0, 4);
+    return { images: flat, zoneName: null };
   }
 
-  // 1. Exact zone name in prompt
+  // 1. Exact zone name match in prompt — highest priority
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
       const imgs = cdnFilter(zone.image_urls).slice(0, 4);
-      if (imgs.length > 0) return { images: imgs, zoneName: zone.zone_name };
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] Exact zone name match: "${zone.zone_name}"`);
+        return { images: imgs, zoneName: zone.zone_name };
+      }
     }
   }
 
-  // 2. Keyword-based zone hint
+  // 2. Keyword-based zone match
   for (const entry of ZONE_KEYWORD_MAP) {
     if (entry.keywords.some(kw => promptLower.includes(kw))) {
       const matched = zones.find(z =>
@@ -80,18 +90,25 @@ function resolveZoneFromLocation(location, promptLower) {
       );
       if (matched) {
         const imgs = cdnFilter(matched.image_urls).slice(0, 4);
-        if (imgs.length > 0) return { images: imgs, zoneName: matched.zone_name };
+        if (imgs.length > 0) {
+          console.log(`[resolveZone] Keyword match: prompt→"${entry.zone}" matched zone "${matched.zone_name}"`);
+          return { images: imgs, zoneName: matched.zone_name };
+        }
       }
     }
   }
 
-  // 3. First zone with accessible images
-  const first = zones.find(z => cdnFilter(z.image_urls).length > 0);
-  if (first) {
-    return { images: cdnFilter(first.image_urls).slice(0, 4), zoneName: first.zone_name };
+  // 3. STRICT RULE: if only one zone exists, use it (unambiguous)
+  if (zones.length === 1) {
+    const imgs = cdnFilter(zones[0].image_urls).slice(0, 4);
+    console.log(`[resolveZone] Only one zone exists — using "${zones[0].zone_name}"`);
+    return { images: imgs, zoneName: zones[0].zone_name };
   }
 
-  return { images: cdnFilter(location.image_urls || []).slice(0, 4), zoneName: null };
+  // 4. STRICT RULE: multiple zones, no match — do NOT guess. Return no images.
+  // This prevents cross-zone contamination. The generation will proceed without env refs.
+  console.warn(`[resolveZone] Multiple zones found but none matched prompt — returning NO env refs to avoid cross-zone contamination`);
+  return { images: [], zoneName: null };
 }
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
@@ -110,10 +127,10 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
 
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
-    preamble += `Images ${envRefStart}–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of "${place}". Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nYou MUST replicate this room. This is not inspiration. This is the room.\n\n`;
+    preamble += `Images ${envRefStart}–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of the "${zoneName || place}" ONLY. Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nYou MUST replicate this exact room. This is not inspiration. This is the room.\n\n`;
   }
   if (hasChar) {
-    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face, skin tone, hair, body type, markings.\n⛔ Avatar background = 0%. The room/scenery behind the person in these photos is IRRELEVANT — ignore it.\n\n`;
+    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face, skin tone, hair, body type, markings.\n⛔ Avatar background = 0%. The room/scenery behind the person in these photos is IRRELEVANT — ignore it completely.\n\n`;
   }
   if (hasUser) {
     preamble += `Images ${userRefStart}–${userEnd}: USER IDENTITY — 90-100% AUTHORITY ON THIS PERSON\nUse ONLY for: face, skin tone, hair, body type. Background = 0%.\n\n`;
@@ -145,13 +162,21 @@ ZERO OBJECT DRIFT:
   ⛔ No "similar looking" substitutions
   ⛔ No generic room generation
 
+STRICT ZONE ISOLATION — CROSS-ZONE CONTAMINATION IS FORBIDDEN:
+  ⛔ Do NOT use furniture, decor, art, lighting, rugs, shelves, or objects from ANY other room
+  ⛔ If the zone is "${zoneName || 'this room'}", only objects visible in images ${envRefStart}–${envEnd} may appear
+  ⛔ A sofa from the living room must NOT appear in the bedroom
+  ⛔ A shelf from the office must NOT appear in the kitchen
+  ⛔ Wall art from the hallway must NOT appear in the living room
+  ⛔ Every object in the output must come from these reference images — nothing else
+
 10% FLEXIBILITY (only):
   ✓ Camera angle and framing
   ✓ Lighting intensity and softness
   ✓ Depth of field
 
-FAILURE: Any furniture, decor, or layout element that differs = FAILURE.
-SUCCESS: Side-by-side comparison must show THE IDENTICAL ROOM.`;
+FAILURE: Any furniture, decor, or layout element from a different room = CONTAMINATION FAILURE.
+SUCCESS: Side-by-side comparison must show THE IDENTICAL ROOM with only objects from images ${envRefStart}–${envEnd}.`;
   }
 
   // Identity lock block

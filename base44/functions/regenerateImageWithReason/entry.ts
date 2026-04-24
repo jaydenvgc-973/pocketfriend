@@ -87,10 +87,16 @@ ZERO OBJECT DRIFT:
   ⛔ No generic room generation
   ⛔ Do NOT use any room/background from the character identity photos
 
+STRICT ZONE ISOLATION — CROSS-ZONE CONTAMINATION IS FORBIDDEN:
+  ⛔ This is the "${zoneName || 'selected zone'}" ONLY
+  ⛔ Objects from other rooms (bedroom, kitchen, living room, office, hallway, etc.) must NEVER appear
+  ⛔ Every piece of furniture, decor, art, rug, light, and shelf must come from images 1–${envEnd} only
+  ⛔ If an object does not appear in images 1–${envEnd}, it must not appear in the output
+
 10% FLEXIBILITY (only): camera angle, framing, lighting softness
 
-FAILURE: Any element that differs from the reference photos = FAILURE.
-SUCCESS: Side-by-side must show THE IDENTICAL ROOM.`;
+FAILURE: Any element from a different room, or any element not in images 1–${envEnd} = CONTAMINATION FAILURE.
+SUCCESS: Side-by-side must show THE IDENTICAL ROOM with ONLY objects from images 1–${envEnd}.`;
   }
 
   // Reason-specific enforcement
@@ -131,40 +137,79 @@ Match: face structure, eyes, skin tone, hair color/length/style, body type.
   return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
 }
 
-// ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
+// ── ZONE RESOLUTION — STRICT ZONE ISOLATION ────────────────────────────────────
+// Only the exact matched zone's images are returned.
+// No cross-zone fallback. Multiple zones with no match → no images (prevents contamination).
 
 const ZONE_KEYWORD_MAP = [
-  { keywords: ['bedroom', 'bed ', 'sleeping', 'woke up', 'nightstand', 'duvet'], zone: 'bedroom' },
-  { keywords: ['kitchen', 'cooking', 'stove', 'fridge', 'oven', 'pancake', 'breakfast'], zone: 'kitchen' },
-  { keywords: ['bathroom', 'shower', 'bathtub', 'toilet'], zone: 'bathroom' },
-  { keywords: ['living room', 'couch', 'sofa', 'tv ', 'lounge'], zone: 'living room' },
-  { keywords: ['backyard', 'patio', 'deck', 'yard', 'garden'], zone: 'backyard' },
-  { keywords: ['dining room', 'dining table'], zone: 'dining room' },
-  { keywords: ['office', 'desk', 'home office'], zone: 'office' },
+  { keywords: ['bedroom', 'in bed', 'on the bed', 'sleeping', 'woke up', 'waking up', 'nightstand', 'duvet', 'pillow', 'mattress', 'my room', 'her room', 'his room'], zone: 'bedroom' },
+  { keywords: ['kitchen', 'cooking', 'stove', 'fridge', 'oven', 'microwave', 'counter', 'pancake', 'breakfast', 'making food'], zone: 'kitchen' },
+  { keywords: ['bathroom', 'shower', 'bathtub', 'toilet', 'vanity', 'brushing teeth', 'getting ready'], zone: 'bathroom' },
+  { keywords: ['living room', 'couch', 'sofa', 'tv ', 'on the couch', 'lounge', 'sectional', 'watching tv'], zone: 'living room' },
+  { keywords: ['backyard', 'patio', 'deck', 'yard', 'garden', 'grill', 'outside at home'], zone: 'backyard' },
+  { keywords: ['dining room', 'dining table', 'dinner table', 'eating at the table'], zone: 'dining room' },
+  { keywords: ['office', 'desk', 'home office', 'workspace', 'working from home'], zone: 'office' },
+  { keywords: ['gym', 'workout', 'weights', 'treadmill', 'lifting', 'training'], zone: 'gym' },
+  { keywords: ['vip', 'vip section', 'vip lounge'], zone: 'vip' },
+  { keywords: ['bar area', 'behind the bar', 'bartending'], zone: 'bar area' },
+  { keywords: ['dance floor', 'main floor', 'dancefloor'], zone: 'main floor' },
+  { keywords: ['rooftop', 'roof deck', 'rooftop bar'], zone: 'rooftop' },
+  { keywords: ['hallway', 'corridor', 'entryway', 'front door', 'foyer'], zone: 'hallway' },
+  { keywords: ['balcony', 'on the balcony'], zone: 'balcony' },
 ];
 
-function resolveZoneFromLocation(location, promptLower) {
+function resolveZoneFromLocation(location, promptLower, preferredZoneName) {
   const zones = (location.zones || []).filter(z => cdnFilter(z.image_urls || []).length > 0);
   if (zones.length === 0) {
     return { images: cdnFilter(location.image_urls || []).slice(0, 4), zoneName: null };
   }
+
+  // 0. Preferred zone name (from stored generation_context.zone_name) — highest priority
+  if (preferredZoneName) {
+    const preferred = zones.find(z => z.zone_name && z.zone_name.toLowerCase() === preferredZoneName.toLowerCase());
+    if (preferred) {
+      const imgs = cdnFilter(preferred.image_urls).slice(0, 4);
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] Preferred zone match: "${preferred.zone_name}"`);
+        return { images: imgs, zoneName: preferred.zone_name };
+      }
+    }
+  }
+
+  // 1. Exact zone name in prompt
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
       const imgs = cdnFilter(zone.image_urls).slice(0, 4);
-      if (imgs.length > 0) return { images: imgs, zoneName: zone.zone_name };
+      if (imgs.length > 0) {
+        console.log(`[resolveZone] Exact name match: "${zone.zone_name}"`);
+        return { images: imgs, zoneName: zone.zone_name };
+      }
     }
   }
+
+  // 2. Keyword match
   for (const entry of ZONE_KEYWORD_MAP) {
     if (entry.keywords.some(kw => promptLower.includes(kw))) {
       const matched = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(entry.zone));
       if (matched) {
         const imgs = cdnFilter(matched.image_urls).slice(0, 4);
-        if (imgs.length > 0) return { images: imgs, zoneName: matched.zone_name };
+        if (imgs.length > 0) {
+          console.log(`[resolveZone] Keyword match: "${matched.zone_name}"`);
+          return { images: imgs, zoneName: matched.zone_name };
+        }
       }
     }
   }
-  const first = zones[0];
-  return { images: cdnFilter(first.image_urls).slice(0, 4), zoneName: first.zone_name };
+
+  // 3. Only one zone — use it (unambiguous)
+  if (zones.length === 1) {
+    console.log(`[resolveZone] Single zone — using "${zones[0].zone_name}"`);
+    return { images: cdnFilter(zones[0].image_urls).slice(0, 4), zoneName: zones[0].zone_name };
+  }
+
+  // 4. Multiple zones, no match — no images to avoid cross-zone contamination
+  console.warn(`[resolveZone] Multiple zones, no match — returning no env refs`);
+  return { images: [], zoneName: null };
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
@@ -297,11 +342,12 @@ Deno.serve(async (req) => {
       }
 
       // If stored refs inaccessible, re-fetch from original location
+      // Pass originalZoneName as preferred so the SAME zone is re-selected (not a different one)
       if (envRefs.length === 0 && originalLocId) {
         const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: originalLocId }, null, 1).catch(() => []);
         const locRecord = locListSR?.[0] || null;
         if (locRecord) {
-          const { images, zoneName } = resolveZoneFromLocation(locRecord, originalPrompt.toLowerCase());
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, originalPrompt.toLowerCase(), originalZoneName);
           envRefs = images;
           resolvedZoneName = zoneName || originalZoneName;
           console.log(`[regenerateImageWithReason] Re-fetched location "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);

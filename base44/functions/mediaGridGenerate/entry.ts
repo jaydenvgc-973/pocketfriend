@@ -199,6 +199,14 @@ ZERO OBJECT DRIFT — no object may be:
   ⛔ Added (do not invent new items)
   ⛔ Repositioned (unless strictly required by camera angle perspective)
 
+STRICT ZONE ISOLATION — CROSS-ZONE CONTAMINATION IS FORBIDDEN:
+  ⛔ This is the "${zoneName || 'selected zone'}" only. No objects from any other room may appear.
+  ⛔ Do NOT pull furniture, decor, art, rugs, lighting, or shelves from any other zone
+  ⛔ A sofa from the living room must NOT appear in the bedroom
+  ⛔ A shelf from the office must NOT appear in the kitchen
+  ⛔ Wall art from the hallway must NOT appear in the living room
+  ⛔ Every object in the output must come exclusively from the reference images 1–${ENV_SLOTS} — nothing else
+
 WHAT 10% FLEXIBILITY ALLOWS (ONLY):
   ✓ Camera angle and framing
   ✓ Natural lighting intensity and softness
@@ -211,9 +219,10 @@ THE 10% DOES NOT ALLOW:
   ⛔ Different colors
   ⛔ "Similar looking" substitutions
   ⛔ Generic room generation of this room type
+  ⛔ Objects from other rooms or zones
 
-FAILURE CONDITION: If ANY environmental element differs from the reference photos — different sofa color, missing rug, different curtains, swapped art — the generation is a FAILURE.
-SUCCESS CONDITION: A viewer doing a side-by-side comparison of the reference photo and the output must immediately recognize them as THE IDENTICAL ROOM.`;
+FAILURE CONDITION: If ANY environmental element differs from the reference photos, OR if any object appears that is not in images 1–${ENV_SLOTS}, the generation is a FAILURE.
+SUCCESS CONDITION: A viewer doing a side-by-side comparison of the reference photo and the output must immediately recognize them as THE IDENTICAL ROOM with the IDENTICAL objects.`;
     }
 
     // ── IDENTITY LOCK ─────────────────────────────────────────────────────────
