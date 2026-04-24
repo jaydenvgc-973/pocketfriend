@@ -1699,6 +1699,19 @@ Return JSON:
               {workerCharacters.map(c => c.name).join(", ")} {workerCharacters.length === 1 ? "is" : "are"} here working
             </span></div>
           )}
+          {(() => {
+            // Show real characters present at this location who are NOT workers and NOT travel companions
+            const presentHere = allPossibleNpcs.filter(n =>
+              n.isNpc === false &&
+              n.npcType === 'present' &&
+              !characterIds.includes(n.id)
+            );
+            return presentHere.length > 0 ? (
+              <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">
+                {presentHere.map(c => c.name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact
+              </span></div>
+            ) : null;
+          })()}
 
         </div>
 
