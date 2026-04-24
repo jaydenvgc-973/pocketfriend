@@ -819,9 +819,16 @@ export default function Scene() {
       // - NEVER include: residents who just live there but weren't explicitly brought/selected
       // This respects the "Who's here" dropdown selection as the authority on who appears
       
+      // CRITICAL: Use allPossibleNpcs as source of truth for avatar data.
+      // selectedNpcs may have been filtered and lost full character context.
+      // Match selected NPC IDs back to allPossibleNpcs to recover avatar_url and age data.
+      const selectedNpcsFull = (selectedNpcIds || [])
+        .map(npcId => allPossibleNpcs.find(n => n.id === npcId))
+        .filter(Boolean);
+
       const residentialPeople = [
         ...broughtCharacters,
-        ...(selectedNpcs || []),
+        ...selectedNpcsFull,
       ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i).slice(0, 4);
 
       console.log(
