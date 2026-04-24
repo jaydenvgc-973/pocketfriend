@@ -84,14 +84,23 @@ export async function dispatchImageGeneration({
     const imageUrl = res?.data?.imageUrl;
     if (imageUrl && imageUrl.startsWith('http') && isMountedRef.current) {
       setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, image_url: imageUrl } : m));
+      base44.entities.Conversation.update(convoId, {
+        last_message_preview: "(photo)",
+        last_message_date: new Date().toISOString(),
+      }).catch(() => {});
+      queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+    } else if (res?.data?.success === false && isMountedRef.current) {
+      // Generation failed — mark message so frontend shows the retry UI instead of hanging placeholder
+      console.error(`[ChatImageDispatch] Generation returned success=false for ${targetMsgId}: ${res?.data?.error}`);
+      base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
     }
-
-    base44.entities.Conversation.update(convoId, {
-      last_message_preview: "(photo)",
-      last_message_date: new Date().toISOString(),
-    }).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
   } catch (err) {
     console.error(`[ChatImageDispatch] Image generation failed for ${targetMsgId}:`, err.message);
+    // Mark as failed so user sees retry UI rather than a permanently spinning placeholder
+    if (isMountedRef.current) {
+      base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
+    }
   }
 }

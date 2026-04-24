@@ -7,6 +7,23 @@ import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import { generateImageWithUserIdentity, buildUserAppearanceData, buildUserReferenceImages } from "@/lib/userImageGeneration";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
+function toPublicCDN(url) {
+  if (!url || typeof url !== 'string') return url;
+  if (url.startsWith('https://media.base44.com/')) return url;
+  const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+  if (match) return `https://media.base44.com/images/public/${match[1]}`;
+  return url;
+}
+
+function isProviderAccessible(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('https://')) return false;
+  if (url.includes('/files/mp/private/') || url.includes('/files/private/')) return false;
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  if (url.includes('base44.app/api/apps/')) return false;
+  return true;
+}
+
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated, externalTrigger, onExternalClose }) {
   const [isOpen, setIsOpen] = useState(false);
 
@@ -217,21 +234,33 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       
       // CRITICAL: Always start with the primary character's own identity refs.
       // These are the authoritative source for who is in the image.
+      // Convert all URLs to public CDN — private/internal URLs are rejected by the generation provider.
       // Additional selected characters are appended after — never replace the primary.
       let charReferenceImages = [];
-      if (character.avatar_url) charReferenceImages.push(character.avatar_url);
-      if (character.reference_image_urls?.length > 0) charReferenceImages.push(...character.reference_image_urls.slice(0, 2));
+      if (character.avatar_url) {
+        const cdnAvatar = toPublicCDN(character.avatar_url);
+        if (isProviderAccessible(cdnAvatar)) charReferenceImages.push(cdnAvatar);
+      }
+      if (character.reference_image_urls?.length > 0) {
+        character.reference_image_urls.slice(0, 2).forEach(url => {
+          const cdn = toPublicCDN(url);
+          if (isProviderAccessible(cdn)) charReferenceImages.push(cdn);
+        });
+      }
 
       // Add additional selected characters' refs (excluding the primary character to avoid duplication)
       const otherSelectedChars = selectedChars.filter(c => c.id !== character.id);
       otherSelectedChars.forEach(char => {
-        if (char.avatar_url) charReferenceImages.push(char.avatar_url);
-        if (char.reference_image_urls?.length > 0) charReferenceImages.push(...char.reference_image_urls.slice(0, 1));
+        if (char.avatar_url) { const cdn = toPublicCDN(char.avatar_url); if (isProviderAccessible(cdn)) charReferenceImages.push(cdn); }
+        if (char.reference_image_urls?.length > 0) {
+          const cdn = toPublicCDN(char.reference_image_urls[0]);
+          if (isProviderAccessible(cdn)) charReferenceImages.push(cdn);
+        }
       });
 
       // Add world people avatars if they exist
       selectedWorldPeople.forEach(person => {
-        if (person.avatar_url) charReferenceImages.push(person.avatar_url);
+        if (person.avatar_url) { const cdn = toPublicCDN(person.avatar_url); if (isProviderAccessible(cdn)) charReferenceImages.push(cdn); }
       });
 
       if (referenceImageUrl) charReferenceImages.push(referenceImageUrl);
