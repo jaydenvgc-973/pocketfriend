@@ -66,11 +66,9 @@ export function resolveSceneImagePeople(
     allowedPeople.push(person);
   };
 
-  // SOURCE 1: characters who are confirmed physically present at this location
-  // resolved_current_location_id is the single authoritative location truth
+  // SOURCE 1: real Character entities confirmed living at or physically present at this location
   allCharactersInScene.forEach(char => {
-    if (!char || char.isNpc) return; // real Character entities only in this pass
-    // Must be currently at this location OR living here
+    if (!char || char.isNpc || char.character_type === 'family_npc') return; // real entities only in this pass
     const isLivingHere = char.current_home_location_id === sceneLocation.id;
     const isPhysicallyHere = char.resolved_current_location_id === sceneLocation.id;
     if (isLivingHere || isPhysicallyHere) {
@@ -78,32 +76,35 @@ export function resolveSceneImagePeople(
     }
   });
 
-  // SOURCE 2: residents explicitly listed in location.residents array
+  // SOURCE 2: residents explicitly listed in location.residents array (any character type)
   (sceneLocation.residents || []).forEach(resident => {
     if (!resident?.character_id) return;
-    // Find the full character object if available in the passed-in array
     const charObj = allCharactersInScene.find(c => c.id === resident.character_id);
     if (charObj) {
       add(charObj);
     } else {
-      // Resident is listed but not in our character array — add as minimal stub
-      // (prevents their absence from causing a random stranger to be generated instead)
+      // Listed resident not in scene array — stub so their name appears in the constraint
       add({ id: resident.character_id, name: resident.character_name || 'Resident', isResident: true });
     }
   });
 
   // SOURCE 3: resident_family_members listed on the location record
-  // These are NPC family members who LIVE here — treat as valid residents
+  // These ARE residents by definition. Include them directly from the location record.
+  // The caller (Scene.jsx) passes familyNpcSceneObjects in allCharactersInScene — match by name
+  // to get avatar_url. If not found, still include them so their name blocks random-person generation.
   (sceneLocation.resident_family_members || []).forEach(fm => {
     if (!fm?.name) return;
-    // Only include if they are in the passed-in scene array (i.e. caller confirmed them present)
+    // Look for their enriched object (with avatar_url) in the scene array
     const fmObj = allCharactersInScene.find(c =>
-      c.isNpc && c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
+      c.name?.trim().toLowerCase() === fm.name.trim().toLowerCase()
     );
     if (fmObj) {
       add(fmObj);
+    } else {
+      // Not in scene array — still add as a named stub so the constraint lists them
+      const fmId = `npc_family_${fm.name.replace(/\s+/g, '_')}`;
+      add({ id: fmId, name: fm.name, isNpc: true, character_type: 'family_npc', isResident: true });
     }
-    // If not in scene array, do NOT invent them — the caller (Scene.jsx) decides who is present
   });
 
   // SOURCE 4: the current user, if they physically traveled here
