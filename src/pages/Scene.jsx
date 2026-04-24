@@ -212,8 +212,8 @@ export default function Scene() {
     staleTime: 0,
   });
 
-  const location = locationsData.find(l => l.id === locationId);
-  const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
+  const location = locationsData?.find?.(l => l?.id === locationId);
+  const locationMap = Object.fromEntries((locationsData || []).map(l => [l?.id, l]).filter(([id]) => id));
   const locationZones = location?.zones || [];
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
