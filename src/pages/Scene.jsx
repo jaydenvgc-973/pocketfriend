@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
@@ -16,8 +16,10 @@ import { isLocationOpen } from "@/lib/locationHoursUtils";
 import { generateLocationActions } from "@/lib/actionGenerator";
 import { buildUnifiedMemoryContext, formatMemoryForLLM, shouldReferenceMemory, getLocationMemories } from "@/lib/memoryUnity";
 import { checkCharacterAvailability, getLocationEmployees, spawnLocationNPCs, shouldNPCApproach } from "@/lib/npcSpawner";
+import { getPresenceAtLocation, resolveTravelPresenceEntities } from "@/lib/travelPresenceResolver";
 import ConversationTypeSelector from "@/components/scene/ConversationTypeSelector";
 import InviteToSceneModal from "@/components/scene/InviteToSceneModal";
+import WhosHereDropdown from "@/components/scene/WhosHereDropdown";
 import { buildSceneSystemPrompt, maybeInjectMemoryCallback, buildNPCIntroContext } from "@/lib/sceneMemoryInjection";
 import ResidenceOptionsDropdown from "@/components/scene/ResidenceOptionsDropdown";
 import RealtorTourModal from "@/components/scene/RealtorTourModal";
@@ -120,6 +122,17 @@ export default function Scene() {
   const location = locationsData.find(l => l.id === locationId);
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const locationZones = location?.zones || [];
+
+  // ── UNIFIED PRESENCE RESOLUTION ─────────────────────────────────────────────
+  // SAME resolver as Travel page (Map + popup) — one source of truth for all surfaces
+  const unifiedPresenceEntities = useMemo(() => resolveTravelPresenceEntities({
+    currentUser,
+    activeCharacters: characters.filter(c => c.character_type === 'active_created_character'),
+    npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious'),
+    npcFamilyMembers: characters.filter(c => c.character_type === 'npc_family_member'),
+    allCharacters: characters,
+    locations: locationsData,
+  }), [currentUser?.id, characters.length, locationsData.length]);
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
   // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
@@ -1472,96 +1485,19 @@ Return JSON:
           />
         )}
 
-        {/* NPC Dropdown */}
-        <div className="relative z-50" ref={npcDropdownRef}>
-          <button
-            onClick={() => setShowNpcDropdown(v => !v)}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl border text-xs font-medium transition-colors ${
-              selectedNpcs.length > 0
-                ? "bg-primary/10 border-primary/40 text-primary"
-                : "bg-secondary border-border text-muted-foreground hover:text-foreground"
-            }`}
-            title="NPCs nearby"
-          >
-            <Users className="w-3.5 h-3.5" />
-            <span>Who's here{selectedNpcs.length > 0 ? ` · ${selectedNpcs.length}` : ""}</span>
-            <ChevronDown className={`w-3 h-3 transition-transform ${showNpcDropdown ? "rotate-180" : ""}`} />
-          </button>
-
-          <AnimatePresence>
-            {showNpcDropdown && (
-              <motion.div
-                initial={{ opacity: 0, y: -6, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -6, scale: 0.97 }}
-                transition={{ duration: 0.15 }}
-                className="absolute right-0 top-full mt-1.5 w-52 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden"
-              >
-                <div className="px-3 py-2 border-b border-border">
-                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Talk to someone nearby</p>
-                </div>
-                <div className="max-h-72 overflow-y-auto py-1">
-                  {(() => {
-                    // Separate real characters from NPCs
-                    const realCharacters = allPossibleNpcs.filter(n => n.isNpc === false);
-                    // NPCs grouped by type
-                    const residentNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "resident");
-                    const staffNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "staff");
-                    const customerNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "customer");
-                    const ungrouped = allPossibleNpcs.filter(n => n.isNpc !== false && !["resident", "staff", "customer"].includes(n.npcType));
-
-                    return (
-                      <>
-                        {realCharacters.length > 0 && (
-                          <>
-                            <div className="px-3 py-1.5 border-b border-border/50">
-                              <p className="text-[9px] font-semibold text-purple-400/80 uppercase tracking-wider">Characters</p>
-                            </div>
-                            {realCharacters.map(renderNpc)}
-                          </>
-                        )}
-                        {residentNpcs.length > 0 && (
-                          <>
-                            <div className="px-3 py-1.5 border-b border-border/50 mt-1">
-                              <p className="text-[9px] font-semibold text-green-400/80 uppercase tracking-wider">Residents</p>
-                            </div>
-                            {residentNpcs.map(renderNpc)}
-                          </>
-                        )}
-                        {staffNpcs.length > 0 && (
-                          <>
-                            <div className="px-3 py-1.5 border-b border-border/50 mt-1">
-                              <p className="text-[9px] font-semibold text-blue-400/80 uppercase tracking-wider">Employees</p>
-                            </div>
-                            {staffNpcs.map(renderNpc)}
-                          </>
-                        )}
-                        {customerNpcs.length > 0 && (
-                          <>
-                            <div className="px-3 py-1.5 border-b border-border/50 mt-1">
-                              <p className="text-[9px] font-semibold text-muted-foreground/70 uppercase tracking-wider">People here</p>
-                            </div>
-                            {customerNpcs.map(renderNpc)}
-                          </>
-                        )}
-                        {ungrouped.map(renderNpc)}
-                      </>
-                    );
-                  })()}
-                </div>
-                {/* Invite someone here */}
-                <div className="border-t border-border p-2">
-                  <button
-                    onClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }}
-                    className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-primary/10 hover:bg-primary/20 text-primary transition-colors text-left"
-                  >
-                    <UserPlus className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span className="text-xs font-medium">Invite someone here</span>
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+        {/* NPC Dropdown — uses unified presence resolver (same as Map + Travel popup) */}
+        <div ref={npcDropdownRef}>
+          <WhosHereDropdown
+            allPossibleNpcs={allPossibleNpcs}
+            unifiedPresenceEntities={unifiedPresenceEntities}
+            location={location}
+            selectedNpcs={selectedNpcs}
+            onToggleNpc={toggleNpc}
+            showDropdown={showNpcDropdown}
+            onToggleDropdown={setShowNpcDropdown}
+            onInviteClick={() => { setShowNpcDropdown(false); setShowInviteModal(true); }}
+            renderNpc={renderNpc}
+          />
         </div>
 
         <button
@@ -1586,7 +1522,7 @@ Return JSON:
           </div>
         ) : sceneImage ? (
           <button onClick={() => setLightboxSrc(sceneImage)} className="w-full h-full block group relative">
-            <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" />
+            <img src={sceneImage} alt={location.name} className="w-full h-full object-cover" style={{ imageOrientation: 'from-image' }} />
             <div className="absolute inset-0 bg-black/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
               <ZoomIn className="w-6 h-6 text-white drop-shadow" />
             </div>
@@ -1700,15 +1636,13 @@ Return JSON:
             </span></div>
           )}
           {(() => {
-            // Show real characters present at this location who are NOT workers and NOT travel companions
-            const presentHere = allPossibleNpcs.filter(n =>
-              n.isNpc === false &&
-              n.npcType === 'present' &&
-              !characterIds.includes(n.id)
+            // Show real characters present at this location from unified resolver (same as map)
+            const presentHere = getPresenceAtLocation(location, unifiedPresenceEntities).filter(
+              e => !characterIds.includes(e.id)
             );
             return presentHere.length > 0 ? (
               <div><span className="text-xs text-blue-400/70 bg-secondary/50 px-3 py-1 rounded-full">
-                {presentHere.map(c => c.name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact
+                {presentHere.map(e => e.display_name).join(", ")} {presentHere.length === 1 ? "is" : "are"} also here — tap "Who's here" to interact
               </span></div>
             ) : null;
           })()}
