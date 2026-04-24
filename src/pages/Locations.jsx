@@ -318,17 +318,6 @@ function formatShift(shift) {
   return parts.join(' ') || null;
 }
 
-function isShiftCurrentlyActive(shift) {
-  if (!shift?.start || !shift?.end || !shift?.days) return false;
-  const now = new Date();
-  const day = now.getDay();
-  const hour = now.getHours();
-  if (!shift.days.includes(day)) return false;
-  const [startH] = shift.start.split(':').map(Number);
-  const [endH] = shift.end.split(':').map(Number);
-  return hour >= startH && hour < endH;
-}
-
 function getWorkerAvailabilityV2(character, allLocations, currentLocationId = null) {
   if (!character) return { status: 'unavailable', allJobs: [] };
 
@@ -342,8 +331,9 @@ function getWorkerAvailabilityV2(character, allLocations, currentLocationId = nu
       allJobs.push({
         name: loc.name,
         title: loc.worker_job_titles?.[character.id] || null,
-        shift: formatShiftDisplay(shift),
+        shift: formatShift(shift),
         days: shift?.days?.map(d => DAY_LABELS[d]) || [],
+        location_id: character.occupation_location_id,
       });
     }
   }
@@ -357,23 +347,61 @@ function getWorkerAvailabilityV2(character, allLocations, currentLocationId = nu
           allJobs.push({
             name: addlOcc.location_name || loc.name,
             title: addlOcc.job_title || loc.worker_job_titles?.[character.id] || null,
-            shift: formatShiftDisplay(shift),
+            shift: formatShift(shift),
             days: shift?.days?.map(d => DAY_LABELS[d]) || [],
+            location_id: addlOcc.location_id,
           });
         }
       }
     });
   }
 
-  // Calculate availability using the engine
-  const availability = calculateCharacterAvailability(character, allLocations, currentLocationId);
+  // Calculate availability
+  const now = new Date();
+  const currentDay = now.getDay();
+  const currentHour = now.getHours();
+  const currentMinute = now.getMinutes();
+
+  let isOnShiftNow = false;
+  for (const job of allJobs) {
+    const shift = allLocations.find(l => l.id === job.location_id)?.worker_shifts?.[character.id];
+    if (shift?.start && shift?.end && shift?.days?.includes(currentDay)) {
+      const [startH, startM] = shift.start.split(':').map(Number);
+      const [endH, endM] = shift.end.split(':').map(Number);
+      const startTotalMins = startH * 60 + startM;
+      const endTotalMins = endH * 60 + endM;
+      const nowTotalMins = currentHour * 60 + currentMinute;
+      if (nowTotalMins >= startTotalMins && nowTotalMins < endTotalMins) {
+        isOnShiftNow = true;
+        break;
+      }
+    }
+  }
+
+  let status = 'available';
+  if (isOnShiftNow) {
+    status = 'at_work';
+  } else if (allJobs.length >= 2) {
+    status = 'between_shifts';
+  }
 
   return {
-    status: availability.status,
+    status,
     jobCount: allJobs.length,
     allJobs,
-    isOnShiftNow: availability.isOnShiftNow,
+    isOnShiftNow,
   };
+}
+
+function isShiftCurrentlyActive(shift) {
+  if (!shift?.start || !shift?.end || !shift?.days) return false;
+  const now = new Date();
+  const day = now.getDay();
+  const hour = now.getHours();
+  if (!shift.days.includes(day)) return false;
+  const [startH] = shift.start.split(':').map(Number);
+  const [endH] = shift.end.split(':').map(Number);
+  return hour >= startH && hour < endH;
 }
 
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
