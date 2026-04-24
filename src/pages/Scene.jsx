@@ -123,6 +123,9 @@ export default function Scene() {
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const locationZones = location?.zones || [];
 
+  // Active characters explicitly brought (from URL params) — must be before useMemo that uses it
+  const broughtCharacters = characters.filter(c => characterIds.includes(c.id));
+
   // ── UNIFIED PRESENCE RESOLUTION ─────────────────────────────────────────────
   // SAME resolver as Travel page (Map + popup) — one source of truth for all surfaces
   const unifiedPresenceEntities = useMemo(() => {
@@ -520,9 +523,6 @@ export default function Scene() {
     // Dedupe by id
     return npcs.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
   })();
-
-  // Active characters explicitly brought (from URL params)
-  const broughtCharacters = characters.filter(c => characterIds.includes(c.id));
 
   // Selected NPCs — default: none selected until user picks
   const selectedNpcs = selectedNpcIds !== null
