@@ -29,12 +29,15 @@ export default function EditCharacterPhotos() {
   });
 
   const hasApiKey = userSettings[0]?.openai_api_key ? true : false;
+  const [pendingAvatarUrl, setPendingAvatarUrl] = useState(null); // uploaded but not yet saved
   const [form, setForm] = useState({});
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const handleSelect = (char) => {
     setSelectedChar(char);
+    setPendingAvatarUrl(null);
+    setAvatarSaveStatus('idle');
     setForm({
       voice_enabled: char.voice_enabled || false,
       voice_name: char.voice_name || "",
@@ -115,10 +118,14 @@ export default function EditCharacterPhotos() {
                 <div className="border border-border rounded-2xl p-4 space-y-3">
                   <p className="text-xs font-medium text-foreground uppercase tracking-wider">Replace Avatar</p>
                   <p className="text-xs text-muted-foreground">Upload a photo to use as their avatar directly. This photo becomes 100% of the avatar.</p>
-                  {selectedChar.avatar_url && (
+                  {/* Preview: pending upload takes priority over saved avatar */}
+                  {(pendingAvatarUrl || selectedChar.avatar_url) && (
                     <div className="flex justify-center">
                       <div className="relative w-24 h-24 rounded-full overflow-hidden ring-2 ring-primary/30">
-                        <img src={selectedChar.avatar_url} alt="avatar" className="w-full h-full object-cover" />
+                        <img src={pendingAvatarUrl || selectedChar.avatar_url} alt="avatar" className="w-full h-full object-cover" />
+                        {pendingAvatarUrl && (
+                          <div className="absolute bottom-0 left-0 right-0 bg-primary/80 text-[9px] text-white text-center py-0.5">Preview</div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -132,6 +139,7 @@ export default function EditCharacterPhotos() {
                       ✗ Save failed — please try again
                     </div>
                   )}
+                  {/* Step 1: pick a photo */}
                   <label className="block">
                     <input
                       type="file"
@@ -139,31 +147,19 @@ export default function EditCharacterPhotos() {
                       className="hidden"
                       disabled={uploadingAvatarId === selectedChar.id}
                       onChange={async (e) => {
-                       const file = e.target.files?.[0];
-                       if (!file) return;
-                       setUploadingAvatarId(selectedChar.id);
-                       setAvatarSaveStatus('saving');
-                       try {
-                         console.log(`[AVATAR] Upload started for character ${selectedChar.id} — old url: ${selectedChar.avatar_url?.substring(0, 60)}`);
-                         const result = await base44.integrations.Core.UploadFile({ file });
-                         await base44.functions.invoke('updateCharacterAvatar', {
-                           characterId: selectedChar.id,
-                           avatarUrl: result.file_url,
-                           referenceImageUrls: [result.file_url],
-                         });
-                         console.log(`[AVATAR] Save succeeded for character ${selectedChar.id} — new url: ${result.file_url.substring(0, 60)}`);
-                         setSelectedChar({ ...selectedChar, avatar_url: result.file_url, reference_image_urls: [result.file_url] });
-                         setAvatarSaveStatus('saved');
-                         queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
-                         queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
-                         setTimeout(() => setAvatarSaveStatus('idle'), 3000);
-                       } catch (err) {
-                         console.error(`[AVATAR] Save failed for character ${selectedChar.id}:`, err.message);
-                         setAvatarSaveStatus('failed');
-                         setTimeout(() => setAvatarSaveStatus('idle'), 4000);
-                       } finally {
-                         setUploadingAvatarId(null);
-                       }
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setUploadingAvatarId(selectedChar.id);
+                        try {
+                          const result = await base44.integrations.Core.UploadFile({ file });
+                          setPendingAvatarUrl(result.file_url);
+                          setAvatarSaveStatus('idle');
+                        } catch (err) {
+                          setAvatarSaveStatus('failed');
+                          setTimeout(() => setAvatarSaveStatus('idle'), 4000);
+                        } finally {
+                          setUploadingAvatarId(null);
+                        }
                       }}
                     />
                     <div className="w-full py-3 rounded-xl border-2 border-dashed border-border hover:border-primary/40 flex items-center justify-center cursor-pointer transition-colors">
@@ -172,11 +168,39 @@ export default function EditCharacterPhotos() {
                       ) : (
                         <div className="flex items-center gap-2">
                           <Upload className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-xs text-muted-foreground">Click to upload a photo</span>
+                          <span className="text-xs text-muted-foreground">{pendingAvatarUrl ? "Choose a different photo" : "Click to upload a photo"}</span>
                         </div>
                       )}
                     </div>
                   </label>
+                  {/* Step 2: explicit Save button */}
+                  {pendingAvatarUrl && (
+                    <Button
+                      onClick={async () => {
+                        setAvatarSaveStatus('saving');
+                        try {
+                          await base44.entities.Character.update(selectedChar.id, {
+                            avatar_url: pendingAvatarUrl,
+                            reference_image_urls: [pendingAvatarUrl],
+                          });
+                          setSelectedChar({ ...selectedChar, avatar_url: pendingAvatarUrl, reference_image_urls: [pendingAvatarUrl] });
+                          setPendingAvatarUrl(null);
+                          setAvatarSaveStatus('saved');
+                          queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+                          queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
+                          setTimeout(() => setAvatarSaveStatus('idle'), 3000);
+                        } catch (err) {
+                          console.error('[AVATAR] Save failed:', err.message);
+                          setAvatarSaveStatus('failed');
+                          setTimeout(() => setAvatarSaveStatus('idle'), 4000);
+                        }
+                      }}
+                      disabled={avatarSaveStatus === 'saving'}
+                      className="w-full h-11 rounded-xl gap-2"
+                    >
+                      {avatarSaveStatus === 'saving' ? <><RefreshCw className="w-4 h-4 animate-spin" /> Saving...</> : <><Check className="w-4 h-4" /> Save Avatar</>}
+                    </Button>
+                  )}
                 </div>
 
                 {/* Option 2: Generate from reference photos + description */}
