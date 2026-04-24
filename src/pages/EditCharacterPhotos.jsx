@@ -34,14 +34,17 @@ export default function EditCharacterPhotos() {
   const [isSaving, setIsSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const handleSelect = (char) => {
-    setSelectedChar(char);
+  const handleSelect = async (char) => {
+    // Refetch fresh character data to ensure avatar is current
+    const fresh = await base44.entities.Character.filter({ id: char.id });
+    const freshChar = fresh?.[0] || char;
+    setSelectedChar(freshChar);
     setPendingAvatarUrl(null);
     setAvatarSaveStatus('idle');
     setForm({
-      voice_enabled: char.voice_enabled || false,
-      voice_name: char.voice_name || "",
-      voice_style_note: char.voice_style_note || "",
+      voice_enabled: freshChar.voice_enabled || false,
+      voice_name: freshChar.voice_name || "",
+      voice_style_note: freshChar.voice_style_note || "",
     });
   };
 
