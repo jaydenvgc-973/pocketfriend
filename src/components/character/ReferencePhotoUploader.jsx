@@ -29,16 +29,14 @@ export default function ReferencePhotoUploader({
   const [generationPrompt, setGenerationPrompt] = useState(existingGenerationPrompt);
   const [initialized, setInitialized] = useState(false);
 
-  // Re-sync when the parent's async data arrives
+  // Re-sync when the parent's async data arrives or changes
   useEffect(() => {
-    if (!initialized && (existingReferenceUrls.length > 0 || existingAvatarUrl || existingDescriptionText || existingGenerationPrompt)) {
-      setReferenceUrls(existingReferenceUrls);
-      setGeneratedUrl(existingAvatarUrl);
-      setDescriptionText(existingDescriptionText);
-      setGenerationPrompt(existingGenerationPrompt);
-      setInitialized(true);
-    }
-  }, [existingReferenceUrls, existingAvatarUrl, existingDescriptionText, existingGenerationPrompt, initialized]);
+    setReferenceUrls(existingReferenceUrls);
+    setGeneratedUrl(existingAvatarUrl);
+    setDescriptionText(existingDescriptionText);
+    setGenerationPrompt(existingGenerationPrompt);
+    setInitialized(true);
+  }, [existingReferenceUrls, existingAvatarUrl, existingDescriptionText, existingGenerationPrompt]);
 
   const handleUpload = async (e) => {
     const files = Array.from(e.target.files || []);

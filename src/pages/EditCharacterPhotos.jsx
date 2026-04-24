@@ -183,7 +183,8 @@ export default function EditCharacterPhotos() {
                             avatar_url: pendingAvatarUrl,
                             reference_image_urls: [pendingAvatarUrl],
                           });
-                          setSelectedChar({ ...selectedChar, avatar_url: pendingAvatarUrl, reference_image_urls: [pendingAvatarUrl] });
+                          const updated = { ...selectedChar, avatar_url: pendingAvatarUrl, image_avatar_url: pendingAvatarUrl, reference_image_urls: [pendingAvatarUrl] };
+                          setSelectedChar(updated);
                           setPendingAvatarUrl(null);
                           setAvatarSaveStatus('saved');
                           queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
