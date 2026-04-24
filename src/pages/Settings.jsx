@@ -26,6 +26,7 @@ import SuggestedDuplicatesModal from "@/components/settings/SuggestedDuplicatesM
 import GenericLocationFixer from "@/components/settings/GenericLocationFixer";
 import SettingsTroubleshootingPanel from "@/components/settings/SettingsTroubleshootingPanel";
 import EditCharacterType from "@/components/settings/EditCharacterType";
+import NarrativeDiagnosticPanel from "@/components/settings/NarrativeDiagnosticPanel";
 import { getCharactersForSettingsList } from "@/lib/characterEditableListResolver";
 
 export default function Settings() {
@@ -618,6 +619,11 @@ export default function Settings() {
                <DiagnosticReportViewer />
              </div>
            )}
+
+          {/* Narrative Diagnostic */}
+          <div className="mb-3 bg-card border border-border rounded-xl p-4">
+            <NarrativeDiagnosticPanel />
+          </div>
 
           <div className="mb-3">
             <EditCharacterType characters={characters} currentUser={user} />
