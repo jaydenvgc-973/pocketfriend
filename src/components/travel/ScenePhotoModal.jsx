@@ -3,6 +3,7 @@ import { base44 } from "@/api/base44Client";
 import { motion } from "framer-motion";
 import { X, Sparkles, Send, Check, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { buildPhotoGenerationPrompt, extractPhotoAvatarUrls, validatePhotoGenerationInput, logPhotoGenerationState } from "@/lib/scenePhotoIdentityLock";
 
 export default function ScenePhotoModal({ location, characters, currentUser, displayName, onClose, allCharacters }) {
   const [participants, setParticipants] = useState(characters.map(c => c.id));
@@ -36,24 +37,44 @@ export default function ScenePhotoModal({ location, characters, currentUser, dis
   const generate = async () => {
     setIsGenerating(true);
     const selectedChars = allCharacters.filter(c => participants.includes(c.id));
-    const charNames = selectedChars.map(c => c.name).join(", ");
-    const allNames = [displayName, ...selectedChars.map(c => c.name)].join(", ");
     const autoPrompt = prompt.trim() || `Candid group photo at ${location.name}, natural lighting, realistic moment`;
 
-    // Include user avatar + character avatars as reference images
+    // STRICT IDENTITY LOCK: Extract user + character avatars as hard references
     const userAvatar = currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
-    const charRefs = selectedChars.flatMap(c => c.avatar_url ? [c.avatar_url] : []);
-    const allRefs = [userAvatar, ...charRefs].filter(Boolean);
+    const avatarUrls = extractPhotoAvatarUrls(selectedChars, userAvatar);
+    
+    // Validate generation input
+    logPhotoGenerationState(participants, selectedChars, userAvatar);
+    
+    // Location background (secondary reference only)
     const firstImage = location?.zones?.find(z => z.image_urls?.length > 0)?.image_urls?.[0] || null;
-    const refImages = [...allRefs, ...(firstImage ? [firstImage] : [])].slice(0, 4);
+    const refImages = [...avatarUrls, ...(firstImage ? [firstImage] : [])].slice(0, 6);
 
     try {
+      // Build prompt with STRICT identity lock enforcement
+      const finalPrompt = buildPhotoGenerationPrompt(autoPrompt, selectedChars, location, displayName);
+      
+      console.log('[Photo] Generating with strict identity lock:', {
+        avatarCount: avatarUrls.length,
+        people: selectedChars.map(c => `${c.name}(age:${c.age || '?'})`).join(', '),
+        totalRefs: refImages.length,
+      });
+
       const result = await base44.integrations.Core.GenerateImage({
-        prompt: `${autoPrompt}. People in the photo: ${allNames}. Location: ${location.name}. Include ALL people listed. Photorealistic, candid, authentic moment.`,
+        prompt: finalPrompt,
         existing_image_urls: refImages.length > 0 ? refImages : undefined,
       });
-      setGeneratedImage(result.url);
-    } catch {
+      
+      // Validate generation succeeded
+      const validation = validatePhotoGenerationInput(selectedChars, result.url);
+      if (!validation.valid) {
+        console.error('[Photo] Validation failed:', validation.error);
+        setGeneratedImage(null);
+      } else {
+        setGeneratedImage(result.url);
+      }
+    } catch (err) {
+      console.error('[Photo] Generation failed:', err.message);
       setGeneratedImage(null);
     } finally {
       setIsGenerating(false);
