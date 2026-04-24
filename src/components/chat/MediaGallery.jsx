@@ -1,10 +1,9 @@
 import { useState, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Images, X, Sparkles, Loader2, RefreshCw, Upload, Wand2, MapPin, ChevronDown, Users, Check } from "lucide-react";
+import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
-import { generateImageWithUserIdentity, buildUserAppearanceData, buildUserReferenceImages } from "@/lib/userImageGeneration";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
 
 function toPublicCDN(url) {
@@ -38,7 +37,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Prompt generator state
   const [prompt, setPrompt] = useState("");
   const [referenceImageUrl, setReferenceImageUrl] = useState(null);
-  const [referenceImageSource, setReferenceImageSource] = useState(null); // 'upload' | 'gallery'
+  const [referenceImageSource, setReferenceImageSource] = useState(null);
   const [showGridPicker, setShowGridPicker] = useState(false);
   const [isUploadingRef, setIsUploadingRef] = useState(false);
   const [isAutoPrompting, setIsAutoPrompting] = useState(false);
@@ -179,238 +178,90 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
   };
 
-  const extractMentionedPeople = (text) => {
-    if (!text.trim()) return { characters: [], userIncluded: false };
-    
-    const textLower = text.toLowerCase();
-    const mentionedCharacters = allCharacters.filter(c => 
-      textLower.includes(c.name.toLowerCase())
-    );
-    
-    const userIncluded = userSettings?.fictional_world_name && 
-      textLower.includes(userSettings.fictional_world_name.toLowerCase());
-    
-    return { characters: mentionedCharacters, userIncluded };
-  };
+  // ── SHARED GENERATE HANDLER ────────────────────────────────────────────────
+  // Source-of-truth model: use exactly what the user selected. No guessing.
+  const handleGenerate = async (subjectType) => {
+    if (!character || !conversationId) return;
+    const promptText = prompt.trim() || "candid natural moment, everyday life";
 
-  const buildReferenceImagesFromMention = (mentionedCharacters, userIncluded) => {
-    const refs = [];
-    
-    // Add character avatars
-    mentionedCharacters.forEach(char => {
-      if (char.avatar_url) refs.push(char.avatar_url);
-      if (char.reference_image_urls?.length > 0) {
-        refs.push(...char.reference_image_urls.slice(0, 1));
-      }
-    });
-    
-    // Add user reference images for identity-locked generation
-    if (userIncluded) {
-      const userChar = allCharacters.find(c => c.is_user);
-      const userImgs = (userChar?.all_reference_images || userChar?.reference_image_urls || []);
-      refs.push(...userImgs.slice(0, 3));
+    // Resolve zone images from the selected location/zone — exactly what the UI shows
+    const zoneImageUrls = selectedLocation
+      ? (selectedZone
+          ? (selectedLocation.zones?.find(z => z.zone_name === selectedZone)?.image_urls || [])
+          : (selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls || selectedLocation.image_urls || [])
+        )
+      : [];
+
+    // Validate: if location selected but zone has no images, stop early with clear message
+    if (selectedLocation && zoneImageUrls.length === 0) {
+      setGenerateError(`"${selectedLocation.name}"${selectedZone ? ` → "${selectedZone}"` : ''} has no zone photos. Add photos to this zone before generating.`);
+      return;
     }
-    
-    return refs;
-  };
 
-  const handleGenerateCharacter = async () => {
-    if ((!prompt.trim() && !referenceImageUrl && !selectedLocation) || !character || !conversationId) return;
+    // Build user refs for user/joint subject types
+    const userChar = allCharacters.find(c => c.is_user);
+    const userRefImages = subjectType !== 'character'
+      ? [
+          ...(userChar?.reference_image_urls || []).slice(0, 3),
+          ...(userChar?.generated_avatar_urls || []).slice(0, 1),
+          userChar?.avatar_url,
+        ].filter(Boolean)
+      : [];
+
+    // Build primary character refs from their avatar + reference photos
+    const charRefImages = [
+      character.avatar_url,
+      ...(character.reference_image_urls || []).slice(0, 2),
+    ].filter(Boolean);
+
     setIsGenerating(true);
     setGenerateError(null);
     try {
-      const charName = character.name;
-      const charDesc = [character.appearance_notes, character.personality_summary, character.age_range, character.gender].filter(Boolean).join(', ');
-      
-      // Use selected entities (including world people) from dropdown, or extract from prompt
-      let selectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
-        : extractMentionedPeople(prompt).characters;
-      
-      let selectedWorldPeople = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.is_world_person)
-        : [];
-      
-      const userIncluded = selectedCharacterIds.length > 0
-        ? selectedCharacterIds.includes("user")
-        : extractMentionedPeople(prompt).userIncluded;
-      
-      // CRITICAL: Always start with the primary character's own identity refs.
-      // These are the authoritative source for who is in the image.
-      // Convert all URLs to public CDN — private/internal URLs are rejected by the generation provider.
-      // Additional selected characters are appended after — never replace the primary.
-      let charReferenceImages = [];
-      if (character.avatar_url) {
-        const cdnAvatar = toPublicCDN(character.avatar_url);
-        if (isProviderAccessible(cdnAvatar)) charReferenceImages.push(cdnAvatar);
-      }
-      if (character.reference_image_urls?.length > 0) {
-        character.reference_image_urls.slice(0, 2).forEach(url => {
-          const cdn = toPublicCDN(url);
-          if (isProviderAccessible(cdn)) charReferenceImages.push(cdn);
-        });
-      }
-
-      // Add additional selected characters' refs (excluding the primary character to avoid duplication)
-      const otherSelectedChars = selectedChars.filter(c => c.id !== character.id);
-      otherSelectedChars.forEach(char => {
-        if (char.avatar_url) { const cdn = toPublicCDN(char.avatar_url); if (isProviderAccessible(cdn)) charReferenceImages.push(cdn); }
-        if (char.reference_image_urls?.length > 0) {
-          const cdn = toPublicCDN(char.reference_image_urls[0]);
-          if (isProviderAccessible(cdn)) charReferenceImages.push(cdn);
-        }
-      });
-
-      // Add world people avatars if they exist
-      selectedWorldPeople.forEach(person => {
-        if (person.avatar_url) { const cdn = toPublicCDN(person.avatar_url); if (isProviderAccessible(cdn)) charReferenceImages.push(cdn); }
-      });
-
-      if (referenceImageUrl) charReferenceImages.push(referenceImageUrl);
-      
-      // Build user reference images with strong identity preservation
-      const userChar = allCharacters.find(c => c.is_user);
-      let userReferenceImages = [];
-      if (userChar) {
-        // Prioritize uploaded reference images for user identity
-        if (userChar.reference_image_urls?.length > 0) {
-          userReferenceImages.push(...userChar.reference_image_urls.slice(0, 3));
-        }
-        // Then add generated avatars
-        if (userChar.generated_avatar_urls?.length > 0) {
-          userReferenceImages.push(...userChar.generated_avatar_urls.slice(0, 2));
-        }
-        // Finally add primary avatar as fallback
-        if (userChar.avatar_url && !userReferenceImages.includes(userChar.avatar_url)) {
-          userReferenceImages.push(userChar.avatar_url);
-        }
-      }
-
-      const rawPromptText = prompt.trim() || "candid natural moment, everyday life";
-
-      // Inject character's current outfit into the prompt
-      const charOutfit = character.current_outfit;
-      const charClosetOutfits = (character.character_closet || []).filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
-      const activeCharOutfit = charOutfit?.label ? charOutfit : (charClosetOutfits[charClosetOutfits.length - 1] || null);
-      let charOutfitSuffix = '';
-      if (activeCharOutfit) {
-        const parts = [activeCharOutfit.top, activeCharOutfit.bottom, activeCharOutfit.shoes, activeCharOutfit.outerwear, activeCharOutfit.accessories].filter(Boolean);
-        const rawDesc = activeCharOutfit.full_description || parts.join(', ');
-        // Filter sensitive/revealing outfit descriptions to prevent AI provider rejections
-        const sensitiveOutfitPatterns = [/wearing only/i, /shirtless/i, /topless/i, /no shirt/i, /bare (chest|torso|skin)/i, /slight sheen of moisture/i, /boxer/i, /underwear/i, /\bbra\b/i, /naked/i, /nude/i, /lingerie/i, /bikini/i];
-        const outfitIsSensitive = sensitiveOutfitPatterns.some(p => p.test(rawDesc));
-        const desc = outfitIsSensitive ? null : rawDesc;
-        if (desc) charOutfitSuffix = ` OUTFIT LOCK: ${character.name} is wearing: ${desc}. Reproduce this exact outfit — do NOT use the clothing visible in the avatar/reference photo.`;
-      }
-
-      // Enforce photorealistic quality on all prompts. NSFW allowed.
-      const promptText = `${rawPromptText}${charOutfitSuffix}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
-
-      // Determine subject type based on who's selected:
-      // - user alone (no other chars) → "user"
-      // - user + other chars → "joint"
-      // - no user → "character"
-      const hasOtherChars = selectedChars.length > 0 || selectedWorldPeople.length > 0;
-      const subjectType = userIncluded ? (hasOtherChars ? "joint" : "user") : "character";
-
-      // Build per-character outfit notes for all selected characters
-      const SENSITIVE_OUTFIT_RE = [/wearing only/i, /shirtless/i, /topless/i, /no shirt/i, /bare (chest|torso|skin)/i, /slight sheen of moisture/i, /boxer/i, /underwear/i, /\bbra\b/i, /naked/i, /nude/i, /lingerie/i, /bikini/i];
-      const isOutfitSensitive = (desc) => SENSITIVE_OUTFIT_RE.some(p => p.test(desc));
-      const buildOutfitNote = (char) => {
-        const outfit = char.current_outfit;
-        const closetOutfits = (char.character_closet || []).filter(item => item.type === "outfit" || (!item.piece_type && item.outfit_id));
-        const activeOutfit = outfit?.label ? outfit : (closetOutfits[closetOutfits.length - 1] || null);
-        if (!activeOutfit) return null;
-        const parts = [activeOutfit.top, activeOutfit.bottom, activeOutfit.shoes, activeOutfit.outerwear, activeOutfit.accessories].filter(Boolean);
-        const desc = activeOutfit.full_description || parts.join(', ');
-        if (!desc || isOutfitSensitive(desc)) return null;
-        return `${char.name} is wearing: ${desc}`;
-      };
-
-      // Build outfit instructions for all selected characters
-      const allSelectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
-        : [];
-      const charOutfitLines = [character, ...allSelectedChars.filter(c => c.id !== character.id)]
-        .map(buildOutfitNote).filter(Boolean);
-
-      // User outfit note
-      const userCurrentOutfit = userSettings?.user_current_outfit;
-      if (userIncluded && userCurrentOutfit?.label) {
-        const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
-        const desc = userCurrentOutfit.full_description || parts.join(', ');
-        const uName = userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || "the user";
-        if (desc) charOutfitLines.push(`${uName} is wearing: ${desc}`);
-      }
-
-      const multiOutfitSuffix = charOutfitLines.length > 0
-        ? `\n\nOUTFIT REQUIREMENTS — STRICT: Each person MUST wear their assigned outfit below. Do NOT mix or swap outfits between people:\n${charOutfitLines.map((l, i) => `${i + 1}. ${l}`).join('\n')}\nThese outfits OVERRIDE anything visible in reference photos.`
-        : '';
-
-      // Create a placeholder message then call generateImageAsync (which handles location locking)
+      // Create placeholder message
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
-        sender_type: "character",
-        character_id: character.id,
-        character_name: character.name,
+        sender_type: subjectType === 'user' ? 'user' : 'character',
+        character_id: subjectType !== 'user' ? character.id : undefined,
+        character_name: subjectType !== 'user' ? character.name : undefined,
         content: "",
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
       });
-
       if (!newMsg?.id) throw new Error('Failed to create message');
 
-      // Build the prompt for generateImageAsync
-      const fullPrompt = `[CHARACTER] ${promptText}${multiOutfitSuffix}`;
-
-      // Collect location reference images for the selected location and zone
-      const locRefImages = selectedLocation
-        ? (selectedZone && selectedLocation.zones?.find(z => z.zone_name === selectedZone)?.image_urls)
-          || selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls
-          || selectedLocation.image_urls
-          || []
-        : [];
-
-      // Call generateImageAsync which handles location locking, character refs, etc.
-      const genRes = await base44.functions.invoke('generateImageAsync', {
+      const genRes = await base44.functions.invoke('mediaGridGenerate', {
         messageId: newMsg.id,
-        prompt: fullPrompt,
-        characterReferenceImages: charReferenceImages,
-        userReferenceImages: userReferenceImages,
-        locationReferenceImages: locRefImages,
-        characterName: charName,
-        userWorldName: userSettings?.fictional_world_name || allCharacters.find(c => c.is_user)?.world_name || null,
+        prompt: promptText,
         subjectType,
+        // Character identity
         characterId: character.id,
-        manualLocationId: selectedLocation?.id || null,
-        manualZoneId: selectedZone || null,
-        includesUser: userIncluded,
-        isCreativeGeneration: true, // media grid = user-directed creative, not presence-based scene
-        userAppearanceData: userIncluded ? {
-          appearance_notes: userChar?.appearance_notes || '',
-          age_range: userChar?.age_range || '',
-          gender: userChar?.gender || '',
-          ethnicities: userChar?.ethnicities || [],
-        } : null,
+        characterName: character.name,
+        characterRefImages: charRefImages,
+        // User identity
+        userRefImages,
+        userName: userSettings?.fictional_world_name || userChar?.world_name || userChar?.name || 'the user',
+        // Environment — exactly what the user selected
+        locationId: selectedLocation?.id || null,
+        locationName: selectedLocation?.name || null,
+        zoneName: selectedZone || (selectedLocation ? selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.zone_name : null) || null,
+        zoneImageUrls,
       });
 
       if (genRes?.data?.filtered) {
         await base44.entities.Message.delete(newMsg.id).catch(() => {});
-        throw new Error('Image blocked by content filter. Try a different description.');
+        throw new Error('Image blocked by content filter. Try rephrasing.');
       }
-
       if (!genRes?.data?.success || !genRes?.data?.imageUrl) {
         await base44.entities.Message.delete(newMsg.id).catch(() => {});
-        const errMsg = genRes?.data?.error || 'Image generation failed. Try a different description or remove the reference image.';
-        throw new Error(errMsg);
+        throw new Error(genRes?.data?.error || 'Image generation failed.');
       }
 
-      // Store memory so character remembers sending this
-      const envNote = selectedLocation ? ` at ${selectedLocation.name}${selectedZone ? ` (${selectedZone})` : ''}` : '';
+      // Memory note
+      const envNote = selectedLocation ? ` at ${selectedLocation.name}${selectedZone ? ` → ${selectedZone}` : ''}` : '';
       base44.entities.Memory.create({
         character_id: character.id,
-        title: `Sent a photo: ${promptText.substring(0, 60)}`,
-        description: `You sent the user a photo${envNote}. Prompt: "${promptText}".`,
+        title: `Sent a photo`,
+        description: `Sent a photo${envNote}. Prompt: "${promptText.substring(0, 80)}".`,
         emotional_impact: 'positive',
         timestamp: new Date().toISOString(),
         source_context: `gallery_generated_${newMsg.id}`,
@@ -421,106 +272,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setReferenceImageSource(null);
       setShowGridPicker(false);
       setIsOpen(false);
-      // Pass the hydrated message (with image_url already set) so Chat renders the image immediately
-      // without showing a "Load Photo" placeholder
       if (onImageGenerated) onImageGenerated({ ...newMsg, image_url: genRes.data.imageUrl });
-    } catch (err) {
-      setGenerateError(err.message || "Failed to generate image");
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  const handleGenerateUser = async () => {
-    if ((!prompt.trim() && !selectedLocation) || !character || !conversationId) return;
-    setIsGenerating(true);
-    setGenerateError(null);
-    try {
-      const userCharForGen = allCharacters.find(c => c.is_user);
-      const userName = userSettings?.fictional_world_name || userCharForGen?.world_name || userCharForGen?.name || "the user";
-      const rawPromptText = prompt.trim() || "candid natural moment, everyday life";
-
-      // Inject user's current outfit from their closet
-      const userCurrentOutfit = userSettings?.user_current_outfit;
-      let userOutfitSuffix = '';
-      if (userCurrentOutfit?.label) {
-        const parts = [userCurrentOutfit.top, userCurrentOutfit.bottom, userCurrentOutfit.shoes, userCurrentOutfit.outerwear, userCurrentOutfit.accessories].filter(Boolean);
-        const rawUserDesc = userCurrentOutfit.full_description || parts.join(', ');
-        const userSensitiveRe = [/wearing only/i, /shirtless/i, /topless/i, /no shirt/i, /bare (chest|torso|skin)/i, /slight sheen of moisture/i, /boxer/i, /underwear/i, /\bbra\b/i, /naked/i, /nude/i, /lingerie/i, /bikini/i];
-        const userOutfitOk = rawUserDesc && !userSensitiveRe.some(p => p.test(rawUserDesc));
-        if (userOutfitOk) userOutfitSuffix = ` OUTFIT LOCK: ${userName} is wearing: ${rawUserDesc}. Reproduce this exact outfit — do NOT default to the clothing in the reference photo.`;
-      }
-
-      // Enforce photorealistic quality on all prompts. NSFW allowed.
-      const promptText = `${rawPromptText}${userOutfitSuffix}. Photorealistic, cinematic, ultra-detailed, high-resolution professional photography. RAW photo quality. Natural lighting. Natural skin texture, real human proportions. Not an illustration, not a painting, not a digital render.`;
-
-      // Use selected entities from dropdown (excluding user and world people for user generation)
-      const selectedChars = selectedCharacterIds.length > 0
-        ? allCharacters.filter(c => selectedCharacterIds.includes(c.id) && c.id !== "user" && !c.is_world_person)
-        : extractMentionedPeople(promptText).characters;
-      
-      // Build reference images with selected/mentioned characters
-      const charReferences = buildReferenceImagesFromMention(selectedChars, false);
-      
-      // Get user profile for identity-locked generation
-      const userAppearanceData = buildUserAppearanceData(userCharForGen);
-
-      // Create a placeholder message for user
-      const newMsg = await base44.entities.Message.create({
-        conversation_id: conversationId,
-        sender_type: "user",
-        content: "",
-        timestamp: new Date().toISOString(),
-      });
-
-      if (!newMsg?.id) throw new Error('Failed to create message');
-
-      try {
-        // Collect location reference images for the selected location
-        const locImgs = selectedLocation
-          ? (selectedLocation.zones?.find(z => z.zone_name === selectedZone)?.image_urls
-              || selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls
-              || selectedLocation.image_urls
-              || [])
-          : [];
-
-        // Use shared user identity-preserving generation (same as Travel page)
-        const imageUrl = await generateImageWithUserIdentity(
-          promptText,
-          charReferences,
-          locImgs,
-          userCharForGen,
-          userAppearanceData,
-          true // strictMode: enforce maximum identity preservation
-        );
-
-        // Update message with generated image
-        await base44.entities.Message.update(newMsg.id, {
-          image_url: imageUrl,
-          generation_context: {
-            prompt: promptText,
-            subject_type: "user",
-            character_id: character.id,
-            character_reference_images: charReferences,
-            location_id: selectedLocation?.id || null,
-            zone_name: selectedZone || null,
-            location_name: selectedLocation?.name || null,
-            location_reference_images: locImgs,
-            user_reference_images: userCharForGen ? buildUserReferenceImages(userCharForGen) : [],
-            user_appearance_data: userAppearanceData,
-            is_user_identity_locked: true,
-          },
-        });
-
-        setPrompt("");
-        setReferenceImageUrl(null);
-        setShowGridPicker(false);
-        setIsOpen(false);
-        if (onImageGenerated) onImageGenerated(newMsg);
-      } catch (genErr) {
-        await base44.entities.Message.delete(newMsg.id).catch(() => {});
-        throw genErr;
-      }
     } catch (err) {
       setGenerateError(err.message || "Failed to generate image");
     } finally {
@@ -757,54 +509,6 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       )}
                     </div>
 
-                    {/* Reference image — upload or pick from gallery */}
-                    <div className="space-y-2">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <label className="flex-shrink-0 cursor-pointer flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors">
-                          <input type="file" accept="image/*" className="hidden" onChange={handleRefUpload} disabled={isUploadingRef} />
-                          {isUploadingRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
-                          Upload ref
-                        </label>
-                        {images.length > 0 && (
-                          <button
-                            onClick={() => setShowGridPicker(v => !v)}
-                            className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-xl bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-                          >
-                            <Images className="w-3.5 h-3.5" />
-                            Pick from gallery
-                          </button>
-                        )}
-                        {referenceImageUrl && (
-                          <div className="relative flex-shrink-0">
-                            <img src={referenceImageUrl} alt="reference" className="w-10 h-10 rounded-lg object-cover ring-2 ring-primary/40" />
-                            <button
-                              onClick={clearReference}
-                              className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center"
-                            >
-                              <X className="w-2.5 h-2.5 text-white" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                      {!referenceImageUrl && <p className="text-[10px] text-muted-foreground/60">Optional: upload or pick an existing photo to guide the scene/style</p>}
-                      {referenceImageUrl && <p className="text-[10px] text-primary/70">Reference set from {referenceImageSource === 'gallery' ? 'gallery' : 'upload'} — will influence the result</p>}
-
-                      {/* Inline gallery picker */}
-                      {showGridPicker && images.length > 0 && (
-                        <div className="grid grid-cols-4 gap-1.5 max-h-32 overflow-y-auto">
-                          {images.map((img, i) => (
-                            <button
-                              key={i}
-                              onClick={() => handlePickFromGallery(img)}
-                              className={`relative aspect-square rounded-lg overflow-hidden ring-2 transition-all ${referenceImageUrl === img.url ? 'ring-primary' : 'ring-transparent hover:ring-primary/40'}`}
-                            >
-                              <img src={img.url} alt="" className="w-full h-full object-cover" />
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
                     {/* Prompt textarea + auto-generate */}
                     <div className="relative">
                       <textarea
@@ -827,8 +531,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
 
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
-                      onClick={generationTab === "character" ? handleGenerateCharacter : handleGenerateUser}
-                      disabled={(!prompt.trim() && !referenceImageUrl && !selectedLocation) || isGenerating}
+                      onClick={() => handleGenerate(generationTab === "user" ? "user" : "character")}
+                      disabled={(!prompt.trim() && !selectedLocation) || isGenerating}
                       className="sticky bottom-0 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 mt-auto"
                     >
                       {isGenerating ? (
