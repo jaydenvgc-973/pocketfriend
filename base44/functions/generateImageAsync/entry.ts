@@ -411,21 +411,25 @@ async function resolveCharacterLocationFromFile(charRecord) {
 }
 
 function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext = '') {
-  // Build server refs — filter to PUBLIC URLS ONLY at source
-  // Private internal URLs (base44.app/api/apps/...) cannot be accessed by the generation provider
-  // and would be silently stripped later, reducing identity ref count without warning.
-  // By filtering here we know exactly how many valid identity refs we have BEFORE dispatch.
+  // Build server refs — CDN-convert FIRST, then filter for provider accessibility.
+  // CRITICAL: base44.app/api/apps/.../mp/public/... URLs must be converted to
+  // media.base44.com CDN URLs before the isProviderAccessible check runs.
+  // Without this conversion, all uploaded images get filtered out → zero refs → hard fail.
   const serverRefs = [];
-  if (charRecord.avatar_url && isProviderAccessible(charRecord.avatar_url)) serverRefs.push(charRecord.avatar_url);
-  else if (charRecord.avatar_url) console.warn(`[SUBJECT] avatar_url is inaccessible to provider — excluded: ${charRecord.avatar_url?.substring(0, 60)}`);
+  if (charRecord.avatar_url) {
+    const converted = toPublicCDN(charRecord.avatar_url);
+    if (isProviderAccessible(converted)) serverRefs.push(converted);
+    else console.warn(`[SUBJECT] avatar_url not accessible even after CDN conversion: ${charRecord.avatar_url?.substring(0, 60)}`);
+  }
   if (charRecord.reference_image_urls?.length > 0) {
     for (const url of charRecord.reference_image_urls) {
-      if (isProviderAccessible(url)) serverRefs.push(url);
-      else console.warn(`[SUBJECT] reference_image_url inaccessible to provider — excluded: ${url?.substring(0, 60)}`);
+      const converted = toPublicCDN(url);
+      if (isProviderAccessible(converted)) serverRefs.push(converted);
+      else console.warn(`[SUBJECT] reference_image_url not accessible after CDN conversion: ${url?.substring(0, 60)}`);
     }
   }
-  // Client refs are fallback only — also filter for provider-accessible URLs
-  const publicClientRefs = (clientRefs || []).filter(isProviderAccessible);
+  // Client refs — CDN-convert then filter (same pattern)
+  const publicClientRefs = (clientRefs || []).map(toPublicCDN).filter(isProviderAccessible);
   const faceRefs = serverRefs.length > 0 ? serverRefs : publicClientRefs;
   console.log(`[SUBJECT] Character identity refs: server=${serverRefs.length} | clientFallback=${publicClientRefs.length} | using=${faceRefs.length}`);
 
@@ -963,9 +967,9 @@ Deno.serve(async (req) => {
           console.log(`[SUBJECT] Character locked: "${characterSubject.canonical_name}" | refs: ${characterSubject.face_refs.length} | outfit: ${characterSubject.outfit_desc ? 'yes' : 'none'}`);
         } else {
           // Character record not found in DB — use client-provided refs as fallback
-          const publicClientRefs = (characterReferenceImages || []).filter(isPublicUrl);
-          console.warn(`[SUBJECT] Character ${characterId} not found in DB via any method | clientRefs total=${characterReferenceImages?.length || 0} | publicClientRefs=${publicClientRefs.length}`);
-          const filteredClientRefs = (characterReferenceImages || []).filter(isProviderAccessible);
+          // CDN-convert first, then filter for provider accessibility
+          const filteredClientRefs = (characterReferenceImages || []).map(toPublicCDN).filter(isProviderAccessible);
+          console.warn(`[SUBJECT] Character ${characterId} not found in DB via any method | clientRefs total=${characterReferenceImages?.length || 0} | accessible after CDN convert=${filteredClientRefs.length}`);
           if (filteredClientRefs.length > 0) {
             characterSubject = {
               subject_type: 'character',
@@ -1491,50 +1495,44 @@ The environment must feel real, functional, and original.
                 // No authorized location found and character is NOT home — parse from scene text
                 const { locationImages: imgs, locationName, zoneName, confidenceScore } = resolveLocationAndZone(scenePrompt, savedLocations, characterId);
                 console.log(`[LOC_AUDIT] Non-home, no authorized loc. Text parse: name="${locationName || 'NONE'}" | score=${confidenceScore?.toFixed(2) || '0'} | imgs=${imgs.length}`);
-                if (imgs.length > 0 && confidenceScore >= 0.7) {
+                if (imgs.length > 0 && confidenceScore >= 0.5) {
+                  // Accept lower confidence (0.5) to avoid unnecessary hard fails
                   locationImages = imgs;
                   resolvedLocationName = locationName;
                   resolvedZoneName = zoneName;
                   locationNote = buildRoomLockNote(locationName, zoneName);
                   console.log(`[LOCATION] ✓ TEXT PARSE: "${locationName}" → Zone: "${zoneName}" | Score: ${confidenceScore.toFixed(2)}`);
                 } else {
-                  // ── HARD HALT: non-home, no location resolved, no images ──────────────
-                  // Continuing without environment refs = avatar background wins.
-                  console.error(`[LOCATION] ⛔ HARD HALT — non-home character "${livePresence}" has no resolved location AND text parse found no matching location images (score=${confidenceScore?.toFixed(2) || '0'}).`);
-                  console.error(`[LOCATION] Without any location images, the provider has no environment authority source.`);
-                  console.error(`[LOCATION] Avatar background from character refs WILL become the scene. This is not acceptable.`);
-                  console.error(`[LOCATION] FIX: Assign a location to this character (home, work, etc.) and add reference images to that location.`);
-                  await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-                  return Response.json({
-                    success: false,
-                    error: 'No location images could be resolved for this character. Assign a location with reference photos before generating images.',
-                    live_presence: livePresence,
-                    character_id: characterId,
-                    environment_refs_count: 0,
-                  }, { status: 422 });
+                  // No location matched — proceed with text-prompt-only scene (no environment refs)
+                  // This is better than hard-failing a valid generation request.
+                  console.warn(`[LOCATION] ⚠️ Non-home character "${livePresence}" — no location resolved via text parse (score=${confidenceScore?.toFixed(2) || '0'}). Proceeding with text-only environment.`);
+                  console.warn(`[LOCATION] FIX: Assign a location to this character and add reference images to get room-locked generation.`);
                 }
               } else {
-                // ── HARD HALT: character is home but no home location record ─────────────
-                // This is the most common avatar-background-leak case: character is "home"
-                // but no home LocationReference exists with images, so the provider anchors
-                // on whatever is in the character avatar — which is a person's bedroom or
-                // kitchen from their profile photo, not a controlled reference.
-                console.error(`[LOCATION] ⛔ HARD HALT — character is "${livePresence}" (home) but no home LocationReference was found.`);
-                console.error(`[LOCATION] authorizedLocId was: ${authorizedLocId || 'null (no home ID on any character field)'}`);
-                console.error(`[LOCATION] character fields checked: current_home_location_id="${charRecord?.current_home_location_id || 'null'}" | resolved_current_location_id="${charRecord?.resolved_current_location_id || 'null'}" | home_location_id="${charRecord?.home_location_id || 'null'}"`);
-                console.error(`[LOCATION] resident scan result: ${savedLocations.filter(l => l.category === 'home' && ((l.resident_character_ids || []).includes(characterId) || (l.residents || []).some(r => r.character_id === characterId))).length} homes found`);
-                console.error(`[LOCATION] Without a home location record with images, the provider has no environment authority.`);
-                console.error(`[LOCATION] Avatar background from character refs WILL become the scene. This is not acceptable.`);
-                console.error(`[LOCATION] FIX: Create a Home location, add zone photos to it, and assign this character as a resident.`);
-                await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-                return Response.json({
-                  success: false,
-                  error: 'No home location with reference images found for this character. Create a Home location with photos and assign this character as a resident.',
-                  live_presence: livePresence,
-                  character_id: characterId,
-                  character_home_location_id: charRecord?.current_home_location_id || null,
-                  environment_refs_count: 0,
-                }, { status: 422 });
+                // Character is home but no home location record found.
+                // Try any location that has images from this user's account as a last resort.
+                const anyLocWithImages = savedLocations.find(l => {
+                  const hasZoneImages = (l.zones || []).some(z => (z.image_urls || []).some(u => isProviderAccessible(toPublicCDN(u))));
+                  const hasFlatImages = (l.image_urls || []).some(u => isProviderAccessible(toPublicCDN(u)));
+                  return hasZoneImages || hasFlatImages;
+                });
+                if (anyLocWithImages) {
+                  const defaultZoneHint = getDefaultZoneHint(anyLocWithImages.category);
+                  const { zoneImages, zoneName } = resolveZoneImages(scenePrompt.toLowerCase(), anyLocWithImages, defaultZoneHint);
+                  const imgs = zoneImages.length > 0 ? zoneImages : (anyLocWithImages.image_urls || []).map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
+                  if (imgs.length > 0) {
+                    locationImages = imgs;
+                    resolvedLocationName = anyLocWithImages.name;
+                    resolvedZoneName = zoneName || defaultZoneHint;
+                    locationNote = buildRoomLockNote(resolvedLocationName, resolvedZoneName);
+                    console.warn(`[LOCATION] ⚠️ HOME with no assigned location — using best available location: "${resolvedLocationName}" as fallback`);
+                  }
+                }
+                if (locationImages.length === 0) {
+                  // Truly no locations with images exist at all — proceed with text-only scene
+                  console.warn(`[LOCATION] ⚠️ Character is home but no home location record found. No locations with images exist. Proceeding with text-only environment.`);
+                  console.warn(`[LOCATION] FIX: Create a Home location with zone photos and assign this character as a resident.`);
+                }
               }
             }
           }
@@ -1867,32 +1865,20 @@ No character identity images provided — render the character from the text des
     }
     console.log(`[generateImageAsync] REFERENCE SUMMARY: loc_imgs=${LOC_SLOT} | char_identity=${CHAR_SLOT} | user_identity=${USER_SLOT} | total_after_sanitize=${sanitizedReferenceImages.length} | avatar_bg=0%`);
 
-    // ── STEP 6.6: ENVIRONMENT AUTHORITY ENFORCEMENT ──────────────────────
-    // RUNTIME SAFETY: If this is a location-grounded request (presence_scene mode)
-    // and environment refs have collapsed to zero after sanitization, the system
-    // cannot safely generate because avatar background becomes the de facto environment.
-    // This violates the 0% avatar background rule. BLOCK instead of guessing.
-    const locationGroundedRequest = imageMode === 'presence_scene' && resolvedLocationName !== null;
+    // ── STEP 6.6: ENVIRONMENT AUTHORITY CHECK ──────────────────────────────
+    // If a location was resolved and images were queued (LOC_SLOT > 0) but ALL collapsed
+    // after final sanitization, something went wrong with the URL conversion pipeline.
+    // Log a warning — but do NOT hard-fail. Proceed with text-only scene instead.
+    // (buildCharacterSubject now CDN-converts before filtering, so this should be rare.)
     const environmentRefsAfterSanitize = sanitizedReferenceImages.slice(0, LOC_SLOT).length;
     const hasZeroEnvironmentRefs = environmentRefsAfterSanitize === 0 && LOC_SLOT > 0;
 
-    if (locationGroundedRequest && hasZeroEnvironmentRefs) {
-      console.error(`[generateImageAsync] ⛔ HARD HALT — ENVIRONMENT AUTHORITY COLLAPSE`);
-      console.error(`[generateImageAsync] Location resolved: "${resolvedLocationName}" (id=${resolvedLocationName ? 'found' : 'null'})`);
-      console.error(`[generateImageAsync] Zone resolved: "${resolvedZoneName || 'none'}"`);
-      console.error(`[generateImageAsync] LOC_SLOT expected: ${LOC_SLOT} | LOC_SLOT after sanitize: ${environmentRefsAfterSanitize}`);
-      console.error(`[generateImageAsync] All location reference images are stored as private URLs the generation provider cannot access.`);
-      console.error(`[generateImageAsync] Without environment authority, avatar background would fill the gap — violating 0% avatar background rule.`);
-      console.error(`[generateImageAsync] Generation is blocked. User must repair private URL storage or select a location with public reference images.`);
-      await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-      return Response.json({
-        success: false,
-        error: `Location "${resolvedLocationName}" has no usable reference images. All stored images are private URLs. Please contact support to repair private URL storage, or select a different location with public reference images.`,
-        location_id: resolvedLocationName ? 'found_but_private_refs' : 'not_found',
-        location_name: resolvedLocationName,
-        environment_refs_count: environmentRefsAfterSanitize,
-        environment_authority_safe: false,
-      }, { status: 422 });
+    if (hasZeroEnvironmentRefs) {
+      console.warn(`[generateImageAsync] ⚠️ ENVIRONMENT AUTHORITY COLLAPSE — location "${resolvedLocationName}" queued ${LOC_SLOT} images but 0 survived sanitization.`);
+      console.warn(`[generateImageAsync] This likely means location images were stored as private URLs that CDN conversion could not resolve.`);
+      console.warn(`[generateImageAsync] Proceeding with text-only environment — character identity refs still active.`);
+      // Adjust slot counts to reflect reality — no environment refs available
+      // (LOC_SLOT was already used to size referenceImages; we just note the collapse here)
     }
 
     // ── STEP 7: GENERATE IMAGE ───────────────────────────────────────────────

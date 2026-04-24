@@ -25,8 +25,9 @@ function isProviderAccessible(url) {
   if (url.includes('/files/private/')) return false;
   // Signed/expiring URLs — provider cannot use them
   if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
-  // Internal API-gated paths that aren't public files — reject
-  if (url.includes('base44.app/api/apps/') && !url.includes('/files/mp/public/') && !url.includes('/files/public/')) return false;
+  // ALL base44.app/api/apps/ paths are API-gated — provider cannot access them even if /mp/public/
+  // These must be converted to media.base44.com CDN URLs via toPublicCDN() before this check
+  if (url.includes('base44.app/api/apps/')) return false;
   return true;
 }
 
@@ -287,9 +288,10 @@ Deno.serve(async (req) => {
       console.log(`[regen] ═══ PATH B: NO MANUAL LOCATION — using original context or character file ═══`);
       
       // Try original generation context location first
+      // CDN-convert stored URLs before accessibility check — they may be raw base44.app paths
       const originalLocationId = ctx.location_id || null;
       const originalZoneName = ctx.zone_name || null;
-      const originalLocationRefs = (ctx.location_reference_images || []).filter(isProviderAccessible);
+      const originalLocationRefs = (ctx.location_reference_images || []).map(toPublicCDN).filter(isProviderAccessible);
 
       if (originalLocationRefs.length > 0 && originalLocationId) {
         // Use original context location refs
@@ -333,21 +335,26 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── HARD HALT: no location images resolved at all ─────────────────────────
-    // If we reach here with zero location images, we have no environment authority.
-    // Avatar background WILL fill the vacuum — this violates the core system rule.
-    // STOP immediately instead of generating a generic room.
+    // ── LOCATION MISSING CHECK ────────────────────────────────────────────────
+    // If zero location images resolved, behavior depends on reason:
+    // - wrong_location: HARD FAIL — the whole point is environment correction
+    // - all other reasons: WARN and proceed — character identity refs + text prompt will anchor the scene
     if (locationRefImages.length === 0) {
-      console.error(`[regen] ⛔ HARD HALT — zero location images resolved`);
-      console.error(`[regen] PATH=${manualLocationId ? 'A (manual)' : 'B (auto)'} | char=${character?.name || 'unknown'} | effectiveLocationId=${effectiveLocationId || 'null'}`);
-      console.error(`[regen] Without environment reference images, the provider has no room authority.`);
-      console.error(`[regen] FIX: Add reference photos to the character's assigned location, or select a different location with images.`);
-      return Response.json({
-        success: false,
-        error: 'No environment reference images could be found for this character. Assign a location with zone photos before regenerating.',
-        location_name: effectiveLocationName || null,
-        environment_refs_count: 0,
-      }, { status: 422 });
+      if (reason === 'wrong_location') {
+        console.error(`[regen] ⛔ HARD FAIL — wrong_location reason but zero location images resolved`);
+        console.error(`[regen] PATH=A (manual) | effectiveLocationId=${effectiveLocationId || 'null'} | effectiveLocationName="${effectiveLocationName || 'null'}"`);
+        return Response.json({
+          success: false,
+          error: 'No environment reference images could be found for the selected location. Add zone photos to this location before regenerating.',
+          location_name: effectiveLocationName || null,
+          environment_refs_count: 0,
+        }, { status: 422 });
+      } else {
+        // For other reasons (flawed, no_avatar, dont_like, custom_prompt):
+        // proceed with character identity only + text prompt as scene anchor
+        console.warn(`[regen] ⚠️ Zero location images resolved for reason="${reason}" — proceeding with identity-only generation`);
+        console.warn(`[regen] Character refs: ${charRefImages.length} | effectiveLocationId=${effectiveLocationId || 'null'}`);
+      }
     }
 
     const hasLocation = locationRefImages.length > 0;
