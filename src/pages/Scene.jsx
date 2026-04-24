@@ -864,6 +864,10 @@ export default function Scene() {
       if (authoratativeEnvRefs.length > 0) {
         finalPrompt += ` ENVIRONMENT AUTHORITY: The reference images define this location's exact room — reproduce the same layout, furniture, colors, and architecture. Do not invent a new environment.`;
       }
+      // Add avatar identity enforcement for action overrides
+      if (visiblePeopleForScene.length > 0) {
+        finalPrompt += `\n\nAVATAR IDENTITY REQUIREMENT (NON-NEGOTIABLE):\nThe attached reference images are the EXACT identity source for each character.\nYou MUST preserve: face shape, facial structure, skin tone, hair texture, hair length, hairstyle, body type, apparent age, gender presentation.\nDo NOT alter these features. Do NOT reinterpret, beautify, age, or generalize. Match the avatar EXACTLY or do not render that character.`;
+      }
       try {
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
@@ -915,13 +919,21 @@ export default function Scene() {
         ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${outfitSuffix} Photorealistic.`;
+      // IDENTITY LOCK ENFORCEMENT: Each character's avatar must be used as exact visual reference
+      const avatarRefInstructions = validResidentialPeople.length > 0
+        ? `\n\nAVATAR IDENTITY REQUIREMENT (NON-NEGOTIABLE):\nThe attached reference images are the EXACT identity source for each character.\nYou MUST preserve: face shape, facial structure, skin tone, hair texture, hair length, hairstyle, body type, apparent age, gender presentation.\nDo NOT alter these features. Do NOT reinterpret, beautify, age, or generalize. Match the avatar EXACTLY or do not render that character.`
+        : '';
+
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
     } else {
       if (isGlobal) {
         const charNames = sceneCharacters.slice(0, 3).map(c => c.name).join(", ");
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
         const charIdentityLocks = buildIdentityLockBlock(sceneCharacters.slice(0, 3), currentUser);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${outfitSuffix} Photorealistic.`;
+        const avatarRefInstructions = sceneCharacters.length > 0
+          ? `\n\nAVATAR IDENTITY REQUIREMENT (NON-NEGOTIABLE):\nThe attached reference images are the EXACT identity source for each character.\nYou MUST preserve: face shape, facial structure, skin tone, hair texture, hair length, hairstyle, body type, apparent age, gender presentation.\nDo NOT alter these features. Do NOT reinterpret, beautify, age, or generalize. Match the avatar EXACTLY or do not render that character.`
+          : '';
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
       } else {
         const physicallyPresent = [
           ...broughtCharacters,
@@ -933,7 +945,10 @@ export default function Scene() {
           : `The space is completely empty — no silhouettes, no background figures, nobody.`;
 
         const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${charIdentityLocks}${outfitSuffix} Photorealistic.`;
+        const avatarRefInstructions = physicallyPresent.length > 0
+          ? `\n\nAVATAR IDENTITY REQUIREMENT (NON-NEGOTIABLE):\nThe attached reference images are the EXACT identity source for each character.\nYou MUST preserve: face shape, facial structure, skin tone, hair texture, hair length, hairstyle, body type, apparent age, gender presentation.\nDo NOT alter these features. Do NOT reinterpret, beautify, age, or generalize. Match the avatar EXACTLY or do not render that character.`
+          : '';
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
       }
     }
 
