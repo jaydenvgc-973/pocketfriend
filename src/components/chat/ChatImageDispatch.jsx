@@ -9,6 +9,23 @@
 import { base44 } from "@/api/base44Client";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 
+function toPublicCDN(url) {
+  if (!url || typeof url !== 'string') return url;
+  if (url.startsWith('https://media.base44.com/')) return url;
+  const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
+  if (match) return `https://media.base44.com/images/public/${match[1]}`;
+  return url;
+}
+
+function isProviderAccessible(url) {
+  if (!url || typeof url !== 'string') return false;
+  if (!url.startsWith('https://')) return false;
+  if (url.includes('/files/mp/private/') || url.includes('/files/private/')) return false;
+  if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
+  if (url.includes('base44.app/api/apps/')) return false;
+  return true;
+}
+
 /**
  * Dispatch image generation for a chat message.
  * 
@@ -40,11 +57,15 @@ export async function dispatchImageGeneration({
   queryClient,
 }) {
   try {
+    // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
+    const publicCharRefs = (charRefs || []).map(toPublicCDN).filter(isProviderAccessible);
+    const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);
+
     const res = await base44.functions.invoke('generateImageAsync', {
       messageId: targetMsgId,
       prompt: imageGenPrompt,
-      characterReferenceImages: charRefs,
-      userReferenceImages: useUserRefs ? userRefImages : [],
+      characterReferenceImages: publicCharRefs,
+      userReferenceImages: useUserRefs ? publicUserRefs : [],
       characterName: character.name,
       userWorldName: userSettings.fictional_world_name || currentUser.full_name || null,
       subjectType,

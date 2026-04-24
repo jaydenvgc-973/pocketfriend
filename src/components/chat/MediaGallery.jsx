@@ -136,15 +136,23 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       timestamp: msg.timestamp,
     }));
 
-  const handleRegenSelect = async (reason, customPrompt) => {
+  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
     if (!regenTarget) return;
     setIsRegenerating(true);
     try {
-      await base44.functions.invoke('regenerateImageWithReason', {
+      const res = await base44.functions.invoke('regenerateImageWithReason', {
         messageId: regenTarget.id,
         reason,
         customPrompt,
+        manualLocationId: manualLocationId || null,
+        manualZoneId: manualZoneId || null,
       });
+      if (res?.data?.success && res?.data?.image_url) {
+        // Hydrate gallery immediately so updated image shows without reload
+        setRegenTarget(null);
+      }
+    } catch (err) {
+      console.error('[MediaGallery.handleRegenSelect] regen failed:', err.message);
     } finally {
       setIsRegenerating(false);
       setRegenTarget(null);
