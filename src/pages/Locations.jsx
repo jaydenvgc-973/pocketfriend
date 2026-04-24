@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
@@ -467,6 +467,14 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const [showCustomInput, setShowCustomInput] = useState(false);
 
   const update = (field, val) => setForm(p => ({ ...p, [field]: val }));
+
+  // Update worker_character_ids when allCharacters data loads
+  React.useEffect(() => {
+    if (editingLocation && allCharacters.length > 0) {
+      const updatedWorkerIds = computeInitialWorkerIds();
+      setForm(p => ({ ...p, worker_character_ids: updatedWorkerIds }));
+    }
+  }, [allCharacters, editingLocation?.id]);
 
   const presets = ZONE_PRESETS[form.category] || ZONE_PRESETS.other;
   const existingZoneNames = form.zones.map(z => z.zone_name.toLowerCase());
