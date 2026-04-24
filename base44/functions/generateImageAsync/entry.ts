@@ -894,20 +894,8 @@ Deno.serve(async (req) => {
     const cleanPrompt = prompt.replace(/^\[(USER|CHARACTER|JOINT)\]\s*/i, "");
 
     // ── PAST-EVENT LOCATION INTENT DETECTOR ──────────────────────────────────
-    // BEFORE stripping future/past intent phrases, scan the raw prompt for explicit
-    // past-tense references to a named saved location.
-    // If detected, this location will be used as the image scene instead of livePresence.
-    //
-    // Examples that qualify:
-    //   "yesterday at Jay's apartment"     → past location → use Jay's apartment images
-    //   "when we were at the bar last night" → past location → use bar images
-    //   "from the party at the club"        → past location → use club images
-    //
-    // Examples that DO NOT qualify (future — must default to livePresence):
-    //   "I'm going to the gym later"        → future → NO override
-    //   "we should hang at the coffee shop" → hypothetical → NO override
-    //
-    // This is intentionally permissive for past events and strict for future events.
+    // Scan raw prompt for explicit past-tense references to a named saved location.
+    // If detected, use that location instead of livePresence.
     const PAST_LOCATION_PATTERNS = [
       /\b(yesterday|last night|earlier|the other day|a few days ago|last week|the night|that night|that time|when we were|remember when|from when|after (the|our)|during (the|our)|at the time|at that|back at|i was at|we were at|i had been at|we had been at|from (the|our))\b/i,
     ];
@@ -943,22 +931,27 @@ Deno.serve(async (req) => {
         charRecord = charListUser?.[0] || null;
         if (charRecord) console.log(`[SUBJECT] ✓ Character found via user-scoped filter: "${charRecord.name}"`);
 
-        // Fallback 1: asServiceRole .get()
-        if (!charRecord) {
-          charRecord = await base44.asServiceRole.entities.Character.get(characterId).catch(() => null);
-          if (charRecord) console.log(`[SUBJECT] ✓ Character found via asServiceRole.get(): "${charRecord.name}"`);
-        }
-        // Fallback 2: asServiceRole filter by id
-        if (!charRecord) {
-          const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
-          charRecord = charList?.[0] || null;
-          if (charRecord) console.log(`[SUBJECT] ✓ Character found via asServiceRole filter: "${charRecord.name}"`);
-        }
-        // Fallback 3: asServiceRole filter by id + created_by
+        // Fallback 1: asServiceRole filter by id + created_by (always scope to current user)
         if (!charRecord && message?.created_by) {
           const charList2 = await base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: message.created_by }, null, 1).catch(() => []);
           charRecord = charList2?.[0] || null;
           if (charRecord) console.log(`[SUBJECT] ✓ Character found via created_by filter: "${charRecord.name}"`);
+        }
+        // Fallback 2: asServiceRole filter by id — but VERIFY ownership before accepting
+        if (!charRecord) {
+          const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+          const candidate = charList?.[0] || null;
+          if (candidate) {
+            // ZERO LEAKAGE: reject if this character belongs to a different user
+            const ownerEmail = candidate.owner_email || candidate.created_by;
+            const requestingUser = message?.created_by;
+            if (ownerEmail && requestingUser && ownerEmail !== requestingUser) {
+              console.error(`[SUBJECT] ⛔ CROSS-ACCOUNT VIOLATION: characterId=${characterId} belongs to "${ownerEmail}" but request is from "${requestingUser}". REJECTED.`);
+            } else {
+              charRecord = candidate;
+              console.log(`[SUBJECT] ✓ Character found via asServiceRole filter (ownership verified): "${charRecord.name}"`);
+            }
+          }
         }
 
         _cachedCharRecord = charRecord; // cache for reuse below
@@ -1069,6 +1062,17 @@ Deno.serve(async (req) => {
             // User explicitly selected a location (and optionally a zone) in Media Grid.
             // Resolve it directly — do NOT run rabbit hole / presence gate logic.
             const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
+            // ZERO LEAKAGE: verify ownership before using this location
+            if (manualLoc) {
+              const _lo = manualLoc.owner_email || manualLoc.created_by;
+              const _ru = message?.created_by;
+              const _sh = manualLoc.scope === 'shared' || manualLoc.location_type === 'shared';
+              if (_lo && _ru && _lo !== _ru && !_sh) {
+                console.error(`[LOCATION] ⛔ CROSS-ACCOUNT (creative): "${manualLoc.name}" owned by "${_lo}", request from "${_ru}". HARD FAIL.`);
+                await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+                return Response.json({ success: false, error: 'Location access denied — this location belongs to a different account.' }, { status: 403 });
+              }
+            }
             if (manualLoc) {
               resolvedLocationName = manualLoc.name;
               let imgs = [];
@@ -1233,6 +1237,17 @@ The environment must feel real, functional, and original.
           // Already handled above — skip all other location resolution
         } else if (manualLocationId) {
           const manualLoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
+          // ZERO LEAKAGE: verify this location belongs to the requesting user or is shared
+          if (manualLoc) {
+            const locOwner = manualLoc.owner_email || manualLoc.created_by;
+            const requestingUser = _cachedCharRecord?.created_by || message?.created_by;
+            const isShared = manualLoc.scope === 'shared' || manualLoc.location_type === 'shared';
+            if (locOwner && requestingUser && locOwner !== requestingUser && !isShared) {
+              console.error(`[LOCATION] ⛔ CROSS-ACCOUNT VIOLATION: location "${manualLoc.name}" (${manualLocationId}) belongs to "${locOwner}" but request is from "${requestingUser}". HARD FAIL.`);
+              await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+              return Response.json({ success: false, error: 'Location access denied — this location belongs to a different account.' }, { status: 403 });
+            }
+          }
           if (manualLoc) {
             resolvedLocationName = manualLoc.name;
             let imgs = [];
@@ -1357,11 +1372,6 @@ The environment must feel real, functional, and original.
               console.log(`[LOCATION] 🔍 Multi-source check: ${authSource || 'NO LOCATION FOUND IN CHARACTER FILE'} | locId=${authorizedLocId || 'null'} | presence="${livePresence}"`);
 
               // ── ZONE HINT FROM PROMPT ────────────────────────────────────────────────
-              // Derive zone hint from prompt KEYWORDS only.
-              // These keywords tell us which room the prompt describes.
-              // CRITICAL: The zone hint must match what the prompt says.
-              // If the prompt says "bathroom", hint must be "bathroom" — NOT "living room".
-              // DO NOT infer zone from furniture visible in character avatar photos.
               let liveZoneHint = null;
               if (livePresence === 'sleeping' || livePresence === 'napping') {
                 liveZoneHint = 'bedroom'; // state-based, not image-based
@@ -1414,6 +1424,15 @@ The environment must feel real, functional, and original.
                 const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: authorizedLocId }, null, 1).catch(() => []);
                 realTimeLoc = locList?.[0] || null;
                 if (realTimeLoc) console.log(`[LOCATION] 🏠 Location resolved via filter fallback: "${realTimeLoc.name}"`);
+              }
+              // ZERO LEAKAGE: verify location belongs to this user
+              if (realTimeLoc) {
+                const _rlo = realTimeLoc.owner_email || realTimeLoc.created_by;
+                const _rsh = realTimeLoc.scope === 'shared' || realTimeLoc.location_type === 'shared';
+                if (_rlo && createdBy && _rlo !== createdBy && !_rsh) {
+                  console.error(`[LOCATION] ⛔ CROSS-ACCOUNT (presence): "${realTimeLoc.name}" owned by "${_rlo}", not "${createdBy}". Discarded.`);
+                  realTimeLoc = null;
+                }
               }
 
               // SAFETY: reject venue location when character is home

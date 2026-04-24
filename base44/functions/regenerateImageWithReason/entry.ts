@@ -152,19 +152,28 @@ Deno.serve(async (req) => {
     const originalCharId = ctx.character_id || message.character_id || null;
     const originalSubjectType = ctx.subject_type || 'character';
 
-    // Fetch character
+    // Fetch character — always scope to the requesting user (zero leakage)
     let character = null;
     if (originalCharId) {
+      // Primary: user-scoped (respects RLS)
       const charListUser = await base44.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
       character = charListUser?.[0] || null;
-      if (!character) character = await base44.asServiceRole.entities.Character.get(originalCharId).catch(() => null);
-      if (!character) {
-        const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
-        character = charList?.[0] || null;
-      }
+      // Fallback: service role but verify ownership
       if (!character && message?.created_by) {
         const charList2 = await base44.asServiceRole.entities.Character.filter({ id: originalCharId, created_by: message.created_by }, null, 1).catch(() => []);
         character = charList2?.[0] || null;
+      }
+      if (!character) {
+        const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+        const candidate = charList?.[0] || null;
+        if (candidate) {
+          const _co = candidate.owner_email || candidate.created_by;
+          if (_co && message?.created_by && _co !== message.created_by) {
+            console.error(`[regen] ⛔ CROSS-ACCOUNT: character "${candidate.name}" owned by "${_co}", request from "${message.created_by}". REJECTED.`);
+          } else {
+            character = candidate;
+          }
+        }
       }
     }
     console.log(`[regen] Character: ${character?.name || 'NOT FOUND'} (id=${originalCharId || 'none'})`);
