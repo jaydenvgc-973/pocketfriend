@@ -394,6 +394,40 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const activeChars = editableChars.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
   const npcFictitious = editableChars.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
+  // Compute initialWorkerIds: merge location's explicit worker_character_ids with characters whose employment fields point to this location
+  const computeInitialWorkerIds = () => {
+    const ids = new Set();
+    
+    // Add existing explicit worker assignments
+    if (editingLocation?.worker_character_ids) {
+      editingLocation.worker_character_ids.forEach(id => ids.add(id));
+    }
+    
+    // Add characters whose occupation_location_id or additional_occupation_locations point to this location
+    allCharacters.forEach(char => {
+      if (!char || !char.id || char.status === 'deleted' || char.status === 'moved_away') return;
+      if (char.owner_email !== currentUser?.email && char.created_by !== currentUser?.email) return;
+      
+      // Check primary occupation location
+      if (char.occupation_location_id === editingLocation?.id) {
+        ids.add(char.id);
+      }
+      
+      // Check additional occupation locations
+      if (char.additional_occupation_locations && Array.isArray(char.additional_occupation_locations)) {
+        char.additional_occupation_locations.forEach(locEntry => {
+          if (locEntry?.location_id === editingLocation?.id) {
+            ids.add(char.id);
+          }
+        });
+      }
+    });
+    
+    return Array.from(ids);
+  };
+  
+  const initialWorkerIds = editingLocation ? computeInitialWorkerIds() : [];
+
   const [form, setForm] = useState({
     name: editingLocation?.name || "",
     location_type: editingLocation?.location_type === "shared" ? "global" : (editingLocation?.location_type || "global"),
@@ -421,7 +455,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     gym_membership_fee: editingLocation?.gym_membership_fee || 50,
     utility_costs: editingLocation?.utility_costs || { electricity: 80, water: 40, gas: 50, internet: 60, other: 0 },
     operating_hours: editingLocation?.operating_hours || [],
-    worker_character_ids: editingLocation?.worker_character_ids || [],
+    worker_character_ids: initialWorkerIds,
     worker_pay_rates: editingLocation?.worker_pay_rates || {},
     worker_pay_type: editingLocation?.worker_pay_type || {},
     worker_job_titles: editingLocation?.worker_job_titles || {},
