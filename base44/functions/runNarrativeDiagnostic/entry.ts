@@ -21,8 +21,9 @@ Deno.serve(async (req) => {
 
     const runId = `diag_${Date.now()}`;
     const now = new Date();
-    const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+    // active_created_characters: 7-day activity window (matches scheduler)
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
     console.log(`[runNarrativeDiagnostic] ▶ START user=${user.email} runId=${runId}`);
 
@@ -96,11 +97,12 @@ Deno.serve(async (req) => {
       charReport.conversationId = convo.id;
       charReport.lastMessageDate = convo.last_message_date;
 
-      // Check 3: recent activity
-      charReport.checks.conversationActiveIn24h = !!(convo.last_message_date && convo.last_message_date >= oneDayAgo);
-      if (!charReport.checks.conversationActiveIn24h) {
+      // Check 3: recent activity — 7-day window for active_created_character
+      const lastMsgDate = convo.last_message_date ? new Date(convo.last_message_date) : null;
+      charReport.checks.conversationActiveIn7Days = !!(lastMsgDate && lastMsgDate >= sevenDaysAgo);
+      if (!charReport.checks.conversationActiveIn7Days) {
         charReport.status = 'skipped';
-        charReport.reason = `conversation inactive — last message: ${convo.last_message_date || 'never'} (needs to be within 24h)`;
+        charReport.reason = `conversation inactive — last message: ${convo.last_message_date || 'never'} (needs to be within 7 days)`;
         report.summary.skipped++;
         report.characters.push(charReport);
         continue;
@@ -112,7 +114,7 @@ Deno.serve(async (req) => {
         '-timestamp', 5
       ).catch(() => []);
       const lastNarrativeTs = recentNarratives[0]?.timestamp || null;
-      charReport.checks.narrativeCooldownClear = !recentNarratives.some(m => m.timestamp >= twoHoursAgo);
+      charReport.checks.narrativeCooldownClear = !recentNarratives.some(m => new Date(m.timestamp) > twoHoursAgo);
       charReport.lastNarrativeTimestamp = lastNarrativeTs;
       if (!charReport.checks.narrativeCooldownClear) {
         charReport.status = 'skipped';

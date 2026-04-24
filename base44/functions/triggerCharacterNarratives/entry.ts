@@ -31,8 +31,9 @@ const buildLocationAffinityContext = (character) => {
 async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode = false) {
   const log = [];
   const now = new Date();
-  const oneDayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
-  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000).toISOString();
+  // active_created_characters receive narratives if conversation was active in the last 7 days
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
   const results = [];
 
   // ACCOUNT-SCOPED: fetch this user's characters, filter in JS (compound DB filters can be unreliable)
@@ -70,9 +71,10 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
 
     const convo = convos[0];
 
-    // ── 2. Activity check — last 24h ──
-    if (!convo.last_message_date || convo.last_message_date < oneDayAgo) {
-      const reason = `conversation inactive — last message: ${convo.last_message_date || 'never'}`;
+    // ── 2. Activity check — last 7 days (active_created_character gets a generous window) ──
+    const lastMsgDate = convo.last_message_date ? new Date(convo.last_message_date) : null;
+    if (!lastMsgDate || lastMsgDate < sevenDaysAgo) {
+      const reason = `conversation inactive — last message: ${convo.last_message_date || 'never'} (needs to be within 7 days)`;
       console.log(`[triggerCharacterNarratives] SKIP ${character.name} — ${reason}`);
       results.push({ ...skipBase, reason, ts: now.toISOString(), runId });
       continue;
@@ -83,7 +85,7 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
       { conversation_id: convo.id, is_narrative: true },
       '-timestamp', 5
     ).catch(() => []);
-    const narrativeRecently = recentNarratives.some(m => m.timestamp >= twoHoursAgo);
+    const narrativeRecently = recentNarratives.some(m => new Date(m.timestamp) > twoHoursAgo);
     if (narrativeRecently) {
       const lastN = recentNarratives[0]?.timestamp;
       const reason = `narrative cooldown — last narrative: ${lastN}`;
