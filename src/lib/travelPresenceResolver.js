@@ -153,12 +153,21 @@ function resolveInitials(char) {
 export function getPresenceAtLocation(location, presenceEntities = []) {
   if (!location) return [];
   
-  return presenceEntities.filter(entity => {
+  const here = presenceEntities.filter(entity => {
     // Entity must be currently present at this location
     if (!entity.is_currently_present) return false;
     if (entity.resolved_current_location_id !== location.id) return false;
     return true;
   });
+  
+  console.log(
+    `[getPresenceAtLocation] "${location.name}":`,
+    `total=${presenceEntities.length} |`,
+    `present=${here.length} |`,
+    `present: ${here.map(e => `${e.display_name}(is_present:${e.is_currently_present},loc:${e.resolved_current_location_id})`).join(', ')}`
+  );
+  
+  return here;
 }
 
 /**

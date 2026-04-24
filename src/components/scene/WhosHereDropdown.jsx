@@ -36,6 +36,13 @@ export default function WhosHereDropdown({
     if (!location) return [];
     const presenceHere = getPresenceAtLocation(location, unifiedPresenceEntities);
     
+    console.log(
+      `[WhosHereDropdown] "${location.name}": `,
+      `unifiedTotal=${unifiedPresenceEntities.length} |`,
+      `present=${presenceHere.length} |`,
+      `present chars: ${presenceHere.map(e => `${e.display_name}(type:${e.character_type})`).join(', ')}`
+    );
+    
     // Convert presence entities to NPC-picker format for consistent rendering
     return presenceHere.map(entity => ({
       id: entity.id,
