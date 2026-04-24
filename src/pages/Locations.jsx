@@ -332,40 +332,40 @@ function isShiftCurrentlyActive(shift) {
 function getWorkerAvailabilityV2(character, allLocations, currentLocationId = null) {
   if (!character) return { status: 'unavailable', allJobs: [] };
 
-  // Get all job locations (primary + additional)
   const allJobs = [];
 
+  // Primary occupation
   if (character.occupation_location_id && character.occupation_location_id !== currentLocationId) {
     const loc = allLocations.find(l => l.id === character.occupation_location_id);
     if (loc) {
       const shift = loc.worker_shifts?.[character.id];
+      const jobTitle = character.work_details?.job_title || loc.worker_job_titles?.[character.id] || null;
       allJobs.push({
         name: loc.name,
-        title: loc.worker_job_titles?.[character.id] || null,
+        title: jobTitle,
         shift: formatShiftDisplay(shift),
-        days: shift?.days?.map(d => DAY_LABELS[d]) || [],
       });
     }
   }
 
+  // Additional occupations
   if (character.additional_occupation_locations && Array.isArray(character.additional_occupation_locations)) {
     character.additional_occupation_locations.forEach(addlOcc => {
       if (addlOcc.location_id && addlOcc.location_id !== currentLocationId) {
         const loc = allLocations.find(l => l.id === addlOcc.location_id);
         if (loc) {
           const shift = loc.worker_shifts?.[character.id];
+          const jobTitle = addlOcc.job_title || loc.worker_job_titles?.[character.id] || null;
           allJobs.push({
             name: addlOcc.location_name || loc.name,
-            title: addlOcc.job_title || loc.worker_job_titles?.[character.id] || null,
+            title: jobTitle,
             shift: formatShiftDisplay(shift),
-            days: shift?.days?.map(d => DAY_LABELS[d]) || [],
           });
         }
       }
     });
   }
 
-  // Calculate availability using the engine
   const availability = calculateCharacterAvailability(character, allLocations, currentLocationId);
 
   return {
