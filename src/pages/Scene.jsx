@@ -29,6 +29,7 @@ import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
+import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
