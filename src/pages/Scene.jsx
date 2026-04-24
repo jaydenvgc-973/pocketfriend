@@ -690,11 +690,18 @@ export default function Scene() {
 
     // CRITICAL: Use resolvedWhosHereList directly — no re-resolution, no duplication
     // Log validation before proceeding
+    const avatarCheckList = resolvedWhosHereList.map(p => ({
+      name: p.name,
+      id: p.id,
+      avatar_url: p.avatar_url,
+      image_avatar_url: p.image_avatar_url,
+      hasAvatar: !!(p.avatar_url || p.image_avatar_url)
+    }));
     console.log(
       `[Scene generateSceneImage] VALIDATION:`,
       `who's here count: ${resolvedWhosHereList.length} |`,
-      `avatars present: ${resolvedWhosHereList.filter(p => p.avatar_url || p.image_avatar_url).length}`,
-      `| people: ${resolvedWhosHereList.map(p => `${p.name}(${!!(p.avatar_url || p.image_avatar_url) ? '✓' : '✗'})`).join(', ')}`
+      `avatars present: ${resolvedWhosHereList.filter(p => p.avatar_url || p.image_avatar_url).length} |`,
+      'avatars:', avatarCheckList
     );
 
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
@@ -743,6 +750,13 @@ export default function Scene() {
     // Use resolvedWhosHereList directly — no re-query, no re-matching by name
     const visiblePeopleForScene = resolvedWhosHereList;
     
+    // Extract avatar URLs from all characters — prioritize avatar_url first, fallback to image_avatar_url
+    const allCharacterAvatars = visiblePeopleForScene
+      .map(c => c.avatar_url || c.image_avatar_url)
+      .filter(url => url && url.trim().length > 0);
+    
+    console.log('[Scene] Character avatars extracted:', allCharacterAvatars);
+    
     // Prioritize avatars (identity lock) before environment images
     const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
 
@@ -778,6 +792,7 @@ export default function Scene() {
       try {
         // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
         const actionVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
+        console.log('[Scene action] Passing visual references:', actionVisualRefs);
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
           existing_image_urls: actionVisualRefs.length > 0 ? actionVisualRefs : undefined,
@@ -858,6 +873,7 @@ export default function Scene() {
     try {
       // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
       const finalVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
+      console.log('[Scene main] Passing visual references:', finalVisualRefs, 'for characters:', visiblePeopleForScene.map(c => c.name));
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
         existing_image_urls: finalVisualRefs.length > 0 ? finalVisualRefs : undefined,
