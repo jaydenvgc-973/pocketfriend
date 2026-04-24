@@ -34,6 +34,7 @@ import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLoc
 import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGenerator";
 import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
+import { useSceneCharacters } from "@/hooks/useSceneCharacters";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -103,21 +104,8 @@ export default function Scene() {
     enabled: !!currentUser?.email,
   });
 
-  const { data: characters = [] } = useQuery({
-    queryKey: ["characters", currentUser?.email],
-    queryFn: async () => {
-      const all = await base44.entities.Character.filter({ created_by: currentUser.email, status: "active" });
-      // DIAGNOSTIC FILTER: exclude test/diagnostic entities from all scene queries
-      return all.filter(c =>
-        c.is_test_character !== true &&
-        c.diagnostic_only !== true &&
-        c.exclude_from_default_scene_queries !== true
-      );
-    },
-    enabled: !!currentUser?.email,
-    // Refetch on scene load to ensure fresh authoritative presence data
-    staleTime: 0,
-  });
+  // Multi-source character loading — same strategy as Travel page so Scene sees all NPCs
+  const characters = useSceneCharacters(currentUser);
 
   const location = locationsData.find(l => l.id === locationId);
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
