@@ -818,9 +818,10 @@ export default function Scene() {
         ? allZoneImagesFlat.slice(0, 4)
         : (firstImage ? [firstImage] : []);
     
-    // Get visible people for this scene (residents + brought chars for home, or brought chars for public)
+    // Get visible people for this scene — for homes use the full residential-eligible pool,
+    // for public locations use only brought characters
     const visiblePeopleForScene = isHomeLocation
-      ? [...homeResidentsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
+      ? [...homeResidentsPresent, ...familyMemberNpcsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
       : broughtCharacters;
     
     // Prioritize avatars (identity lock) before environment images
@@ -829,7 +830,8 @@ export default function Scene() {
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
       let finalPrompt = actionOverridePrompt;
-      const isGlobal = location.location_type === "global";
+      // isGlobal must NEVER be true for residential/home locations
+      const isGlobal = !isHomeLocation && location.location_type === "global";
 
       if (!isGlobal) {
         // Apply residential filtering for home locations — residents only, plus user
@@ -868,7 +870,8 @@ export default function Scene() {
 
     // authoratativeEnvRefs already computed above — zone images are the ONLY environment source
     const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
-    const isGlobal = location.location_type === "global";
+    // isGlobal must NEVER be true for residential locations — home scenes always use the strict resident path
+    const isGlobal = !isHomeLocation && location.location_type === "global";
     const envNote = authoratativeEnvRefs.length > 0
       ? `CRITICAL ENVIRONMENT RULE: The reference images are the AUTHORITATIVE source for this location's environment. Reproduce the EXACT room shown — same layout, furniture, wall colors, lighting, and architecture. Do NOT invent a new room. Characters exist INSIDE this environment; they do NOT define it.`
       : "";
