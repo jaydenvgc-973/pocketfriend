@@ -34,13 +34,7 @@ export default function WhosHereDropdown({
   // Get real characters currently present at this location from unified resolver
   const presentRealCharacters = useMemo(() => {
     if (!location) return [];
-    console.log(
-      `[WhosHereDropdown] Resolving "${location.name}":`,
-      `unifiedPresenceEntities=${unifiedPresenceEntities.length} |`,
-      `entities: ${unifiedPresenceEntities.map(e => `${e.display_name}(loc:${e.resolved_current_location_id})`).join(', ') || 'NONE'}`
-    );
     const presenceHere = getPresenceAtLocation(location, unifiedPresenceEntities);
-    console.log(`[WhosHereDropdown] After filter: ${presenceHere.length} present`);
     
     // Convert presence entities to NPC-picker format for consistent rendering
     return presenceHere.map(entity => ({

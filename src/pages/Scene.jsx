@@ -126,7 +126,6 @@ export default function Scene() {
   // ── UNIFIED PRESENCE RESOLUTION ─────────────────────────────────────────────
   // SAME resolver as Travel page (Map + popup) — one source of truth for all surfaces
   const unifiedPresenceEntities = useMemo(() => {
-    console.log(`[Scene] Resolving presence: active=${characters.filter(c => c.character_type === 'active_created_character').length}, npc_fict=${characters.filter(c => c.character_type === 'npc_fictitious').length}, npc_fam=${characters.filter(c => c.character_type === 'npc_family_member').length}`);
     const resolved = resolveTravelPresenceEntities({
       currentUser,
       activeCharacters: characters.filter(c => c.character_type === 'active_created_character'),
@@ -135,9 +134,42 @@ export default function Scene() {
       allCharacters: characters,
       locations: locationsData,
     });
-    console.log(`[Scene] Resolved: ${resolved.length} total | Present now: ${resolved.filter(e => e.is_currently_present).length}`);
-    return resolved;
-  }, [currentUser?.id, characters.length, locationsData.length]);
+
+    // CRITICAL: Brought characters MUST appear in presence, even if resolved_current_location_id hasn't synced yet
+    // They are explicitly here with the user, so override their presence state
+    const withBroughtCharacters = resolved.map(entity => {
+      if (broughtCharacters.find(bc => bc.id === entity.id)) {
+        return {
+          ...entity,
+          resolved_current_location_id: locationId,
+          is_currently_present: true,
+        };
+      }
+      return entity;
+    });
+
+    // Add any brought characters missing from resolved list (e.g., newly arrived)
+    broughtCharacters.forEach(brought => {
+      if (!withBroughtCharacters.find(e => e.id === brought.id)) {
+        withBroughtCharacters.push({
+          id: brought.id,
+          display_name: brought.display_name || brought.name,
+          name: brought.name,
+          character_type: brought.character_type,
+          avatar_url: brought.avatar_url,
+          resolved_current_location_id: locationId,
+          resolved_current_location_name: location?.name,
+          resolved_presence_status: 'visiting',
+          is_currently_present: true,
+          is_home_resident: brought.current_home_location_id === locationId,
+          personality_summary: brought.personality_summary,
+          emotional_state: brought.emotional_state,
+        });
+      }
+    });
+
+    return withBroughtCharacters;
+  }, [currentUser?.id, characters.length, locationsData.length, broughtCharacters, locationId, location?.name]);
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
   // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
@@ -605,7 +637,7 @@ export default function Scene() {
   // Home page card, Travel page, Travel pop-ups, Chat/Narrative, Image generation.
   // RULE: One character = one location. No overlap. No stale state.
   useEffect(() => {
-    if (!location) return;
+    if (!location || broughtCharacters.length === 0) return;
     
     // Update brought characters — they have traveled here, so this IS their current location now.
     broughtCharacters.forEach(char => {
@@ -622,7 +654,7 @@ export default function Scene() {
         travel_destination_location_id: null,
       }).catch(() => {});
     });
-  }, [location?.id]);
+  }, [location?.id, broughtCharacters.length]);
 
   const handleLeaveWithCharacters = async () => {
     setShowLeaveModal(false);
