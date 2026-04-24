@@ -300,7 +300,7 @@ export default function EditCharacterType({ characters = [], currentUser }) {
     };
 
     performSearch();
-  }, [searchQuery, userEmail, scopedCharacters]);
+  }, [searchQuery, currentUser?.email, scopedCharacters]);
 
   const { strong: strongMatches, weak: weakMatches } = searchMatches;
 
