@@ -1494,7 +1494,7 @@ Return JSON:
                     const residentNpcs = allPossibleNpcs.filter(n => n.npcType === "resident");
                     const staffNpcs = allPossibleNpcs.filter(n => n.npcType === "staff");
                     const customerNpcs = allPossibleNpcs.filter(n => n.npcType === "customer");
-                    const ungrouped = allPossibleNpcs.filter(n => !n.npcType);
+                    const ungrouped = allPossibleNpcs.filter(n => !["resident", "staff", "customer"].includes(n.npcType));
 
                     return (
                       <>
