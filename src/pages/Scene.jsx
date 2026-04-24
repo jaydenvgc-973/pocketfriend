@@ -572,49 +572,54 @@ export default function Scene() {
     ? allPossibleNpcs.filter(n => selectedNpcIds.includes(n.id))
     : [];
 
-  // ── AUTHORITATIVE SCENE ROSTER ───────────────────────────────────────────────
-  // STRICT DATA SEPARATION — three distinct lists:
-  //
-  // 1. traveledWithChars — ONLY characters explicitly in the URL characterIds (user selected on Travel page)
-  //    or added via a valid invite/join flow (extraNpcs). NEVER includes residents, owners, or employees.
-  //
-  // 2. presentResidents — Characters physically home at this location (residents only, not companions)
-  //
-  // 3. presentWorkers — Characters confirmed on-shift AND live-presence at this location
-  //
-  // 4. selectedNpcs — Explicitly chosen by user from "Who's here" picker
-  //
-  // RULE: Ownership / residence linkage / employment assignment alone do NOT add anyone to any list.
-  // RULE: Diagnostic/test characters are already filtered from the characters array above.
+  // ── SINGLE SHARED PEOPLE RESOLUTION PIPELINE ───────────────────────────────────
+  // CRITICAL: Build the resolved people list ONCE. Use it for BOTH Who's Here AND image generation.
+  // No re-resolution. No duplication. No separate avatar lookups.
 
   // traveled-with = only URL-param companions + invite-joined extras
   const traveledWithChars = broughtCharacters; // strictly from characterIds URL param
 
-  // Build the full scene roster maintaining semantic separation
-  const allSceneChars = [
-    // Section 1: Traveled-with companions (explicit selection only)
-    ...traveledWithChars,
-    // Section 2: Home residents physically present (home scenes only) — NOT traveled-with
-    ...(isHomeLocation ? homeResidentsPresent.filter(r => !traveledWithChars.find(t => t.id === r.id)) : []),
-    // Section 3: Family NPCs physically present (home scenes only) — NOT traveled-with
-    ...familyNpcSceneObjects.filter(fn => !traveledWithChars.find(b => b.name === fn.name)),
-    // Section 4: Workers on-shift with confirmed live presence — NOT traveled-with
-    // VGC Towers: never auto-inject distributed NPCs — require explicit selection
-    ...workerCharacters.filter(w => !traveledWithChars.find(t => t.id === w.id)),
-    // Section 5: VGC Towers / traveling NPCs — excluded from auto-scene, require explicit pick
-    ...(isVGCTowers ? [] : vgcDistributedNpcs.filter(n =>
-      !traveledWithChars.find(b => b.id === n.id) &&
-      !workerCharacters.find(w => w.id === n.id)
-    )),
-    ...(isVGCTowers ? [] : npcsTravelingHere.filter(n =>
-      !traveledWithChars.find(b => b.id === n.id) &&
-      !familyNpcSceneObjects.find(fn => fn.name === n.name)
-    )),
-    // Section 6: Explicitly selected NPCs from "Who's here" picker
-    ...selectedNpcs,
-    // Section 7: Invite-joined extras (these ARE valid traveled-with equivalents)
-    ...extraNpcs.filter(e => !traveledWithChars.find(t => t.id === e.id)),
-  ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
+  // BUILD FUNCTION: resolvedWhosHereList — the authoritative people data
+  // This is used by Who's Here dropdown AND passed to generateSceneImage()
+  const buildResolvedWhosHereList = () => {
+    const list = [
+      // Section 1: Traveled-with companions (explicit selection only)
+      ...traveledWithChars,
+      // Section 2: Home residents physically present (home scenes only) — NOT traveled-with
+      ...(isHomeLocation ? homeResidentsPresent.filter(r => !traveledWithChars.find(t => t.id === r.id)) : []),
+      // Section 3: Family NPCs physically present (home scenes only) — enriched with avatar_url
+      ...familyNpcSceneObjects.filter(fn => !traveledWithChars.find(b => b.name === fn.name)),
+      // Section 4: Workers on-shift with confirmed live presence — NOT traveled-with
+      ...workerCharacters.filter(w => !traveledWithChars.find(t => t.id === w.id)),
+      // Section 5: VGC Towers / traveling NPCs — excluded from auto-scene, require explicit pick
+      ...(isVGCTowers ? [] : vgcDistributedNpcs.filter(n =>
+        !traveledWithChars.find(b => b.id === n.id) &&
+        !workerCharacters.find(w => w.id === n.id)
+      )),
+      ...(isVGCTowers ? [] : npcsTravelingHere.filter(n =>
+        !traveledWithChars.find(b => b.id === n.id) &&
+        !familyNpcSceneObjects.find(fn => fn.name === n.name)
+      )),
+      // Section 6: Explicitly selected NPCs from "Who's here" picker
+      ...selectedNpcs,
+      // Section 7: Invite-joined extras (these ARE valid traveled-with equivalents)
+      ...extraNpcs.filter(e => !traveledWithChars.find(t => t.id === e.id)),
+    ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i); // dedupe
+
+    // VALIDATION: Block if avatars are missing from selected residents
+    const missingAvatars = list.filter(c => !c.avatar_url && !c.image_avatar_url && c.name);
+    if (missingAvatars.length > 0) {
+      console.warn(
+        `[Scene] ⚠️ MISSING AVATARS in Who's Here list:`,
+        missingAvatars.map(c => `${c.name} (${c.id})`).join(', ')
+      );
+    }
+
+    return list;
+  };
+
+  const resolvedWhosHereList = buildResolvedWhosHereList();
+  const allSceneChars = resolvedWhosHereList;
 
   // Apply 10-character limit for VGC Towers scene display (data not affected, only display)
   const displayCharacters = isVGCTowers && allSceneChars.length > 10 ? allSceneChars.slice(0, 10) : allSceneChars;
@@ -775,6 +780,16 @@ export default function Scene() {
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
     setIsGeneratingImage(true);
+
+    // CRITICAL: Use resolvedWhosHereList directly — no re-resolution, no duplication
+    // Log validation before proceeding
+    console.log(
+      `[Scene generateSceneImage] VALIDATION:`,
+      `who's here count: ${resolvedWhosHereList.length} |`,
+      `avatars present: ${resolvedWhosHereList.filter(p => p.avatar_url || p.image_avatar_url).length}`,
+      `| people: ${resolvedWhosHereList.map(p => `${p.name}(${!!(p.avatar_url || p.image_avatar_url) ? '✓' : '✗'})`).join(', ')}`
+    );
+
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
     const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
@@ -818,11 +833,8 @@ export default function Scene() {
         ? allZoneImagesFlat.slice(0, 4)
         : (firstImage ? [firstImage] : []);
     
-    // Get visible people for this scene — for homes use the full residential-eligible pool,
-    // for public locations use only brought characters
-    const visiblePeopleForScene = isHomeLocation
-      ? [...homeResidentsPresent, ...familyMemberNpcsPresent, ...broughtCharacters].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i)
-      : broughtCharacters;
+    // Use resolvedWhosHereList directly — no re-query, no re-matching by name
+    const visiblePeopleForScene = resolvedWhosHereList;
     
     // Prioritize avatars (identity lock) before environment images
     const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
@@ -834,17 +846,10 @@ export default function Scene() {
       const isGlobal = !isHomeLocation && location.location_type === "global";
 
       if (!isGlobal) {
-        // Apply residential filtering for home locations — residents only, plus user
-        // Use familyNpcSceneObjects (enriched with avatar_url) not raw familyMemberNpcsPresent
-        const rawPresent = [
-          ...homeResidentsPresent,
-          ...broughtCharacters,
-          ...familyNpcSceneObjects,
-        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
-
+        // Use resolvedWhosHereList directly — already properly resolved with avatars
         const physicallyPresent = isHomeLocation
-          ? resolveSceneImagePeople(location, rawPresent, currentUser, true)
-          : rawPresent;
+          ? resolveSceneImagePeople(location, resolvedWhosHereList, currentUser, true)
+          : resolvedWhosHereList;
 
         if (physicallyPresent.length === 0) {
           finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
@@ -881,14 +886,20 @@ export default function Scene() {
     let prompt;
     if (isHomeLocation) {
       // ── RESIDENTIAL SCENE FILTERING + IDENTITY LOCK ────────────────────────
-      // Strict residence occupant-only rule + 100% face match to avatars
-      // Pass familyNpcSceneObjects (enriched, with avatar_url from parent character's family_members)
-      // NOT familyMemberNpcsPresent (raw location record entries with no avatar_url or id)
+      // Use resolvedWhosHereList directly — already contains all properly-resolved residents
+      // with avatars loaded. No re-resolution. No re-matching.
       const validResidentialPeople = resolveSceneImagePeople(
         location,
-        [...homeResidentsPresent, ...broughtCharacters, ...familyNpcSceneObjects],
+        resolvedWhosHereList,
         currentUser,
         true // include user
+      );
+
+      console.log(
+        `[Scene image] RESIDENTIAL PEOPLE:`,
+        `input count: ${resolvedWhosHereList.length} |`,
+        `validated count: ${validResidentialPeople.length} |`,
+        `names: ${validResidentialPeople.map(p => `${p.name}`).join(', ')}`
       );
 
       const visibleNames = validResidentialPeople.slice(0, 3).map(c => c.name);
