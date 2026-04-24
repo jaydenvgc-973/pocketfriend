@@ -1,132 +1,173 @@
+/**
+ * regenerateImageWithReason — "Why Regenerate" handler.
+ *
+ * PIPELINE:
+ *   - Reads generation_context saved on the message (set by generateImageAsync / mediaGridGenerate)
+ *   - Uses that context as the source of truth: same character, same location, same zone
+ *   - User corrections (wrong_location) update ONLY the environment refs
+ *   - User corrections (dont_like, custom_prompt) update ONLY the prompt
+ *   - Identity is NEVER discarded unless there are no refs
+ *
+ * RULES:
+ *   - Never generate a random person
+ *   - Never redesign the room
+ *   - Never cross accounts
+ *   - Avatar background = 0% influence on environment
+ */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-// Convert internal base44.app storage URL to public CDN URL that external providers can access.
-// Pattern: https://base44.app/api/apps/{appId}/files/mp/public/{appId}/{filename}
-//       → https://media.base44.com/images/public/{appId}/{filename}
+// ── URL UTILITIES ─────────────────────────────────────────────────────────────
+
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
-  // Already a CDN URL — return as-is
   if (url.startsWith('https://media.base44.com/')) return url;
-  // Transform internal API file URL to CDN URL
   const match = url.match(/https:\/\/base44\.app\/api\/apps\/[^\/]+\/files\/mp\/public\/([^\/]+\/[^?]+)/);
-  if (match) {
-    const converted = `https://media.base44.com/images/public/${match[1]}`;
-    console.log(`[regen] URL converted: ${url.substring(0, 60)}... → ${converted}`);
-    return converted;
-  }
+  if (match) return `https://media.base44.com/images/public/${match[1]}`;
   return url;
 }
 
-function isProviderAccessible(url) {
+function isAccessible(url) {
   if (!url || typeof url !== 'string') return false;
   if (!url.startsWith('https://')) return false;
-  // Private storage — requires authentication, provider cannot access
-  if (url.includes('/files/mp/private/')) return false;
-  if (url.includes('/files/private/')) return false;
-  // Signed/expiring URLs — provider cannot use them
+  if (url.includes('/files/mp/private/') || url.includes('/files/private/')) return false;
   if (url.includes('?token=') || url.includes('?signed=') || url.includes('X-Amz-Signature')) return false;
-  // ALL base44.app/api/apps/ paths are API-gated — provider cannot access them even if /mp/public/
-  // These must be converted to media.base44.com CDN URLs via toPublicCDN() before this check
   if (url.includes('base44.app/api/apps/')) return false;
   return true;
 }
 
-async function resolveLocationImages(base44, locationId, zoneName) {
-  if (!locationId) return { images: [], zoneName: null, locationName: null };
-  
-  const loc = await base44.asServiceRole.entities.LocationReference.get(locationId).catch(() => null);
-  if (!loc) {
-    console.error(`[regen] ⛔ Location NOT FOUND: id=${locationId}`);
-    return { images: [], zoneName: null, locationName: null };
-  }
-
-  console.log(`[regen] ═══ LOCATION LOADED ═══`);
-  console.log(`[regen] location.id="${locationId}" | location.name="${loc.name}" | zones=${loc.zones?.length || 0} | flat_images=${loc.image_urls?.length || 0}`);
-  console.log(`[regen] zoneName REQUESTED: "${zoneName || 'null'}"`);
-  
-  // AUDIT: log all zones in this location
-  loc.zones?.forEach((z, i) => {
-    console.log(`[regen]   Zone[${i}]: name="${z.zone_name}" | image_urls count=${z.image_urls?.length || 0}`);
-    if (z.image_urls?.length > 0) {
-      z.image_urls.slice(0, 2).forEach((url, ui) => {
-        console.log(`[regen]     Image[${ui}]: ${url.substring(0, 80)}`);
-      });
-    }
-  });
-
-  let images = [];
-  let resolvedZone = null;
-
-  // STEP 1: Exact zone match (MANDATORY when zoneName provided)
-  if (zoneName && loc.zones?.length > 0) {
-    console.log(`[regen] STEP 1: Searching for exact zone match: "${zoneName}"`);
-    const zone = loc.zones.find(z => z.zone_name && z.zone_name.toLowerCase() === zoneName.toLowerCase());
-    if (zone) {
-      console.log(`[regen] ✓ EXACT MATCH FOUND: zone.zone_name="${zone.zone_name}"`);
-      const rawUrls = zone.image_urls || [];
-      console.log(`[regen]   Raw zone.image_urls count: ${rawUrls.length}`);
-      
-      const filtered = rawUrls.map(url => {
-        const converted = toPublicCDN(url);
-        const accessible = isProviderAccessible(converted);
-        console.log(`[regen]   URL: ${url.substring(0, 50)}... → ${accessible ? '✓ accessible' : '✗ NOT accessible'}`);
-        return converted;
-      }).filter(isProviderAccessible);
-      
-      images = filtered.slice(0, 6);
-      resolvedZone = zone.zone_name;
-      console.log(`[regen] ✓ ZONE MATCH RESULT: zone="${zone.zone_name}" | raw_urls=${rawUrls.length} | accessible=${images.length} | final_slot=${images.length}`);
-    } else {
-      const available = loc.zones?.map(z => z.zone_name).join(', ') || '(no zones)';
-      console.error(`[regen] ⛔ STEP 1 FAILED: Zone "${zoneName}" NOT FOUND in location. Available zones: ${available}`);
-    }
-  } else {
-    if (zoneName) {
-      console.warn(`[regen] ⚠️ zoneName="${zoneName}" provided but no zones in location`);
-    } else {
-      console.log(`[regen] zoneName is null/empty — will use STEP 2 fallback`);
-    }
-  }
-
-  // STEP 2: First zone with accessible images (ONLY if NO zoneName was requested)
-  // CRITICAL: If user explicitly selected a zone and STEP 1 failed, DO NOT fall back to other zones.
-  // This prevents the system from compositing images from multiple zones.
-  if (zoneName && images.length === 0) {
-    // User explicitly requested a zone but it has zero images — STOP here. No fallback.
-    console.log(`[regen] ⛔ STRICT ZONE LOCK: User requested zone="${zoneName}" but it has no accessible images. NO FALLBACK to other zones.`);
-    return { images: [], zoneName: null, locationName: loc.name };
-  } else if (images.length === 0 && loc.zones?.length > 0) {
-    console.log(`[regen] STEP 2: No zoneName requested. Finding first zone with accessible images...`);
-    const firstZone = loc.zones.find(z => (z.image_urls || []).map(toPublicCDN).some(isProviderAccessible));
-    if (firstZone) {
-      const rawUrls = firstZone.image_urls || [];
-      images = rawUrls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
-      resolvedZone = firstZone.zone_name;
-      console.log(`[regen] ✓ STEP 2 RESULT: using first zone="${resolvedZone}" | raw_urls=${rawUrls.length} | accessible=${images.length}`);
-    } else {
-      console.warn(`[regen] ⚠️ STEP 2 FAILED: no zone with accessible images found`);
-    }
-  }
-
-  // STEP 3: Flat location images (ONLY if NO zoneName was requested)
-  // If user explicitly selected a zone, we already returned early above. So STEP 3 only fires
-  // when zoneName was null/empty and no zone-based images were found.
-  if (images.length === 0 && !zoneName && loc.image_urls?.length > 0) {
-    console.log(`[regen] STEP 3: No zoneName requested. Using flat location.image_urls...`);
-    const rawUrls = loc.image_urls;
-    images = rawUrls.map(toPublicCDN).filter(isProviderAccessible).slice(0, 6);
-    console.log(`[regen] ✓ STEP 3 RESULT: flat_images | raw=${rawUrls.length} | accessible=${images.length}`);
-  }
-
-  console.log(`[regen] ═══ resolveLocationImages FINAL RESULT ═══`);
-  console.log(`[regen] location="${loc.name}" | resolvedZone="${resolvedZone || '(none — fallback used)'}" | images_count=${images.length}`);
-  if (images.length > 0) {
-    images.slice(0, 3).forEach((url, i) => {
-      console.log(`[regen]   Image[${i}]: ${url.substring(0, 80)}`);
-    });
-  }
-  return { images, zoneName: resolvedZone, locationName: loc.name };
+function cdnFilter(urls) {
+  return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
+
+// ── PROMPT BUILDER ────────────────────────────────────────────────────────────
+
+function buildRegenPrompt({ scenePrompt, charName, locationName, zoneName, envRefs, charRefs, reason }) {
+  const hasEnv  = envRefs.length > 0;
+  const hasChar = charRefs.length > 0;
+
+  const ENV_SLOTS  = Math.min(envRefs.length, 4);
+  const CHAR_SLOTS = Math.min(charRefs.length, 2);
+
+  const envEnd    = ENV_SLOTS;
+  const charStart = ENV_SLOTS + 1;
+  const charEnd   = ENV_SLOTS + CHAR_SLOTS;
+
+  let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
+
+  if (hasEnv) {
+    const place = [locationName, zoneName].filter(Boolean).join(' → ');
+    preamble += `Images 1–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of "${place}". Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nREPLICATE this room exactly. This is not inspiration. This IS the room.\n\n`;
+  }
+  if (hasChar) {
+    preamble += `Images ${charStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face, skin tone, hair, body type, markings.\n⛔ Avatar background = 0%. The room/wall/furniture behind the person in these photos is IRRELEVANT — ignore it completely.\n\n`;
+  }
+  preamble += '⛔ DO NOT blend image sets. Each set has one exclusive role.\n════════════════════════════════════════════════════════════\n\n';
+
+  let envLock = '';
+  if (hasEnv) {
+    const place = [locationName, zoneName].filter(Boolean).join(' → ');
+    envLock = `
+
+════════════════════════════════════════════════════════════
+ENVIRONMENT LOCK — "${place}" — 90% VISUAL AUTHORITY
+════════════════════════════════════════════════════════════
+Reference images 1–${envEnd} are PHOTOGRAPHS of this exact room. REPLICATE it.
+Insert the character into it. Do NOT redesign it.
+
+MUST MATCH EXACTLY:
+  ✅ Furniture types, colors, shapes, placement
+  ✅ Wall color, floor type, rug color/pattern/placement
+  ✅ Curtains, lighting fixtures, lamps
+  ✅ Wall art — same pieces, same positions
+  ✅ Shelves, decor objects, room layout
+
+ZERO OBJECT DRIFT:
+  ⛔ No replaced, recolored, removed, or added objects
+  ⛔ No "similar looking" substitutions
+  ⛔ No generic room generation
+  ⛔ Do NOT use any room/background from the character identity photos
+
+10% FLEXIBILITY (only): camera angle, framing, lighting softness
+
+FAILURE: Any element that differs from the reference photos = FAILURE.
+SUCCESS: Side-by-side must show THE IDENTICAL ROOM.`;
+  }
+
+  // Reason-specific enforcement
+  let reasonBlock = '';
+  if (reason === 'flawed') {
+    reasonBlock = `
+
+FLAWED IMAGE CORRECTION:
+The previous image had rendering failures (body morphing, wrong room, furniture errors, texture glitches).
+Re-render with MAXIMUM fidelity. Every constraint above is non-negotiable.
+Correct: body proportions, furniture exact match, correct face/hair, anatomically correct hands/fingers.`;
+  } else if (reason === 'no_avatar') {
+    reasonBlock = `
+
+IDENTITY CORRECTION — "${charName}":
+The previous image did not look like the character. Fix identity with maximum precision.
+Reference images ${charStart}–${charEnd} are photographs of this exact person.
+Match PRECISELY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
+⛔ Do NOT generate an approximate or generic person.`;
+  } else if (reason === 'wrong_location') {
+    reasonBlock = `
+
+LOCATION CORRECTION:
+The environment has been corrected. Reference images 1–${envEnd} show the CORRECT room.
+Reproduce this room with exact fidelity. The previous room was wrong — do NOT replicate it.`;
+  }
+
+  let identityLock = '';
+  if (hasChar) {
+    identityLock = `
+
+CHARACTER IDENTITY — "${charName}":
+Images ${charStart}–${charEnd} are photographs of this exact person.
+Match: face structure, eyes, skin tone, hair color/length/style, body type.
+⛔ Do NOT generate a generic or random person.`;
+  }
+
+  return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
+}
+
+// ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
+
+const ZONE_KEYWORD_MAP = [
+  { keywords: ['bedroom', 'bed ', 'sleeping', 'woke up', 'nightstand', 'duvet'], zone: 'bedroom' },
+  { keywords: ['kitchen', 'cooking', 'stove', 'fridge', 'oven', 'pancake', 'breakfast'], zone: 'kitchen' },
+  { keywords: ['bathroom', 'shower', 'bathtub', 'toilet'], zone: 'bathroom' },
+  { keywords: ['living room', 'couch', 'sofa', 'tv ', 'lounge'], zone: 'living room' },
+  { keywords: ['backyard', 'patio', 'deck', 'yard', 'garden'], zone: 'backyard' },
+  { keywords: ['dining room', 'dining table'], zone: 'dining room' },
+  { keywords: ['office', 'desk', 'home office'], zone: 'office' },
+];
+
+function resolveZoneFromLocation(location, promptLower) {
+  const zones = (location.zones || []).filter(z => cdnFilter(z.image_urls || []).length > 0);
+  if (zones.length === 0) {
+    return { images: cdnFilter(location.image_urls || []).slice(0, 4), zoneName: null };
+  }
+  for (const zone of zones) {
+    if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
+      const imgs = cdnFilter(zone.image_urls).slice(0, 4);
+      if (imgs.length > 0) return { images: imgs, zoneName: zone.zone_name };
+    }
+  }
+  for (const entry of ZONE_KEYWORD_MAP) {
+    if (entry.keywords.some(kw => promptLower.includes(kw))) {
+      const matched = zones.find(z => z.zone_name && z.zone_name.toLowerCase().includes(entry.zone));
+      if (matched) {
+        const imgs = cdnFilter(matched.image_urls).slice(0, 4);
+        if (imgs.length > 0) return { images: imgs, zoneName: matched.zone_name };
+      }
+    }
+  }
+  const first = zones[0];
+  return { images: cdnFilter(first.image_urls).slice(0, 4), zoneName: first.zone_name };
+}
+
+// ── MAIN HANDLER ──────────────────────────────────────────────────────────────
 
 Deno.serve(async (req) => {
   try {
@@ -134,469 +175,209 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { messageId, reason, customPrompt, manualLocationId, manualZoneId, directLocationImages, directZoneName, directLocationName } = await req.json();
-    if (!messageId || !reason) return Response.json({ error: 'messageId and reason required' }, { status: 400 });
-    
-    console.log(`[regen] ▶ REQUEST: messageId=${messageId} | reason=${reason} | manualLocationId=${manualLocationId || 'NONE'} | manualZoneId=${manualZoneId || 'NONE'} | directImages=${directLocationImages?.length || 0}`);
+    const {
+      messageId,
+      reason,          // 'flawed' | 'no_avatar' | 'wrong_location' | 'dont_like' | 'custom_prompt'
+      customPrompt,    // for dont_like / custom_prompt
+      manualLocationId, // for wrong_location
+      manualZoneId,     // for wrong_location
+      directLocationImages, // pre-resolved zone images from UI (optional)
+      directZoneName,
+      directLocationName,
+    } = await req.json();
 
-    // Fetch the message
-    let message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
-    if (!message) {
-      const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
-      message = msgList?.[0] || null;
+    if (!messageId || !reason) {
+      return Response.json({ error: 'messageId and reason are required' }, { status: 400 });
     }
-    if (!message) return Response.json({ error: 'Message not found', success: false }, { status: 404 });
 
+    console.log(`[regenerateImageWithReason] ▶ messageId=${messageId} | reason=${reason} | manualLocationId=${manualLocationId || 'none'}`);
+
+    // ── 1. LOAD MESSAGE AND CONTEXT ───────────────────────────────────────────
+    const msgList = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
+    const message = msgList?.[0];
+    if (!message) return Response.json({ error: 'Message not found' }, { status: 404 });
+
+    const requestingUser = message.created_by || user.email;
     const ctx = message.generation_context || {};
-    const originalPrompt = ctx.prompt || null;
-    const originalCharId = ctx.character_id || message.character_id || null;
-    const originalSubjectType = ctx.subject_type || 'character';
 
-    // Fetch character — always scope to the requesting user (zero leakage)
-    let character = null;
+    const originalCharId    = ctx.character_id || message.character_id || null;
+    const originalPrompt    = ctx.prompt || '';
+    const originalLocId     = ctx.location_id || null;
+    const originalZoneName  = ctx.zone_name || null;
+    const originalLocName   = ctx.location_name || null;
+    const originalLocRefs   = ctx.location_reference_images || [];
+
+    // ── 2. RESOLVE CHARACTER IDENTITY REFS ───────────────────────────────────
+    let charRefs = [];
+    let charName = ctx.character_name || 'the character';
+
     if (originalCharId) {
-      // Primary: user-scoped (respects RLS)
       const charListUser = await base44.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
-      character = charListUser?.[0] || null;
-      // Fallback: service role but verify ownership
-      if (!character && message?.created_by) {
-        const charList2 = await base44.asServiceRole.entities.Character.filter({ id: originalCharId, created_by: message.created_by }, null, 1).catch(() => []);
-        character = charList2?.[0] || null;
-      }
-      if (!character) {
-        const charList = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
-        const candidate = charList?.[0] || null;
+      let charRecord = charListUser?.[0] || null;
+
+      if (!charRecord) {
+        const charListSR = await base44.asServiceRole.entities.Character.filter({ id: originalCharId }, null, 1).catch(() => []);
+        const candidate = charListSR?.[0] || null;
         if (candidate) {
-          const _co = candidate.owner_email || candidate.created_by;
-          if (_co && message?.created_by && _co !== message.created_by) {
-            console.error(`[regen] ⛔ CROSS-ACCOUNT: character "${candidate.name}" owned by "${_co}", request from "${message.created_by}". REJECTED.`);
-          } else {
-            character = candidate;
+          const owner = candidate.owner_email || candidate.created_by;
+          if (owner && owner !== requestingUser) {
+            console.error(`[regenerateImageWithReason] ⛔ Cross-account: char ${originalCharId} owned by ${owner}`);
+            return Response.json({ success: false, error: 'Character does not belong to your account.' }, { status: 403 });
           }
-        }
-      }
-    }
-    console.log(`[regen] Character: ${character?.name || 'NOT FOUND'} (id=${originalCharId || 'none'})`);
-
-    const charName = character?.name || 'the character';
-    // Build safe appearance description — strip outfit/clothing entirely (it may contain sensitive content
-    // that triggers content filters). Only use physical/demographic descriptors.
-    const charDesc = [character?.appearance_notes, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
-
-    // Build character reference images
-    // Always CDN-convert ALL refs first, then filter for provider accessibility.
-    // For flawed/no_avatar: use ALL available refs (avatar + reference_image_urls) for max identity lock.
-    // For other reasons: avatar_url only as primary, with reference_image_urls as supplemental.
-    const isFlawed = reason === 'flawed';
-    const isNoAvatar = reason === 'no_avatar';
-    const avatarUrl = character?.avatar_url ? toPublicCDN(character.avatar_url) : null;
-    let charRefImages = [];
-    if (avatarUrl && isProviderAccessible(avatarUrl)) {
-      charRefImages.push(avatarUrl);
-      console.log(`[regen] ✓ Using character avatar_url (CDN): ${avatarUrl.substring(0, 80)}`);
-    } else {
-      console.warn(`[regen] ⚠️ avatar_url not accessible (raw="${character?.avatar_url?.substring(0, 60) || 'null'}")`);
-    }
-    // For flawed/no_avatar: add all accessible reference_image_urls for maximum identity fidelity
-    if ((isFlawed || isNoAvatar) && character?.reference_image_urls?.length > 0) {
-      for (const ref of character.reference_image_urls) {
-        const converted = toPublicCDN(ref);
-        if (isProviderAccessible(converted) && !charRefImages.includes(converted)) {
-          charRefImages.push(converted);
-        } else if (!isProviderAccessible(toPublicCDN(ref))) {
-          console.warn(`[regen] ⚠️ reference_image_url inaccessible after CDN conversion: ${ref?.substring(0, 60)}`);
-        }
-      }
-      console.log(`[regen] ${reason} mode: expanded charRefImages to ${charRefImages.length} (avatar + reference_image_urls)`);
-    }
-
-    // ── HARD FAIL: zero usable identity refs for character-centered request ───
-    // reason=no_avatar specifically means identity correction — cannot proceed without refs.
-    // reason=flawed means full re-render — cannot proceed without refs.
-    // reason=wrong_location only: location is being corrected, identity uses whatever is available.
-    // For ALL other reasons with zero refs: also hard fail to prevent random-person generation.
-    const characterCenteredReasons = ['no_avatar', 'flawed', 'dont_like', 'custom_prompt'];
-    if (originalCharId && charRefImages.length === 0) {
-      console.error(`[regen] ⛔ HARD FAIL — ZERO USABLE IDENTITY REFS for character "${charName}" (id=${originalCharId})`);
-      console.error(`[regen] avatar_url raw: "${character?.avatar_url?.substring(0, 80) || 'null'}"`);
-      console.error(`[regen] reference_image_urls count: ${character?.reference_image_urls?.length ?? 0}`);
-      console.error(`[regen] All identity refs are stored as private/internal URLs the provider cannot access.`);
-      console.error(`[regen] reason="${reason}" — refusing to dispatch, would generate a random person.`);
-      console.error(`[regen] FIX: Re-upload avatar via character photo editor to store as media.base44.com CDN URL.`);
-      return Response.json({
-        success: false,
-        identity_refs_count: 0,
-        character_id: originalCharId,
-        character_name: charName,
-        error: `No usable identity reference images found for "${charName}". The character's photos may be stored as private URLs. Re-upload the avatar photo to fix this.`,
-      }, { status: 422 });
-    }
-
-    // ══════════════════════════════════════════════════════════════════════════
-    // LOCATION RESOLUTION — STRICT PRIORITY ORDER
-    //
-    // RULE: manualLocationId ALWAYS wins. It must be resolved FIRST.
-    //       Nothing from the original generation context may override it.
-    //       The original location refs are DISCARDED when manual is provided.
-    // ══════════════════════════════════════════════════════════════════════════
-    
-    let locationRefImages = [];
-    let effectiveLocationName = null;
-    let effectiveZoneName = null;
-    let effectiveLocationId = null;
-
-    // ── PATH DIRECT: UI already resolved the zone images — use them as-is ──────
-    // If the caller passes directLocationImages, they are already validated and accessible.
-    // Skip ALL DB re-lookup and re-resolution. This is the SOURCE OF TRUTH for wrong_location.
-    const directImgs = (directLocationImages || []).map(toPublicCDN).filter(isProviderAccessible);
-    if (directImgs.length > 0) {
-      locationRefImages = directImgs;
-      effectiveZoneName = directZoneName || manualZoneId || null;
-      effectiveLocationName = directLocationName || null;
-      effectiveLocationId = manualLocationId || null;
-      console.log(`[regen] ✓ PATH DIRECT: Using caller-provided location images (no re-lookup). count=${directImgs.length} | zone="${effectiveZoneName}" | location="${effectiveLocationName}"`);
-    } else if (manualLocationId) {
-      // ── PATH A: USER EXPLICITLY SELECTED A LOCATION (AND OPTIONALLY ZONE) ─
-      // ZERO LEAKAGE: verify location ownership before resolving images
-      const _pathALoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
-      if (_pathALoc) {
-        const _palo = _pathALoc.owner_email || _pathALoc.created_by;
-        const _paru = message?.created_by || user.email;
-        const _pash = _pathALoc.scope === 'shared' || _pathALoc.location_type === 'shared';
-        if (_palo && _paru && _palo !== _paru && !_pash) {
-          console.error(`[regen] ⛔ CROSS-ACCOUNT PATH A: location "${_pathALoc.name}" owned by "${_palo}", request from "${_paru}". HARD FAIL.`);
-          return Response.json({ success: false, error: 'Location access denied — this location belongs to a different account.' }, { status: 403 });
+          charRecord = candidate;
         }
       }
 
-      console.log(`[regen] ═══ PATH A: MANUAL LOCATION SELECTED ═══`);
-      console.log(`[regen] manualLocationId="${manualLocationId}" | manualZoneId="${manualZoneId || '(none — will auto-detect if multiple zones)'}" | reason="${reason}"`);
-      
-      effectiveLocationId = manualLocationId;
-      const resolved = await resolveLocationImages(base44, manualLocationId, manualZoneId || null);
-      locationRefImages = resolved.images;
-      effectiveZoneName = resolved.zoneName;
-      effectiveLocationName = resolved.locationName;
+      if (charRecord) {
+        charName = charRecord.name;
+        const allUrls = [charRecord.avatar_url, ...(charRecord.reference_image_urls || [])].filter(Boolean);
+        charRefs = cdnFilter(allUrls).slice(0, 3);
+        console.log(`[regenerateImageWithReason] Character "${charName}" — refs: ${charRefs.length}`);
+      }
 
-      // CRITICAL VALIDATION: if user explicitly selected a zone but got zero images, HALT
-      if (manualZoneId && locationRefImages.length === 0) {
-        console.error(`[regen] ⛔ CRITICAL FAILURE: User selected zone "${manualZoneId}" in location "${effectiveLocationName}", but resolveLocationImages returned ZERO images`);
-        console.error(`[regen] This means zone.image_urls is empty or all URLs are inaccessible`);
-        console.error(`[regen] SYSTEM RULE: Cannot fall back to generic or different zone when user explicitly selected "${manualZoneId}"`);
+      // Fallback: use refs stored in generation_context
+      if (charRefs.length === 0 && ctx.character_reference_images?.length > 0) {
+        charRefs = cdnFilter(ctx.character_reference_images).slice(0, 3);
+        console.log(`[regenerateImageWithReason] Using stored charRefs: ${charRefs.length}`);
+      }
+
+      if (charRefs.length === 0) {
+        console.error(`[regenerateImageWithReason] ⛔ Zero identity refs for "${charName}"`);
         return Response.json({
           success: false,
-          error: `Zone "${manualZoneId}" in "${effectiveLocationName}" has no reference images. Add photos to this zone before regenerating.`,
-          location_id: manualLocationId,
-          location_name: effectiveLocationName,
-          zone_requested: manualZoneId,
-          zone_has_images: false,
-          environment_refs_count: 0,
+          error: `No usable identity photos for "${charName}". Re-upload the character's avatar photo.`,
         }, { status: 422 });
       }
+    }
 
-      if (locationRefImages.length === 0) {
-        console.error(`[regen] ⛔ HARD HALT: Manual location "${effectiveLocationName}" (${manualLocationId}) resolved ZERO accessible images`);
-        console.error(`[regen] Zone requested: "${manualZoneId || 'none (auto-detect will use first zone with images)'}"`) ;
-        console.error(`[regen] SYSTEM RULE: Cannot generate without environment reference images. This is a data issue with the location record.`);
-        return Response.json({
-          success: false,
-          error: `Location "${effectiveLocationName}" has no accessible reference images. Add photos to this location's zones before generating from it.`,
-          location_id: manualLocationId,
-          location_name: effectiveLocationName,
-          zone_requested: manualZoneId || null,
-          environment_refs_count: 0,
-        }, { status: 422 });
+    // ── 3. RESOLVE ENVIRONMENT REFS ───────────────────────────────────────────
+    let envRefs = [];
+    let resolvedLocationName = originalLocName;
+    let resolvedZoneName = originalZoneName;
+
+    if (reason === 'wrong_location' && manualLocationId) {
+      // USER SELECTED A NEW LOCATION — use it as the new environment
+      if (directLocationImages?.length > 0) {
+        // UI already resolved the zone images — use directly
+        envRefs = cdnFilter(directLocationImages).slice(0, 4);
+        resolvedZoneName = directZoneName || manualZoneId || null;
+        resolvedLocationName = directLocationName || null;
+        console.log(`[regenerateImageWithReason] wrong_location: using direct zone images — ${envRefs.length} refs`);
       } else {
-        console.log(`[regen] ✓ MANUAL LOCATION RESOLVED: "${effectiveLocationName}" → zone="${effectiveZoneName || '(first auto-detected)'}" | ${locationRefImages.length} images loaded`);
-        locationRefImages.slice(0, 3).forEach((url, i) => {
-          console.log(`[regen]   Image[${i}]: ${url.substring(0, 80)}`);
-        });
-      }
+        // Fetch location from DB
+        const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: manualLocationId }, null, 1).catch(() => []);
+        const locRecord = locListSR?.[0] || null;
 
-    } else {
-      // ── PATH B: NO MANUAL SELECTION — USE ORIGINAL CONTEXT OR CHARACTER FILE ─
-      console.log(`[regen] ═══ PATH B: NO MANUAL LOCATION — using original context or character file ═══`);
-      
-      // Try original generation context location first
-      // CDN-convert stored URLs before accessibility check — they may be raw base44.app paths
-      const originalLocationId = ctx.location_id || null;
-      const originalZoneName = ctx.zone_name || null;
-      const originalLocationRefs = (ctx.location_reference_images || []).map(toPublicCDN).filter(isProviderAccessible);
-
-      if (originalLocationRefs.length > 0 && originalLocationId) {
-        // Use original context location refs
-        locationRefImages = originalLocationRefs.slice(0, 6);
-        effectiveLocationId = originalLocationId;
-        effectiveZoneName = originalZoneName;
-        effectiveLocationName = ctx.location_name || null;
-        console.log(`[regen] ✓ Using original context location: "${effectiveLocationName}" | zone="${effectiveZoneName}" | ${locationRefImages.length} images`);
-      } else {
-        // No usable original refs — look up from character file
-        let fallbackLocationId = null;
-        if (character) {
-          fallbackLocationId = character.resolved_current_location_id || character.current_home_location_id || character.home_location_id || null;
-          if (!fallbackLocationId) {
-            // Scan resident locations
-            const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ created_by: message.created_by || user.email }, '-created_date', 100).catch(() => []);
-            const residentHome = savedLocs.find(l =>
-              l.category === 'home' &&
-              ((l.resident_character_ids || []).includes(originalCharId) || (l.residents || []).some(r => r.character_id === originalCharId))
-            );
-            if (residentHome) fallbackLocationId = residentHome.id;
+        if (locRecord) {
+          const locOwner = locRecord.owner_email || locRecord.created_by;
+          const isShared = locRecord.scope === 'shared' || locRecord.location_type === 'shared';
+          if (locOwner && locOwner !== requestingUser && !isShared) {
+            return Response.json({ success: false, error: 'Location does not belong to your account.' }, { status: 403 });
           }
-        }
-
-        if (fallbackLocationId) {
-          // Derive zone hint from original prompt
-          let zoneHint = null;
-          const pLower = (originalPrompt || '').toLowerCase();
-          if (/\b(kitchen|stove|fridge|counter|oven|pancake|breakfast)\b/.test(pLower)) zoneHint = 'kitchen';
-          else if (/\b(bedroom|bed|sleeping|nightstand)\b/.test(pLower)) zoneHint = 'bedroom';
-          else if (/\b(bathroom|shower|bathtub|toilet)\b/.test(pLower)) zoneHint = 'bathroom';
-          else if (/\b(living room|couch|sofa|tv|lounge)\b/.test(pLower)) zoneHint = 'living room';
-          else if (/\b(backyard|patio|deck|yard)\b/.test(pLower)) zoneHint = 'backyard';
-
-          const resolved = await resolveLocationImages(base44, fallbackLocationId, zoneHint);
-          locationRefImages = resolved.images;
-          effectiveZoneName = resolved.zoneName;
-          effectiveLocationName = resolved.locationName;
-          effectiveLocationId = fallbackLocationId;
+          resolvedLocationName = locRecord.name;
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, originalPrompt.toLowerCase());
+          envRefs = images;
+          resolvedZoneName = manualZoneId || zoneName;
+          console.log(`[regenerateImageWithReason] wrong_location DB: "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
         }
       }
-    }
 
-    // ── LOCATION MISSING CHECK ────────────────────────────────────────────────
-    // If zero location images resolved, behavior depends on reason:
-    // - wrong_location: HARD FAIL — the whole point is environment correction
-    // - all other reasons: WARN and proceed — character identity refs + text prompt will anchor the scene
-    if (locationRefImages.length === 0) {
-      if (reason === 'wrong_location') {
-        console.error(`[regen] ⛔ HARD FAIL — wrong_location reason but zero location images resolved`);
-        console.error(`[regen] PATH=A (manual) | effectiveLocationId=${effectiveLocationId || 'null'} | effectiveLocationName="${effectiveLocationName || 'null'}"`);
+      if (envRefs.length === 0) {
         return Response.json({
           success: false,
-          error: 'No environment reference images could be found for the selected location. Add zone photos to this location before regenerating.',
-          location_name: effectiveLocationName || null,
-          environment_refs_count: 0,
+          error: `The selected location "${resolvedLocationName || 'location'}" has no zone photos. Add photos to a zone first.`,
         }, { status: 422 });
-      } else {
-        // For other reasons (flawed, no_avatar, dont_like, custom_prompt):
-        // proceed with character identity only + text prompt as scene anchor
-        console.warn(`[regen] ⚠️ Zero location images resolved for reason="${reason}" — proceeding with identity-only generation`);
-        console.warn(`[regen] Character refs: ${charRefImages.length} | effectiveLocationId=${effectiveLocationId || 'null'}`);
+      }
+
+    } else {
+      // ALL OTHER REASONS — use original location refs from generation_context
+      if (originalLocRefs.length > 0) {
+        envRefs = cdnFilter(originalLocRefs).slice(0, 4);
+        console.log(`[regenerateImageWithReason] Using stored location refs: ${envRefs.length}`);
+      }
+
+      // If stored refs inaccessible, re-fetch from original location
+      if (envRefs.length === 0 && originalLocId) {
+        const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: originalLocId }, null, 1).catch(() => []);
+        const locRecord = locListSR?.[0] || null;
+        if (locRecord) {
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, originalPrompt.toLowerCase());
+          envRefs = images;
+          resolvedZoneName = zoneName || originalZoneName;
+          console.log(`[regenerateImageWithReason] Re-fetched location "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
+        }
       }
     }
 
-    const hasLocation = locationRefImages.length > 0;
-    const locationLabel = [effectiveLocationName, effectiveZoneName].filter(Boolean).join(' → ');
-
-    // Slot allocation — mirrors generateImageAsync strict role separation
-    const LOC_SLOT  = Math.min(locationRefImages.length, 4);
-    const CHAR_SLOT = Math.min(charRefImages.length, 2);
-    const locIdxStart  = 1;
-    const locIdxEnd    = LOC_SLOT;
-    const charIdxStart = LOC_SLOT + 1;
-    const charIdxEnd   = LOC_SLOT + CHAR_SLOT;
-
-    console.log(`[regen] ═══ FINAL RESOLUTION ═══`);
-    console.log(`[regen] hasLocation=${hasLocation} | locationLabel="${locationLabel}" | loc_images=${locationRefImages.length} (LOC_SLOT=${LOC_SLOT})`);
-    console.log(`[regen] charRefImages=${charRefImages.length} (CHAR_SLOT=${CHAR_SLOT})`);
-    console.log(`[regen] ref_roles: loc=idx${locIdxStart}-${locIdxEnd} | char=idx${charIdxStart}-${charIdxEnd}`);
-
-    // ── ROLE PREAMBLE — must be the FIRST thing the model reads ──────────────
-    // Explicit index-to-role assignment prevents avatar background from bleeding into environment.
-    let rolePreamble = '';
-    if (LOC_SLOT > 0 && CHAR_SLOT > 0) {
-      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST:
-Images 1-${LOC_SLOT}: ROOM ENVIRONMENT ONLY — photographs of the ACTUAL ROOM ("${locationLabel}"). Authority: 80% on the physical room. Use ONLY for: flooring, walls, furniture pieces and colors, layout, windows, curtains, lighting fixtures, decor. This room must appear IDENTICAL in the output — same sofa color, same rug, same shelves, same artwork, same lamps. Do NOT redesign it.
-Images ${charIdxStart}-${charIdxEnd}: CHARACTER IDENTITY ONLY — photos of the person. Authority: 90-100% on the person. Use ONLY for: face, skin, hair, body type, markings.
-⛔ AVATAR BACKGROUND = 0%: Any room, wall, furniture, or scenery visible BEHIND the person in images ${charIdxStart}-${charIdxEnd} is COMPLETELY IRRELEVANT. The room comes from images 1-${LOC_SLOT} only.
-⛔ DO NOT blend these two image sets. They serve entirely separate roles.
-
-`;
-    } else if (LOC_SLOT === 0 && CHAR_SLOT > 0) {
-      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT:
-Images 1-${CHAR_SLOT}: CHARACTER IDENTITY ONLY. Use only for: face, skin, hair, body type. The background behind the person in these photos is unrelated to this scene - ignore it completely. Build the environment from the text prompt.
-
-`;
-    } else if (LOC_SLOT > 0 && CHAR_SLOT === 0) {
-      rolePreamble = `REFERENCE IMAGE ROLE ASSIGNMENT:
-Images 1-${LOC_SLOT}: SCENE ENVIRONMENT ONLY (${locationLabel}). Use for: flooring, walls, furniture, layout, windows. No character identity images provided - render the character from the text description.
-
-`;
+    // ── 4. DETERMINE SCENE PROMPT ─────────────────────────────────────────────
+    let scenePrompt = originalPrompt;
+    if (reason === 'dont_like' && customPrompt?.trim()) {
+      scenePrompt = customPrompt.trim();
+    } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
+      scenePrompt = customPrompt.trim();
     }
+    if (!scenePrompt) scenePrompt = 'candid natural moment, everyday life';
 
-    const qualityFooter = `\nABSOLUTE RULES: No floating text, no overlays, no watermarks. Photorealistic photograph only.`;
+    // ── 5. ASSEMBLE REFS — env first, then identity ───────────────────────────
+    const ENV_SLOTS  = Math.min(envRefs.length, 4);
+    const CHAR_SLOTS = Math.min(charRefs.length, 2);
 
-    // ── ROOM CONTINUITY LOCK ──────────────────────────────────────────────────
-    const roomLock = hasLocation ? `
+    const referenceImages = [
+      ...envRefs.slice(0, ENV_SLOTS),
+      ...charRefs.slice(0, CHAR_SLOTS),
+    ].filter(Boolean);
 
-════════════════════════════════════════════════════════════
-ROOM CONTINUITY LOCK — "${locationLabel}"
-════════════════════════════════════════════════════════════
-Reference images 1-${LOC_SLOT} are PHOTOGRAPHS OF THIS EXACT ROOM. This is NOT inspiration. This is NOT a style reference. This IS the actual room.
+    console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} total=${referenceImages.length} | reason=${reason}`);
 
-MANDATORY — these must match the reference images exactly:
-  ✅ Sofa/couch: same color, type, shape, placement — DO NOT change color
-  ✅ Coffee table: same type, material, placement
-  ✅ Rug: same pattern, tone, size relationship
-  ✅ Curtains/blinds: same type, color, position
-  ✅ Wall art: same placement, count, frames
-  ✅ Shelving: same type, placement, structure
-  ✅ Lighting fixtures: same ceiling lights, same lamps, same positions
-  ✅ Room layout: same furniture arrangement and spacing
-  ✅ Decor objects: same vases, books, plants, ornaments
-
-ONLY these may vary:
-  ✓ Camera angle and framing
-  ✓ Subject position within the room
-  ✓ Natural lighting intensity
-
-ABSOLUTE BANS:
-  ⛔ DO NOT change the sofa color or replace it with a different sofa
-  ⛔ DO NOT redesign the rug
-  ⛔ DO NOT change curtain style or replace window treatments
-  ⛔ DO NOT remove or replace shelving
-  ⛔ DO NOT swap artwork
-  ⛔ DO NOT change lighting fixtures
-  ⛔ DO NOT rearrange the room layout
-  ⛔ DO NOT rebuild a new room around the character — place the character into THIS room
-  ⛔ DO NOT use the background from character identity photos as the room
-
-SUCCESS: A viewer must look at the reference image and the generated image and recognize THE SAME ROOM.
-FAILURE: If any furniture, decor, or layout element changed — it is a continuity failure, not a creative liberty.` : '';
-
-    // ── BUILD PROMPT BY REASON ────────────────────────────────────────────────
-    let corePrompt = '';
-
-    if (reason === 'flawed') {
-      // FLAWED = maximum fidelity re-render. Something fundamental broke — body morphing,
-      // wrong room, incorrect furniture, texture glitches, or both environment and character
-      // were corrupted simultaneously. This is a hard restart with every fidelity constraint
-      // cranked to maximum. Keep the original scene intent but enforce everything strictly.
-      const sceneDesc = originalPrompt || `${charName} in a natural candid scene`;
-
-      corePrompt = `${sceneDesc}${roomLock}
-
-════════════════════════════════════════════════════════════
-MAXIMUM FIDELITY RE-RENDER — FLAWED IMAGE CORRECTION
-════════════════════════════════════════════════════════════
-The previous image had fundamental rendering failures (body morphing, incorrect room layout,
-furniture in wrong positions, texture glitches, or mixed environment/character corruption).
-This is a HARD RESTART. Every constraint below is NON-NEGOTIABLE.
-
-ROOM FIDELITY — ZERO TOLERANCE FOR DRIFT:
-  ⛔ Every piece of furniture must match the reference photos in color, shape, and position
-  ⛔ No floating objects, no warped geometry, no merged surfaces
-  ⛔ Walls, floor, and ceiling must be flat, clean, and consistent
-  ⛔ No duplicate furniture elements or impossible room geometry
-  ⛔ Lighting must be coherent — no impossible shadows or multiple conflicting light sources
-
-CHARACTER FIDELITY — EXACT MATCH REQUIRED:
-  ⛔ Body proportions must be anatomically correct — no extra limbs, no fused fingers, no elongated necks
-  ⛔ Face must match the identity reference exactly — same bone structure, skin tone, eye shape, hair
-  ⛔ Clothing must sit naturally on the body — no texture bleeding, no clipping
-  ⛔ Hands and feet must have correct finger/toe counts and natural proportions
-  ⛔ No body parts merged with furniture or environment
-
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-Ultra high-resolution photorealistic photograph. No artifacts, no distortion, no rendering errors.${qualityFooter}`;
-
-    } else if (reason === 'wrong_location') {
-      // WRONG LOCATION: rebuild scene from the correct location reference images.
-      const sceneDesc = hasLocation
-        ? `${charName} in the ${effectiveZoneName || effectiveLocationName || 'room'}.`
-        : (originalPrompt || `${charName} in a natural candid scene`);
-
-      const locationOverride = hasLocation ? `
-
-LOCATION CORRECTION: The environment is "${locationLabel}". Reference images 1-${LOC_SLOT} are photographs of this exact room. Reproduce those exact walls, floor, furniture, lighting, and decor. Do not use any room or background visible in the character identity photos.` : '';
-
-      corePrompt = `${sceneDesc}${roomLock}${locationOverride}
-
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-Ultra high-resolution photorealistic photograph.${qualityFooter}`;
-
-    } else if (reason === 'no_avatar') {
-      const isMultiPerson = originalSubjectType === 'joint';
-      corePrompt = `${originalPrompt || `${charName} in a natural candid scene`}${roomLock}
-
-EXTREME CHARACTER LIKENESS REQUIREMENT for ${charName}:
-Match exactly: face structure, eyes, nose, mouth, skin tone, hair (color/texture/LENGTH/style), body type.
-Do NOT invent or approximate. The reference photos ARE this person.${isMultiPerson ? '\nMULTI-PERSON: Each person must have a distinctly different face from the reference photos.' : ''}
-Photorealistic photograph. Natural lighting.${qualityFooter}`;
-
-    } else if ((reason === 'dont_like' || reason === 'custom_prompt') && customPrompt) {
-      corePrompt = `${customPrompt}${roomLock}
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-${hasLocation ? `Environment authority: reference images 1–${LOC_SLOT} (80% on room). Character identity: reference images ${charIdxStart}–${charIdxEnd} (person only).` : `Character identity: ${charName}. Avatar background = 0% scene influence.`}
-Photorealistic photograph.${qualityFooter}`;
-
-    } else {
-      corePrompt = `${originalPrompt || `${charName} in a natural candid scene`}${roomLock}
-CHARACTER: ${charName}${charDesc ? ` (${charDesc})` : ''}.
-${hasLocation ? `Environment: images 1–${LOC_SLOT}. Character identity: images ${charIdxStart}–${charIdxEnd} (person only, background ignored).` : `Character identity only. Avatar background = 0% scene influence.`}
-Photorealistic photograph.${qualityFooter}`;
-    }
-
-    // Role preamble goes FIRST — model must read role assignments before anything else
-    const prompt = rolePreamble + corePrompt;
-    
-    console.log(`[regen] DEBUG-BEFORE-CONCAT: locationRefImages=${locationRefImages.length} (LOC_SLOT=${LOC_SLOT}) | charRefImages=${charRefImages.length} (CHAR_SLOT=${CHAR_SLOT})`);
-    locationRefImages.slice(0, LOC_SLOT).forEach((u, i) => console.log(`[regen]   locRef[${i}]: ${u}`));
-    charRefImages.slice(0, CHAR_SLOT).forEach((u, i) => console.log(`[regen]   charRef[${i}]: ${u}`));
-    
-    const referenceImages = [...locationRefImages.slice(0, LOC_SLOT), ...charRefImages.slice(0, CHAR_SLOT)].filter(Boolean);
-
-    console.log(`[regen] ▶ GENERATING: reason=${reason} | refs=${referenceImages.length} (loc=${Math.min(locationRefImages.length,4)}, char=${Math.min(charRefImages.length,2)}) | locationLabel="${locationLabel}"`);
-
-    // ── GENERATE ──────────────────────────────────────────────────────────────
-    console.log(`[regen] ═══ FINAL PAYLOAD TO PROVIDER ═══`);
-    console.log(`[regen] Prompt (first 200 chars): ${prompt.substring(0, 200)}`);
-    console.log(`[regen] Reference images (count=${referenceImages.length}):`);
-    referenceImages.forEach((url, i) => {
-      console.log(`[regen]   [${i}] ${url}`);
+    // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
+    const finalPrompt = buildRegenPrompt({
+      scenePrompt,
+      charName,
+      locationName: resolvedLocationName,
+      zoneName: resolvedZoneName,
+      envRefs: envRefs.slice(0, ENV_SLOTS),
+      charRefs: charRefs.slice(0, CHAR_SLOTS),
+      reason,
     });
-    
+
+    // ── 7. GENERATE ───────────────────────────────────────────────────────────
     let genRes;
     try {
       genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-        prompt,
+        prompt: finalPrompt,
         existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
       });
     } catch (genErr) {
       const msg = genErr?.message || '';
-      if (msg.includes('filtered') || msg.includes('guidelines') || msg.includes('blocked') || msg.includes('violated')) {
+      if (/filter|guideline|block|violat/i.test(msg)) {
         return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
       }
       throw genErr;
     }
 
-    if (!genRes?.url) return Response.json({ success: false, error: 'Generation returned no URL' }, { status: 500 });
+    if (!genRes?.url) {
+      return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
+    }
 
-    // Write result back to the exact message
+    // ── 8. VERIFY AND SAVE ────────────────────────────────────────────────────
     const targetMsg = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
     if (!targetMsg || targetMsg.id !== messageId) {
-      console.error(`[regen] ⛔ ID MISMATCH: requested=${messageId} got=${targetMsg?.id || 'null'}`);
-      return Response.json({ success: false, error: 'Message ID mismatch — aborting write' }, { status: 400 });
+      console.error(`[regenerateImageWithReason] ⛔ ID mismatch: requested=${messageId} got=${targetMsg?.id}`);
+      return Response.json({ success: false, error: 'Message ID mismatch — aborting write.' }, { status: 400 });
     }
+
     await base44.asServiceRole.entities.Message.update(messageId, { image_url: genRes.url });
-    console.log(`[regen] ✓ SUCCESS: message ${messageId} updated with new image`);
+    console.log(`[regenerateImageWithReason] ✓ SUCCESS: ${messageId}`);
 
-    if (character?.id) {
-      base44.asServiceRole.entities.Memory.create({
-        character_id: character.id,
-        title: `Sent a regenerated photo`,
-        description: `The user regenerated a photo (reason: ${reason}).`,
-        emotional_impact: 'neutral',
-        timestamp: new Date().toISOString(),
-        source_context: `regenerated_image_${messageId}`,
-      }).catch(() => {});
-    }
+    return Response.json({
+      success: true,
+      image_url: genRes.url,
+      messageId,
+      reason,
+    });
 
-    return Response.json({ success: true, image_url: genRes.url, messageId, reason });
   } catch (error) {
-    console.error('[regenerateImageWithReason]', error);
+    console.error('[regenerateImageWithReason] Fatal:', error.message);
     return Response.json({ success: false, error: error.message }, { status: 500 });
   }
 });
