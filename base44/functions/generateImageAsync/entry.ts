@@ -616,11 +616,11 @@ function buildCharacterSubject(charRecord, clientRefs = [], clientPromptContext 
 }
 
 function buildUserSubject(sett, clientRefs = [], worldName = null) {
-  // Priority: uploaded reference photos → generated avatars — public URLs only
-  const uploadedRefs = (sett.reference_image_urls || []).filter(isProviderAccessible);
-  const generatedRefs = (sett.generated_avatar_urls || []).filter(isProviderAccessible);
+  // Priority: uploaded reference photos → generated avatars — CDN-convert then filter
+  const uploadedRefs = (sett.reference_image_urls || []).map(toPublicCDN).filter(isProviderAccessible);
+  const generatedRefs = (sett.generated_avatar_urls || []).map(toPublicCDN).filter(isProviderAccessible);
   const faceRefs = [...uploadedRefs, ...generatedRefs];
-  const publicClientRefs = (clientRefs || []).filter(isProviderAccessible);
+  const publicClientRefs = (clientRefs || []).map(toPublicCDN).filter(isProviderAccessible);
   const resolvedFaceRefs = faceRefs.length > 0 ? faceRefs : publicClientRefs;
   console.log(`[SUBJECT] User identity refs: uploaded=${uploadedRefs.length} | generated=${generatedRefs.length} | clientFallback=${publicClientRefs.length} | using=${resolvedFaceRefs.length}`);
 
@@ -1756,14 +1756,39 @@ The environment must feel real, functional, and original.
     console.log(`[PAYLOAD_VALIDATION] manualLocationId=${manualLocationId || 'none'} | manualZoneId=${manualZoneId || 'none'}`);
     console.log(`[PAYLOAD_VALIDATION] subject_type=${resolvedSubjectType} | total_refs=${referenceImages.length}`);
 
-    // ── IDENTITY REF VALIDATION — WARN ONLY ─────────────────────────────────
-    // Log a warning if identity refs are zero but do NOT block generation.
-    // Characters with private-stored photos should still generate (with text-only identity).
+    // ── IDENTITY REF VALIDATION — HARD FAIL FOR CHARACTER-CENTERED REQUESTS ──
+    // For character-centered image requests, zero usable identity refs = hard fail.
+    // Text-only identity is NOT acceptable because the provider will generate a
+    // random person. This is the exact failure mode causing Media Grid / chat to
+    // produce strangers instead of the selected character.
+    //
+    // Modes where this gate fires:
+    //   - Media Grid with a selected character (isCreativeGeneration=true, subjectType=character)
+    //   - Chat image sent by a character (subjectType=character)
+    //   - Why Regenerate "doesn't look like them" (reason=no_avatar)
+    //
+    // The gate does NOT fire for user/joint subjects — those have separate handling.
     const isCharacterCentered = resolvedSubjectType === 'character' || resolvedSubjectType === 'joint';
     const charRefCount = finalCharSubject?.face_refs?.length ?? 0;
+
     if (isCharacterCentered && characterId && charRefCount === 0) {
-      console.warn(`[PAYLOAD_VALIDATION] ⚠️ IDENTITY REFS = 0 for character ${characterId} — all reference images may be stored as private URLs. Generation proceeds with text-only identity.`);
+      const charName = finalCharSubject?.canonical_name || characterName || characterId;
+      console.error(`[PAYLOAD_VALIDATION] ⛔ HARD FAIL — ZERO USABLE IDENTITY REFS for character "${charName}" (id=${characterId})`);
+      console.error(`[PAYLOAD_VALIDATION] character record found: ${!!_cachedCharRecord} | avatar_url: "${_cachedCharRecord?.avatar_url?.substring(0, 60) || 'null'}" | reference_image_urls: ${_cachedCharRecord?.reference_image_urls?.length ?? 0}`);
+      console.error(`[PAYLOAD_VALIDATION] All identity refs filtered out — likely stored as private/internal URLs (base44.app/api/apps/...).`);
+      console.error(`[PAYLOAD_VALIDATION] Client-provided characterReferenceImages: ${characterReferenceImages?.length ?? 0} (all failed isProviderAccessible check)`);
+      console.error(`[PAYLOAD_VALIDATION] Refusing to generate — provider would render a random person, not ${charName}.`);
+      console.error(`[PAYLOAD_VALIDATION] FIX: Ensure character avatar_url and reference_image_urls are stored as media.base44.com CDN URLs (public storage).`);
+      await base44.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      return Response.json({
+        success: false,
+        identity_refs_count: 0,
+        character_id: characterId,
+        character_name: charName,
+        error: `No usable identity reference images found for "${charName}". The character's avatar and reference photos may be stored as private URLs that the image provider cannot access. Upload a new avatar photo to fix this.`,
+      }, { status: 422 });
     }
+
     if (isCharacterCentered && charRefCount > 0 && charRefCount < 2) {
       console.warn(`[PAYLOAD_VALIDATION] ⚠️ LOW IDENTITY REF COUNT: only ${charRefCount} public ref(s) for character ${characterId}. Identity lock may be weaker than intended.`);
     }
