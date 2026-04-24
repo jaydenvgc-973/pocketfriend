@@ -244,8 +244,10 @@ export default function Scene() {
 
   // ── UNIFIED SCENE PEOPLE RESOLVER ───────────────────────────────────────
   // Single source of truth for Who's Here panel and image generation
-  const resolvedScenePeople = resolveScenePeople(location, characters, currentUser);
-  console.log(`[Scene] Resolved ${resolvedScenePeople.length} people for location "${location.name}"`);
+  const resolvedScenePeople = location ? resolveScenePeople(location, characters, currentUser) : [];
+  if (location) {
+    console.log(`[Scene] Resolved ${resolvedScenePeople.length} people for location "${location.name}"`);
+  }
 
   // Separate resolved people by resident status for UI display
   const homeResidents = isHomeLocation
