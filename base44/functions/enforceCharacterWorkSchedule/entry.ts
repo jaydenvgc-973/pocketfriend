@@ -11,6 +11,9 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
     const body = await req.json().catch(() => ({}));
     const { characterId } = body;
 
@@ -30,11 +33,24 @@ Deno.serve(async (req) => {
       return isWorkDay && nowMins >= startMins && nowMins < endMins;
     };
 
+    // Helper: Check blocking conditions
+    const isBlockedFromWork = (char) => {
+      const isSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
+      const isCriticallyIll = char.health_value !== undefined && char.health_value < 20;
+      const isInEmergency = char.current_activity && char.current_activity.toLowerCase().includes('emergency');
+      return isSleeping || isCriticallyIll || isInEmergency;
+    };
+
     // --- Single character mode ---
     if (characterId) {
-      const chars = await base44.asServiceRole.entities.Character.filter({ id: characterId });
+      // CRITICAL: Filter by user scope to prevent cross-account access
+      const chars = await base44.asServiceRole.entities.Character.filter({ 
+        id: characterId,
+        created_by: user.email 
+      });
       if (!chars || chars.length === 0) {
-        return Response.json({ error: 'Character not found' }, { status: 404 });
+        console.warn(`[enforceCharacterWorkSchedule] Character ${characterId} not found or not owned by ${user.email}`);
+        return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
       }
       const character = chars[0];
 
@@ -49,6 +65,11 @@ Deno.serve(async (req) => {
       const activity = (character.current_activity || '').toLowerCase();
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
+
+      // CHECK BLOCKING CONDITIONS
+      if (isBlockedFromWork(character)) {
+        return Response.json({ updated: false, reason: 'Character blocked from work (sleeping/sick/emergency)' });
+      }
 
       if (isOnShift(character)) {
         if (workLocId) {
@@ -92,7 +113,11 @@ Deno.serve(async (req) => {
     }
 
     // --- Full scan / diagnostic mode (no characterId) ---
-    const allChars = await base44.asServiceRole.entities.Character.filter({ status: 'active' });
+    // CRITICAL: Filter by user scope to prevent cross-account processing
+    const allChars = await base44.asServiceRole.entities.Character.filter({ 
+      status: 'active',
+      created_by: user.email 
+    });
 
     const issues_found = [];
     const fixes_applied = [];
@@ -107,6 +132,19 @@ Deno.serve(async (req) => {
     };
 
     for (const char of allChars) {
+      // SKIP non-simulation character types (only process active_created_character and npc_fictitious_character)
+      const charType = char.character_type;
+      const isSimulationChar = ['active_created_character', 'npc_fictitious_character'].includes(charType);
+      if (!isSimulationChar) {
+        continue;
+      }
+
+      // CHECK BLOCKING CONDITIONS EARLY
+      if (isBlockedFromWork(char)) {
+        checks.push({ name: `${char.name} — blocked from work`, status: 'skipped', message: 'Character is sleeping, critically sick, or in emergency state' });
+        continue;
+      }
+
       // Work location: check both fields
       const workLocId = char.current_work_location_id || char.occupation_location_id;
 
@@ -151,14 +189,22 @@ Deno.serve(async (req) => {
 
         if (!isAtWork && workLocId) {
           issues_found.push(`${char.name}: should be at work (${char.work_start_time}–${char.work_end_time}) but location is stale — STALE_SCHEDULE_LOCATION_DATA`);
-          await base44.asServiceRole.entities.Character.update(char.id, {
-            resolved_current_location_id: workLocId,
-            resolved_presence_status: 'at_work',
-            resolved_location_type: 'work',
-            resolved_last_updated_at: new Date().toISOString(),
-          });
-          fixes_applied.push(`${char.name}: synced to work location (was: ${resolvedLocId || 'unset'})`);
-          fixCount++;
+          // VALIDATION: Ensure character exists before updating
+          const validateChar = await base44.asServiceRole.entities.Character.filter({ id: char.id, created_by: user.email });
+          if (validateChar && validateChar.length > 0) {
+            await base44.asServiceRole.entities.Character.update(char.id, {
+              resolved_current_location_id: workLocId,
+              resolved_presence_status: 'at_work',
+              resolved_location_type: 'work',
+              location_status: 'at_work',
+              current_location_status: 'at_work',
+              resolved_last_updated_at: new Date().toISOString(),
+            });
+            fixes_applied.push(`${char.name}: synced to work location (was: ${resolvedLocId || 'unset'})`);
+            fixCount++;
+          } else {
+            issues_found.push(`${char.name}: character validation failed during work location update — skipped`);
+          }
         }
       } else {
         // OFF SHIFT — must not remain at work
@@ -168,33 +214,42 @@ Deno.serve(async (req) => {
         if (isAtWorkLocation && isSleeping && !hasValidSleepAtWorkReason(char)) {
           issues_found.push(`${char.name}: SLEEPING_AT_WORK_INVALID — shift ended, asleep at work with no valid reason`);
           if (homeLocId) {
-            await base44.asServiceRole.entities.Character.update(char.id, {
-              resolved_current_location_id: homeLocId,
-              resolved_presence_status: 'sleeping',
-              resolved_location_type: 'home',
-              resolved_last_updated_at: new Date().toISOString(),
-            });
-            fixes_applied.push(`${char.name}: SLEEPING_AT_WORK_INVALID fixed — relocated to home to sleep`);
-            fixCount++;
-            checks.push({ name: `${char.name} — sleep-at-work check`, status: 'fixed', message: 'Was asleep at work after shift ended — relocated to home' });
+            const validateChar = await base44.asServiceRole.entities.Character.filter({ id: char.id, created_by: user.email });
+            if (validateChar && validateChar.length > 0) {
+              await base44.asServiceRole.entities.Character.update(char.id, {
+                resolved_current_location_id: homeLocId,
+                resolved_presence_status: 'sleeping',
+                resolved_location_type: 'home',
+                location_status: 'home',
+                current_location_status: 'home',
+                resolved_last_updated_at: new Date().toISOString(),
+              });
+              fixes_applied.push(`${char.name}: SLEEPING_AT_WORK_INVALID fixed — relocated to home to sleep`);
+              fixCount++;
+              checks.push({ name: `${char.name} — sleep-at-work check`, status: 'fixed', message: 'Was asleep at work after shift ended — relocated to home' });
+            }
           }
         }
         // Case 2: Still at work (awake) after shift ended
         else if (isAtWorkLocation && !isSleeping) {
           issues_found.push(`${char.name}: POST_SHIFT_EXIT_NOT_TRIGGERED — off shift but still at work location`);
           if (homeLocId) {
-            const energy = char.energy_value || 75;
-            // Low energy → go home to sleep; otherwise heading home
-            const newStatus = energy < 40 ? 'sleeping' : 'home';
-            await base44.asServiceRole.entities.Character.update(char.id, {
-              resolved_current_location_id: homeLocId,
-              resolved_presence_status: newStatus,
-              resolved_location_type: 'home',
-              resolved_last_updated_at: new Date().toISOString(),
-            });
-            fixes_applied.push(`${char.name}: POST_SHIFT_EXIT applied — moved home (${newStatus})`);
-            fixCount++;
-            checks.push({ name: `${char.name} — post-shift exit`, status: 'fixed', message: `Shift ended — moved to home with status '${newStatus}'` });
+            const validateChar = await base44.asServiceRole.entities.Character.filter({ id: char.id, created_by: user.email });
+            if (validateChar && validateChar.length > 0) {
+              const energy = char.energy_value || 75;
+              const newStatus = energy < 40 ? 'sleeping' : 'home';
+              await base44.asServiceRole.entities.Character.update(char.id, {
+                resolved_current_location_id: homeLocId,
+                resolved_presence_status: newStatus,
+                resolved_location_type: 'home',
+                location_status: newStatus,
+                current_location_status: newStatus,
+                resolved_last_updated_at: new Date().toISOString(),
+              });
+              fixes_applied.push(`${char.name}: POST_SHIFT_EXIT applied — moved home (${newStatus})`);
+              fixCount++;
+              checks.push({ name: `${char.name} — post-shift exit`, status: 'fixed', message: `Shift ended — moved to home with status '${newStatus}'` });
+            }
           }
         } else {
           checks.push({ name: `${char.name} — off-shift check`, status: 'passed', message: 'Off shift, location looks correct' });

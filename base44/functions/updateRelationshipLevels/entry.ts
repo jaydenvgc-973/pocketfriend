@@ -275,8 +275,16 @@ Deno.serve(async (req) => {
     if (!characterId) return Response.json({ error: 'Missing required fields' }, { status: 400 });
     if (!userMessage && !emojiReaction) return Response.json({ error: 'Missing required fields' }, { status: 400 });
 
-    const character = await base44.asServiceRole.entities.Character.get(characterId);
-    if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
+    // CRITICAL VALIDATION: Character must exist and belong to current user
+    const chars = await base44.asServiceRole.entities.Character.filter({
+      id: characterId,
+      created_by: user.email
+    });
+    const character = chars?.[0];
+    if (!character) {
+      console.warn(`[updateRelationshipLevels] Character ${characterId} not found or not owned by ${user.email}`);
+      return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
+    }
 
     // ── FETCH MEMORIES FOR ARC STATE DETECTION ────────────────────────────────
     const recentMemories = await base44.asServiceRole.entities.Memory.filter(
@@ -286,7 +294,12 @@ Deno.serve(async (req) => {
     let playingAsCharacter = null;
     let charRelEntry = null;
     if (playingAsCharacterId) {
-      playingAsCharacter = await base44.asServiceRole.entities.Character.get(playingAsCharacterId);
+      // VALIDATION: playingAsCharacter must belong to current user
+      const playingChars = await base44.asServiceRole.entities.Character.filter({
+        id: playingAsCharacterId,
+        created_by: user.email
+      });
+      playingAsCharacter = playingChars?.[0] || null;
       if (playingAsCharacter) {
         charRelEntry = (character.fictional_relationships || []).find(r => r.related_character_id === playingAsCharacterId) || null;
       }
@@ -680,6 +693,15 @@ Respond with ONLY valid JSON:
       };
     }
 
+    // VALIDATION: Ensure character still exists before updating
+    const validateChar = await base44.asServiceRole.entities.Character.filter({
+      id: characterId,
+      created_by: user.email
+    });
+    if (!validateChar || validateChar.length === 0) {
+      console.error(`[updateRelationshipLevels] Character ${characterId} disappeared during processing (owned by ${user.email})`);
+      return Response.json({ error: 'Character became unavailable during processing' }, { status: 410 });
+    }
     await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
 
     // ── MEMORY: milestones + secrets ──────────────────────────────────────────

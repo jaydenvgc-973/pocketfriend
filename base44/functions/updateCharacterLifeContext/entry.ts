@@ -26,8 +26,16 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'character_id and event_description required' }, { status: 400 });
     }
 
-    const character = await base44.asServiceRole.entities.Character.get(character_id);
-    if (!character) return Response.json({ error: 'Character not found' }, { status: 404 });
+    // CRITICAL VALIDATION: Character must exist and belong to current user
+    const chars = await base44.asServiceRole.entities.Character.filter({
+      id: character_id,
+      created_by: user.email
+    });
+    const character = chars?.[0];
+    if (!character) {
+      console.warn(`[updateCharacterLifeContext] Character ${character_id} not found or not owned by ${user.email}`);
+      return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
+    }
 
     const now = new Date();
 
@@ -277,8 +285,16 @@ Rules:
       if (analysis.location_update.state != null) patch.state = analysis.location_update.state;
     }
 
-    // Apply character patch if anything changed
+    // VALIDATION: Ensure character still exists before updating
     if (Object.keys(patch).length > 0) {
+      const validateChar = await base44.asServiceRole.entities.Character.filter({
+        id: character_id,
+        created_by: user.email
+      });
+      if (!validateChar || validateChar.length === 0) {
+        console.error(`[updateCharacterLifeContext] Character ${character_id} became unavailable during processing (owned by ${user.email})`);
+        return Response.json({ error: 'Character became unavailable during processing' }, { status: 410 });
+      }
       await base44.asServiceRole.entities.Character.update(character_id, patch);
     }
 
