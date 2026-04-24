@@ -750,15 +750,24 @@ export default function Scene() {
     // Use resolvedWhosHereList directly — no re-query, no re-matching by name
     const visiblePeopleForScene = resolvedWhosHereList;
     
-    // Extract avatar URLs from all characters — prioritize avatar_url first, fallback to image_avatar_url
+    // DIAGNOSTIC: log every person and whether they have an avatar
     const allCharacterAvatars = visiblePeopleForScene
       .map(c => c.avatar_url || c.image_avatar_url)
       .filter(url => url && url.trim().length > 0);
     
-    console.log('[Scene] Character avatars extracted:', allCharacterAvatars);
+    console.log('[Scene] resolvedWhosHereList count:', visiblePeopleForScene.length, 
+      '| avatars found:', allCharacterAvatars.length,
+      '| people:', visiblePeopleForScene.map(p => `${p.name}:${p.avatar_url ? '✓' : '✗'}`).join(', '));
+    
+    // ALSO include the user's own avatar as a visual reference anchor
+    const userAvatarUrl = currentUser?.generated_avatar_urls?.[0] || currentUser?.avatar_url || null;
+    const allPeopleWithUser = [
+      ...visiblePeopleForScene,
+      ...(userAvatarUrl ? [{ name: displayName, avatar_url: userAvatarUrl }] : []),
+    ];
     
     // Prioritize avatars (identity lock) before environment images
-    const authoratativeEnvRefs = prioritizeAvatarReferences(visiblePeopleForScene, envRefs);
+    const authoratativeEnvRefs = prioritizeAvatarReferences(allPeopleWithUser, envRefs);
 
     // If an action triggered this, use the action's specific prompt
     if (actionOverridePrompt) {
@@ -786,13 +795,13 @@ export default function Scene() {
         finalPrompt += ` ENVIRONMENT AUTHORITY: The reference images define this location's exact room — reproduce the same layout, furniture, colors, and architecture. Do not invent a new environment.`;
       }
       // AVATAR IDENTITY LOCK: enforce full identity matching for all visible people
-      if (visiblePeopleForScene.length > 0) {
-        finalPrompt += buildAvatarIdentityEnforcementBlock(visiblePeopleForScene);
+      if (allPeopleWithUser.length > 0) {
+        finalPrompt += buildAvatarIdentityEnforcementBlock(allPeopleWithUser);
       }
       try {
         // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
-        const actionVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
-        console.log('[Scene action] Passing visual references:', actionVisualRefs);
+        const actionVisualRefs = buildVisualReferenceStack(allPeopleWithUser, authoratativeEnvRefs);
+        console.log('[Scene action] Passing visual references:', actionVisualRefs.length, 'refs for', allPeopleWithUser.map(p=>p.name).join(', '));
         const result = await base44.integrations.Core.GenerateImage({
           prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
           existing_image_urls: actionVisualRefs.length > 0 ? actionVisualRefs : undefined,
@@ -872,8 +881,8 @@ export default function Scene() {
 
     try {
       // AVATAR IDENTITY LOCK: avatars FIRST (identity authority), env images SECOND
-      const finalVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
-      console.log('[Scene main] Passing visual references:', finalVisualRefs, 'for characters:', visiblePeopleForScene.map(c => c.name));
+      const finalVisualRefs = buildVisualReferenceStack(allPeopleWithUser, authoratativeEnvRefs);
+      console.log('[Scene main] FINAL refs:', finalVisualRefs.length, 'avatar+env refs | people:', allPeopleWithUser.map(c => c.name).join(', '));
       const result = await base44.integrations.Core.GenerateImage({
         prompt,
         existing_image_urls: finalVisualRefs.length > 0 ? finalVisualRefs : undefined,
