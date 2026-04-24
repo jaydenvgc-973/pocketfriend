@@ -15,6 +15,8 @@
 /**
  * Resolve the authoritative current location for a character
  * Returns the location ID where they physically are RIGHT NOW
+ * 
+ * LEGACY COMPATIBLE: Supports older field names
  */
 export function resolveCurrentLocation(character) {
   // AUTHORITY: resolved_current_location_id is the source of truth if set
@@ -22,26 +24,38 @@ export function resolveCurrentLocation(character) {
     return character.resolved_current_location_id;
   }
 
-  // FALLBACK: current_location_id
+  // FALLBACK: current_location_id (or legacy current_location)
   if (character.current_location_id) {
     return character.current_location_id;
   }
 
+  // LEGACY: older field names
+  if (character.current_location) {
+    return character.current_location;
+  }
+
   // HOME: If nowhere else specified, they're home
-  const homeId = character.current_home_location_id || character.home_location_id;
+  const homeId = character.current_home_location_id || character.home_location_id || character.home_location;
   return homeId || null;
 }
 
 /**
  * Resolve the authoritative home location for a character
+ * LEGACY COMPATIBLE: Supports older field names
  */
 export function resolveHomeLocation(character) {
-  return character.current_home_location_id || character.home_location_id || null;
+  return character.current_home_location_id 
+    || character.home_location_id 
+    || character.home_location 
+    || character.residence_location_id 
+    || null;
 }
 
 /**
  * Build the authoritative avatar list for a character
  * Returns [avatar_url] in priority order
+ * 
+ * LEGACY COMPATIBLE: Supports older field names (photo_url, profile_image_url, etc.)
  */
 export function resolveCharacterAvatars(character) {
   const avatars = [];
@@ -51,21 +65,31 @@ export function resolveCharacterAvatars(character) {
     avatars.push(character.avatar_url);
   }
 
+  // Priority 1b: Legacy photo_url or profile_image_url
+  if (!character.avatar_url && !avatars.includes(character.photo_url) && character.photo_url) {
+    avatars.push(character.photo_url);
+  }
+  if (!avatars.includes(character.profile_image_url) && character.profile_image_url) {
+    avatars.push(character.profile_image_url);
+  }
+
   // Priority 2: image_avatar_url (fallback)
   if (character.image_avatar_url && !avatars.includes(character.image_avatar_url)) {
     avatars.push(character.image_avatar_url);
   }
 
-  // Priority 3: reference_image_urls
-  if (character.reference_image_urls && Array.isArray(character.reference_image_urls)) {
-    character.reference_image_urls.forEach(url => {
+  // Priority 3: reference_image_urls (or legacy reference_images)
+  const refImages = character.reference_image_urls || character.reference_images || [];
+  if (Array.isArray(refImages)) {
+    refImages.forEach(url => {
       if (url && !avatars.includes(url)) avatars.push(url);
     });
   }
 
-  // Priority 4: generated_avatar_urls
-  if (character.generated_avatar_urls && Array.isArray(character.generated_avatar_urls)) {
-    character.generated_avatar_urls.forEach(url => {
+  // Priority 4: generated_avatar_urls (or legacy generated_avatars)
+  const genAvatars = character.generated_avatar_urls || character.generated_avatars || [];
+  if (Array.isArray(genAvatars)) {
+    genAvatars.forEach(url => {
       if (url && !avatars.includes(url)) avatars.push(url);
     });
   }
@@ -167,29 +191,33 @@ export function validateCharacterForImageGeneration(character) {
 
 /**
  * Resolve narrative eligibility based on shared truth
+ * LEGACY COMPATIBLE: Supports older field names and character types
  */
 export function resolveNarrativeEligibility(character) {
   const reasons = [];
 
-  // Check 1: Character type
-  const supportsNarratives = ['active_created_character', 'npc_fictitious_character'].includes(character.character_type);
+  // Check 1: Character type (support legacy type names)
+  const charType = character.character_type || character.char_type || 'active_created_character';
+  const supportsNarratives = ['active_created_character', 'npc_fictitious_character', 'character', 'npc'].includes(charType);
   if (!supportsNarratives) {
     reasons.push('unsupported_character_type');
     return { eligible: false, reasons };
   }
 
-  // Check 2: Status
-  if (character.status !== 'active') {
+  // Check 2: Status (support legacy status field names)
+  const status = character.status || character.char_status || 'active';
+  if (status !== 'active') {
     reasons.push('not_active');
   }
 
-  // Check 3: Test flag
-  if (character.is_test_character || character.diagnostic_only) {
+  // Check 3: Test flag (support legacy test_character field)
+  const isTest = character.is_test_character || character.diagnostic_only || character.test_character === true;
+  if (isTest) {
     reasons.push('test_or_diagnostic');
   }
 
-  // Check 4: Overdue
-  const lastNarrative = character.last_autonomous_narrative_at;
+  // Check 4: Overdue (support legacy last_narrative_at field)
+  const lastNarrative = character.last_autonomous_narrative_at || character.last_narrative_at;
   const daysSince = lastNarrative ? Math.floor((Date.now() - new Date(lastNarrative)) / (1000 * 60 * 60 * 24)) : null;
   const isOverdue = !lastNarrative || daysSince > 1;
 
@@ -209,12 +237,14 @@ export function resolveNarrativeEligibility(character) {
 
 /**
  * Resolve travel eligibility based on shared truth
+ * LEGACY COMPATIBLE: Supports older field names and character types
  */
 export function resolveTravelEligibility(character) {
   const reasons = [];
 
-  // Check 1: Character type
-  const canTravel = ['active_created_character', 'npc_fictitious_character'].includes(character.character_type);
+  // Check 1: Character type (support legacy type names)
+  const charType = character.character_type || character.char_type || 'active_created_character';
+  const canTravel = ['active_created_character', 'npc_fictitious_character', 'character', 'npc'].includes(charType);
   if (!canTravel) {
     reasons.push('unsupported_character_type');
     return { eligible: false, reasons };
@@ -232,8 +262,9 @@ export function resolveTravelEligibility(character) {
     reasons.push('already_traveling');
   }
 
-  // Check 4: Not already in transit
-  if (character.travel_status === 'traveling') {
+  // Check 4: Not already in transit (support legacy travel_status field)
+  const travelStatus = character.travel_status || character.travel_state;
+  if (travelStatus === 'traveling' || travelStatus === 'in_transit') {
     reasons.push('already_in_transit');
   }
 

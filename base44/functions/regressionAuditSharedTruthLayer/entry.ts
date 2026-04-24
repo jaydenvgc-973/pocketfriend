@@ -20,6 +20,20 @@ async function auditCharacterTruthState(base44, character) {
   const char = character;
   const issues = [];
   const truths = {};
+  const legacyMapping = {};
+
+  // LEGACY COMPATIBILITY: Support older field names
+  // Map new field names to legacy if missing
+  const resolveLocation = (newField, legacyFields) => {
+    if (char[newField]) return char[newField];
+    for (const legacyField of legacyFields) {
+      if (char[legacyField]) {
+        legacyMapping[newField] = legacyField;
+        return char[legacyField];
+      }
+    }
+    return null;
+  };
 
   // TRUTH SOURCE 1: Current Location (authoritative for presence)
   const locFields = {
@@ -30,9 +44,13 @@ async function auditCharacterTruthState(base44, character) {
     'resolved_location_type': char.resolved_location_type,
   };
   truths.locationFields = locFields;
+  truths.legacyFieldsUsed = legacyMapping;
 
-  const primaryLoc = char.resolved_current_location_id || char.current_location_id;
-  const secondaryLoc = char.current_home_location_id || char.home_location_id;
+  // Support legacy field names if newer ones missing
+  const primaryLoc = resolveLocation('resolved_current_location_id', ['current_location_id']) 
+    || resolveLocation('current_location_id', ['resolved_current_location_id']);
+  const secondaryLoc = resolveLocation('current_home_location_id', ['home_location_id']) 
+    || resolveLocation('home_location_id', ['current_home_location_id']);
 
   if (!primaryLoc && !secondaryLoc) {
     issues.push('NO_LOCATION_ASSIGNED');
@@ -46,14 +64,23 @@ async function auditCharacterTruthState(base44, character) {
   }
 
   // TRUTH SOURCE 2: Avatar/Identity Resolution
+  // Support legacy avatar field names: photo_url, profile_image_url
+  const avatarUrl = char.avatar_url || char.photo_url || char.profile_image_url;
+  const imageAvatarUrl = char.image_avatar_url;
+  const referenceImages = char.reference_image_urls || char.reference_images || [];
+  const generatedAvatars = char.generated_avatar_urls || char.generated_avatars || [];
+
   const avatarFields = {
     'avatar_url': char.avatar_url,
+    'photo_url (legacy)': char.photo_url,
     'image_avatar_url': char.image_avatar_url,
-    'reference_image_urls': char.reference_image_urls?.length || 0,
+    'reference_image_urls': referenceImages.length || 0,
+    'generated_avatar_urls': generatedAvatars.length || 0,
   };
   truths.avatarFields = avatarFields;
+  truths.resolvedAvatarUrl = avatarUrl;
 
-  if (!char.avatar_url && !char.image_avatar_url && (!char.reference_image_urls || char.reference_image_urls.length === 0)) {
+  if (!avatarUrl && !imageAvatarUrl && referenceImages.length === 0 && generatedAvatars.length === 0) {
     issues.push('NO_AVATAR_OR_REFERENCE');
   }
 
@@ -92,15 +119,17 @@ async function auditCharacterTruthState(base44, character) {
   };
 
   // TRUTH SOURCE 5: Narrative Eligibility
-  const lastNarrative = char.last_autonomous_narrative_at;
+  // Support legacy status field names: active, inactive, archived
+  const statusVal = char.status || char.char_status || 'active';
+  const lastNarrative = char.last_autonomous_narrative_at || char.last_narrative_at;
   const narrativeMode = char.narrative_mode;
-  const isActive = char.status === 'active';
-  const isTestChar = char.is_test_character || char.diagnostic_only;
+  const isActive = statusVal === 'active';
+  const isTestChar = char.is_test_character || char.diagnostic_only || char.test_character === true;
 
   truths.narrativeState = {
     isActive,
     isTestChar,
-    mode: narrativeMode,
+    mode: narrativeMode || 'auto',
     lastNarrative: lastNarrative ? new Date(lastNarrative).toISOString().split('T')[0] : 'never',
     daysSinceNarrative: lastNarrative ? Math.floor((Date.now() - new Date(lastNarrative)) / (1000 * 60 * 60 * 24)) : null,
   };
@@ -112,11 +141,21 @@ async function auditCharacterTruthState(base44, character) {
   }
 
   // TRUTH SOURCE 6: Character Type Simulation Support
-  const charType = char.character_type;
-  const supportsFullSim = ['active_created_character', 'npc_fictitious_character'].includes(charType);
+  // Support legacy character_type values: character, npc, family, user, etc.
+  const charType = char.character_type || char.char_type || 'active_created_character';
+  const legacyCharTypeMap = {
+    'character': 'active_created_character',
+    'npc': 'npc_fictitious_character',
+    'family': 'npc_family_member',
+    'user': 'user',
+  };
+  
+  const normalizedType = legacyCharTypeMap[charType] || charType;
+  const supportsFullSim = ['active_created_character', 'npc_fictitious_character', 'character', 'npc'].includes(charType || normalizedType);
 
   truths.characterType = {
     type: charType,
+    normalizedType,
     supportsFullSim,
     shouldHaveSchedule: supportsFullSim,
     shouldHaveNarratives: supportsFullSim,
