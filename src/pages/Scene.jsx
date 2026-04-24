@@ -29,7 +29,6 @@ import { isNPCOnShift } from "@/lib/npcShiftUtils";
 import SceneInputBar from "@/components/scene/SceneInputBar";
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from "@/lib/residentialSceneFiltering";
 import { buildIdentityLockBlock, prioritizeAvatarReferences, validateIdentityLockCompliance, describeIdentityLocks } from "@/lib/characterIdentityLock";
-import { resolveScenePeople, resolveSelectedPerson, validateSelectedPeopleAvatars } from "@/lib/sceneResidentResolver";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -178,13 +177,13 @@ export default function Scene() {
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
   const { data: settingsList = [] } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => currentUser?.email ? base44.entities.UserSettings.filter({ created_by: currentUser.email }) : Promise.resolve([]),
+    queryFn: () => base44.entities.UserSettings.filter({ created_by: currentUser.email }),
     enabled: !!currentUser?.email,
   });
-  const settings = settingsList?.[0] || {};
+  const settings = settingsList[0] || {};
   // IDENTITY ISOLATION: displayName must always come from the currently authenticated user.
   // Never derive it from shared/cached settings that may belong to another account.
-  const displayName = settings?.fictional_world_name || currentUser?.full_name || "You";
+  const displayName = settings.fictional_world_name || currentUser?.full_name || "You";
 
   const { data: locationsData = [] } = useQuery({
     queryKey: ["locationReferences", currentUser?.email],
@@ -198,13 +197,12 @@ export default function Scene() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
     queryFn: async () => {
-      if (!currentUser?.email) return [];
       const all = await base44.entities.Character.filter({ created_by: currentUser.email, status: "active" });
       // DIAGNOSTIC FILTER: exclude test/diagnostic entities from all scene queries
-      return (all || []).filter(c =>
-        c?.is_test_character !== true &&
-        c?.diagnostic_only !== true &&
-        c?.exclude_from_default_scene_queries !== true
+      return all.filter(c =>
+        c.is_test_character !== true &&
+        c.diagnostic_only !== true &&
+        c.exclude_from_default_scene_queries !== true
       );
     },
     enabled: !!currentUser?.email,
@@ -212,8 +210,8 @@ export default function Scene() {
     staleTime: 0,
   });
 
-  const location = locationsData?.find?.(l => l?.id === locationId);
-  const locationMap = Object.fromEntries((locationsData || []).map(l => [l?.id, l]).filter(([id]) => id));
+  const location = locationsData.find(l => l.id === locationId);
+  const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
   const locationZones = location?.zones || [];
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
@@ -242,44 +240,64 @@ export default function Scene() {
     return true;
   };
 
-  // ── UNIFIED SCENE PEOPLE RESOLVER ───────────────────────────────────────
-  // Single source of truth for Who's Here panel and image generation
-  const resolvedScenePeople = location ? resolveScenePeople(location, characters, currentUser) : [];
-  if (location) {
-    console.log(`[Scene] Resolved ${resolvedScenePeople.length} people for location "${location.name}"`);
-  }
-
-  // Separate resolved people by resident status for UI display
+  // Active characters home at a home location
   const homeResidents = isHomeLocation
-    ? resolvedScenePeople.filter(p =>
-        p.resident_status === 'resident' && (p.character_type === 'active_created_character' || p.character_type === 'family_npc')
-      )
+    ? characters.filter(c => c.current_home_location_id === location.id)
+    : [];
+  // VGC Towers: residents are selectable but not auto-shown in the presence strip
+  const homeResidentsPresent = homeResidents.filter(c => isCharacterHome(c, locationMap));
+  const homeResidentsAway = homeResidents.filter(c => !isCharacterHome(c, locationMap));
+
+  // Family NPCs for home scenes.
+  // A family NPC is "present" if their current_location_id is unset (default = home) or === this location.
+  // A family NPC is "away" if their current_location_id is set to a DIFFERENT location.
+  // We do NOT require fictional_relationships lookup — resident_family_members is the source of truth.
+  const getFamilyNpcLocationId = (fm) => {
+    // Check source character's fictional_relationships for current_location_id
+    for (const char of homeResidents) {
+      const rel = char.fictional_relationships?.find(
+        r => r.person_name?.trim().toLowerCase() === fm.name?.trim().toLowerCase() && !r.related_character_id
+      );
+      if (rel) return rel.current_location_id || null;
+    }
+    return null; // no location set = home by default
+  };
+
+  const familyMemberNpcsAway = isHomeLocation
+    ? (location.resident_family_members || []).filter(fm => {
+        if (!fm.name) return false;
+        const locId = getFamilyNpcLocationId(fm);
+        return locId && locId !== location.id;
+      })
     : [];
 
-  const homeResidentsPresent = homeResidents.filter(p => {
-    const char = characters?.find(c => c?.id === p.source_id);
-    return char ? isCharacterHome(char, locationMap) : false;
-  });
-  const homeResidentsAway = homeResidents.filter(p => {
-    const char = characters?.find(c => c?.id === p.source_id);
-    return char ? !isCharacterHome(char, locationMap) : false;
-  });
+  const familyMemberNpcsPresent = isHomeLocation
+    ? (location.resident_family_members || []).filter(fm => {
+        if (!fm.name) return false;
+        const locId = getFamilyNpcLocationId(fm);
+        return !locId || locId === location.id;
+      })
+    : [];
 
-  // For backward compatibility with existing scene roster logic
-  // Map resolved people back to character objects for sceneCharacters list
-  const familyNpcSceneObjects = homeResidents
-    .filter(p => p.character_type === 'family_npc')
-    .map(p => ({
-      id: p.id,
-      name: p.display_name,
-      role: 'Family',
+  // Build NPC pseudo-characters for family members present (for sceneCharacters roster)
+  const familyNpcSceneObjects = familyMemberNpcsPresent.map(fm => {
+    // Look up photo_url from source character's family_members array
+    let photoUrl = null;
+    for (const char of homeResidents) {
+      const match = char.family_members?.find(
+        m => m.name?.trim().toLowerCase() === fm.name?.trim().toLowerCase()
+      );
+      if (match?.photo_url) { photoUrl = match.photo_url; break; }
+    }
+    return {
+      id: `npc_family_${fm.name.replace(/\s+/g, '_')}`,
+      name: fm.name,
+      role: fm.relationship_type || 'Family',
       isNpc: true,
       character_type: 'family_npc',
-      avatar_url: p.avatar_url,
-    }));
-
-  const familyMemberNpcsAway = []; // No longer needed — resolved people already handle this
-  const familyMemberNpcsPresent = []; // No longer needed — resolved people already handle this
+      avatar_url: photoUrl,
+    };
+  });
 
   // Workers: ONLY if they have a valid resolved presence at this location (not just assignment)
   // HARD RULE: isCharacterAtWork checks schedule; PLUS we require resolved presence if set
@@ -632,20 +650,9 @@ export default function Scene() {
 
   const toggleNpc = (npcId) => {
     const current = selectedNpcIds ?? [];
-    const updated = current.includes(npcId) ? current.filter(id => id !== npcId) : [...current, npcId];
-    setSelectedNpcIds(updated);
-
-    // Validate that selected people have avatars (debug)
-    const selectedPeople = updated
-      .map(id => resolvedScenePeople.find(p => p.id === id))
-      .filter(Boolean);
-    const validation = validateSelectedPeopleAvatars(selectedPeople);
-    if (validation.without_avatar.length > 0) {
-      console.error(
-        '[Scene] ERROR: Selected person visible in Who\'s Here but avatar not available for image generation:',
-        validation.without_avatar
-      );
-    }
+    setSelectedNpcIds(
+      current.includes(npcId) ? current.filter(id => id !== npcId) : [...current, npcId]
+    );
   };
 
   // Initialize actions dynamically
@@ -827,19 +834,25 @@ export default function Scene() {
       const isGlobal = !isHomeLocation && location.location_type === "global";
 
       if (!isGlobal) {
-        // Use unified resolved people for residential filtering
-        const physicallyPresent = resolvedScenePeople.filter(p =>
-          p.resident_status === 'resident' || p.character_type === 'user'
-        );
+        // Apply residential filtering for home locations — residents only, plus user
+        // Use familyNpcSceneObjects (enriched with avatar_url) not raw familyMemberNpcsPresent
+        const rawPresent = [
+          ...homeResidentsPresent,
+          ...broughtCharacters,
+          ...familyNpcSceneObjects,
+        ].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i);
+
+        const physicallyPresent = isHomeLocation
+          ? resolveSceneImagePeople(location, rawPresent, currentUser, true)
+          : rawPresent;
 
         if (physicallyPresent.length === 0) {
           finalPrompt += ` CRITICAL: This space is empty. There are absolutely NO people in this image — no humans, no silhouettes, no background figures, no one. Only the room/space itself.`;
         } else {
-          finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.display_name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
+          finalPrompt += ` CRITICAL: Only these people may appear: ${physicallyPresent.map(c => c.name).join(", ")}. No other people, no strangers, no random background figures under any circumstances.`;
           if (isHomeLocation) {
             finalPrompt += buildResidentialImageConstraint(location, physicallyPresent);
-            const identityLockPeople = physicallyPresent.filter(p => p.avatar_url);
-            finalPrompt += buildIdentityLockBlock(identityLockPeople, currentUser);
+            finalPrompt += buildIdentityLockBlock(physicallyPresent, currentUser);
           }
         }
       }
@@ -868,21 +881,26 @@ export default function Scene() {
     let prompt;
     if (isHomeLocation) {
       // ── RESIDENTIAL SCENE FILTERING + IDENTITY LOCK ────────────────────────
-      // Use unified resolved people that Who's Here panel already uses
-      const visiblePeople = resolvedScenePeople.filter(p =>
-        p.resident_status === 'resident' || p.character_type === 'user'
+      // Strict residence occupant-only rule + 100% face match to avatars
+      // Pass familyNpcSceneObjects (enriched, with avatar_url from parent character's family_members)
+      // NOT familyMemberNpcsPresent (raw location record entries with no avatar_url or id)
+      const validResidentialPeople = resolveSceneImagePeople(
+        location,
+        [...homeResidentsPresent, ...broughtCharacters, ...familyNpcSceneObjects],
+        currentUser,
+        true // include user
       );
 
-      const identityLockPeople = visiblePeople.filter(p => p.avatar_url);
-      const residentialConstraint = buildResidentialImageConstraint(location, visiblePeople);
-      const identityLockBlock = buildIdentityLockBlock(identityLockPeople, currentUser);
+      const visibleNames = validResidentialPeople.slice(0, 3).map(c => c.name);
       
-      const visibleNames = visiblePeople.slice(0, 3).map(c => c.display_name);
+      const residentialConstraint = buildResidentialImageConstraint(location, validResidentialPeople);
+      const identityLockBlock = buildIdentityLockBlock(validResidentialPeople, currentUser);
+      
       const strictPeopleRule = visibleNames.length > 0
         ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
         : `STRICT RULE: This space is completely empty — no people, no silhouettes, only the room.`;
 
-      const atmosphereSuffix = visiblePeople.length > 0
+      const atmosphereSuffix = (location.resident_family_members?.length > 0 || homeResidents.length > 0)
         ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
         : "";
 
@@ -1563,13 +1581,6 @@ Return JSON:
           </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-b from-transparent to-background/60" />
-
-        {/* Debug log resolved scene people (development only) */}
-        {import.meta.env.DEV && resolvedScenePeople.length > 0 && (
-          <div className="absolute bottom-2 left-2 text-[9px] text-primary/40 max-w-xs">
-            {resolvedScenePeople.length} people: {resolvedScenePeople.map(p => `${p.display_name}${p.avatar_url ? '✓' : '✗'}`).join(', ')}
-          </div>
-        )}
 
         {/* Zone picker */}
         {locationZones.length > 1 && (
