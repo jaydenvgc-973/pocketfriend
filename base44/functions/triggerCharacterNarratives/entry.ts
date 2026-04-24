@@ -13,8 +13,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  *
  * Rules:
  * - Only active_created_character types
- * - Only characters owned by the correct user (owner_email or created_by)
- * - Only conversations active in the last 24 hours
+ * - Characters matched by owner_email OR created_by (both checked, deduplicated)
+ * - Only conversations active in the last 7 days
  * - No narrative within the last 2 hours
  * - At least 3 messages in the conversation
  * - 40% random chance per eligible character to keep it organic
@@ -36,11 +36,19 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
   const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
   const results = [];
 
-  // ACCOUNT-SCOPED: fetch this user's characters, filter in JS (compound DB filters can be unreliable)
-  const rawChars = await base44SR.entities.Character.filter(
-    { created_by: userEmail },
-    null, 100
-  ).catch(() => []);
+  // ACCOUNT-SCOPED: fetch this user's characters by both created_by and owner_email
+  // Some characters may have been created by service role but owned by the user
+  const [byCreatedBy, byOwnerEmail] = await Promise.all([
+    base44SR.entities.Character.filter({ created_by: userEmail }, null, 200).catch(() => []),
+    base44SR.entities.Character.filter({ owner_email: userEmail }, null, 200).catch(() => []),
+  ]);
+  // Deduplicate by id
+  const seenIds = new Set();
+  const rawChars = [...byCreatedBy, ...byOwnerEmail].filter(c => {
+    if (seenIds.has(c.id)) return false;
+    seenIds.add(c.id);
+    return true;
+  });
   const userChars = rawChars.filter(c =>
     c.character_type === 'active_created_character' &&
     (!c.status || c.status === 'active')
@@ -53,14 +61,16 @@ async function processUserNarratives(base44SR, userEmail, runId, diagnosticMode 
     const skipBase = { characterId: character.id, name: character.name, userEmail, status: 'skipped' };
 
     // ── 1. Find the most recent direct conversation (scoped to this user) ──
-    // character_ids is an array field — filter in JS after fetching by created_by
+    // character_ids is an array field — filter in JS after fetching by owner
+    // Fetch once per character loop using service role (already account-scoped by userEmail filter)
     const allUserConvos = await base44SR.entities.Conversation.filter(
       { type: 'direct', created_by: userEmail },
-      '-last_message_date', 50
+      '-last_message_date', 100
     ).catch(() => []);
-    const convos = allUserConvos.filter(c =>
-      Array.isArray(c.character_ids) && c.character_ids.includes(character.id)
-    ).slice(0, 1);
+    const convos = allUserConvos
+      .filter(c => Array.isArray(c.character_ids) && c.character_ids.includes(character.id))
+      .sort((a, b) => new Date(b.last_message_date || 0) - new Date(a.last_message_date || 0))
+      .slice(0, 1);
 
     if (!convos.length) {
       const reason = 'no direct conversation found for this user';
@@ -274,22 +284,31 @@ Deno.serve(async (req) => {
       allResults.push(...results);
     } else {
       // SCHEDULER MODE: iterate distinct user emails from Character records
-      // Fetch all characters (service role) and filter in JS — compound filters may be unreliable
-      const allChars = await base44SR.entities.Character.list(null, 500).catch(() => []);
+      // Page through ALL characters in batches to avoid the 500-record cap
+      let allChars = [];
+      let page = 0;
+      const PAGE_SIZE = 500;
+      while (true) {
+        const batch = await base44SR.entities.Character.list(null, PAGE_SIZE, page * PAGE_SIZE).catch(() => []);
+        if (!batch || batch.length === 0) break;
+        allChars = allChars.concat(batch);
+        if (batch.length < PAGE_SIZE) break; // last page
+        page++;
+      }
+
       const eligibleChars = allChars.filter(c =>
         c.character_type === 'active_created_character' &&
         (!c.status || c.status === 'active')
       );
 
+      // Collect unique user emails — prefer owner_email, fall back to created_by
       const userEmails = [...new Set(
         eligibleChars
           .map(c => c.owner_email || c.created_by)
-          .filter(Boolean)
+          .filter(e => e && !e.startsWith('service+')) // exclude service-role created records
       )];
 
-      console.log(`[triggerCharacterNarratives] Scheduler: ${allChars.length} total chars → ${eligibleChars.length} eligible → ${userEmails.length} unique users`);
-
-      console.log(`[triggerCharacterNarratives] Scheduler mode — found ${userEmails.length} unique user accounts`);
+      console.log(`[triggerCharacterNarratives] Scheduler: ${allChars.length} total chars → ${eligibleChars.length} active_created_character → ${userEmails.length} unique user accounts`);
 
       for (const email of userEmails) {
         const results = await processUserNarratives(base44SR, email, runId, false);
