@@ -247,7 +247,18 @@ Deno.serve(async (req) => {
 
     if (manualLocationId) {
       // ── PATH A: USER EXPLICITLY SELECTED A LOCATION (AND OPTIONALLY ZONE) ─
-      // This is the HIGHEST PRIORITY. Do NOT mix with original context.
+      // ZERO LEAKAGE: verify location ownership before resolving images
+      const _pathALoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);
+      if (_pathALoc) {
+        const _palo = _pathALoc.owner_email || _pathALoc.created_by;
+        const _paru = message?.created_by || user.email;
+        const _pash = _pathALoc.scope === 'shared' || _pathALoc.location_type === 'shared';
+        if (_palo && _paru && _palo !== _paru && !_pash) {
+          console.error(`[regen] ⛔ CROSS-ACCOUNT PATH A: location "${_pathALoc.name}" owned by "${_palo}", request from "${_paru}". HARD FAIL.`);
+          return Response.json({ success: false, error: 'Location access denied — this location belongs to a different account.' }, { status: 403 });
+        }
+      }
+
       console.log(`[regen] ═══ PATH A: MANUAL LOCATION SELECTED ═══`);
       console.log(`[regen] manualLocationId="${manualLocationId}" | manualZoneId="${manualZoneId || '(none — will auto-detect if multiple zones)'}" | reason="${reason}"`);
       
