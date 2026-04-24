@@ -174,26 +174,52 @@ Deno.serve(async (req) => {
     const charDesc = [character?.appearance_notes, character?.age_range, character?.gender, character?.ethnicities?.join(', ')].filter(Boolean).join(', ');
 
     // Build character reference images
-    // For flawed: use ALL available refs (avatar + reference_image_urls) for max identity lock.
-    // For other reasons: avatar_url only.
+    // Always CDN-convert ALL refs first, then filter for provider accessibility.
+    // For flawed/no_avatar: use ALL available refs (avatar + reference_image_urls) for max identity lock.
+    // For other reasons: avatar_url only as primary, with reference_image_urls as supplemental.
     const isFlawed = reason === 'flawed';
+    const isNoAvatar = reason === 'no_avatar';
     const avatarUrl = character?.avatar_url ? toPublicCDN(character.avatar_url) : null;
     let charRefImages = [];
     if (avatarUrl && isProviderAccessible(avatarUrl)) {
       charRefImages.push(avatarUrl);
       console.log(`[regen] ✓ Using character avatar_url (CDN): ${avatarUrl.substring(0, 80)}`);
     } else {
-      console.warn(`[regen] ⚠️ No accessible avatar_url found`);
+      console.warn(`[regen] ⚠️ avatar_url not accessible (raw="${character?.avatar_url?.substring(0, 60) || 'null'}")`);
     }
-    // For flawed regeneration: add all accessible reference_image_urls for maximum identity fidelity
-    if (isFlawed && character?.reference_image_urls?.length > 0) {
+    // For flawed/no_avatar: add all accessible reference_image_urls for maximum identity fidelity
+    if ((isFlawed || isNoAvatar) && character?.reference_image_urls?.length > 0) {
       for (const ref of character.reference_image_urls) {
         const converted = toPublicCDN(ref);
         if (isProviderAccessible(converted) && !charRefImages.includes(converted)) {
           charRefImages.push(converted);
+        } else if (!isProviderAccessible(toPublicCDN(ref))) {
+          console.warn(`[regen] ⚠️ reference_image_url inaccessible after CDN conversion: ${ref?.substring(0, 60)}`);
         }
       }
-      console.log(`[regen] FLAWED mode: expanded charRefImages to ${charRefImages.length} (avatar + reference_image_urls)`);
+      console.log(`[regen] ${reason} mode: expanded charRefImages to ${charRefImages.length} (avatar + reference_image_urls)`);
+    }
+
+    // ── HARD FAIL: zero usable identity refs for character-centered request ───
+    // reason=no_avatar specifically means identity correction — cannot proceed without refs.
+    // reason=flawed means full re-render — cannot proceed without refs.
+    // reason=wrong_location only: location is being corrected, identity uses whatever is available.
+    // For ALL other reasons with zero refs: also hard fail to prevent random-person generation.
+    const characterCenteredReasons = ['no_avatar', 'flawed', 'dont_like', 'custom_prompt'];
+    if (originalCharId && charRefImages.length === 0) {
+      console.error(`[regen] ⛔ HARD FAIL — ZERO USABLE IDENTITY REFS for character "${charName}" (id=${originalCharId})`);
+      console.error(`[regen] avatar_url raw: "${character?.avatar_url?.substring(0, 80) || 'null'}"`);
+      console.error(`[regen] reference_image_urls count: ${character?.reference_image_urls?.length ?? 0}`);
+      console.error(`[regen] All identity refs are stored as private/internal URLs the provider cannot access.`);
+      console.error(`[regen] reason="${reason}" — refusing to dispatch, would generate a random person.`);
+      console.error(`[regen] FIX: Re-upload avatar via character photo editor to store as media.base44.com CDN URL.`);
+      return Response.json({
+        success: false,
+        identity_refs_count: 0,
+        character_id: originalCharId,
+        character_name: charName,
+        error: `No usable identity reference images found for "${charName}". The character's photos may be stored as private URLs. Re-upload the avatar photo to fix this.`,
+      }, { status: 422 });
     }
 
     // ══════════════════════════════════════════════════════════════════════════
