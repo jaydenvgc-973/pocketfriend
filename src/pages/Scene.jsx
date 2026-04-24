@@ -682,7 +682,13 @@ export default function Scene() {
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
       generateSceneImage();
     }
-  }, [location?.id, sceneImage, activeZone, resolvedWhosHereList]);
+  // NOTE: resolvedWhosHereList is intentionally NOT in the dep array — it's a new array every render
+  // and would cause infinite re-generation loops. Image regeneration is triggered by:
+  // - location change (location?.id)
+  // - sceneImage set to null (null = explicit regen request)
+  // - zone change (activeZone)
+  // - selectedNpcIds change (explicit user selection changes who appears)
+  }, [location?.id, sceneImage, activeZone, selectedNpcIds]);
 
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
