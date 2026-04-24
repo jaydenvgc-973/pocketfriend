@@ -12,14 +12,13 @@ export default function FixLocationsButton({ currentUserEmail }) {
     setStatus("running");
     setMessage("");
     try {
-      const res = await base44.functions.invoke("batchFixCharacterLocations", {});
-      const fixed = res?.data?.fixed || 0;
-      setMessage(fixed > 0 ? `${fixed} character${fixed > 1 ? "s" : ""} corrected` : "All locations look good");
+      const res = await base44.functions.invoke("fixCharacterLocationDisplay", {});
+      const corrected = res?.data?.corrected_count || 0;
+      setMessage(corrected > 0 ? `${corrected} card${corrected > 1 ? "s" : ""} updated` : "All displays in sync");
       setStatus("done");
 
-      // Refresh characters + locations everywhere
+      // Refresh characters to reflect updated location display
       queryClient.invalidateQueries({ queryKey: ["characters", currentUserEmail] });
-      queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUserEmail] });
 
       setTimeout(() => setStatus(null), 4000);
     } catch {
