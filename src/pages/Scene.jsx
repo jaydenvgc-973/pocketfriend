@@ -125,14 +125,19 @@ export default function Scene() {
 
   // ── UNIFIED PRESENCE RESOLUTION ─────────────────────────────────────────────
   // SAME resolver as Travel page (Map + popup) — one source of truth for all surfaces
-  const unifiedPresenceEntities = useMemo(() => resolveTravelPresenceEntities({
-    currentUser,
-    activeCharacters: characters.filter(c => c.character_type === 'active_created_character'),
-    npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious'),
-    npcFamilyMembers: characters.filter(c => c.character_type === 'npc_family_member'),
-    allCharacters: characters,
-    locations: locationsData,
-  }), [currentUser?.id, characters.length, locationsData.length]);
+  const unifiedPresenceEntities = useMemo(() => {
+    console.log(`[Scene] Resolving presence: active=${characters.filter(c => c.character_type === 'active_created_character').length}, npc_fict=${characters.filter(c => c.character_type === 'npc_fictitious').length}, npc_fam=${characters.filter(c => c.character_type === 'npc_family_member').length}`);
+    const resolved = resolveTravelPresenceEntities({
+      currentUser,
+      activeCharacters: characters.filter(c => c.character_type === 'active_created_character'),
+      npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious'),
+      npcFamilyMembers: characters.filter(c => c.character_type === 'npc_family_member'),
+      allCharacters: characters,
+      locations: locationsData,
+    });
+    console.log(`[Scene] Resolved: ${resolved.length} total | Present now: ${resolved.filter(e => e.is_currently_present).length}`);
+    return resolved;
+  }, [currentUser?.id, characters.length, locationsData.length]);
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
   // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
