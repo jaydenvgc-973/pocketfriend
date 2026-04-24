@@ -1491,16 +1491,27 @@ Return JSON:
                 </div>
                 <div className="max-h-72 overflow-y-auto py-1">
                   {(() => {
-                    const residentNpcs = allPossibleNpcs.filter(n => n.npcType === "resident");
-                    const staffNpcs = allPossibleNpcs.filter(n => n.npcType === "staff");
-                    const customerNpcs = allPossibleNpcs.filter(n => n.npcType === "customer");
-                    const ungrouped = allPossibleNpcs.filter(n => !["resident", "staff", "customer"].includes(n.npcType));
+                    // Separate real characters from NPCs
+                    const realCharacters = allPossibleNpcs.filter(n => n.isNpc === false);
+                    // NPCs grouped by type
+                    const residentNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "resident");
+                    const staffNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "staff");
+                    const customerNpcs = allPossibleNpcs.filter(n => n.isNpc !== false && n.npcType === "customer");
+                    const ungrouped = allPossibleNpcs.filter(n => n.isNpc !== false && !["resident", "staff", "customer"].includes(n.npcType));
 
                     return (
                       <>
-                        {residentNpcs.length > 0 && (
+                        {realCharacters.length > 0 && (
                           <>
                             <div className="px-3 py-1.5 border-b border-border/50">
+                              <p className="text-[9px] font-semibold text-purple-400/80 uppercase tracking-wider">Characters</p>
+                            </div>
+                            {realCharacters.map(renderNpc)}
+                          </>
+                        )}
+                        {residentNpcs.length > 0 && (
+                          <>
+                            <div className="px-3 py-1.5 border-b border-border/50 mt-1">
                               <p className="text-[9px] font-semibold text-green-400/80 uppercase tracking-wider">Residents</p>
                             </div>
                             {residentNpcs.map(renderNpc)}
