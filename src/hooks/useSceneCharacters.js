@@ -6,6 +6,9 @@ import { base44 } from "@/api/base44Client";
  * Fetches all character sources for the Scene page using the same
  * multi-query strategy as the Travel page — ensuring Who's Here
  * shows every character the map counts, not just active_created ones.
+ * 
+ * Returns: { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner }
+ * so Scene can properly track dependencies per-query-result.
  */
 export function useSceneCharacters(currentUser) {
   const enabled = !!currentUser?.email;
@@ -82,5 +85,6 @@ export function useSceneCharacters(currentUser) {
     );
   }, [activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner]);
 
-  return characters;
+  // Return all source arrays so Scene can track dependency-per-query, not just final count
+  return { characters, activeChars, backendNpcFictitious, rlsNpcFictitious, familyByCreatedBy, familyByOwner };
 }

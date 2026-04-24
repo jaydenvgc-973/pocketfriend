@@ -105,7 +105,14 @@ export default function Scene() {
   });
 
   // Multi-source character loading — same strategy as Travel page so Scene sees all NPCs
-  const characters = useSceneCharacters(currentUser);
+  const { 
+    characters, 
+    activeChars, 
+    backendNpcFictitious, 
+    rlsNpcFictitious, 
+    familyByCreatedBy, 
+    familyByOwner 
+  } = useSceneCharacters(currentUser);
 
   const location = locationsData.find(l => l.id === locationId);
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
@@ -119,9 +126,9 @@ export default function Scene() {
   const unifiedPresenceEntities = useMemo(() => {
     const resolved = resolveTravelPresenceEntities({
       currentUser,
-      activeCharacters: characters.filter(c => c.character_type === 'active_created_character'),
-      npcFictitious: characters.filter(c => c.character_type === 'npc_fictitious'),
-      npcFamilyMembers: characters.filter(c => c.character_type === 'npc_family_member'),
+      activeCharacters: activeChars,
+      npcFictitious: [...backendNpcFictitious, ...rlsNpcFictitious].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i),
+      npcFamilyMembers: [...familyByCreatedBy, ...familyByOwner].filter((c, i, arr) => arr.findIndex(x => x.id === c.id) === i),
       allCharacters: characters,
       locations: locationsData,
     });
@@ -160,7 +167,7 @@ export default function Scene() {
     });
 
     return withBroughtCharacters;
-  }, [currentUser?.id, characters.length, locationsData.length, broughtCharacters, locationId, location?.name]);
+  }, [currentUser?.id, activeChars.length, backendNpcFictitious.length, rlsNpcFictitious.length, familyByCreatedBy.length, familyByOwner.length, locationsData.length, broughtCharacters, locationId, location?.name]);
 
   // ── AUTHORITATIVE PRESENCE FILTER ────────────────────────────────────────────
   // SINGLE SOURCE OF TRUTH: Only use resolved_current_location_id for scene attendance.
