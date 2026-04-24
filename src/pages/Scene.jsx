@@ -774,9 +774,9 @@ export default function Scene() {
   // RABBIT HOLE MODE: Skip scene generation for real-world locations
   useEffect(() => {
     if (location && !sceneImage && !isGeneratingImage && !location.is_rabbit_hole) {
-      generateSceneImage();
+      generateSceneImage(activeZone, resolvedWhosHereList, characters);
     }
-  }, [location?.id, sceneImage]);
+  }, [location?.id, sceneImage, activeZone, resolvedWhosHereList]);
 
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
@@ -1370,7 +1370,7 @@ Return JSON:
         ? presentPeople.map(c => c.name).join(" and ")
         : "no one — the space is empty";
       const imagePrompt = actionImageFn(location?.name || location?.category, whoDesc);
-      generateSceneImage(imagePrompt);
+      generateSceneImage(activeZone, resolvedWhosHereList, characters, imagePrompt);
     }
 
     const payerNote = payer === "character" && broughtCharacters[0] && cost > 0
@@ -1648,7 +1648,7 @@ Return JSON:
         )}
 
         <button
-          onClick={() => generateSceneImage()}
+          onClick={() => generateSceneImage(activeZone, resolvedWhosHereList, characters)}
           disabled={isGeneratingImage}
           className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/40 text-white hover:bg-black/60 transition-colors"
           title="Refresh scene image"
