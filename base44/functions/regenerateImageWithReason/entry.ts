@@ -134,10 +134,10 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { messageId, reason, customPrompt, manualLocationId, manualZoneId } = await req.json();
+    const { messageId, reason, customPrompt, manualLocationId, manualZoneId, directLocationImages, directZoneName, directLocationName } = await req.json();
     if (!messageId || !reason) return Response.json({ error: 'messageId and reason required' }, { status: 400 });
     
-    console.log(`[regen] ▶ REQUEST: messageId=${messageId} | reason=${reason} | manualLocationId=${manualLocationId || 'NONE'} | manualZoneId=${manualZoneId || 'NONE'}`);
+    console.log(`[regen] ▶ REQUEST: messageId=${messageId} | reason=${reason} | manualLocationId=${manualLocationId || 'NONE'} | manualZoneId=${manualZoneId || 'NONE'} | directImages=${directLocationImages?.length || 0}`);
 
     // Fetch the message
     let message = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
@@ -245,7 +245,17 @@ Deno.serve(async (req) => {
     let effectiveZoneName = null;
     let effectiveLocationId = null;
 
-    if (manualLocationId) {
+    // ── PATH DIRECT: UI already resolved the zone images — use them as-is ──────
+    // If the caller passes directLocationImages, they are already validated and accessible.
+    // Skip ALL DB re-lookup and re-resolution. This is the SOURCE OF TRUTH for wrong_location.
+    const directImgs = (directLocationImages || []).map(toPublicCDN).filter(isProviderAccessible);
+    if (directImgs.length > 0) {
+      locationRefImages = directImgs;
+      effectiveZoneName = directZoneName || manualZoneId || null;
+      effectiveLocationName = directLocationName || null;
+      effectiveLocationId = manualLocationId || null;
+      console.log(`[regen] ✓ PATH DIRECT: Using caller-provided location images (no re-lookup). count=${directImgs.length} | zone="${effectiveZoneName}" | location="${effectiveLocationName}"`);
+    } else if (manualLocationId) {
       // ── PATH A: USER EXPLICITLY SELECTED A LOCATION (AND OPTIONALLY ZONE) ─
       // ZERO LEAKAGE: verify location ownership before resolving images
       const _pathALoc = await base44.asServiceRole.entities.LocationReference.get(manualLocationId).catch(() => null);

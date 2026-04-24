@@ -70,12 +70,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     }
   };
 
-  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
-    // CRITICAL VALIDATION: ensure location/zone parameters are not accidentally null when user selected them
-    // The modal calls onSelect('wrong_location', null, locId, zoneName)
-    // If customPrompt is null but manualLocationId is passed, they are in CORRECT positions
-    console.log(`[MessageBubble.handleRegenSelect] ▶ INVOKING regenerateImageWithReason with:`, { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
-    
+  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null) => {
     // HARD VALIDATION: wrong_location reason MUST have a locationId
     if (reason === 'wrong_location' && !manualLocationId) {
       setRegenError('Please select a location to regenerate');
@@ -86,7 +81,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     setIsRegenerating(true);
     setRegenError(null);
     try {
-      const res = await base44.functions.invoke('regenerateImageWithReason', { messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId });
+      const res = await base44.functions.invoke('regenerateImageWithReason', {
+        messageId: message.id, reason, customPrompt, manualLocationId, manualZoneId,
+        directLocationImages: directLocationImages || null,
+        directZoneName: manualZoneId || null,
+        directLocationName: directLocationName || null,
+      });
       if (res?.data?.success === false) {
         setRegenError(res.data.error || 'Failed to regenerate. Please try again.');
         return;

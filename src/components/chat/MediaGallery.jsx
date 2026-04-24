@@ -153,7 +153,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       timestamp: msg.timestamp,
     }));
 
-  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null) => {
+  const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null) => {
     if (!regenTarget) return;
     setIsRegenerating(true);
     try {
@@ -163,6 +163,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         customPrompt,
         manualLocationId: manualLocationId || null,
         manualZoneId: manualZoneId || null,
+        directLocationImages: directLocationImages || null,
+        directZoneName: manualZoneId || null,
+        directLocationName: directLocationName || null,
       });
       if (res?.data?.success && res?.data?.image_url) {
         // Hydrate gallery immediately so updated image shows without reload

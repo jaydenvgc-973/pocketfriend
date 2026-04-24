@@ -121,8 +121,14 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
   const handleLocationConfirm = () => {
     if (!selectedLocation) return;
     const zoneName = selectedZone?.zone_name || null;
-    console.log(`[RegenerateModal] LocationConfirm: location="${selectedLocation.name}" (${selectedLocation.id}) | zone="${zoneName}"`);
-    onSelect('wrong_location', null, selectedLocation.id, zoneName);
+    // Pass the zone preview images directly — no re-lookup needed on the backend
+    const zoneImages = selectedZone?.image_urls?.length > 0
+      ? selectedZone.image_urls
+      : selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.image_urls
+        || selectedLocation.image_urls
+        || [];
+    console.log(`[RegenerateModal] LocationConfirm: location="${selectedLocation.name}" (${selectedLocation.id}) | zone="${zoneName}" | directImages=${zoneImages.length}`);
+    onSelect('wrong_location', null, selectedLocation.id, zoneName, zoneImages, selectedLocation.name);
   };
 
   const promptTitle = promptMode === "dont_like"
