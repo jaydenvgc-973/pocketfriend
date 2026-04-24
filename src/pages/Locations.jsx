@@ -23,6 +23,7 @@ import { Link } from "react-router-dom";
 import { getVenuePositions } from "@/lib/venuePositions";
 import PositionInput from "@/components/location/PositionInput";
 import { getEditableCharactersForModule } from "@/lib/characterEditableListResolver";
+import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDisplay } from "@/lib/characterAvailabilityEngine";
 
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
@@ -328,30 +329,50 @@ function isShiftCurrentlyActive(shift) {
   return hour >= startH && hour < endH;
 }
 
-function getWorkerAvailability(workerId, locations, currentLocationId = null) {
-  const assignedLocations = locations.filter(loc =>
-    loc.id !== currentLocationId &&
-    (loc.worker_character_ids || []).includes(workerId)
-  );
-  const otherJobLocs = assignedLocations.filter(l => WORK_CATEGORIES.includes(l.category));
-  if (otherJobLocs.length === 0) return { status: 'available', jobs: [] };
+function getWorkerAvailabilityV2(character, allLocations, currentLocationId = null) {
+  if (!character) return { status: 'unavailable', allJobs: [] };
 
-  const jobs = otherJobLocs.map(loc => {
-    const shift = loc.worker_shifts?.[workerId];
-    return {
-      name: loc.name,
-      title: loc.worker_job_titles?.[workerId] || null,
-      shift: formatShift(shift),
-      onShiftNow: isShiftCurrentlyActive(shift),
-      days: shift?.days?.map(d => DAY_LABELS[d]) || [],
-    };
-  });
+  // Get all job locations (primary + additional)
+  const allJobs = [];
 
-  const onShiftNow = jobs.some(j => j.onShiftNow);
+  if (character.occupation_location_id && character.occupation_location_id !== currentLocationId) {
+    const loc = allLocations.find(l => l.id === character.occupation_location_id);
+    if (loc) {
+      const shift = loc.worker_shifts?.[character.id];
+      allJobs.push({
+        name: loc.name,
+        title: loc.worker_job_titles?.[character.id] || null,
+        shift: formatShiftDisplay(shift),
+        days: shift?.days?.map(d => DAY_LABELS[d]) || [],
+      });
+    }
+  }
+
+  if (character.additional_occupation_locations && Array.isArray(character.additional_occupation_locations)) {
+    character.additional_occupation_locations.forEach(addlOcc => {
+      if (addlOcc.location_id && addlOcc.location_id !== currentLocationId) {
+        const loc = allLocations.find(l => l.id === addlOcc.location_id);
+        if (loc) {
+          const shift = loc.worker_shifts?.[character.id];
+          allJobs.push({
+            name: addlOcc.location_name || loc.name,
+            title: addlOcc.job_title || loc.worker_job_titles?.[character.id] || null,
+            shift: formatShiftDisplay(shift),
+            days: shift?.days?.map(d => DAY_LABELS[d]) || [],
+          });
+        }
+      }
+    });
+  }
+
+  // Calculate availability using the engine
+  const availability = calculateCharacterAvailability(character, allLocations, currentLocationId);
+
   return {
-    status: otherJobLocs.length >= 2 ? 'overbooked' : 'employed',
-    onShiftNow,
-    jobs,
+    status: availability.status,
+    jobCount: allJobs.length,
+    allJobs,
+    isOnShiftNow: availability.isOnShiftNow,
   };
 }
 
@@ -893,26 +914,33 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
             {activeChars.map(char => {
               const alreadyWorker = form.worker_character_ids?.includes(char.id);
               const tooYoung = isWorkerTooYoung(char.id, form.category);
-              const avail = getWorkerAvailability(char.id, allLocations, editingLocation?.id);
+              const avail = getWorkerAvailabilityV2(char, allLocations, editingLocation?.id);
               return (
                 <button key={char.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), char.id]); }} disabled={alreadyWorker || tooYoung}
                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
                   <CharacterAvatar character={char} size="sm" />
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1.5 mb-0.5">
                       <p className="text-sm text-foreground font-medium">{char.name}</p>
-                      {avail.onShiftNow && <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-orange-500/20 text-orange-400 font-semibold">ON SHIFT</span>}
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${
+                        avail.status === 'at_work' ? 'bg-orange-500/20 text-orange-400' :
+                        avail.status === 'between_shifts' ? 'bg-blue-500/20 text-blue-400' :
+                        avail.status === 'unavailable_sleeping' ? 'bg-purple-500/20 text-purple-400' :
+                        'bg-green-500/20 text-green-400'
+                      }`}>
+                        {getAvailabilityLabel(avail)}
+                      </span>
                     </div>
                     {tooYoung && <p className="text-xs text-destructive">Too young to work here</p>}
-                    {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
-                    {!tooYoung && avail.jobs.map((job, i) => (
-                      <div key={i} className="mt-0.5">
-                        <p className={`text-xs font-medium ${avail.status === 'overbooked' ? 'text-destructive' : 'text-amber-400'}`}>
-                          {avail.status === 'overbooked' ? '⚠ ' : ''}{job.title ? `${job.title} @ ` : ''}{job.name}
+                    {!tooYoung && avail.allJobs.map((job, i) => (
+                      <div key={i} className="mt-1 text-xs">
+                        <p className={`font-medium ${avail.isOnShiftNow && avail.allJobs[0]?.name === job.name ? 'text-orange-400' : 'text-foreground'}`}>
+                          {job.title ? `${job.title} @ ` : ''}{job.name}
                         </p>
-                        {job.shift && <p className="text-[10px] text-muted-foreground">{job.shift}{job.onShiftNow ? ' · working now' : ''}</p>}
+                        {job.shift && <p className="text-muted-foreground text-[10px]">{job.shift}</p>}
                       </div>
                     ))}
+                    {avail.jobCount === 0 && <p className="text-xs text-green-400 font-medium mt-0.5">No other jobs</p>}
                   </div>
                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
                 </button>
@@ -927,15 +955,25 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 if (npcAge < 16) tooYoung = true;
                 if ((form.category === 'social' || form.category === 'food_drink') && npcAge < 21) tooYoung = true;
               }
-              const avail = getWorkerAvailability(npc.id, allLocations, editingLocation?.id);
+              const avail = getWorkerAvailabilityV2(npc, allLocations, editingLocation?.id);
               return (
                 <button key={npc.id} onClick={() => { if (!alreadyWorker && !tooYoung) update("worker_character_ids", [...(form.worker_character_ids || []), npc.id]); }} disabled={alreadyWorker || tooYoung}
                   className={`w-full flex items-start gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyWorker ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : tooYoung ? "opacity-40 cursor-not-allowed" : "hover:bg-secondary"}`}>
                   <CharacterAvatar character={npc} size="sm" />
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm text-foreground font-medium">{npc.name}</span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-sm text-foreground font-medium">{npc.name}</span>
+                      {!tooYoung && <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-semibold ${avail.status === 'at_work' ? 'bg-orange-500/20 text-orange-400' : 'bg-green-500/20 text-green-400'}`}>
+                        {avail.status === 'at_work' ? '🕐 At Work' : '✓ Available'}
+                      </span>}
+                    </div>
                     {tooYoung && <p className="text-xs text-destructive">Too young</p>}
-                    {!tooYoung && avail.jobs.length === 0 && <p className="text-xs text-green-400 font-medium">✓ Available</p>}
+                    {!tooYoung && avail.allJobs.map((job, i) => (
+                      <div key={i} className="mt-0.5 text-xs">
+                        <p className="text-foreground font-medium">{job.title ? `${job.title} @ ` : ''}{job.name}</p>
+                        {job.shift && <p className="text-muted-foreground text-[10px]">{job.shift}</p>}
+                      </div>
+                    ))}
                   </div>
                   {alreadyWorker && <span className="text-xs text-primary font-medium shrink-0">✓ Added</span>}
                 </button>
