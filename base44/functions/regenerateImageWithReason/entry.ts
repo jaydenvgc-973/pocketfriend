@@ -39,6 +39,26 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
+// ── CAMERA POSITION DETECTION ────────────────────────────────────────────
+
+function selectCameraPosition(prompt = '') {
+  const promptLower = (prompt || '').toLowerCase();
+  
+  // Selfie detection — includes "cell phone selfie", "phone selfie", etc.
+  const isSelfie = /selfie|self-?portrait|cell phone|phone.*selfie|selfie.*phone/.test(promptLower);
+  if (isSelfie) {
+    return 'extreme close-up, selfie perspective, camera at arm\'s length from subject\'s face, personal and intimate framing';
+  }
+  
+  // Context-aware camera positions
+  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table/.test(promptLower);
+  if (isSittingAtTable) {
+    return 'tight medium shot, seated eye-level at the table, character is the primary subject, table surface and food in frame';
+  }
+  
+  return 'from a closer standing position';
+}
+
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildRegenPrompt({ scenePrompt, charName, locationName, zoneName, envRefs, charRefs, reason }) {
@@ -52,51 +72,64 @@ function buildRegenPrompt({ scenePrompt, charName, locationName, zoneName, envRe
   const charStart = ENV_SLOTS + 1;
   const charEnd   = ENV_SLOTS + CHAR_SLOTS;
 
-  let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
+  const cameraPos = selectCameraPosition(scenePrompt);
+
+  let preamble = `════════════════════════════════════════════════════════════
+STRUCTURAL TRUTH & DYNAMIC FLEXIBILITY
+════════════════════════════════════════════════════════════
+
+CAMERA POSITION (MANDATORY):
+${cameraPos}
+This camera angle MUST be visibly different from reference images.
+
+REFERENCE HIERARCHY:
+- 70–80% STRUCTURAL TRUTH: room layout, furniture, materials, zone identity
+- 20–30% DYNAMIC FLEXIBILITY: camera angle, framing, lighting
+
+`;
 
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
-    preamble += `Images 1–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of "${place}". Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nREPLICATE this room exactly. This is not inspiration. This IS the room.\n\n`;
+    preamble += `Images 1–${envEnd}: ROOM ENVIRONMENT — 70–80% STRUCTURAL TRUTH
+Photographs of "${place}". PRESERVE: walls, floor, furniture identity, rug, curtains, lighting fixtures, decor, layout.
+The room structure is TRUE — the viewpoint and lighting will change with new camera position.
+
+`;
   }
   if (hasChar) {
-    preamble += `Images ${charStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face, skin tone, hair, body type, markings.\n⛔ Avatar background = 0%. The room/wall/furniture behind the person in these photos is IRRELEVANT — ignore it completely.\n\n`;
+    preamble += `Images ${charStart}–${charEnd}: CHARACTER IDENTITY — 100% AUTHORITY
+"${charName}" — Match: face structure, skin tone, hair, body type.
+⛔ Avatar background = 0%. Ignore any room/wall/furniture in these photos completely.
+
+`;
   }
-  preamble += '⛔ DO NOT blend image sets. Each set has one exclusive role.\n════════════════════════════════════════════════════════════\n\n';
+  preamble += '════════════════════════════════════════════════════════════\n\n';
 
   let envLock = '';
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     envLock = `
 
-════════════════════════════════════════════════════════════
-ENVIRONMENT LOCK — "${place}" — 90% VISUAL AUTHORITY
-════════════════════════════════════════════════════════════
-Reference images 1–${envEnd} are PHOTOGRAPHS of this exact room. REPLICATE it.
-Insert the character into it. Do NOT redesign it.
+  ════════════════════════════════════════════════════════════
+  STRUCTURAL TRUTH — "${place}" — 70–80% IDENTITY, 20–30% DYNAMIC
+  ════════════════════════════════════════════════════════════
 
-MUST MATCH EXACTLY:
-  ✅ Furniture types, colors, shapes, placement
-  ✅ Wall color, floor type, rug color/pattern/placement
-  ✅ Curtains, lighting fixtures, lamps
-  ✅ Wall art — same pieces, same positions
-  ✅ Shelves, decor objects, room layout
+  PRESERVE (70–80% structural truth):
+   ✅ Furniture types, colors, shapes, structural placement
+   ✅ Wall color, floor type, rug, curtains
+   ✅ All lighting fixtures and lamps
+   ✅ Wall art and shelves in relative positions
+   ✅ Room layout, windows, doors, architecture
 
-ZERO OBJECT DRIFT:
-  ⛔ No replaced, recolored, removed, or added objects
-  ⛔ No "similar looking" substitutions
-  ⛔ No generic room generation
-  ⛔ Do NOT use any room/background from the character identity photos
+  REGENERATE (20–30% dynamic flexibility):
+   ✓ Camera position (MUST differ from reference image viewpoint)
+   ✓ Camera angle (MUST be new perspective)
+   ✓ Lighting (NO light source from reference images — generate fresh)
+   ✓ Composition (MUST be reframed from new camera viewpoint)
+   ✓ Depth of field and focus
 
-STRICT ZONE ISOLATION — CROSS-ZONE CONTAMINATION IS FORBIDDEN:
-  ⛔ This is the "${zoneName || 'selected zone'}" ONLY
-  ⛔ Objects from other rooms (bedroom, kitchen, living room, office, hallway, etc.) must NEVER appear
-  ⛔ Every piece of furniture, decor, art, rug, light, and shelf must come from images 1–${envEnd} only
-  ⛔ If an object does not appear in images 1–${envEnd}, it must not appear in the output
-
-10% FLEXIBILITY (only): camera angle, framing, lighting softness
-
-FAILURE: Any element from a different room, or any element not in images 1–${envEnd} = CONTAMINATION FAILURE.
-SUCCESS: Side-by-side must show THE IDENTICAL ROOM with ONLY objects from images 1–${envEnd}.`;
+  NO OBJECT INVENTION — Every object must come from images 1–${envEnd}.
+  NO STATIC BACKGROUND LOCK — Recompose the entire scene from the new camera position.`;
   }
 
   // Reason-specific enforcement
