@@ -19,7 +19,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  */
 
 // NPC character_type values that live in VGC Towers (matches Character entity schema)
-const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member'];
+const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member', 'family_npc'];
 
 // Travel blocks defined by hour (ET)
 const TRAVEL_BLOCKS = [

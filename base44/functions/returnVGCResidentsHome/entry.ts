@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     const log = [];
 
     // NPC types that live in VGC Towers (must match Character entity schema)
-    const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member'];
+    const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member', 'family_npc'];
 
     // Load ALL active characters + locations via service role
     const [allCharacters, accountLocations, sharedLocations] = await Promise.all([
