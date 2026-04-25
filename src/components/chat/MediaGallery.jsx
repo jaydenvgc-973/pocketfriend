@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
+import { validateSelectedPeopleIdentities, buildMultiPersonPayload } from "@/lib/mediaGridIdentityLock";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -198,7 +199,31 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       return;
     }
 
-    // Build user refs for user/joint subject types
+    // ═════════════════════════════════════════════════════════════════════════
+    // HARD IDENTITY LOCK: Validate ALL selected people have visual references
+    // ═════════════════════════════════════════════════════════════════════════
+    let selectedPeople = null;
+    if (selectedCharacterIds.length > 0) {
+      // Multi-person image: validate all selected people
+      const validation = await validateSelectedPeopleIdentities(
+        base44,
+        selectedCharacterIds,
+        false, // includeUser — only set if user is in selectedCharacterIds
+        userEmail,
+        character.id,
+        allCharacters
+      );
+
+      if (!validation.valid) {
+        setGenerateError(validation.errors.join('\n'));
+        return;
+      }
+      selectedPeople = validation.selectedPeople;
+      console.log(`[MediaGallery] Identity lock PASSED for ${selectedCharacterIds.length} selected people`);
+    }
+    // If no multi-select, use single-character mode (existing path)
+
+    // Build user refs for user/joint subject types (single-character fallback)
     const userChar = allCharacters.find(c => c.is_user);
     const userRefImages = subjectType !== 'character'
       ? [
@@ -217,6 +242,21 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     setIsGenerating(true);
     setGenerateError(null);
     try {
+      // Log identity lock validation chain
+      console.log(`[MediaGallery.handleGenerate] ═══════════════════════════════════════════════`);
+      console.log(`[MediaGallery.handleGenerate] IDENTITY LOCK VALIDATION`);
+      console.log(`[MediaGallery.handleGenerate] Selected characters: ${selectedCharacterIds.length}`);
+      if (selectedPeople) {
+        console.log(`[MediaGallery.handleGenerate]   Primary: ${selectedPeople.character?.id} → refs: ${selectedPeople.character?.refs?.length || 0}`);
+        selectedPeople.others.forEach((ch, i) => {
+          console.log(`[MediaGallery.handleGenerate]   Other ${i}: ${ch.id} → refs: ${ch.refs?.length || 0}`);
+        });
+        if (selectedPeople.user) {
+          console.log(`[MediaGallery.handleGenerate]   User → refs: ${selectedPeople.user?.refs?.length || 0}`);
+        }
+      }
+      console.log(`[MediaGallery.handleGenerate] ═══════════════════════════════════════════════`);
+
       // Create placeholder message
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
@@ -245,6 +285,13 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         locationName: selectedLocation?.name || null,
         zoneName: selectedZone || (selectedLocation ? selectedLocation.zones?.find(z => z.image_urls?.length > 0)?.zone_name : null) || null,
         zoneImageUrls,
+        // HARD IDENTITY LOCK: Multi-person selection with validated references
+        multiPersonSelection: selectedPeople ? buildMultiPersonPayload(
+          selectedPeople,
+          promptText,
+          selectedLocation?.id || null,
+          selectedZone || null
+        ) : null,
       });
 
       if (genRes?.data?.filtered) {
