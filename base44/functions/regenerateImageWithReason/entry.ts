@@ -39,23 +39,38 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
-// ── CAMERA POSITION DETECTION ────────────────────────────────────────────
+// ── CAMERA POSITION DETECTION ─────────────────────────────────────────────────
+// MUST stay in sync with selectCameraPosition in generateImageAsync.js
+// Both generation and regeneration paths share the same camera logic.
 
 function selectCameraPosition(prompt = '') {
   const promptLower = (prompt || '').toLowerCase();
-  
-  // Selfie detection — includes "cell phone selfie", "phone selfie", etc.
-  const isSelfie = /selfie|self-?portrait|cell phone|phone.*selfie|selfie.*phone/.test(promptLower);
+
+  const isSelfie = /selfie|self-?portrait|phone selfie|smartphone selfie|cell phone|taken.*phone|phone.*photo/.test(promptLower);
+  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table|dining.*table|wooden.*table/.test(promptLower);
+  const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
+  const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
+
   if (isSelfie) {
-    return 'extreme close-up, selfie perspective, camera at arm\'s length from subject\'s face, personal and intimate framing';
+    // Compound: selfie + seated — character holds phone at face level while seated
+    if (isSittingAtTable) {
+      return 'selfie perspective — character is SEATED at the table holding the phone at arm\'s length toward the camera. Face and upper chest dominate the frame. The table and any food are partially visible below. Character is NOT standing. Phone is in the character\'s hand extended toward viewer.';
+    }
+    return 'extreme close-up selfie — character holds phone at arm\'s length directly toward camera. Face fills most of the frame. Personal and intimate framing. Character is NOT standing in a wide shot.';
   }
-  
-  // Context-aware camera positions
-  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table/.test(promptLower);
+
   if (isSittingAtTable) {
     return 'tight medium shot, seated eye-level at the table, character is the primary subject, table surface and food in frame';
   }
-  
+
+  if (isSittingOnCouch) {
+    return 'seated eye-level from the couch, character is the primary subject, close and personal framing';
+  }
+
+  if (isStandingAtCounter) {
+    return 'close-up at counter-level, character and counter are the primary subjects';
+  }
+
   return 'from a closer standing position';
 }
 
@@ -329,7 +344,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 3. RESOLVE ENVIRONMENT REFS ───────────────────────────────────────────
+    // ── 3a. DETERMINE SCENE PROMPT (needed for zone resolution) ──────────────
+    let scenePrompt = originalPrompt;
+    if (reason === 'dont_like' && customPrompt?.trim()) {
+      scenePrompt = customPrompt.trim();
+    } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
+      scenePrompt = customPrompt.trim();
+    }
+    if (!scenePrompt) scenePrompt = 'candid natural moment, everyday life';
+
+    // ── 3b. RESOLVE ENVIRONMENT REFS ─────────────────────────────────────────
     let envRefs = [];
     let resolvedLocationName = originalLocName;
     let resolvedZoneName = originalZoneName;
@@ -369,34 +393,26 @@ Deno.serve(async (req) => {
       }
 
     } else {
-      // ALL OTHER REASONS — use original location refs from generation_context
-      if (originalLocRefs.length > 0) {
-        envRefs = cdnFilter(originalLocRefs).slice(0, 4);
-        console.log(`[regenerateImageWithReason] Using stored location refs: ${envRefs.length}`);
-      }
-
-      // If stored refs inaccessible, re-fetch from original location
-      // Pass originalZoneName as preferred so the SAME zone is re-selected (not a different one)
-      if (envRefs.length === 0 && originalLocId) {
+      // ALL OTHER REASONS — always re-fetch fresh zone images from DB first.
+      // Do NOT re-use stale stored refs from generation_context — those came from the failed image
+      // and may have caused the problem. Fresh DB fetch guarantees current zone truth.
+      if (originalLocId) {
         const locListSR = await base44.asServiceRole.entities.LocationReference.filter({ id: originalLocId }, null, 1).catch(() => []);
         const locRecord = locListSR?.[0] || null;
         if (locRecord) {
-          const { images, zoneName } = resolveZoneFromLocation(locRecord, originalPrompt.toLowerCase(), originalZoneName);
+          const { images, zoneName } = resolveZoneFromLocation(locRecord, scenePrompt.toLowerCase(), originalZoneName);
           envRefs = images;
           resolvedZoneName = zoneName || originalZoneName;
-          console.log(`[regenerateImageWithReason] Re-fetched location "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
+          console.log(`[regenerateImageWithReason] Fresh DB fetch: "${locRecord.name}" → zone "${resolvedZoneName}" → ${envRefs.length} refs`);
         }
       }
-    }
 
-    // ── 4. DETERMINE SCENE PROMPT ─────────────────────────────────────────────
-    let scenePrompt = originalPrompt;
-    if (reason === 'dont_like' && customPrompt?.trim()) {
-      scenePrompt = customPrompt.trim();
-    } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
-      scenePrompt = customPrompt.trim();
+      // Only fall back to stored refs if DB fetch returned nothing (location deleted/inaccessible)
+      if (envRefs.length === 0 && originalLocRefs.length > 0) {
+        envRefs = cdnFilter(originalLocRefs).slice(0, 4);
+        console.log(`[regenerateImageWithReason] Fallback to stored location refs: ${envRefs.length}`);
+      }
     }
-    if (!scenePrompt) scenePrompt = 'candid natural moment, everyday life';
 
     // ── 5. ASSEMBLE REFS — env first, then identity ───────────────────────────
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
