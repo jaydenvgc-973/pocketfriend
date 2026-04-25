@@ -209,17 +209,96 @@ CRITICAL RULES:
 5. No dialogue. No speculation about the future. Just this exact moment.
 6. 2-4 sentences only. No preamble, no labels.
 
-Write the narrative now:`;
+RESPOND WITH JSON:
+Return a JSON object with:
+{
+  "narrative_text": "the vivid 2-4 sentence narrative",
+  "action_effects": [
+    {
+      "type": "needs",
+      "need": "hunger|energy|hygiene|social|health|mental|comfort|financial_need",
+      "change": <number between -50 and +50>,
+      "reason": "why this need changed"
+    }
+  ]
+}
+
+Only include action_effects if the narrative describes concrete actions (eating, sleeping, showering, socializing, etc.).
+If no actions occur, return empty action_effects array.`;
 
     const narrativeRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
       prompt: narrativePrompt,
       model: 'gemini_3_flash',
+      response_json_schema: {
+        type: 'object',
+        properties: {
+          narrative_text: { type: 'string' },
+          action_effects: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['needs', 'presence'] },
+                need: { type: 'string' },
+                change: { type: 'number' },
+                reason: { type: 'string' },
+                location_id: { type: 'string' },
+                location_name: { type: 'string' },
+              },
+              required: ['type', 'reason'],
+            },
+          },
+        },
+        required: ['narrative_text', 'action_effects'],
+      },
     });
 
-    const narrativeText = narrativeRes?.trim() ||
+    const narrativeText = narrativeRes?.narrative_text?.trim() ||
       `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
+    
+    const actionEffects = narrativeRes?.action_effects || [];
 
     const memorySummary = `[Right Now] ${timeStr} ${dayName}: ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} — ${narrativeText.substring(0, 80)}...`;
+
+    // ── APPLY ACTION EFFECTS TO CHARACTER ──────────────────────────────────
+    let characterUpdatePayload = {};
+    const updatedNeeds = { ...needsSnapshot };
+
+    if (actionEffects && actionEffects.length > 0) {
+      console.log(`[generateAutomaticNarrative] Applying ${actionEffects.length} action effects...`);
+      
+      for (const effect of actionEffects) {
+        if (effect.type === 'needs' && effect.need) {
+          const needFieldMap = {
+            'hunger': 'hunger_value',
+            'energy': 'energy_value',
+            'social': 'social_value',
+            'health': 'health_value',
+            'mental': 'mental_value',
+            'financial_need': 'financial_need_value',
+            'hygiene': 'hygiene_value',
+            'comfort': 'comfort_value',
+          };
+          
+          const fieldName = needFieldMap[effect.need];
+          if (fieldName && character[fieldName] !== undefined) {
+            const oldValue = updatedNeeds[effect.need] ?? character[fieldName] ?? 0;
+            const newValue = Math.max(0, Math.min(100, oldValue + effect.change));
+            updatedNeeds[effect.need] = newValue;
+            characterUpdatePayload[fieldName] = newValue;
+            console.log(`  [${effect.need}] ${oldValue} → ${newValue} (${effect.change > 0 ? '+' : ''}${effect.change}) — ${effect.reason}`);
+          } else {
+            console.warn(`[generateAutomaticNarrative] Unknown need field: ${effect.need}`);
+          }
+        }
+      }
+
+      // Save character updates if any changes were made
+      if (Object.keys(characterUpdatePayload).length > 0) {
+        await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
+        console.log(`[generateAutomaticNarrative] ✓ Character needs updated.`);
+      }
+    }
 
     // ── SAVE TO CharacterAutomaticNarrative (same table as automatic system) ──
     const narrative = await base44.asServiceRole.entities.CharacterAutomaticNarrative.create({
@@ -239,7 +318,7 @@ Write the narrative now:`;
       sleep_state: isAsleep ? 'asleep' : 'awake',
       travel_state: isTraveling ? 'traveling' : 'at_location',
       work_state: workState,
-      needs_snapshot: needsSnapshot,
+      needs_snapshot: updatedNeeds,
       emotional_state: character.emotional_state || 'calm',
       triggered_by: isManual ? 'manual' : 'scheduled',
       visibility: isManual ? 'visible_in_chat' : 'visible_in_chat',
