@@ -145,7 +145,7 @@ function getTimeLighting(hour = new Date().getHours()) {
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
-function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart }) {
+function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime }) {
   const hasEnv  = envRefCount > 0;
   const hasChar = charRefCount > 0;
   const hasUser = userRefCount > 0;
@@ -154,8 +154,8 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const charEnd   = charRefStart + charRefCount - 1;
   const userEnd   = userRefStart + userRefCount - 1;
 
-  const cameraPos = selectCameraPosition(zoneName, prompt + Date.now());
-  const timeLighting = getTimeLighting();
+  const cameraPos = selectCameraPosition(zoneName, prompt + serverTime);
+  const timeLighting = getTimeLighting(serverHour);
 
   let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
 
@@ -186,11 +186,19 @@ RENDER FROM THIS EXACT CAMERA POSITION.`;
   let lightingBlock = `
 
 ════════════════════════════════════════════════════════════
-MANDATORY LIGHTING — ${timeLighting.period} TIME
+MANDATORY LIGHTING — ${timeLighting.period} TIME (${serverHour}:00)
 ════════════════════════════════════════════════════════════
-Current time determines lighting. This overrides all other visual inputs.
+ACTUAL SERVER TIME: ${serverTime}
 
-Lighting: ${timeLighting.desc}
+Current time OVERRIDES all other visual inputs. NO EXCEPTIONS.
+
+Lighting MUST be: ${timeLighting.desc}
+
+TIME-OF-DAY LOCK RULES:
+${serverHour >= 21 || serverHour < 5 ? `⛔ It is NIGHT (${serverHour}:00). There is NO SUNLIGHT, NO DAYLIGHT, NO BRIGHT WINDOWS.
+⛔ Windows show darkness or night environment ONLY.
+⛔ Interior lit by lamps or artificial light ONLY.
+✅ All light must be artificial/interior — no external light source.` : `✅ Daylight lighting is appropriate (${serverHour}:00 hours).`}
 
 ⛔ Do NOT copy lighting from reference images.
 ⛔ Do NOT use incorrect time-of-day lighting.
@@ -513,6 +521,7 @@ Deno.serve(async (req) => {
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
 
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
+    const serverTime = new Date();
     const finalPrompt = buildPrompt({
       prompt,
       charName: charRecord?.name || characterName || 'the character',
@@ -525,6 +534,8 @@ Deno.serve(async (req) => {
       envRefStart,
       charRefStart,
       userRefStart,
+      serverHour: serverTime.getHours(),
+      serverTime: serverTime.toLocaleTimeString(),
     });
 
     // ── 7. GENERATE ───────────────────────────────────────────────────────────
