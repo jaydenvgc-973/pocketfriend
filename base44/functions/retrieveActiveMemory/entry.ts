@@ -13,7 +13,7 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, currentMessage, recentMessages = [], topK = 12 } = await req.json();
+    const { characterId, currentMessage, recentMessages = [], topK = 12, _forceRedeploy = true } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
     console.log(`[retrieveActiveMemory] Starting for char=${characterId}`);
@@ -40,6 +40,19 @@ Deno.serve(async (req) => {
     } catch (err) {
       console.error(`[retrieveActiveMemory] Backfill fetch error: ${err.message}`);
     }
+
+    // ── INJECT BACKFILLED NARRATIVES INTO MEMORY CONTEXT ─────────────────
+    // Convert backfilled narratives to memory objects with HIGHEST priority
+    const backfillAsMemories = backfilledNarratives.map((bn, idx) => ({
+      id: bn.id,
+      title: `[BACKFILLED] ${bn.time_of_day?.replace(/_/g, ' ') || 'Missed Time'}`,
+      description: bn.narrative_text || '',
+      emotional_impact: 'Continuity of timeline',
+      timestamp: bn.timestamp,
+      source_context: 'backfilled_narrative',
+      _score: 100 - idx, // Highest scores: first backfill gets 100, second gets 99, etc.
+      _backfill: true,
+    }));
 
     // Convert backfilled narratives to memory-like format
     const backfillMemories = backfilledNarratives.map(n => ({
