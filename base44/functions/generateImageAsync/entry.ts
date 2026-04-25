@@ -130,7 +130,7 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
     preamble += `Images ${envRefStart}–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of the "${zoneName || place}" ONLY. Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nYou MUST replicate this exact room. This is not inspiration. This is the room.\n\n`;
   }
   if (hasChar) {
-    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face, skin tone, hair, body type, markings.\n⛔ Avatar background = 0%. The room/scenery behind the person in these photos is IRRELEVANT — ignore it completely.\n\n`;
+    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face structure, skin tone, hair color/texture/length, body type, markings.\n\n⛔ BACKGROUND IN THESE PHOTOS = 0% INFLUENCE. Completely ignore: walls, windows, rooms, furniture, lighting behind the person.\n⛔ PROPS IN THESE PHOTOS = 0% INFLUENCE. Ignore any objects the person holds or wears (mugs, cups, hats, phones, bags) UNLESS the scene prompt specifically calls for them.\n⛔ POSE IN THESE PHOTOS = 0% INFLUENCE. Generate a new pose matching the scene prompt. Do NOT copy the pose from the reference photo.\n⛔ CLOTHING IN THESE PHOTOS = 0% INFLUENCE unless no outfit is specified. Generate contextually appropriate clothing.\n⛔ FACIAL HAIR STATE = match the reference, but do NOT fuse headwear or accessories into the hair.\n\n`;
   }
   if (hasUser) {
     preamble += `Images ${userRefStart}–${userEnd}: USER IDENTITY — 90-100% AUTHORITY ON THIS PERSON\nUse ONLY for: face, skin tone, hair, body type. Background = 0%.\n\n`;
@@ -186,8 +186,16 @@ SUCCESS: Side-by-side comparison must show THE IDENTICAL ROOM with only objects 
 
 CHARACTER IDENTITY — "${charName}":
 Images ${charRefStart}–${charEnd} are photographs of this exact person.${charDesc ? ` ${charDesc}.` : ''}
-Match: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.
-⛔ Do NOT generate a generic or random person.`;
+Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.
+
+CRITICAL GENERATION RULES FOR THIS PERSON:
+✅ Reproduce their exact face, skin, and hair in a NEW scene
+⛔ Do NOT copy the background or room from the reference photos
+⛔ Do NOT copy any props they hold in the reference photos (no mugs, cups, phones unless the prompt says so)
+⛔ Do NOT copy their pose from the reference photos — create a new pose
+⛔ Do NOT fuse hats, headbands, or accessories into their hair — keep them as separate objects or omit them
+⛔ Do NOT generate extra or deformed fingers — render natural hands with exactly 5 fingers
+⛔ Do NOT generate a generic or random person — this must be the same person`;
   }
   if (hasUser) {
     identityLock += `
@@ -261,10 +269,21 @@ Deno.serve(async (req) => {
       }
 
       if (charRecord) {
-        // Build identity refs: avatar first, then reference_image_urls
-        const allUrls = [charRecord.avatar_url, ...(charRecord.reference_image_urls || [])].filter(Boolean);
-        charRefs = cdnFilter(allUrls).slice(0, 3);
-        console.log(`[generateImageAsync] Character "${charRecord.name}" — DB identity refs: ${charRefs.length}`);
+        // Build identity refs: prefer reference_image_urls ONLY (not avatar).
+        // The avatar is often a raw uploaded photo — passing it as a reference causes the AI to
+        // copy its pose, background, props, and lighting directly into generated scenes.
+        // reference_image_urls are the canonical face/identity sources.
+        // Only fall back to avatar if no reference images exist at all.
+        const refUrls = cdnFilter(charRecord.reference_image_urls || []);
+        if (refUrls.length > 0) {
+          // Use reference images only — skip avatar to prevent pose/background bleed
+          charRefs = refUrls.slice(0, 3);
+        } else if (charRecord.avatar_url) {
+          // No reference images — use avatar as last resort, capped at 1
+          const avatarCdn = toPublicCDN(charRecord.avatar_url);
+          if (isAccessible(avatarCdn)) charRefs = [avatarCdn];
+        }
+        console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (from ${(charRecord.reference_image_urls || []).length} ref images, avatar as fallback: ${charRefs.length > 0 && (charRecord.reference_image_urls || []).length === 0})`);
 
         // Build appearance descriptor (non-outfit — just physical)
         const parts = [
