@@ -77,29 +77,35 @@ function selectCameraPosition(prompt = '') {
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildRegenPrompt({ scenePrompt, charName, locationName, zoneName, envRefs, charRefs, reason }) {
-  const hasEnv  = envRefs.length > 0;
-  const hasChar = charRefs.length > 0;
+   const hasEnv  = envRefs.length > 0;
+   const hasChar = charRefs.length > 0;
 
-  const ENV_SLOTS  = Math.min(envRefs.length, 4);
-  const CHAR_SLOTS = Math.min(charRefs.length, 2);
+   const ENV_SLOTS  = Math.min(envRefs.length, 4);
+   const CHAR_SLOTS = Math.min(charRefs.length, 2);
 
-  const envEnd    = ENV_SLOTS;
-  const charStart = ENV_SLOTS + 1;
-  const charEnd   = ENV_SLOTS + CHAR_SLOTS;
+   const envEnd    = ENV_SLOTS;
+   const charStart = ENV_SLOTS + 1;
+   const charEnd   = ENV_SLOTS + CHAR_SLOTS;
 
-  const cameraPos = selectCameraPosition(scenePrompt);
+   const cameraPos = selectCameraPosition(scenePrompt);
 
-  let preamble = `════════════════════════════════════════════════════════════
-STRUCTURAL TRUTH & DYNAMIC FLEXIBILITY
+   let preamble = `════════════════════════════════════════════════════════════
+STRUCTURAL TRUTH & DYNAMIC FLEXIBILITY — CAMERA ADAPTS TO ROOM
 ════════════════════════════════════════════════════════════
 
-CAMERA POSITION (MANDATORY):
+CAMERA POSITION (MANDATORY — MUST DIFFER FROM REFERENCE):
 ${cameraPos}
+
 This camera angle MUST be visibly different from reference images.
 
+CRITICAL: If the character's requested action requires an existing object (table, couch, bed, counter, stove):
+✅ Use THAT existing object from images 1–${envEnd}
+✅ Move the camera to frame the object correctly
+⛔ Do NOT duplicate, invent, or replace the object
+
 REFERENCE HIERARCHY:
-- 70–80% STRUCTURAL TRUTH: room layout, furniture, materials, zone identity
-- 20–30% DYNAMIC FLEXIBILITY: camera angle, framing, lighting
+- 70–80% STRUCTURAL TRUTH: room layout, furniture identity, materials, zone identity
+- 20–30% DYNAMIC FLEXIBILITY: camera angle, framing, lighting (time-based)
 
 `;
 
@@ -349,6 +355,20 @@ Deno.serve(async (req) => {
         const refUrls = cdnFilter(charRecord.reference_image_urls || []);
         charRefs = refUrls.slice(0, 3);
         console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs from reference_image_urls only: ${charRefs.length} (NOT using avatar to prevent scene contamination)`);
+        
+        // Build appearance descriptor for text-based generation — CRITICAL: include appearance_lock traits as immutable truth
+        const charDescParts = [
+          charRecord.age_range ? `${charRecord.age_range} years old` : null,
+          charRecord.gender,
+          charRecord.ethnicities?.length > 0 ? charRecord.ethnicities.join('/') + ' ethnicity' : null,
+          charRecord.appearance_lock?.skin_tone ? `${charRecord.appearance_lock.skin_tone} skin tone` : null,
+          charRecord.appearance_lock?.hairstyle ? `${charRecord.appearance_lock.hairstyle} hairstyle` : null,
+          charRecord.appearance_lock?.hair_type ? `${charRecord.appearance_lock.hair_type} hair` : null,
+          charRecord.appearance_lock?.facial_hair ? `${charRecord.appearance_lock.facial_hair}` : null,
+          charRecord.appearance_notes || null,
+          charRecord.avatar_description_text || null,
+        ].filter(Boolean);
+        // Store locally for prompt building (though buildRegenPrompt doesn't use it, good for future extensions)
       }
 
       // Fallback: use refs stored in generation_context (which should also be reference images only, not avatar)

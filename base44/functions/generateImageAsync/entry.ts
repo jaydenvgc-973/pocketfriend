@@ -118,56 +118,57 @@ function resolveZoneFromLocation(location, promptLower) {
 // ── CAMERA + LIGHTING HELPERS ──────────────────────────────────────────────────────────
 
 function selectCameraPosition(zoneName, seed = '', prompt = '') {
-  const promptLower = (prompt || '').toLowerCase();
-  
-  // HIGHEST PRIORITY: Selfie detection — comprehensive match
-  const isSelfie = /selfie|self-?portrait|phone selfie|smartphone selfie|cell phone|taken.*phone|phone.*photo/.test(promptLower);
-  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table|dining.*table|wooden.*table/.test(promptLower);
-  const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
-  const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
+   const promptLower = (prompt || '').toLowerCase();
 
-  if (isSelfie) {
-    // Selfie + seated context: character holds phone at arm's length, face fills frame, seated position visible below
-    if (isSittingAtTable) {
-      return 'selfie perspective — character is SEATED at the table holding the phone at arm\'s length toward the camera. Face and upper chest dominate the frame. The table and food are partially visible below. Character is NOT standing. Phone is in the character\'s hand extended toward viewer.';
-    }
-    return 'extreme close-up selfie — character holds phone at arm\'s length directly toward camera. Face fills most of the frame. Personal and intimate framing. Character is NOT standing in a wide shot.';
-  }
-  
-  if (isSittingAtTable) {
-    const tablePositions = [
-      'tight medium shot, seated eye-level at the table, character is the primary subject',
-      'close-up, seated eye-level facing the character at table, table surface in frame',
-      'seated perspective, close frame with character and table as main focus',
-      'medium-tight shot, character seated at table, framed from slightly above eye-level'
-    ];
-    return tablePositions[Math.floor(Math.abs(seed.charCodeAt(0)) % tablePositions.length)];
-  }
-  
-  if (isSittingOnCouch) {
-    return Math.random() > 0.5 
-      ? 'seated eye-level from the couch, character is the primary subject'
-      : 'close-up from across the room, focused on character on couch';
-  }
-  
-  if (isStandingAtCounter) {
-    return 'close-up at counter-level, character and counter are the primary subjects';
-  }
-  
-  // Default positions for general scenes
-  const positions = [
-    'from the doorway looking inward',
-    'from the left corner of the room',
-    'from the right corner of the room',
-    'from across the room looking back',
-    'from a closer standing position',
-    'from a slightly elevated angle',
-    'from a lower angle looking slightly up',
-    'from a diagonal side view'
-  ];
-  const idx = Math.abs(seed.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % positions.length;
-  return positions[idx];
-}
+   // HIGHEST PRIORITY: Selfie detection — comprehensive match
+   const isSelfie = /selfie|self-?portrait|phone selfie|smartphone selfie|cell phone|taken.*phone|phone.*photo/.test(promptLower);
+   const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table|dining.*table|wooden.*table/.test(promptLower);
+   const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
+   const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
+
+   if (isSelfie) {
+     // Selfie + seated context: character holds phone at arm's length, face fills frame, seated position visible below
+     // CRITICAL: Ensure the existing table in the zone is framed below the character's face
+     if (isSittingAtTable) {
+       return 'selfie perspective — character is SEATED at the EXISTING table in this room, holding the phone at arm\'s length toward the camera. Face and upper chest dominate the frame. The existing table, place settings, and food (if present) are partially visible below. Character is NOT standing. Phone is in the character\'s hand extended toward viewer. CAMERA MUST adjust to frame the existing table from this angle.';
+     }
+     return 'extreme close-up selfie — character holds phone at arm\'s length directly toward camera. Face fills most of the frame. Personal and intimate framing. Character is NOT standing in a wide shot.';
+   }
+
+   if (isSittingAtTable) {
+     const tablePositions = [
+       'tight medium shot, seated eye-level at the EXISTING table, character is the primary subject, table surface and existing objects in frame',
+       'close-up, seated eye-level facing the character at the EXISTING table, existing table surface and place settings in frame',
+       'seated perspective, close frame with character and the EXISTING table as main focus',
+       'medium-tight shot, character seated at the EXISTING table, framed from slightly above eye-level to show table and food'
+     ];
+     return tablePositions[Math.floor(Math.abs(seed.charCodeAt(0)) % tablePositions.length)];
+   }
+
+   if (isSittingOnCouch) {
+     return Math.random() > 0.5 
+       ? 'seated eye-level on the EXISTING couch, character is the primary subject, couch details visible'
+       : 'close-up from across the room, focused on character seated on the EXISTING couch';
+   }
+
+   if (isStandingAtCounter) {
+     return 'close-up at counter-level, character standing at the EXISTING counter are the primary subjects, counter surface and existing fixtures in frame';
+   }
+
+   // Default positions for general scenes
+   const positions = [
+     'from the doorway looking inward',
+     'from the left corner of the room',
+     'from the right corner of the room',
+     'from across the room looking back',
+     'from a closer standing position',
+     'from a slightly elevated angle',
+     'from a lower angle looking slightly up',
+     'from a diagonal side view'
+   ];
+   const idx = Math.abs(seed.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % positions.length;
+   return positions[idx];
+ }
 
 function getTimeLighting(hour = new Date().getHours()) {
   if (hour >= 5 && hour < 9) return { period: 'EARLY MORNING', desc: 'soft golden sunrise, warm golden hour light, long soft shadows' };
