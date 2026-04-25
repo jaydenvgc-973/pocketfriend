@@ -1,0 +1,211 @@
+{
+  "name": "CharacterAutomaticNarrative",
+  "type": "object",
+  "rls": {
+    "create": true,
+    "read": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "owner_user_id": "{{user.id}}"
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "owner_user_id": "{{user.id}}"
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "created_by": "{{user.email}}"
+        },
+        {
+          "owner_user_id": "{{user.id}}"
+        }
+      ]
+    }
+  },
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character this narrative belongs to"
+    },
+    "character_name": {
+      "type": "string",
+      "description": "Display name of the character"
+    },
+    "owner_user_id": {
+      "type": "string",
+      "description": "ID of the user who owns this character"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user who owns this character"
+    },
+    "event_type": {
+      "type": "string",
+      "enum": [
+        "passive_time",
+        "sleep",
+        "wake",
+        "work_start",
+        "work_end",
+        "travel_arrival",
+        "travel_departure",
+        "needs_warning",
+        "social_event",
+        "catch_up_summary"
+      ],
+      "description": "Type of automatic narrative event"
+    },
+    "narrative_text": {
+      "type": "string",
+      "description": "The generated narrative describing what the character experienced"
+    },
+    "memory_summary": {
+      "type": "string",
+      "description": "Short summary for memory extraction (e.g., 'Was at work in the afternoon')"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the narrative was generated (UTC)"
+    },
+    "local_time": {
+      "type": "string",
+      "description": "Local time when narrative was generated (HH:MM format)"
+    },
+    "time_of_day": {
+      "type": "string",
+      "enum": [
+        "early_morning",
+        "morning",
+        "midday",
+        "afternoon",
+        "evening",
+        "night"
+      ],
+      "description": "Time of day period for the narrative"
+    },
+    "location_id": {
+      "type": "string",
+      "description": "Location ID where the character was during this narrative period"
+    },
+    "location_name": {
+      "type": "string",
+      "description": "Location name or description"
+    },
+    "zone_name": {
+      "type": "string",
+      "description": "Specific zone/room within the location"
+    },
+    "sleep_state": {
+      "type": "string",
+      "enum": [
+        "awake",
+        "sleeping",
+        "waking"
+      ],
+      "description": "Character's sleep state during this narrative period"
+    },
+    "travel_state": {
+      "type": "string",
+      "enum": [
+        "stationary",
+        "in_transit",
+        "arrived"
+      ],
+      "description": "Character's travel state"
+    },
+    "work_state": {
+      "type": "string",
+      "enum": [
+        "not_working",
+        "shift_starting",
+        "on_shift",
+        "shift_ending"
+      ],
+      "description": "Character's work state"
+    },
+    "needs_snapshot": {
+      "type": "object",
+      "properties": {
+        "hunger": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "energy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "social": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "health": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "mental": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "financial_need": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "hygiene": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "comfort": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "description": "Snapshot of character needs at the time of narrative"
+    },
+    "triggered_by": {
+      "type": "string",
+      "enum": [
+        "interval",
+        "state_change",
+        "user_return"
+      ],
+      "description": "What triggered this narrative generation"
+    },
+    "is_catch_up": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if this is a catch-up narrative for user return"
+    },
+    "hours_since_last_interaction": {
+      "type": "number",
+      "description": "For catch-up narratives: hours elapsed since last user interaction"
+    }
+  },
+  "required": [
+    "character_id",
+    "owner_user_id",
+    "event_type",
+    "narrative_text",
+    "timestamp"
+  ]
+}

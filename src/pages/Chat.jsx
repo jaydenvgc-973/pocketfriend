@@ -20,6 +20,7 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
+import { useCatchUpNarrative } from "@/hooks/useCatchUpNarrative";
 import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
@@ -85,6 +86,9 @@ export default function Chat() {
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
   });
+
+  // ── CATCH-UP NARRATIVES: When user returns after time has passed ────────
+  useCatchUpNarrative(conversationId, characterId, character);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
