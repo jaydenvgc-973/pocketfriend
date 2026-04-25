@@ -918,15 +918,13 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
               </section>
 
               {/* Needs */}
-              {character.character_type === 'active' && (
-                <section className="space-y-4">
-                  <div>
-                    <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Needs Status</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">Drag sliders then hit Save Needs to apply.</p>
-                  </div>
-                  <NeedsEditor character={character} />
-                </section>
-              )}
+              <section className="space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Needs Status</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">Drag sliders then hit Save Needs to apply.</p>
+                </div>
+                <NeedsEditor character={character} />
+              </section>
 
               {/* Education */}
               <section className="space-y-4">
