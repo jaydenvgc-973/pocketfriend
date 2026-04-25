@@ -206,7 +206,7 @@ Deno.serve(async (req) => {
     // Also check for decided_to_stay_up override
     if (isAsleep && char.decided_to_stay_up_until) {
       const stayUpUntil = new Date(char.decided_to_stay_up_until);
-      if (now < stayUpUntil) {
+      if (nowET < stayUpUntil) {
         isAsleep = false;
       }
     }
