@@ -115,8 +115,15 @@ Deno.serve(async (req) => {
       }
 
       if (Object.keys(presenceUpdate).length > 0) {
-        await base44.asServiceRole.entities.Character.update(characterId, presenceUpdate);
-        console.log(`[resolveLocationAlias] Updated character ${characterId} presence → ${resolutionType}: ${locationName || rabbitHoleLabel}`);
+        // Verify character belongs to this user before updating
+        const charCheck = await base44.entities.Character.filter({ id: characterId }, null, 1).catch(() => []);
+        if (charCheck.length > 0) {
+          // User has access to this character — use user-scoped call
+          await base44.entities.Character.update(characterId, presenceUpdate);
+          console.log(`[resolveLocationAlias] Updated character ${characterId} presence → ${resolutionType}: ${locationName || rabbitHoleLabel}`);
+        } else {
+          console.warn(`[resolveLocationAlias] ⚠️ Character ${characterId} not accessible to user ${user.email} — skipping presence update`);
+        }
       }
     }
 
