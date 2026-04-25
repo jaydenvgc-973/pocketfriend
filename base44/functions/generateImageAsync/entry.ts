@@ -254,6 +254,25 @@ ZERO OBJECT DRIFT — Every object must come from images ${envRefStart}–${envE
   ✓ Depth of field`;
   }
 
+  let refImageOverride = `
+
+════════════════════════════════════════════════════════════
+⛔ CRITICAL OVERRIDE: REFERENCE IMAGE LIGHTING IS IGNORED ⛔
+════════════════════════════════════════════════════════════
+Reference images (identity or location) may contain daylight, bright windows, or morning/afternoon lighting.
+
+THIS LIGHTING MUST BE COMPLETELY IGNORED.
+
+Lighting is ONLY determined by server time: ${serverHour}:${String(new Date().getMinutes()).padStart(2, '0')} (${timeLighting.period})
+
+If reference images show bright daylight or bright windows:
+🚫 DO NOT replicate that lighting
+🚫 DO NOT use that color temperature
+🚫 DO NOT copy that brightness level
+
+Generate ONLY from the server time lighting rules above.
+The scene lighting must match the actual world time, not the reference images.`;
+
   let identityLock = '';
   if (hasChar) {
     identityLock += `
@@ -273,7 +292,8 @@ CRITICAL GENERATION RULES:
 ⛔ Do NOT copy background, room, or pose from reference photos
 ⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and room responds
 ⛔ Do NOT paste the character in — integrate with matching depth, shadow, and light direction
-⛔ Do NOT copy props or lighting from reference photos`;
+⛔ Do NOT copy props or lighting from reference photos
+⛔ LIGHTING COMES ONLY FROM SERVER TIME — NEVER FROM REFERENCE IMAGES`;
   }
   if (hasUser) {
     identityLock += `
@@ -283,7 +303,7 @@ Images ${userRefStart}–${userEnd} are this exact person's photos.
 Match: face structure, skin tone, hair, body type.`;
   }
 
-  return `${preamble}${cameraBlock}${lightingBlock}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
+  return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
