@@ -147,6 +147,21 @@ Deno.serve(async (req) => {
       comfort: character.comfort_value ?? 70,
     };
 
+    // ── TIME RECONCILIATION: Check for expired actions ──────────────────────
+    // Resolve any actions completed since last narrative
+    let reconciliationUpdates = {};
+    try {
+      const { enforceTimeReconciliation } = await import('https://cdn.jsdelivr.net/gh/base44/app@latest/lib/actionExpirationEngine.js');
+      const reconciliation = enforceTimeReconciliation(character, character.updated_date);
+      if (reconciliation.expired && Object.keys(reconciliation.updates).length > 0) {
+        console.log(`[generateAutomaticNarrative] ✓ Resolved expired action | Updates:`, reconciliation.updates);
+        Object.assign(character, reconciliation.updates);
+        reconciliationUpdates = reconciliation.updates;
+      }
+    } catch (recErr) {
+      console.log(`[generateAutomaticNarrative] Reconciliation skipped (non-blocking):`, recErr.message);
+    }
+
     // ── BUILD STATE-ACCURATE PROMPT ───────────────────────────────────────
     const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
     const dayName = nowET.toLocaleDateString('en-US', { weekday: 'long' });
@@ -297,6 +312,16 @@ If no actions occur, return empty action_effects array.`;
       if (Object.keys(characterUpdatePayload).length > 0) {
         await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
         console.log(`[generateAutomaticNarrative] ✓ Character needs updated.`);
+      }
+    }
+
+    // Persist reconciliation updates if any
+    if (Object.keys(reconciliationUpdates).length > 0) {
+      try {
+        await base44.asServiceRole.entities.Character.update(characterId, reconciliationUpdates);
+        console.log(`[generateAutomaticNarrative] ✓ Persisted reconciliation updates.`);
+      } catch (updateErr) {
+        console.warn(`[generateAutomaticNarrative] Failed to persist reconciliation:`, updateErr.message);
       }
     }
 
