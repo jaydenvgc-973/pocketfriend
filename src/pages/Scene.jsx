@@ -35,6 +35,7 @@ import { enforceZoneLock, buildAvatarIdentityBlock } from "@/lib/sceneImageGener
 import { ACTION_IMAGE_PROMPTS, getLocationActions } from "@/lib/sceneActionConfig";
 import { buildVisualReferenceStack, buildAvatarIdentityEnforcementBlock } from "@/lib/avatarIdentityEnforcer";
 import { useSceneCharacters } from "@/hooks/useSceneCharacters";
+import { getLightingDescriptor, buildZoneLockEnvNote, buildActionEnvNote } from "@/lib/sceneImagePromptBuilder";
 
 const CATEGORY_EMOJIS = {
   home: "🏠", workplace: "💼", school: "🏫", gym: "🏋️", grocery: "🛒",
@@ -785,6 +786,7 @@ export default function Scene() {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
     const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
+    const lightingDesc = getLightingDescriptor(hour);
 
     // Build outfit descriptions for brought characters from their closet
     const getCharacterOutfitDesc = (char) => {
@@ -861,7 +863,7 @@ export default function Scene() {
         }
       }
       if (authoratativeEnvRefs.length > 0) {
-        finalPrompt += ` ENVIRONMENT AUTHORITY: The reference images define this location's exact room — reproduce the same layout, furniture, colors, and architecture. Do not invent a new environment.`;
+        finalPrompt += ` ` + buildActionEnvNote(currentZoneForAction?.zone_name || "this area", true, lightingDesc);
       }
       // AVATAR IDENTITY LOCK: enforce full identity matching for all visible people
       if (visiblePeopleForScene.length > 0) {
@@ -872,7 +874,7 @@ export default function Scene() {
         const actionVisualRefs = buildVisualReferenceStack(visiblePeopleForScene, authoratativeEnvRefs);
         console.log('[Scene action] Passing visual references:', actionVisualRefs);
         const result = await base44.integrations.Core.GenerateImage({
-          prompt: `${finalPrompt} ${timeOfDay} lighting. Photorealistic, high quality, authentic.`,
+          prompt: `${finalPrompt} Photorealistic, high quality, authentic.`,
           existing_image_urls: actionVisualRefs.length > 0 ? actionVisualRefs : undefined,
         });
         setSceneImage(result.url);
@@ -883,11 +885,10 @@ export default function Scene() {
 
     // authoratativeEnvRefs already computed above — zone images are the ONLY environment source
     const zoneSuffix = currentZoneForAction?.zone_name ? ` — ${currentZoneForAction.zone_name}` : "";
+    const activeZoneName = currentZoneForAction?.zone_name || "this area";
     // isGlobal must NEVER be true for residential locations — home scenes always use the strict resident path
     const isGlobal = !isHomeLocation && location.location_type === "global";
-    const envNote = authoratativeEnvRefs.length > 0
-      ? `CRITICAL ENVIRONMENT RULE: The reference images are the AUTHORITATIVE source for this location's environment. Reproduce the EXACT room shown — same layout, furniture, wall colors, lighting, and architecture. Do NOT invent a new room. Characters exist INSIDE this environment; they do NOT define it.`
-      : "";
+    const envNote = buildZoneLockEnvNote(activeZoneName, authoratativeEnvRefs.length > 0, lightingDesc);
 
     let prompt;
     if (isHomeLocation) {
