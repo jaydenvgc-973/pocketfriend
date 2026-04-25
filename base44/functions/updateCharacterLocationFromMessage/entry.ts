@@ -33,9 +33,21 @@ const RABBIT_HOLE_TERMS = new Set([
 
 const VAGUE = ['out', 'busy', 'gone', 'away', 'around', 'somewhere', 'back', 'good', 'here'];
 
+// Detect "going out" / "heading out" / "stepping out" statements — sets traveling state without specific destination
+const GOING_OUT_PATTERNS = [
+  /\b(?:i'm|i am|i'll be|gonna be|going to be)\s+(?:going|heading|stepping|getting|going\s+out|heading\s+out|stepping\s+out|out\s+for\s+a\s+bit|out\s+for\s+a\s+while|out\s+tonight|out\s+today|out\s+right\s+now)\b/i,
+  /\b(?:just\s+)?(?:left|leaving|heading out|stepping out|going out|going for a walk|going for a run|going for a drive|going to run errands|running errands|out\s+for\s+a\s+bit)\b/i,
+  /\b(?:i\s+need\s+to\s+go|gotta\s+go|gotta\s+head\s+out|time\s+to\s+go|about\s+to\s+head\s+out)\b/i,
+];
+
+function detectGoingOut(msg) {
+  const lower = msg.toLowerCase();
+  return GOING_OUT_PATTERNS.some(p => p.test(lower));
+}
+
 function detectSpokenPlace(msg) {
   const lower = msg.toLowerCase();
-  // Skip pure vague
+  // Skip pure single-word vague
   if (VAGUE.some(v => lower === v || lower === `i'm ${v}`)) return null;
 
   for (const pattern of PLACE_PATTERNS) {
@@ -82,7 +94,24 @@ Deno.serve(async (req) => {
 
     // Detect spoken place
     const detected = detectSpokenPlace(messageContent);
+
+    // If no specific location found, check if they said they're going out (vague travel)
     if (!detected) {
+      const isGoingOut = detectGoingOut(messageContent);
+      if (isGoingOut) {
+        // Set character to a traveling/out state without a specific destination
+        await base44.entities.Character.update(characterId, {
+          resolved_current_location_name: 'Out',
+          resolved_location_type: 'visit',
+          resolved_presence_status: 'visiting',
+          resolved_source_reason: 'chat_going_out',
+          location_status: 'traveling',
+          travel_status: 'traveling_to_destination',
+          last_location_update_time: new Date().toISOString(),
+        });
+        console.log(`[updateCharacterLocationFromMessage] ✓ "${character.name}" marked as out/traveling (vague going-out statement)`);
+        return Response.json({ success: true, updated: true, method: 'going_out', reason: 'vague_travel_detected' });
+      }
       return Response.json({ success: true, updated: false, reason: 'no_place_detected' });
     }
 
