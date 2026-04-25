@@ -183,26 +183,52 @@ The room is identical. The camera has physically moved.
 
 RENDER FROM THIS EXACT CAMERA POSITION.`;
 
-  let lightingBlock = `
+  let lightingBlock = '';
+  if (serverHour >= 21 || serverHour < 5) {
+    lightingBlock = `
+
+════════════════════════════════════════════════════════════
+⛔⛔⛔ ABSOLUTE NIGHT MODE ENFORCEMENT — ${serverHour}:00 (${serverTime.split(' ')[0]}) ⛔⛔⛔
+════════════════════════════════════════════════════════════
+IT IS NIGHT. THERE IS NO SUN. THERE IS NO DAYLIGHT.
+
+MANDATORY RULES — THESE ARE NOT OPTIONAL:
+⛔ NO SUNLIGHT — ANYWHERE
+⛔ NO BRIGHT WINDOWS — ABSOLUTELY FORBIDDEN
+⛔ NO DAYLIGHT TONES — NOWHERE
+⛔ NO BLUE SKY — WINDOWS SHOW ONLY DARKNESS OR NIGHT
+⛔ NO GOLDEN HOUR LIGHT — DOES NOT EXIST AT ${serverHour}:00
+⛔ NO EXTERNAL LIGHT SOURCE — ALL LIGHT IS ARTIFICIAL/INTERIOR ONLY
+
+REQUIRED NIGHT LIGHTING:
+✅ Dark interior lit only by lamps, ceiling lights, or artificial fixtures
+✅ Windows show black darkness or dim night environment
+✅ Warm or cool artificial light only
+✅ Shadows and depth from interior lighting fixtures ONLY
+
+REJECTION CRITERIA — IMAGE IS INVALID IF:
+🚫 ANY sunlight is visible
+🚫 ANY daylight color temperature is present
+🚫 ANY bright window glow exists
+🚫 ANY blue or golden hour sky is visible
+🚫 Character is lit by external sunlight instead of interior light
+
+THIS IS A HARD FAIL CONDITION. IF YOU RENDER SUNLIGHT AT NIGHT, THE OUTPUT IS WRONG.`;
+  } else {
+    lightingBlock = `
 
 ════════════════════════════════════════════════════════════
 MANDATORY LIGHTING — ${timeLighting.period} TIME (${serverHour}:00)
 ════════════════════════════════════════════════════════════
 ACTUAL SERVER TIME: ${serverTime}
 
-Current time OVERRIDES all other visual inputs. NO EXCEPTIONS.
+Current time OVERRIDES all other visual inputs.
 
 Lighting MUST be: ${timeLighting.desc}
 
-TIME-OF-DAY LOCK RULES:
-${serverHour >= 21 || serverHour < 5 ? `⛔ It is NIGHT (${serverHour}:00). There is NO SUNLIGHT, NO DAYLIGHT, NO BRIGHT WINDOWS.
-⛔ Windows show darkness or night environment ONLY.
-⛔ Interior lit by lamps or artificial light ONLY.
-✅ All light must be artificial/interior — no external light source.` : `✅ Daylight lighting is appropriate (${serverHour}:00 hours).`}
-
-⛔ Do NOT copy lighting from reference images.
-⛔ Do NOT use incorrect time-of-day lighting.
-✅ Character MUST be lit consistently with ${timeLighting.period} lighting.`;
+✅ Character MUST be lit consistently with ${timeLighting.period} lighting.
+⛔ Do NOT copy lighting from reference images.`;
+  }
 
   let envLock = '';
   if (hasEnv) {
