@@ -174,14 +174,28 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   let cameraBlock = `
 
 ════════════════════════════════════════════════════════════
-MANDATORY CAMERA POSITION
+⛔ MANDATORY CAMERA OVERRIDE — CAMERA MUST MOVE ⛔
 ════════════════════════════════════════════════════════════
 Camera viewpoint MUST be: ${cameraPos}
 
-REQUIREMENT: This MUST be a DIFFERENT camera angle than reference images.
-The room is identical. The camera has physically moved.
+CRITICAL RULE: This camera angle MUST be VISIBLY DIFFERENT from reference images.
 
-RENDER FROM THIS EXACT CAMERA POSITION.`;
+If reference images show:
+  • Wide framing → Use closer perspective
+  • Centered composition → Use side angle
+  • Eye-level view → Use slightly elevated or lowered angle
+  • Far distance → Move camera closer
+  • Symmetric framing → Use offset/asymmetric framing
+
+The room/environment is identical, but the CAMERA HAS PHYSICALLY MOVED to a new position.
+
+REJECTION CRITERIA — IMAGE IS INVALID IF:
+🚫 Composition matches the reference image framing
+🚫 Camera appears to be in the same position as reference
+🚫 Perspective shift is not visibly obvious
+🚫 Framing looks like a reused angle
+
+RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
 
   let lightingBlock = '';
   if (serverHour >= 21 || serverHour < 5) {
