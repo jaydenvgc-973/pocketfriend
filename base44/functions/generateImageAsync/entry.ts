@@ -117,18 +117,47 @@ function resolveZoneFromLocation(location, promptLower) {
 
 // ── CAMERA + LIGHTING HELPERS ──────────────────────────────────────────────────────────
 
-function selectCameraPosition(zoneName, seed = '') {
+function selectCameraPosition(zoneName, seed = '', prompt = '') {
+  const promptLower = (prompt || '').toLowerCase();
+  
+  // Context-aware camera positions based on prompt content
+  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table/.test(promptLower);
+  const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
+  const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
+  const isCloseUp = /close|closeup|close-up|tight|focused/.test(promptLower);
+  
+  // Choose position based on context, not random
+  if (isSittingAtTable) {
+    // Character is the primary subject at table — tight, focused frame
+    const tablePositions = [
+      'tight medium shot, seated eye-level at the table, character is the primary subject',
+      'close-up, seated eye-level facing the character at table, table surface in frame',
+      'seated perspective, close frame with character and table as main focus',
+      'medium-tight shot, character seated at table, framed from slightly above eye-level'
+    ];
+    return tablePositions[Math.floor(Math.abs(seed.charCodeAt(0)) % tablePositions.length)];
+  }
+  
+  if (isSittingOnCouch) {
+    return Math.random() > 0.5 
+      ? 'seated eye-level from the couch, character is the primary subject'
+      : 'close-up from across the room, focused on character on couch';
+  }
+  
+  if (isStandingAtCounter) {
+    return 'close-up at counter-level, character and counter are the primary subjects';
+  }
+  
+  // Default wide-angle positions for general scenes
   const positions = [
     'from the doorway looking inward',
     'from the left corner of the room',
     'from the right corner of the room',
     'from across the room looking back',
-    'at seated eye-level from center-left',
     'from a closer standing position',
     'from a slightly elevated angle',
     'from a lower angle looking slightly up',
-    'from a diagonal side view',
-    'positioned near the window looking inward'
+    'from a diagonal side view'
   ];
   const idx = Math.abs(seed.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % positions.length;
   return positions[idx];
@@ -159,7 +188,7 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const timeLighting = getTimeLighting(resolvedTime);
   
   // ── THEN CAMERA POSITION (NOT FROM REFERENCE) ──
-  const cameraPos = selectCameraPosition(zoneName, prompt + serverTime);
+  const cameraPos = selectCameraPosition(zoneName, prompt + serverTime, prompt);
 
   let preamble = `════════════════════════════════════════════════════════════
 UNIFIED CAMERA SYSTEM — MANDATORY GENERATION ORDER
