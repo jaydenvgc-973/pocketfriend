@@ -126,21 +126,20 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const charEnd   = charRefStart + charRefCount - 1;
   const userEnd   = userRefStart + userRefCount - 1;
 
-  // Role preamble — model must read this first
-  // ORDERING: identity refs come first (highest model weight), env refs come last
+  // Role preamble — env first (room anchor), then identity
   let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
 
-  if (hasChar) {
-    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — THIS IS THE MOST IMPORTANT REFERENCE\n"${charName}" — These are real photographs of this specific person. You MUST reproduce their EXACT face.\nMatch with 100% fidelity: face structure, eyes, nose, mouth shape, skin tone, hair color/texture/curl pattern/length, beard/facial hair, body type, skin markings.\n⚠️ This person must be INSTANTLY RECOGNIZABLE as the same individual across all generations.\n\n⛔ BACKGROUND IN THESE PHOTOS = 0% INFLUENCE. Completely ignore everything behind the person.\n⛔ PROPS IN THESE PHOTOS = 0% INFLUENCE. Ignore held objects unless scene prompt calls for them.\n⛔ POSE IN THESE PHOTOS = 0% INFLUENCE. Generate a new pose matching the scene.\n⛔ CLOTHING = contextually appropriate for the scene, not copied from reference photos.\n\n`;
-  }
-  if (hasUser) {
-    preamble += `Images ${userRefStart}–${userEnd}: USER IDENTITY — 100% AUTHORITY ON THIS PERSON\nUse ONLY for: face, skin tone, hair, body type. Background = 0%.\n\n`;
-  }
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
-    preamble += `Images ${envRefStart}–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of the "${zoneName || place}" ONLY. Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nYou MUST replicate this exact room. This is not inspiration. This is the room.\n\n`;
+    preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT — THIS IS THE SCENE BACKGROUND. 100% AUTHORITY.\nThese are photographs of the actual "${zoneName || place}". THIS IS THE ONLY ROOM ALLOWED IN THE OUTPUT.\nREPLICATE every detail: walls, floor, furniture, rug, curtains, lighting, decor, layout. Do NOT invent or substitute anything.\n⛔ Do NOT use any other room, background, or environment — not from identity photos, not from imagination.\n\n`;
   }
-  preamble += '⛔ DO NOT blend image sets. Each set has one exclusive role.\n════════════════════════════════════════════════════════════\n\n';
+  if (hasChar) {
+    preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY for "${charName}"\nExtract ONLY: face shape, eyes, nose, mouth, skin tone, hair color/texture/length, facial hair, body type.\n⚠️ CRITICAL — THE BACKGROUND IN THESE PHOTOS IS COMPLETELY IRRELEVANT AND MUST BE IGNORED 100%.\n⛔ Do NOT use, reference, copy, or be influenced by the room, walls, furniture, lighting, or any background visible behind the person in these photos.\n⛔ The ONLY background allowed is the one from the environment images above.\n\n`;
+  }
+  if (hasUser) {
+    preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY for the user\nExtract ONLY: face, skin tone, hair, body type. Background in these photos = 0% influence.\n\n`;
+  }
+  preamble += '⛔ DO NOT blend image sets. Room comes from env images only. Face comes from identity images only.\n════════════════════════════════════════════════════════════\n\n';
 
   // Environment lock block
   let envLock = '';
@@ -449,22 +448,25 @@ Deno.serve(async (req) => {
       envRefs = validEnvRefs;
     }
 
-    // ── 5. ASSEMBLE REFS — identity FIRST (highest model weight), then env ────
-    // AI image models weight earlier reference images more heavily.
-    // Character identity must come first so the model locks face/hair before reading env.
-    const CHAR_SLOTS = Math.min(charRefs.length, 5);  // up to 5 identity refs
-    const USER_SLOTS = Math.min(userRefs.length, 3);
+    // ── 5. ASSEMBLE REFS — env FIRST (locks the room), then identity ─────────
+    // Environment must come first so the model anchors the room before reading identity.
+    // Identity refs (charRefs) must NEVER bleed their background into the scene.
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
+    const CHAR_SLOTS = Math.min(charRefs.length, 5);
+    const USER_SLOTS = Math.min(userRefs.length, 3);
 
-    const charRefStart = 1;
-    const userRefStart = CHAR_SLOTS + 1;
-    const envRefStart  = CHAR_SLOTS + USER_SLOTS + 1;
+    const envRefStart  = 1;
+    const charRefStart = ENV_SLOTS + 1;
+    const userRefStart = ENV_SLOTS + CHAR_SLOTS + 1;
 
     const referenceImages = [
+      ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
-      ...envRefs.slice(0, ENV_SLOTS),
     ].filter(Boolean);
+
+    console.log(`[generateImageAsync] FINAL REF URLS:`);
+    referenceImages.forEach((url, i) => console.log(`  [${i+1}] ${url}`));
 
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
 
