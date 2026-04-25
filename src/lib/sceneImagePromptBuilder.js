@@ -34,20 +34,25 @@ export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc)
   return `ZONE LOCK — STRICT: The reference images define the EXACT visual identity of the "${activeZoneName}" zone. ` +
     `You MUST preserve: the same room layout, same furniture style, same wall colors, same flooring, same architectural features, ` +
     `same zone-defining structures (bar counter, kitchen, bed, couch, hallway, etc.), same windows and doors, same overall atmosphere. ` +
-    `CAMERA FLEXIBILITY (10% shift only): You may vary the camera angle slightly — ` +
-    `different viewpoint within the same space, wider or closer framing, seated eye-level, standing eye-level, ` +
-    `over-the-shoulder, or doorway view into the same zone. ` +
+    `CAMERA DYNAMICS (MANDATORY VARIATION): You MUST use dynamic camera placement and angles. Do NOT reuse the same static viewpoint. ` +
+    `Vary significantly: from the doorway looking in, from beside furniture, from across the room, from a corner angle, over-the-shoulder close-ups, ` +
+    `wider environmental shots, seated eye-level, standing eye-level, from different heights, from different distances. ` +
+    `Framing must change — sometimes close on character, sometimes wide room view, sometimes partial character in frame. ` +
+    `Distance must vary — sometimes intimate close camera, sometimes far away establishing shot. ` +
     `You may NOT redesign the room, replace furniture, change wall colors, change flooring, ` +
-    `pull elements from a different zone, or invent a new location. ` +
+    `pull elements from a different zone, or invent new location objects. ` +
     `ZONE EXCLUSIVITY: Only elements visible in the "${activeZoneName}" reference images may appear — ` +
     `no objects, wall art, furniture, or details from other zones. ` +
-    `TIME OF DAY: ${lightingDesc}. Adjust lighting to match — do not apply wrong-time-of-day lighting. ` +
+    `TIME OF DAY: ${lightingDesc}. Adjust lighting to match the actual current time — do not apply wrong-time-of-day lighting. ` +
+    `Morning light is soft and golden. Afternoon light is bright and direct. Evening light is warm and low-angle. Night uses lamps or moonlight. ` +
     `The lighting changes the atmosphere, not the room identity. ` +
     `CHARACTER INTEGRATION: Any characters must feel physically inside the scene — ` +
-    `match their shadows, highlights, color temperature, brightness, and light direction to the room. ` +
-    `If the room is dim, characters must be dimly lit. If warm light, characters have warm tones. ` +
+    `match their shadows, highlights, color temperature, brightness, and light direction to the room lighting. ` +
+    `If the room is dim, characters must be dimly lit. If warm light, characters have warm tones. If cool shadows, character reflects that. ` +
+    `Characters must be clearly visible — camera must be close enough to identify them when they are the focus. ` +
     `Characters must not look pasted on, cutout, or photographed in different lighting. ` +
-    `Feet must make sense on the floor. If sitting, body must align with the furniture.`;
+    `Feet must make sense on the floor. If sitting, body must align with existing furniture. ` +
+    `Do NOT invent new furniture to make a closer view — use the same furniture from closer camera angle.`;
 }
 
 /**
@@ -56,6 +61,8 @@ export function buildZoneLockEnvNote(activeZoneName, hasRefImages, lightingDesc)
 export function buildActionEnvNote(activeZoneName, hasRefImages, lightingDesc) {
   if (!hasRefImages) return `${lightingDesc}.`;
   return `ZONE: "${activeZoneName}" — preserve same room layout, furniture, and colors. ` +
-    `Camera may shift slightly within the same space. ` +
-    `Apply ${lightingDesc}. Match character lighting to the room. Do not redesign the space.`;
+    `CAMERA DYNAMICS: Use varied camera angles, distances, and framing — doorway view, close-ups, wide shots, different heights, different positions. ` +
+    `Do not repeat the same static angle. Framing must change. Distance must vary. ` +
+    `Apply ${lightingDesc}. Match character lighting to the room. Characters must be visible and clearly identifiable. ` +
+    `Do not redesign the space or invent new furniture.`;
 }
