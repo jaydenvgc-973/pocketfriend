@@ -1,41 +1,28 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // Smart memory retrieval: fetches ALL memories for a character and returns
 // the most contextually relevant ones for the current conversation turn.
-// This ensures stored/archived memories are NEVER silently dropped — they
-// remain active long-term memory the character can think with.
+// Backfilled narratives (AutomaticNarrative with is_catch_up=true) are highest priority.
 
 Deno.serve(async (req) => {
-  // FORCE REDEPLOY: v2_backfill_integration
-  console.log('[retrieveActiveMemory] Function called - backfill enabled');
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const { characterId, currentMessage, recentMessages = [], topK = 12, _forceRedeploy = true } = await req.json();
+    const { characterId, currentMessage, recentMessages = [], topK = 12 } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    console.log(`[retrieveActiveMemory] Starting for char=${characterId}`);
-
     // ── 1. FETCH BACKFILLED NARRATIVES FIRST (highest priority) ──────────
-    // Backfilled events are stored in AutomaticNarrative with triggered_by='backfill'
     let backfilledNarratives = [];
     try {
-      // Query AutomaticNarrative for backfilled records (same entity that backfillMissingNarratives writes to)
-      const allAutoNarratives = await base44.asServiceRole.entities.AutomaticNarrative.filter(
+      backfilledNarratives = await base44.asServiceRole.entities.AutomaticNarrative.filter(
         { character_id: characterId, is_catch_up: true },
         '-timestamp',
         50
       );
-      console.log(`[retrieveActiveMemory] AutomaticNarrative backfill records for char: ${allAutoNarratives.length}`);
-      backfilledNarratives = allAutoNarratives;
-      
-      if (backfilledNarratives.length > 0) {
-        console.log(`[retrieveActiveMemory] Most recent backfill: ${backfilledNarratives[0].narrative_text?.substring(0, 80)}`);
-      }
     } catch (err) {
-      console.error(`[retrieveActiveMemory] Backfill fetch error: ${err.message}`);
+      // Non-fatal — continue without backfill
       backfilledNarratives = [];
     }
 
