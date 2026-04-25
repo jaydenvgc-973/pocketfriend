@@ -154,22 +154,104 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const charEnd   = charRefStart + charRefCount - 1;
   const userEnd   = userRefStart + userRefCount - 1;
 
+  // ── GENERATION ORDER: TIME FIRST ──
+  const resolvedTime = serverHour;
+  const timeLighting = getTimeLighting(resolvedTime);
+  
+  // ── THEN CAMERA POSITION (NOT FROM REFERENCE) ──
   const cameraPos = selectCameraPosition(zoneName, prompt + serverTime);
-  const timeLighting = getTimeLighting(serverHour);
 
-  let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
+  let preamble = `════════════════════════════════════════════════════════════
+UNIFIED CAMERA SYSTEM — MANDATORY GENERATION ORDER
+════════════════════════════════════════════════════════════
+
+STEP 1: RESOLVE SCENE TIME
+Current time: ${resolvedTime}:${String(new Date().getMinutes()).padStart(2, '0')} → ${timeLighting.period}
+
+STEP 2: DEFINE LIGHTING FROM TIME
+Time-based lighting: ${timeLighting.desc}
+Reference image lighting = IGNORED (0% influence)
+
+STEP 3: CHOOSE NEW CAMERA POSITION
+Camera: ${cameraPos}
+Reference image camera angle = IGNORED (camera must move)
+
+STEP 4: APPLY ZONE REFERENCE IMAGE FOR ROOM IDENTITY ONLY
+Environment reference images define: room layout, furniture, materials, fixtures, walls, flooring
+Environment reference images do NOT define: lighting, camera, framing, character scale
+
+STEP 5: PLACE CHARACTER WITH MATCHED LIGHTING & PERSPECTIVE
+Character is integrated—not scaled or pasted—using the new camera angle and time-based lighting.
+
+════════════════════════════════════════════════════════════
+REFERENCE IMAGE HIERARCHY
+════════════════════════════════════════════════════════════
+
+Room/Zone Identity: 70–80% from reference image
+  ✅ Use: layout, furniture, materials, objects, walls, floor, windows, fixtures
+  ⛔ Ignore: lighting, brightness, window glow, sky color
+
+Lighting & Time: 100% from server time (OVERRIDES reference image)
+  ✅ Use: current time-of-day lighting only
+  ⛔ Ignore: any daylight/nighttime in reference image
+
+Camera Position: 100% from generated new position (OVERRIDES reference image)
+  ✅ Use: mandated camera offset, side angle, or closer view
+  ⛔ Ignore: reference image framing or composition
+
+Character Identity: 100% from provided character (OVERRIDES reference image background)
+  ✅ Use: character face, body, appearance
+  ⛔ Ignore: reference image background behind the character
+
+════════════════════════════════════════════════════════════
+REFERENCE IMAGE ROLE ASSIGNMENT
+════════════════════════════════════════════════════════════
+`;
 
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
-    preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT — THIS IS THE SCENE BACKGROUND. 100% AUTHORITY.\nThese are photographs of the actual "${zoneName || place}". THIS IS THE ONLY ROOM ALLOWED IN THE OUTPUT.\nREPLICATE every detail: walls, floor, furniture, rug, curtains, decor, layout. Do NOT invent or substitute anything.\n⛔ Do NOT use any other room, background, or environment — not from identity photos, not from imagination.\n\n`;
+    preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
+These are photographs of the "${zoneName || place}".
+REPLICATE: walls, floor, furniture, layout, materials, objects, fixtures.
+REGENERATE: lighting (based on ${timeLighting.period}), camera angle (new position), composition.
+⛔ Do NOT copy the lighting, brightness, window glow, or sky from these photos—the time overrides this.
+
+`;
   }
   if (hasChar) {
-    preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY for "${charName}"\nExtract ONLY: face shape, eyes, nose, mouth, skin tone, hair color/texture/length, facial hair, body type.\n⚠️ CRITICAL — THE BACKGROUND IN THESE PHOTOS IS COMPLETELY IRRELEVANT AND MUST BE IGNORED 100%.\n⛔ Do NOT use, reference, copy, or be influenced by the room, walls, furniture, lighting, or any background visible behind the person in these photos.\n⛔ The ONLY background allowed is the one from the environment images above.\n\n`;
+    preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY — 100% AUTHORITY FOR CHARACTER APPEARANCE.
+REPLICATE: face shape, eyes, nose, mouth, skin tone, hair color/texture, facial hair, body type.
+IGNORE COMPLETELY: background, room, lighting, camera angle in these photos.
+⛔ The background in reference photos is irrelevant—the room comes from zone images, re-lit for time.
+
+`;
   }
   if (hasUser) {
-    preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY for the user\nExtract ONLY: face, skin tone, hair, body type. Background in these photos = 0% influence.\n\n`;
+    preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
+REPLICATE: face, skin tone, hair, body type.
+IGNORE: background, lighting, camera angle.
+
+`;
   }
-  preamble += '⛔ DO NOT blend image sets. Room comes from env images only. Face comes from identity images only.\n════════════════════════════════════════════════════════════\n\n';
+  preamble += `════════════════════════════════════════════════════════════
+FAIL CONDITIONS — IMAGE IS INVALID IF
+════════════════════════════════════════════════════════════
+🚫 Daylight appears in a ${timeLighting.period} scene
+🚫 Camera matches the reference image angle
+🚫 Lighting matches the reference image (when time requires different lighting)
+🚫 Character is enlarged instead of camera moving closer
+🚫 Character looks pasted—not integrated with matched shadows/depth
+🚫 Room becomes a different location or zone
+🚫 Composition matches reference image framing
+
+════════════════════════════════════════════════════════════
+SUCCESS CONDITION
+════════════════════════════════════════════════════════════
+"The same room, captured at ${timeLighting.period}, with fresh ${timeLighting.period} lighting and a new camera position."
+
+════════════════════════════════════════════════════════════
+
+`;
 
   let cameraBlock = `
 
