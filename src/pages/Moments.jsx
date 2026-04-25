@@ -111,9 +111,9 @@ export default function Moments() {
   const unlockedCount = allAchievements.filter(a => unlockedMap[a.id]).length;
 
   return (
-    <div className="min-h-screen bg-background pb-20">
+    <div className="min-h-screen bg-background pt-20 pb-20">
       {/* Header */}
-       <div className="sticky top-0 z-10 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
+       <div className="fixed top-0 left-0 right-0 z-50 bg-background/90 backdrop-blur-xl border-b border-border px-4 pt-6 pb-4">
          <div className="flex items-center justify-between">
            <div>
              <h1 className="text-xl font-bold text-foreground">Moments & Impact</h1>
@@ -152,7 +152,7 @@ export default function Moments() {
         </div>
       </div>
 
-      <div className="px-4 py-5 space-y-8">
+      <div className="px-4 py-5 space-y-8 relative z-10">
 
         {/* Active Arcs — active created characters only (no NPCs) */}
         {characters.filter(c => c.character_type === 'active_created_character').length > 0 && (
