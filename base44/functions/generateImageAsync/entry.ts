@@ -418,9 +418,11 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 4b. VALIDATE ENV REFS — verify image is actually loadable, not just reachable ──
-    // HEAD returns 200 but some files are corrupt/incompatible — must do a real GET
-    // and check for image content-type + non-zero body to confirm usability.
+    // ── 4b. VALIDATE & CONVERT ENV REFS ───────────────────────────────────────
+    // The AI model cannot read AVIF format images (common from iPhone uploads).
+    // Detect AVIF by checking first 12 bytes for "ftyp avif" signature.
+    // If AVIF detected, skip that image — log clearly so we know the real cause.
+    // For other formats (jpeg, png, webp): pass through as-is if HTTP 200.
     if (envRefs.length > 0) {
       const validChecks = await Promise.all(
         envRefs.map(async url => {
@@ -428,14 +430,21 @@ Deno.serve(async (req) => {
             const r = await fetch(url, { method: 'GET' });
             if (!r.ok) { console.warn(`[validateEnv] ❌ HTTP ${r.status}: ${url}`); return null; }
             const ct = r.headers.get('content-type') || '';
-            const isImage = ct.startsWith('image/');
-            if (!isImage) { console.warn(`[validateEnv] ❌ Not an image (${ct}): ${url}`); return null; }
-            // Read a small chunk to verify the body has data
+            if (!ct.startsWith('image/')) { console.warn(`[validateEnv] ❌ Not an image (${ct}): ${url}`); return null; }
+            // Read first 16 bytes to detect AVIF format
             const reader = r.body.getReader();
-            const { value, done } = await reader.read();
+            const { value } = await reader.read();
             reader.cancel();
-            if (done || !value || value.length === 0) { console.warn(`[validateEnv] ❌ Empty body: ${url}`); return null; }
-            console.log(`[validateEnv] ✅ Valid image (${ct}, ${value.length} bytes): ${url}`);
+            if (!value || value.length === 0) { console.warn(`[validateEnv] ❌ Empty body: ${url}`); return null; }
+            // AVIF detection: bytes 4-11 contain "ftyp" + "avif"/"avis"/"heic"/"heif"
+            const header = Array.from(value.slice(4, 12)).map(b => String.fromCharCode(b)).join('');
+            const isAvif = header.includes('avif') || header.includes('avis') || header.includes('heic') || header.includes('heif') || ct === 'image/avif';
+            if (isAvif) {
+              console.warn(`[validateEnv] ❌ AVIF format not supported by AI model — SKIPPING: ${url}`);
+              console.warn(`[validateEnv] ⚠️ SOLUTION: Re-upload this zone photo as a JPEG or PNG (not from iPhone in HEIC/AVIF mode)`);
+              return null;
+            }
+            console.log(`[validateEnv] ✅ Valid image (${ct}): ${url}`);
             return url;
           } catch (e) {
             console.warn(`[validateEnv] ❌ Fetch error for ${url}: ${e.message}`);
@@ -444,7 +453,7 @@ Deno.serve(async (req) => {
         })
       );
       const validEnvRefs = validChecks.filter(Boolean);
-      console.log(`[generateImageAsync] Env ref validation: ${envRefs.length} attempted → ${validEnvRefs.length} valid images`);
+      console.log(`[generateImageAsync] Env validation: ${envRefs.length} attempted → ${validEnvRefs.length} valid (non-AVIF) images`);
       envRefs = validEnvRefs;
     }
 
