@@ -53,33 +53,19 @@ Deno.serve(async (req) => {
     }
 
     // ── 3. FETCH BACKFILLED NARRATIVES ───────────────────────────────────
-    // These are the CharacterAutomaticNarrative records saved by backfillMissingNarratives
+    // Read from AutomaticNarrative where backfillMissingNarratives writes
     let backfilledNarratives = [];
     try {
-      backfilledNarratives = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
-        { character_id: characterId },
+      backfilledNarratives = await base44.asServiceRole.entities.AutomaticNarrative.filter(
+        { character_id: characterId, is_catch_up: true },
         '-timestamp',
         50
       );
-      console.log(`[generateCatchupNarrative] asServiceRole query returned: ${backfilledNarratives.length}`);
+      console.log(`[generateCatchupNarrative] Found ${backfilledNarratives.length} backfilled narratives in AutomaticNarrative`);
     } catch (err) {
-      console.error(`[generateCatchupNarrative] Query error: ${err.message}`);
+      console.error(`[generateCatchupNarrative] Backfill fetch error: ${err.message}`);
       backfilledNarratives = [];
     }
-
-    // Also try user-scoped query for comparison
-    try {
-      const userScoped = await base44.entities.CharacterAutomaticNarrative.filter(
-        { character_id: characterId },
-        '-timestamp',
-        50
-      );
-      console.log(`[generateCatchupNarrative] user-scoped query returned: ${userScoped.length}`);
-    } catch (err2) {
-      console.error(`[generateCatchupNarrative] user-scoped error: ${err2.message}`);
-    }
-
-    console.log(`[generateCatchupNarrative] Total CharacterAutomaticNarrative records found: ${backfilledNarratives.length}`);
 
     // Filter to ones after anchor time
     const newNarratives = backfilledNarratives.filter(n => {

@@ -99,51 +99,57 @@ Deno.serve(async (req) => {
         base44, character, eventTime, timeOfDay
       );
 
-      const backfillEvent = await base44.entities.AutomaticNarrative.create({
-        character_id: characterId,
-        character_name: character.name,
-        owner_user_id: character.owner_user_id,
-        owner_email: character.owner_email || character.created_by,
-        event_type: 'passive_time',
-        narrative_text: narrativeText,
-        memory_summary: `${timeOfDay.replace(/_/g, ' ')}: ${narrativeText.substring(0, 100)}...`,
-        timestamp: eventTime.toISOString(),
-        local_time: `${eventHour}:${String(eventTime.getMinutes()).padStart(2, '0')}`,
-        time_of_day: timeOfDay,
-        location_id: character.resolved_current_location_id || character.current_home_location_id || null,
-        location_name: character.resolved_current_location_name || 'Unknown',
-        sleep_state: isSleeping(character, eventHour) ? 'asleep' : 'awake',
-        travel_state: character.travel_status === 'not_traveling' ? 'at_location' : 'in_transit',
-        work_state: character.resolved_presence_status === 'at_work' ? 'at_work' : 'off_work',
-        needs_snapshot: {
-          hunger: character.hunger_value ?? 70,
-          energy: character.energy_value ?? 75,
-          social: character.social_value ?? 65,
-          health: character.health_value ?? 80,
-          mental: character.mental_value ?? 70,
-          financial_need: character.financial_need_value ?? 60,
-          hygiene: character.hygiene_value ?? 75,
-          comfort: character.comfort_value ?? 70,
-        },
-        triggered_by: 'backfill',
-        is_catch_up: true,
-        visibility: 'memory_only', // Don't show in chat, only in memory context
-      }).catch(err => {
-        console.error(`[backfillMissingNarratives] Failed to save backfill event: ${err.message}`);
-        return null;
-      });
+      console.log(`[backfillMissingNarratives] Saving backfill event ${i + 1}/${eventCount} | char_id=${characterId} | time=${eventTime.toISOString()}`);
 
-      if (backfillEvent) {
-        backfilledNarratives.push({
-          id: backfillEvent.id,
-          time: eventTime.toISOString(),
-          timeOfDay,
-          text: narrativeText,
+      let backfillEvent = null;
+      try {
+        backfillEvent = await base44.asServiceRole.entities.AutomaticNarrative.create({
+          character_id: characterId,
+          character_name: character.name,
+          owner_user_id: character.owner_user_id,
+          owner_email: character.owner_email || character.created_by,
+          event_type: 'passive_time',
+          narrative_text: narrativeText,
+          memory_summary: `${timeOfDay.replace(/_/g, ' ')}: ${narrativeText.substring(0, 100)}...`,
+          timestamp: eventTime.toISOString(),
+          local_time: `${eventHour}:${String(eventTime.getMinutes()).padStart(2, '0')}`,
+          time_of_day: timeOfDay,
+          location_id: character.resolved_current_location_id || character.current_home_location_id || null,
+          location_name: character.resolved_current_location_name || 'Unknown',
+          sleep_state: isSleeping(character, eventHour) ? 'asleep' : 'awake',
+          travel_state: character.travel_status === 'not_traveling' ? 'at_location' : 'in_transit',
+          work_state: character.resolved_presence_status === 'at_work' ? 'at_work' : 'off_work',
+          needs_snapshot: {
+            hunger: character.hunger_value ?? 70,
+            energy: character.energy_value ?? 75,
+            social: character.social_value ?? 65,
+            health: character.health_value ?? 80,
+            mental: character.mental_value ?? 70,
+            financial_need: character.financial_need_value ?? 60,
+            hygiene: character.hygiene_value ?? 75,
+            comfort: character.comfort_value ?? 70,
+          },
+          is_catch_up: true,
+          visibility: 'memory_only',
         });
+
+        if (!backfillEvent || !backfillEvent.id) {
+          console.error(`[backfillMissingNarratives] Create returned no ID | event=${i+1} | response=${JSON.stringify(backfillEvent)}`);
+        } else {
+          console.log(`[backfillMissingNarratives] ✓ Saved event ${i+1}/${eventCount} with ID=${backfillEvent.id}`);
+          backfilledNarratives.push({
+            id: backfillEvent.id,
+            time: eventTime.toISOString(),
+            timeOfDay,
+            text: narrativeText,
+          });
+        }
+      } catch (err) {
+        console.error(`[backfillMissingNarratives] SAVE FAILED for event ${i+1}/${eventCount}: ${err.message}`);
       }
     }
 
-    console.log(`[backfillMissingNarratives] ✓ Saved ${backfilledNarratives.length} backfill events`);
+    console.log(`[backfillMissingNarratives] ✓ Successfully saved ${backfilledNarratives.length}/${eventCount} backfill events to AutomaticNarrative`);
 
     // Build context string from backfilled narratives
     const contextBlock = backfilledNarratives
