@@ -105,10 +105,14 @@ function resolveZoneFromLocation(location, promptLower) {
     return { images: imgs, zoneName: zones[0].zone_name };
   }
 
-  // 4. STRICT RULE: multiple zones, no match — do NOT guess. Return no images.
-  // This prevents cross-zone contamination. The generation will proceed without env refs.
-  console.warn(`[resolveZone] Multiple zones found but none matched prompt — returning NO env refs to avoid cross-zone contamination`);
-  return { images: [], zoneName: null };
+  // 4. Multiple zones, no keyword match — use the FIRST zone with images as a safe default.
+  // This is far better than returning no environment at all, which causes the AI to invent
+  // a background (or copy it from identity reference photos — the root cause of avatar bleed).
+  // The first zone is typically the main living area (living room, lobby, etc).
+  const firstZoneWithImages = zones[0];
+  const imgs = cdnFilter(firstZoneWithImages.image_urls).slice(0, 4);
+  console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" (${imgs.length} imgs) to prevent background invention`);
+  return { images: imgs, zoneName: firstZoneWithImages.zone_name };
 }
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
