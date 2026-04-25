@@ -237,11 +237,10 @@ export default function EditCharacterPhotos() {
               <Button
                 onClick={async () => {
                   setIsSaving(true);
-                  await base44.functions.invoke('updateCharacterAvatar', {
-                    characterId: selectedChar.id,
-                    voiceEnabled: form.voice_enabled,
-                    voiceName: form.voice_name,
-                    voiceStyleNote: form.voice_style_note,
+                  await base44.entities.Character.update(selectedChar.id, {
+                    voice_enabled: form.voice_enabled,
+                    voice_name: form.voice_name,
+                    voice_style_note: form.voice_style_note,
                   });
                   queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
                   setIsSaving(false);
