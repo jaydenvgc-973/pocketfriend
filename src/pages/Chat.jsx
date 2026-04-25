@@ -1487,9 +1487,14 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       ...(userSettings.reference_image_urls || []),
     ].filter((v, i, a) => v && a.indexOf(v) === i); // dedupe, non-empty
     const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
-    const charRefs = character.avatar_url
-      ? [character.avatar_url, ...(character.reference_image_urls || [])]
-      : (character.reference_image_urls || []);
+    // CRITICAL: Do NOT pass avatar_url as a character reference for image generation.
+    // The avatar is typically a raw uploaded photo (selfie, mirror shot, etc.) and when passed
+    // as a reference image, the AI model copies its ENTIRE visual context: background, pose,
+    // props in hand, lighting, accessories — causing scene contamination.
+    // Only pass reference_image_urls (dedicated face/identity shots with clean backgrounds).
+    // The backend (generateImageAsync) will handle the identity-only extraction from these.
+    // If reference_image_urls is empty, pass nothing — the backend will use text description only.
+    const charRefs = (character.reference_image_urls || []).filter(Boolean);
 
     // Helper: create a stable image-only message and kick off async generation
     // If user navigated away, write directly to DB as unread (no local state update)

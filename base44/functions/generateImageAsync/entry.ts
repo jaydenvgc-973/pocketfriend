@@ -185,17 +185,23 @@ SUCCESS: Side-by-side comparison must show THE IDENTICAL ROOM with only objects 
     identityLock += `
 
 CHARACTER IDENTITY — "${charName}":
-Images ${charRefStart}–${charEnd} are photographs of this exact person.${charDesc ? ` ${charDesc}.` : ''}
-Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.
+${charRefCount > 0
+  ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs of this person.${charDesc ? ` Physical description: ${charDesc}.` : ''}
+Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.`
+  : `No reference photos provided. Generate this person from text description ONLY: ${charDesc || 'no description available — generate a realistic human'}.`
+}
 
 CRITICAL GENERATION RULES FOR THIS PERSON:
-✅ Reproduce their exact face, skin, and hair in a NEW scene
-⛔ Do NOT copy the background or room from the reference photos
-⛔ Do NOT copy any props they hold in the reference photos (no mugs, cups, phones unless the prompt says so)
-⛔ Do NOT copy their pose from the reference photos — create a new pose
-⛔ Do NOT fuse hats, headbands, or accessories into their hair — keep them as separate objects or omit them
-⛔ Do NOT generate extra or deformed fingers — render natural hands with exactly 5 fingers
-⛔ Do NOT generate a generic or random person — this must be the same person`;
+✅ Generate a new, original pose appropriate to the scene described above
+✅ Render natural, anatomically correct hands with exactly 5 fingers per hand
+${charRefCount > 0 ? `✅ Reproduce their face and hair from the reference photos` : `✅ Render a realistic human face consistent with the text description`}
+⛔ Do NOT copy the background or room from any reference photos — place the person in the environment specified by the scene prompt
+⛔ Do NOT copy props from any reference photos (no mugs, cups, phones, bags) unless the scene prompt explicitly calls for them
+⛔ Do NOT copy the pose from any reference photos — generate a fresh pose matching the scene
+⛔ Do NOT fuse hats, headbands, or accessories INTO the hair — they must be physically separate objects sitting ON top of the hair
+⛔ Do NOT generate extra, missing, or malformed fingers — exactly 5 fingers per visible hand
+⛔ Do NOT generate a floating, composite, or physically impossible scene
+⛔ Do NOT invent objects or furniture not present in the environment reference images`;
   }
   if (hasUser) {
     identityLock += `
@@ -285,30 +291,31 @@ Deno.serve(async (req) => {
         }
         console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (from ${(charRecord.reference_image_urls || []).length} ref images, avatar as fallback: ${charRefs.length > 0 && (charRecord.reference_image_urls || []).length === 0})`);
 
-        // Build appearance descriptor (non-outfit — just physical)
+        // Build appearance descriptor — rich text description used when no reference photos exist
+        // This is the PRIMARY identity source for characters without reference_image_urls
         const parts = [
-          charRecord.age_range,
+          charRecord.age_range ? `${charRecord.age_range} years old` : null,
           charRecord.gender,
-          charRecord.ethnicities?.join(', '),
-          charRecord.appearance_notes,
+          charRecord.ethnicities?.length > 0 ? charRecord.ethnicities.join('/') + ' ethnicity' : null,
+          charRecord.appearance_notes || null,
+          charRecord.avatar_description_text || null, // text description from photo uploader
         ].filter(Boolean);
         charDesc = parts.join(', ');
       }
 
-      // Fallback to UI-provided refs if DB had none
+      // Fallback to UI-provided refs if DB had none (only reference_image_urls — NOT avatar)
+      // Note: Chat.jsx now only passes reference_image_urls (not avatar) as characterReferenceImages
       if (charRefs.length === 0 && characterReferenceImages?.length > 0) {
         charRefs = cdnFilter(characterReferenceImages).slice(0, 3);
-        console.log(`[generateImageAsync] Using UI-provided charRefs: ${charRefs.length}`);
+        console.log(`[generateImageAsync] Using UI-provided charRefs (reference images only): ${charRefs.length}`);
       }
 
-      // Hard fail: no identity refs means random person — refuse
+      // If still no refs: generate using text description ONLY — do NOT fall back to avatar_url.
+      // Avatar photos (selfies, mirror shots) contaminate the entire scene with their background,
+      // pose, props, and lighting. Text-only generation produces a clean, correct scene.
       if (charRefs.length === 0) {
-        console.error(`[generateImageAsync] ⛔ Zero identity refs for character "${characterName || characterId}"`);
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-        return Response.json({
-          success: false,
-          error: `No usable identity photos for "${characterName || characterId}". Upload an avatar for this character first.`,
-        }, { status: 422 });
+        console.log(`[generateImageAsync] ℹ️ No reference images for "${characterName || characterId}" — will generate from text description only (no avatar fallback to prevent scene contamination)`);
+        // charRefs stays empty — buildPrompt will omit identity ref block, charDesc carries the description
       }
     }
 
