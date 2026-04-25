@@ -785,7 +785,6 @@ export default function Scene() {
 
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
-    const timeOfDay = hour < 6 ? "night" : hour < 12 ? "morning" : hour < 17 ? "afternoon" : hour < 21 ? "evening" : "night";
     const lightingDesc = getLightingDescriptor(hour);
 
     // Build outfit descriptions for brought characters from their closet
@@ -959,7 +958,7 @@ export default function Scene() {
         ...envRefs.filter(u => !residentAvatarUrls.includes(u))
       ];
 
-      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
+      prompt = `${envNote} Scene: ${location.name}${zoneSuffix}.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
 
       // ── SEND with COMPLETE resolved visual refs from allPossibleNpcs ────────────────
       try {
@@ -984,7 +983,7 @@ export default function Scene() {
         const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
         const charIdentityLocks = buildIdentityLockBlock(sceneCharacters.slice(0, 3), currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(sceneCharacters.slice(0, 3));
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
       } else {
         const physicallyPresent = [
           ...broughtCharacters,
@@ -997,7 +996,7 @@ export default function Scene() {
 
         const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser);
         const avatarRefInstructions = buildAvatarIdentityEnforcementBlock(physicallyPresent);
-        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
+        prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${outfitSuffix} Photorealistic.`;
       }
     }
 
