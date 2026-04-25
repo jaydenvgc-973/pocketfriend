@@ -115,6 +115,34 @@ function resolveZoneFromLocation(location, promptLower) {
   return { images: imgs, zoneName: firstZoneWithImages.zone_name };
 }
 
+// ── CAMERA + LIGHTING HELPERS ──────────────────────────────────────────────────────────
+
+function selectCameraPosition(zoneName, seed = '') {
+  const positions = [
+    'from the doorway looking inward',
+    'from the left corner of the room',
+    'from the right corner of the room',
+    'from across the room looking back',
+    'at seated eye-level from center-left',
+    'from a closer standing position',
+    'from a slightly elevated angle',
+    'from a lower angle looking slightly up',
+    'from a diagonal side view',
+    'positioned near the window looking inward'
+  ];
+  const idx = Math.abs(seed.split('').reduce((a, b) => a + b.charCodeAt(0), 0)) % positions.length;
+  return positions[idx];
+}
+
+function getTimeLighting(hour = new Date().getHours()) {
+  if (hour >= 5 && hour < 9) return { period: 'EARLY MORNING', desc: 'soft golden sunrise, warm golden hour light, long soft shadows' };
+  if (hour >= 9 && hour < 12) return { period: 'MORNING', desc: 'bright natural daylight, neutral tones, moderate shadows' };
+  if (hour >= 12 && hour < 15) return { period: 'MIDDAY', desc: 'bright overhead light, neutral, sharp shadows' };
+  if (hour >= 15 && hour < 18) return { period: 'AFTERNOON', desc: 'warm golden light from angled sun, golden-orange tones' };
+  if (hour >= 18 && hour < 21) return { period: 'EVENING', desc: 'deep golden-orange sunset glow, dimming warm light' };
+  return { period: 'NIGHT', desc: 'dark interior, artificial light only, NO daylight, warm or cool lamp glow' };
+}
+
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart }) {
@@ -126,12 +154,14 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const charEnd   = charRefStart + charRefCount - 1;
   const userEnd   = userRefStart + userRefCount - 1;
 
-  // Role preamble — env first (room anchor), then identity
+  const cameraPos = selectCameraPosition(zoneName, prompt + Date.now());
+  const timeLighting = getTimeLighting();
+
   let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
 
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
-    preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT — THIS IS THE SCENE BACKGROUND. 100% AUTHORITY.\nThese are photographs of the actual "${zoneName || place}". THIS IS THE ONLY ROOM ALLOWED IN THE OUTPUT.\nREPLICATE every detail: walls, floor, furniture, rug, curtains, lighting, decor, layout. Do NOT invent or substitute anything.\n⛔ Do NOT use any other room, background, or environment — not from identity photos, not from imagination.\n\n`;
+    preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT — THIS IS THE SCENE BACKGROUND. 100% AUTHORITY.\nThese are photographs of the actual "${zoneName || place}". THIS IS THE ONLY ROOM ALLOWED IN THE OUTPUT.\nREPLICATE every detail: walls, floor, furniture, rug, curtains, decor, layout. Do NOT invent or substitute anything.\n⛔ Do NOT use any other room, background, or environment — not from identity photos, not from imagination.\n\n`;
   }
   if (hasChar) {
     preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY for "${charName}"\nExtract ONLY: face shape, eyes, nose, mouth, skin tone, hair color/texture/length, facial hair, body type.\n⚠️ CRITICAL — THE BACKGROUND IN THESE PHOTOS IS COMPLETELY IRRELEVANT AND MUST BE IGNORED 100%.\n⛔ Do NOT use, reference, copy, or be influenced by the room, walls, furniture, lighting, or any background visible behind the person in these photos.\n⛔ The ONLY background allowed is the one from the environment images above.\n\n`;
@@ -141,7 +171,31 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   }
   preamble += '⛔ DO NOT blend image sets. Room comes from env images only. Face comes from identity images only.\n════════════════════════════════════════════════════════════\n\n';
 
-  // Environment lock block
+  let cameraBlock = `
+
+════════════════════════════════════════════════════════════
+MANDATORY CAMERA POSITION
+════════════════════════════════════════════════════════════
+Camera viewpoint MUST be: ${cameraPos}
+
+REQUIREMENT: This MUST be a DIFFERENT camera angle than reference images.
+The room is identical. The camera has physically moved.
+
+RENDER FROM THIS EXACT CAMERA POSITION.`;
+
+  let lightingBlock = `
+
+════════════════════════════════════════════════════════════
+MANDATORY LIGHTING — ${timeLighting.period} TIME
+════════════════════════════════════════════════════════════
+Current time determines lighting. This overrides all other visual inputs.
+
+Lighting: ${timeLighting.desc}
+
+⛔ Do NOT copy lighting from reference images.
+⛔ Do NOT use incorrect time-of-day lighting.
+✅ Character MUST be lit consistently with ${timeLighting.period} lighting.`;
+
   let envLock = '';
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
@@ -150,73 +204,52 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
 ════════════════════════════════════════════════════════════
 ENVIRONMENT LOCK — "${place}" — 90% VISUAL AUTHORITY
 ════════════════════════════════════════════════════════════
-Reference images ${envRefStart}–${envEnd} are PHOTOGRAPHS of this exact room. REPLICATE it.
-Insert the character into it. Do NOT redesign it.
+Reference images ${envRefStart}–${envEnd} define the room structure ONLY.
 
 MUST MATCH EXACTLY:
   ✅ Furniture types, colors, shapes, placement
-  ✅ Wall color, floor type, rug color/pattern/placement
-  ✅ Curtains and window treatments
+  ✅ Wall color, floor type, rug, curtains
   ✅ All lighting fixtures and lamps
-  ✅ Wall art — same pieces, same positions
-  ✅ Shelves, decor objects, room layout
+  ✅ Wall art and shelves in exact positions
 
-ZERO OBJECT DRIFT:
-  ⛔ No replaced, recolored, removed, or added objects
-  ⛔ No "similar looking" substitutions
-  ⛔ No generic room generation
-
-STRICT ZONE ISOLATION — CROSS-ZONE CONTAMINATION IS FORBIDDEN:
-  ⛔ Do NOT use furniture, decor, art, lighting, rugs, shelves, or objects from ANY other room
-  ⛔ If the zone is "${zoneName || 'this room'}", only objects visible in images ${envRefStart}–${envEnd} may appear
-  ⛔ A sofa from the living room must NOT appear in the bedroom
-  ⛔ A shelf from the office must NOT appear in the kitchen
-  ⛔ Wall art from the hallway must NOT appear in the living room
-  ⛔ Every object in the output must come from these reference images — nothing else
+ZERO OBJECT DRIFT — Every object must come from images ${envRefStart}–${envEnd} only.
 
 10% FLEXIBILITY (only):
-  ✓ Camera angle and framing
-  ✓ Lighting intensity and softness
-  ✓ Depth of field
-
-FAILURE: Any furniture, decor, or layout element from a different room = CONTAMINATION FAILURE.
-SUCCESS: Side-by-side comparison must show THE IDENTICAL ROOM with only objects from images ${envRefStart}–${envEnd}.`;
+  ✓ Camera position (already explicitly defined above)
+  ✓ Lighting based on time of day (already explicitly defined above)
+  ✓ Depth of field`;
   }
 
-  // Identity lock block
   let identityLock = '';
   if (hasChar) {
     identityLock += `
 
 CHARACTER IDENTITY — "${charName}":
 ${charRefCount > 0
-  ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs of this person.${charDesc ? ` Physical description: ${charDesc}.` : ''}
-Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/texture/style, body type.`
-  : `No reference photos provided. Generate this person from text description ONLY: ${charDesc || 'no description available — generate a realistic human'}.`
+  ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs.${charDesc ? ` Description: ${charDesc}.` : ''}
+Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/style, body type.`
+  : `No reference photos. Generate from text description: ${charDesc || 'realistic human'}.`
 }
 
-CRITICAL GENERATION RULES FOR THIS PERSON:
-✅ Generate a new, original pose appropriate to the scene described above
-✅ Render natural, anatomically correct hands with exactly 5 fingers per hand
-${charRefCount > 0 ? `✅ Reproduce their face and hair from the reference photos` : `✅ Render a realistic human face consistent with the text description`}
-⛔ Do NOT copy the background or room from any reference photos — place the person in the environment specified by the scene prompt
-⛔ Do NOT copy props from any reference photos (no mugs, cups, phones, bags) unless the scene prompt explicitly calls for them
-⛔ Do NOT copy the pose from any reference photos — generate a fresh pose matching the scene
-⛔ Do NOT fuse hats, headbands, or accessories INTO the hair — they must be physically separate objects sitting ON top of the hair
-⛔ Do NOT generate extra, missing, or malformed fingers — exactly 5 fingers per visible hand
-⛔ Do NOT generate a floating, composite, or physically impossible scene
-⛔ Do NOT invent objects or furniture not present in the environment reference images`;
+CRITICAL GENERATION RULES:
+✅ Generate a new, original pose for this scene
+✅ Render natural, anatomically correct hands (exactly 5 fingers per hand)
+✅ Character MUST be lit consistently with the ${timeLighting.period} lighting defined above
+✅ Shadows, highlights, and skin tones MUST match the time-of-day lighting, NOT reference image lighting
+⛔ Do NOT copy background, room, or pose from reference photos
+⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and room responds
+⛔ Do NOT paste the character in — integrate with matching depth, shadow, and light direction
+⛔ Do NOT copy props or lighting from reference photos`;
   }
   if (hasUser) {
     identityLock += `
 
 USER IDENTITY:
-Images ${userRefStart}–${userEnd} are photographs of this exact person.
-Match: face structure, skin tone, hair, body type.
-⛔ Do NOT generate a generic or random person.`;
+Images ${userRefStart}–${userEnd} are this exact person's photos.
+Match: face structure, skin tone, hair, body type.`;
   }
 
-  return `${preamble}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
+  return `${preamble}${cameraBlock}${lightingBlock}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
 }
 
 // ── MAIN HANDLER ──────────────────────────────────────────────────────────────
