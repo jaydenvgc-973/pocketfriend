@@ -23,69 +23,41 @@ export default function ChatHeader({
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
 
-  // Right Now — direct LLM call, no backend queue, no delay.
-  // Pattern mirrors NarrativeActionButton which is proven to work.
+  // Right Now — uses existing generateAutomaticNarrative with full state accuracy.
+  // Immediate display via optimistic setMessages after narrative returns.
   const handleRightNow = async () => {
     console.log('[RightNow] Clicked | char:', character?.name, '| convoId:', conversationId);
     if (!character || !conversationId || isGeneratingRightNow) return;
     setIsGeneratingRightNow(true);
     try {
-      const now = new Date();
-      const hour = now.getHours();
-      const timeStr = `${String(hour).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      const dayName = now.toLocaleDateString('en-US', { weekday: 'long' });
-      const isAsleep = hour >= 23 || hour < 7;
-
-      const prompt = `Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${character.name} is experiencing RIGHT NOW.
-
-TIME: ${timeStr} on ${dayName}
-CHARACTER: ${character.name}
-Personality: ${character.personality_summary || 'not defined'}
-Emotional state: ${character.emotional_state || 'calm'}
-Location: ${character.resolved_current_location_name || character.city || 'home'}
-Status: ${isAsleep ? 'asleep' : (character.resolved_presence_status || 'at home')}
-Occupation: ${character.occupation || 'unknown'}
-
-Write in present tense, third-person. Make it immersive and specific. No dialogue. 2-4 sentences only. No preamble.`;
-
-      const narrativeText = await base44.integrations.Core.InvokeLLM({ prompt });
-
-      if (!narrativeText?.trim()) {
-        console.warn('[RightNow] LLM returned empty narrative');
+      const res = await base44.functions.invoke('generateAutomaticNarrative', {
+        characterId,
+        trigger: 'manual_right_now',
+        forceGenerate: true,
+      });
+      const narrativeText = res?.data?.narrativeText;
+      if (!narrativeText) {
+        console.warn('[RightNow] No narrativeText in response');
         return;
       }
 
-      // Create Message immediately — subscription in Chat.jsx delivers it to UI
       const msg = await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: 'character',
         character_id: characterId,
         character_name: character.name,
-        content: narrativeText.trim(),
+        content: narrativeText,
         is_narrative: true,
         is_read: true,
         timestamp: new Date().toISOString(),
       });
 
-      // Optimistic update in case subscription is slow
+      // Optimistic display: add to local state immediately after backend returns
       if (setMessages && msg?.id) {
         setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
       }
 
-      console.log('[RightNow] ✓ Message created:', msg?.id);
-
-      // Fire-and-forget: save to memory/timeline (non-blocking)
-      base44.entities.Memory.create({
-        character_id: characterId,
-        memory_type: 'event',
-        title: `[Right Now] ${timeStr} ${dayName}`,
-        description: narrativeText.trim(),
-        importance_score: 3,
-        confidence_score: 0.9,
-        permanence: 'long_term',
-        timestamp: new Date().toISOString(),
-      }).catch(() => {});
-
+      console.log('[RightNow] ✓ Message created:', msg.id);
     } catch (err) {
       console.error('[RightNow] ERROR:', err.message);
     } finally {

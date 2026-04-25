@@ -15,7 +15,7 @@ Deno.serve(async (req) => {
     }
 
     // ── FETCH CHARACTER ───────────────────────────────────────────────────
-    const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+    const charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
     const character = charList?.[0];
 
     if (!character) {
