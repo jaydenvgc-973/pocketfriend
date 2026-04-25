@@ -43,11 +43,12 @@ Deno.serve(async (req) => {
 
     // --- Single character mode ---
     if (characterId) {
-      // CRITICAL: Filter by user scope to prevent cross-account access
-      const chars = await base44.asServiceRole.entities.Character.filter({ 
-        id: characterId,
-        created_by: user.email 
-      });
+      // CRITICAL: Filter by user scope using BOTH ownership paths (same as Home page UI)
+      const [byCreatedBy, byOwnerEmail] = await Promise.all([
+        base44.asServiceRole.entities.Character.filter({ id: characterId, created_by: user.email }),
+        base44.asServiceRole.entities.Character.filter({ id: characterId, owner_email: user.email }),
+      ]);
+      const chars = byCreatedBy.length > 0 ? byCreatedBy : byOwnerEmail;
       if (!chars || chars.length === 0) {
         console.warn(`[enforceCharacterWorkSchedule] Character ${characterId} not found or not owned by ${user.email}`);
         return Response.json({ error: 'Character not found or access denied' }, { status: 404 });
@@ -113,10 +114,17 @@ Deno.serve(async (req) => {
     }
 
     // --- Full scan / diagnostic mode (no characterId) ---
-    // CRITICAL: Filter by user scope to prevent cross-account processing
-    const allChars = await base44.asServiceRole.entities.Character.filter({ 
-      status: 'active',
-      created_by: user.email 
+    // CRITICAL: Filter by user scope using BOTH ownership paths (same as Home page UI)
+    // Legacy characters may have owner_email set instead of created_by
+    const [byCreatedBy, byOwnerEmail] = await Promise.all([
+      base44.asServiceRole.entities.Character.filter({ status: 'active', created_by: user.email }),
+      base44.asServiceRole.entities.Character.filter({ status: 'active', owner_email: user.email }),
+    ]);
+    const seenIds = new Set();
+    const allChars = [...byCreatedBy, ...byOwnerEmail].filter(c => {
+      if (seenIds.has(c.id)) return false;
+      seenIds.add(c.id);
+      return true;
     });
 
     const issues_found = [];
