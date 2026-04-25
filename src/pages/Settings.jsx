@@ -161,7 +161,7 @@ export default function Settings() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background pt-16 pb-20">
       {pendingDelete && (
         <DeleteCharacterDialog
           character={pendingDelete}
@@ -169,11 +169,11 @@ export default function Settings() {
           onCancel={() => setPendingDelete(null)}
         />
       )}
-      <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/home" className="text-muted-foreground hover:text-foreground"><ArrowLeft className="w-5 h-5" /></Link>
         <h2 className="text-sm font-semibold">Settings</h2>
       </div>
-      <div className="max-w-lg mx-auto px-6 py-6 space-y-8">
+      <div className="max-w-lg mx-auto px-6 py-6 space-y-8 relative z-10">
         <div className="space-y-4">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Response Length</p>
           <Select value={settings.response_length || "medium"} onValueChange={v => { if (!isLoadingSettings) mutation.mutate({ response_length: v }); }}>
@@ -805,7 +805,7 @@ export default function Settings() {
           )}
         </div>
       </div>
-      <div className="pb-28" />
+
       <BottomNav />
 
       <SettingsTroubleshootingPanel
