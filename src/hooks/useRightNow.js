@@ -18,18 +18,27 @@ export function useRightNow({ characterId, conversationId, character, setMessage
         trigger: 'manual_right_now',
         forceGenerate: true,
       });
-      if (res?.data?.success && res?.data?.narrativeText) {
+
+      console.log('[RightNow] Response:', res);
+
+      // Handle response structure: { data: { narrativeText, ... } }
+      const narrativeText = res?.data?.narrativeText || res?.narrativeText;
+      
+      if (narrativeText) {
         const narrativeMsg = await base44.entities.Message.create({
           conversation_id: conversationId,
           sender_type: 'character',
           character_id: characterId,
           character_name: character.name,
-          content: res.data.narrativeText,
+          content: narrativeText,
           is_narrative: true,
           is_read: true,
           timestamp: new Date().toISOString(),
         });
         setMessages(prev => prev.some(m => m.id === narrativeMsg.id) ? prev : [...prev, narrativeMsg]);
+        console.log('[RightNow] Narrative posted:', narrativeMsg.id);
+      } else {
+        console.warn('[RightNow] No narrative text in response:', res);
       }
     } catch (err) {
       console.error('[RightNow] Failed:', err.message);
