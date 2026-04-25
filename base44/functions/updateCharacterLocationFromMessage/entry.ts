@@ -31,7 +31,7 @@ const RABBIT_HOLE_TERMS = new Set([
   'stage', 'rooftop', 'gallery', 'lab', 'salon', 'clinic',
 ]);
 
-const VAGUE = ['out', 'busy', 'gone', 'away', 'around', 'somewhere', 'back', 'good', 'here'];
+const VAGUE = ['out', 'busy', 'gone', 'away', 'around', 'somewhere', 'good', 'here'];
 
 // Detect "going out" / "heading out" / "stepping out" statements — sets traveling state without specific destination
 const GOING_OUT_PATTERNS = [
