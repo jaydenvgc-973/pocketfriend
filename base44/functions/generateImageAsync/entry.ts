@@ -198,57 +198,66 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const cameraPos = selectCameraPosition(zoneName, prompt + serverTime, prompt);
 
   let preamble = `════════════════════════════════════════════════════════════
-UNIFIED CAMERA SYSTEM — MANDATORY GENERATION ORDER
-════════════════════════════════════════════════════════════
+  UNIFIED CAMERA SYSTEM — MANDATORY GENERATION ORDER
+  ════════════════════════════════════════════════════════════
 
-STEP 1: RESOLVE SCENE TIME
-Current time: ${resolvedTime}:${String(new Date().getMinutes()).padStart(2, '0')} → ${timeLighting.period}
+  STEP 1: RESOLVE SCENE TIME
+  Current time: ${resolvedTime}:${String(new Date().getMinutes()).padStart(2, '0')} → ${timeLighting.period}
 
-STEP 2: DEFINE LIGHTING FROM TIME
-Time-based lighting: ${timeLighting.desc}
-Reference image lighting = IGNORED (0% influence)
+  STEP 2: DEFINE LIGHTING FROM TIME
+  Time-based lighting: ${timeLighting.desc}
+  Reference image lighting = IGNORED (0% influence)
 
-STEP 3: CHOOSE NEW CAMERA POSITION
-Camera: ${cameraPos}
-Reference image camera angle = IGNORED (camera must move)
+  STEP 3: CHOOSE NEW CAMERA POSITION
+  Camera: ${cameraPos}
+  Reference image camera angle = IGNORED (camera must move)
 
-STEP 4: APPLY ZONE REFERENCE IMAGE FOR ROOM IDENTITY ONLY
-Environment reference images define: room layout, furniture, materials, fixtures, walls, flooring
-Environment reference images do NOT define: lighting, camera, framing, character scale
+  STEP 4: APPLY ZONE REFERENCE IMAGE FOR ROOM IDENTITY ONLY
+  Environment reference images define: room layout, furniture identity, materials, fixtures, walls, flooring
+  Environment reference images do NOT define: lighting, camera, framing, character scale
 
-STEP 5: PLACE CHARACTER WITH MATCHED LIGHTING & PERSPECTIVE
-Character is integrated—not scaled or pasted—using the new camera angle and time-based lighting.
+  ⛔ ANTI-DUPLICATION LOCK: Every object visible in reference images is THE ONLY VERSION of that object in this room.
+  If character sits at a table → use THAT existing table. Do NOT create a second version.
+  If character sits on couch → use THAT existing couch. Do NOT duplicate.
+  If character stands at counter → use THAT existing counter. Do NOT invent a new one.
+  NO SUBSTITUTES. NO APPROXIMATIONS. NO "CLOSE ENOUGH."
 
-════════════════════════════════════════════════════════════
-REFERENCE IMAGE HIERARCHY
-════════════════════════════════════════════════════════════
+  STEP 5: PLACE CHARACTER WITH MATCHED LIGHTING & PERSPECTIVE
+  Character is integrated—not scaled or pasted—using the new camera angle and time-based lighting.
 
-STRUCTURAL TRUTH (70–80% from reference image):
-   ✅ Must preserve: layout, furniture identity, materials, objects, walls, floor, windows, fixtures, zone identity
-   ✅ Can change: camera viewpoint, lighting (time-based), framing, perspective angle
-   ⛔ Cannot ignore: what furniture exists and its structural position relative to room
+  ════════════════════════════════════════════════════════════
+  REFERENCE IMAGE HIERARCHY
+  ════════════════════════════════════════════════════════════
 
-DYNAMIC FLEXIBILITY (20–30% controlled adjustment):
-   ✅ Must vary: lighting (from server time, not reference), camera angle, camera position, framing
-   ✅ Must recapture: perspective based on new camera viewpoint
-   ⛔ Cannot change: room structure, furniture types/identities, zone layout
+  STRUCTURAL TRUTH (70–80% from reference image):
+  ✅ Must preserve: layout, furniture identity, materials, objects, walls, floor, windows, fixtures, zone identity
+  ✅ Can change: camera viewpoint, lighting (time-based), framing, perspective angle
+  ⛔ Cannot ignore: what furniture exists and its structural position relative to room
+  ⛔ Cannot duplicate: if a table exists, NO second table is ever created
 
-Time-of-Day Lighting: 100% from server time (OVERRIDES reference image lighting)
-   ✅ Use: current time-of-day lighting only
-   ⛔ Ignore: any daylight/nighttime in reference image
+  DYNAMIC FLEXIBILITY (20–30% controlled adjustment):
+  ✅ Must vary: lighting (from server time, not reference), camera angle, camera position, framing
+  ✅ Must recapture: perspective based on new camera viewpoint
+  ⛔ Cannot change: room structure, furniture types/identities, zone layout, object count
 
-Camera Position: 100% from generated new position (OVERRIDES reference image camera angle)
-   ✅ Use: mandated camera offset, side angle, closer view from fresh viewpoint
-   ⛔ Ignore: reference image framing, composition, or camera angle
+  Time-of-Day Lighting: 100% from server time (OVERRIDES reference image lighting)
+  ✅ Use: current time-of-day lighting only
+  ⛔ Ignore: any daylight/nighttime in reference image
 
-Character Identity: 100% from provided character (OVERRIDES reference image background)
-   ✅ Use: character face, body, appearance
-   ⛔ Ignore: reference image background behind the character
+  Camera Position: 100% from generated new position (OVERRIDES reference image camera angle)
+  ✅ Use: mandated camera offset, side angle, closer view from fresh viewpoint
+  ✅ Move camera if object is not perfectly framed — do NOT create replacement furniture
+  ⛔ Ignore: reference image framing, composition, or camera angle
 
-════════════════════════════════════════════════════════════
-REFERENCE IMAGE ROLE ASSIGNMENT
-════════════════════════════════════════════════════════════
-`;
+  Character Identity: 100% from provided character (OVERRIDES reference image background)
+  ✅ Use: character face, body, appearance traits from appearance_lock
+  ⛔ Ignore: reference image background behind the character
+  ⛔ Ignore: conflicting traits in reference images — TEXT DESCRIPTION WINS
+
+  ════════════════════════════════════════════════════════════
+  REFERENCE IMAGE ROLE ASSIGNMENT
+  ════════════════════════════════════════════════════════════
+  `;
 
   if (hasEnv) {
      const place = [locationName, zoneName].filter(Boolean).join(' → ');
@@ -297,11 +306,21 @@ FAIL CONDITIONS — IMAGE IS INVALID IF
 🚫 Character looks pasted—not integrated with matched shadows/depth
 🚫 Room becomes a different location or zone
 🚫 Composition matches reference image framing
+🚫 A second table, couch, bed, counter, stool, or chair is created when one already exists in the zone
+🚫 An existing object is replaced with a different version, shape, or style
+🚫 A structural object is invented when not requested by the user
+🚫 Furniture layout differs from reference images
+🚫 Object count differs from reference images
+🚫 Character appearance contradicts the appearance lock (wrong hair, facial hair, or skin tone)
 
 ════════════════════════════════════════════════════════════
 SUCCESS CONDITION
 ════════════════════════════════════════════════════════════
-"The same room, captured at ${timeLighting.period}, with fresh ${timeLighting.period} lighting and a new camera position."
+✅ Same room. Same furniture. Same layout. Same objects. Zero duplication.
+✅ Character framed correctly using EXISTING objects via camera positioning.
+✅ Camera moved to fit the scene — room was NOT changed to fit the camera.
+✅ Character appearance matches appearance lock exactly.
+✅ Fresh ${timeLighting.period} lighting. New camera position.
 
 ════════════════════════════════════════════════════════════
 

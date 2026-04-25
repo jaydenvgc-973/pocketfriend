@@ -44,35 +44,36 @@ function cdnFilter(urls) {
 // Both generation and regeneration paths share the same camera logic.
 
 function selectCameraPosition(prompt = '') {
-  const promptLower = (prompt || '').toLowerCase();
+   const promptLower = (prompt || '').toLowerCase();
 
-  const isSelfie = /selfie|self-?portrait|phone selfie|smartphone selfie|cell phone|taken.*phone|phone.*photo/.test(promptLower);
-  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table|dining.*table|wooden.*table/.test(promptLower);
-  const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
-  const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
+   const isSelfie = /selfie|self-?portrait|phone selfie|smartphone selfie|cell phone|taken.*phone|phone.*photo/.test(promptLower);
+   const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table|dining.*table|wooden.*table/.test(promptLower);
+   const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
+   const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
 
-  if (isSelfie) {
-    // Compound: selfie + seated — character holds phone at face level while seated
-    if (isSittingAtTable) {
-      return 'selfie perspective — character is SEATED at the table holding the phone at arm\'s length toward the camera. Face and upper chest dominate the frame. The table and any food are partially visible below. Character is NOT standing. Phone is in the character\'s hand extended toward viewer.';
-    }
-    return 'extreme close-up selfie — character holds phone at arm\'s length directly toward camera. Face fills most of the frame. Personal and intimate framing. Character is NOT standing in a wide shot.';
-  }
+   if (isSelfie) {
+     // Compound: selfie + seated — character holds phone at face level while seated
+     // CRITICAL: Use EXISTING table in the zone, do NOT create a new one
+     if (isSittingAtTable) {
+       return 'selfie perspective — character is SEATED at the EXISTING table in this room holding the phone at arm\'s length toward the camera. Face and upper chest dominate the frame. The existing table and any food/place settings are partially visible below. Character is NOT standing. Phone is in the character\'s hand extended toward viewer. CAMERA MUST adjust angle to show the existing table structure.';
+     }
+     return 'extreme close-up selfie — character holds phone at arm\'s length directly toward camera. Face fills most of the frame. Personal and intimate framing. Character is NOT standing in a wide shot.';
+   }
 
-  if (isSittingAtTable) {
-    return 'tight medium shot, seated eye-level at the table, character is the primary subject, table surface and food in frame';
-  }
+   if (isSittingAtTable) {
+     return 'tight medium shot, seated eye-level at the EXISTING table, character is the primary subject, existing table surface and place settings in frame — do NOT invent a new table, use the one in the zone';
+   }
 
-  if (isSittingOnCouch) {
-    return 'seated eye-level from the couch, character is the primary subject, close and personal framing';
-  }
+   if (isSittingOnCouch) {
+     return 'seated eye-level from the EXISTING couch, character is the primary subject, close and personal framing — use the couch that exists in this room';
+   }
 
-  if (isStandingAtCounter) {
-    return 'close-up at counter-level, character and counter are the primary subjects';
-  }
+   if (isStandingAtCounter) {
+     return 'close-up at counter-level, character standing at the EXISTING counter are the primary subjects — do NOT create a replacement counter, use the one in the zone';
+   }
 
-  return 'from a closer standing position';
-}
+   return 'from a closer standing position';
+ }
 
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
