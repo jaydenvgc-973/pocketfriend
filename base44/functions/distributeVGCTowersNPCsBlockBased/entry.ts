@@ -2,321 +2,282 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
  * BLOCK-BASED VGC TOWERS TRAVEL SCHEDULER
- * 
- * Implements explicit daily travel blocks:
- * - 10:00 AM: Departure (move out)
- * - 1:00 PM: Midday (rotate/stay)
- * - 4:00 PM: Afternoon (rotate/stay)
- * - 7:00 PM: Evening (rotate/stay)
- * - 10:00 PM: Wrap-up (final move or prepare return)
- * - 1:00 AM: Return-home (handled by separate automation)
- * 
- * This function runs HOURLY but is block-aware.
- * It only triggers movement when the current hour matches a block time.
+ *
+ * Runs hourly as a scheduled automation (no user session required).
+ * Uses service role for all data access.
+ * Processes ALL accounts' VGC Towers residents independently — strict per-account isolation.
+ *
+ * Daily travel blocks (ET):
+ * - 10:00 AM: DEPARTURE — move all home residents out
+ * - 1:00 PM:  MIDDAY    — rotate if 3+ hours at location
+ * - 4:00 PM:  AFTERNOON — rotate if 3+ hours at location
+ * - 7:00 PM:  EVENING   — rotate if 3+ hours at location
+ * - 10:00 PM: WRAP_UP   — final position before 1 AM return
+ * - 1:00 AM:  Handled by returnVGCResidentsHome automation
+ *
+ * Lockdown window: 1 AM – 10 AM (residents stay home, cooldown/rest)
  */
+
+// NPC character_type values that live in VGC Towers (matches Character entity schema)
+const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc_regular', 'npc_family_member'];
+
+// Travel blocks defined by hour (ET)
+const TRAVEL_BLOCKS = [
+  { name: 'DEPARTURE',  hour: 10 },
+  { name: 'MIDDAY',     hour: 13 },
+  { name: 'AFTERNOON',  hour: 16 },
+  { name: 'EVENING',    hour: 19 },
+  { name: 'WRAP_UP',    hour: 22 },
+];
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    
-    // ── SERVICE ROLE: Process all users' VGC Towers residents automatically ──
+
     const now = new Date();
     const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
     const minute = nowET.getMinutes();
     const currentMinutes = hour * 60 + minute;
 
-    // Define travel blocks
-    const TRAVEL_BLOCKS = [
-      { name: 'DEPARTURE', hour: 10, action: 'move_out' },
-      { name: 'MIDDAY', hour: 13, action: 'rotate_or_stay' },
-      { name: 'AFTERNOON', hour: 16, action: 'rotate_or_stay' },
-      { name: 'EVENING', hour: 19, action: 'rotate_or_stay' },
-      { name: 'WRAP_UP', hour: 22, action: 'final_move_or_stay' },
-    ];
-
-    // Lockdown: 1 AM - 10 AM (outside active window)
+    // Lockdown: 1 AM – 10 AM — cooldown/rest, no travel
     const isLockdown = hour >= 1 && hour < 10;
-    const log = [];
 
-    // Load ALL characters and locations (service role — no user context needed)
-    const [characterList, userLocations, sharedLocations] = await Promise.all([
+    // Load all active characters + locations via service role
+    const [allCharacters, accountLocations, sharedLocations] = await Promise.all([
       base44.asServiceRole.entities.Character.filter({ status: 'active' }, null, 500),
-      base44.asServiceRole.entities.LocationReference.filter({}, null, 500),
-      base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }, null, 500),
+      base44.asServiceRole.entities.LocationReference.filter({ scope: 'account_global' }, null, 500),
+      base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }, null, 200),
     ]);
 
-    const charSeen = new Set();
-    const allCharacters = characterList.filter(c => {
-      if (charSeen.has(c.id)) return false;
-      charSeen.add(c.id);
+    // Deduplicate locations
+    const seenLocIds = new Set();
+    const allLocations = [...accountLocations, ...sharedLocations].filter(l => {
+      if (seenLocIds.has(l.id)) return false;
+      seenLocIds.add(l.id);
       return true;
     });
 
-    const seenIds = new Set();
-    const allLocations = [...userLocations, ...sharedLocations].filter(l => {
-      if (seenIds.has(l.id)) return false;
-      seenIds.add(l.id);
-      return true;
-    });
+    // Find all VGC Towers locations (one per user account)
+    const vgcTowersList = allLocations.filter(l => l.name === 'VGC Towers');
+    if (vgcTowersList.length === 0) {
+      return Response.json({ success: true, message: 'No VGC Towers locations found' });
+    }
 
-    const vgcTowers = allLocations.find(l => l.name === 'VGC Towers');
-    if (!vgcTowers) return Response.json({ error: 'VGC Towers not found' }, { status: 400 });
-    const VGC_ID = vgcTowers.id;
+    const globalLog = [];
+    let totalMoved = 0;
+    let totalReturned = 0;
 
-    // Identify VGC Towers npc_fictitious residents
-    const NPC_ELIGIBLE_TYPES = ['npc_fictitious', 'npc', 'npc_regular', 'npc_family_member'];
-    const vgcResidents = allCharacters.filter(c =>
-      c.current_home_location_id === VGC_ID &&
-      NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
-      !c.protected_active &&
-      (c.owner_email === user.email || c.created_by === user.email)
-    );
+    // ── PROCESS EACH ACCOUNT'S VGC TOWERS INDEPENDENTLY ──
+    for (const vgcTowers of vgcTowersList) {
+      const VGC_ID = vgcTowers.id;
+      const ownerEmail = vgcTowers.created_by || vgcTowers.owner_email;
 
-    // ── LOCKDOWN: Return everyone home ──
-    if (isLockdown) {
-      const updates = vgcResidents
-        .filter(npc => npc.resolved_current_location_id !== VGC_ID)
-        .map(npc => {
-          log.push(`${npc.name} → VGC Towers (lockdown 1 AM - 10 AM)`);
-          return base44.entities.Character.update(npc.id, {
+      // Residents of THIS VGC Towers only (account-isolated)
+      const vgcResidents = allCharacters.filter(c =>
+        c.current_home_location_id === VGC_ID &&
+        NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
+        !c.protected_active
+      );
+
+      if (vgcResidents.length === 0) continue;
+
+      // ── LOCKDOWN: Return anyone still out back home, skip all movement ──
+      if (isLockdown) {
+        const away = vgcResidents.filter(npc => npc.resolved_current_location_id !== VGC_ID);
+        for (const npc of away) {
+          globalLog.push(`[${ownerEmail}] ${npc.name} → VGC Towers (lockdown rest)`);
+          await base44.asServiceRole.entities.Character.update(npc.id, {
             resolved_current_location_id: VGC_ID,
             resolved_current_location_name: 'VGC Towers',
             resolved_presence_status: 'home',
             resolved_location_type: 'home',
-            resolved_source_reason: 'lockdown',
+            resolved_source_reason: 'lockdown_rest',
             presence_state: 'home',
             source_of_move: 'system',
             valid_from: now.toISOString(),
             valid_until: null,
-            return_location_id: null,
             next_move_at: null,
           });
-        });
-      if (updates.length > 0) await Promise.all(updates);
-      return Response.json({ success: true, mode: 'lockdown', returned: updates.length, log });
-    }
-
-    // ── ACTIVE WINDOW: Check if this hour is a block trigger ──
-    const currentBlock = TRAVEL_BLOCKS.find(b => b.hour === hour);
-    if (!currentBlock) {
-      log.push(`Hour ${hour}:${String(minute).padStart(2, '0')} does not match any travel block. Skipping.`);
-      return Response.json({ success: true, mode: 'active', message: 'No block triggered', log });
-    }
-
-    log.push(`BLOCK TRIGGERED: ${currentBlock.name} (${hour}:${String(minute).padStart(2, '0')})`);
-
-    // Valid social destinations
-    const socialLocations = allLocations.filter(loc => {
-      if (loc.id === VGC_ID) return false;
-      if (loc.category === 'home' || loc.category === 'generic') return false;
-      if (loc.location_type === 'character_specific') return false;
-      if (loc.scope === 'character_specific') return false;
-      const isUserOwned = loc.created_by === user.email;
-      const isShared = loc.scope === 'shared';
-      if (!isUserOwned && !isShared) return false;
-      if (isLocationClosed(loc, nowET)) return false;
-      return true;
-    });
-
-    if (socialLocations.length === 0) {
-      log.push('No valid social locations available.');
-      return Response.json({ success: true, mode: 'active', block: currentBlock.name, distributed: 0, log });
-    }
-
-    // ── ELIGIBILITY ──
-    const BLOCKED_STATES = ['work', 'school', 'hospital', 'supervised'];
-    const eligible = [];
-    const ineligible = [];
-
-    for (const npc of vgcResidents) {
-      // Self-heal: missing next_move_at during active travel window
-      if (!npc.next_move_at && npc.resolved_current_location_id === VGC_ID) {
-        log.push(`${npc.name} → SELF-HEAL: missing next_move_at, re-queuing for departure`);
-        npc.next_move_at = null; // Will be recalculated below
-      }
-
-      if (BLOCKED_STATES.includes(npc.presence_state)) {
-        ineligible.push({ name: npc.name, reason: npc.presence_state });
-        continue;
-      }
-      if (currentMinutes >= 2 * 60 && currentMinutes < 8 * 60) {
-        ineligible.push({ name: npc.name, reason: 'sleeping_hours' });
-        continue;
-      }
-      if (isOnWorkSchedule(npc, nowET)) {
-        ineligible.push({ name: npc.name, reason: 'work_schedule' });
-        continue;
-      }
-      eligible.push(npc);
-    }
-
-    // ── MOVEMENT DECISION ──
-    const updates = [];
-    const occupancyMap = new Map();
-
-    for (const npc of eligible) {
-      let shouldMove = false;
-      let reason = '';
-
-      if (currentBlock.name === 'DEPARTURE') {
-        // Always move out from VGC Towers at departure
-        shouldMove = npc.resolved_current_location_id === VGC_ID;
-        reason = 'vgc_departure_block';
-      } else if (currentBlock.name === 'WRAP_UP') {
-        // At wrap-up, decide final position or prepare for return home
-        shouldMove = true; // Always re-evaluate
-        reason = 'vgc_wrapup_final_position';
-      } else {
-        // Midday, Afternoon, Evening: rotate if 3+ hours at current location
-        const movedAt = npc.valid_from ? new Date(npc.valid_from).getTime() : 0;
-        const hoursSinceMove = (now.getTime() - movedAt) / (1000 * 60 * 60);
-        shouldMove = hoursSinceMove >= 3;
-        reason = shouldMove ? 'vgc_rotation_due' : 'staying_at_location';
-      }
-
-      if (!shouldMove) {
-        log.push(`${npc.name} → staying at ${npc.resolved_current_location_name} (next block: ${getNextBlockTime(hour)})`);
-        // Update next_move_at to point to next block
-        updates.push({
-          id: npc.id,
-          data: {
-            next_move_at: getNextBlockTimestamp(hour, nowET),
-          }
-        });
-        continue;
-      }
-
-      // Age filter for destinations
-      const npcAge = npc.age || null;
-      const ageFilteredLocations = socialLocations.filter(loc => {
-        if (npcAge && npcAge < 21) {
-          const nameLC = loc.name.toLowerCase();
-          if (['bar', 'club', 'lounge', 'pub', 'tavern', 'nightclub'].some(kw => nameLC.includes(kw))) return false;
+          totalReturned++;
         }
+        continue; // Don't process movement during lockdown
+      }
+
+      // ── ACTIVE WINDOW: Check if this is a block trigger hour ──
+      const currentBlock = TRAVEL_BLOCKS.find(b => b.hour === hour);
+      if (!currentBlock) {
+        globalLog.push(`[${ownerEmail}] Hour ${hour} — no block trigger, skipping`);
+        continue;
+      }
+
+      globalLog.push(`[${ownerEmail}] BLOCK: ${currentBlock.name} at ${hour}:${String(minute).padStart(2, '0')}`);
+
+      // Valid destinations for this account (account-scoped + shared, open now, non-home)
+      const socialLocations = allLocations.filter(loc => {
+        if (loc.id === VGC_ID) return false;
+        if (loc.category === 'home' || loc.category === 'generic') return false;
+        if (loc.scope === 'character_specific') return false;
+        const isAccountOwned = loc.created_by === ownerEmail;
+        const isShared = loc.scope === 'shared';
+        if (!isAccountOwned && !isShared) return false;
+        if (isLocationClosed(loc, nowET)) return false;
         return true;
       });
 
-      const pool = ageFilteredLocations.length > 0 ? ageFilteredLocations : socialLocations;
-      const currentLocId = npc.resolved_current_location_id;
-      const differentLocations = pool.filter(l => l.id !== currentLocId);
-      const finalPool = differentLocations.length > 0 ? differentLocations : pool;
-
-      // Safe fallback: if no valid location, stay at current or return home
-      if (finalPool.length === 0) {
-        log.push(`${npc.name} → no valid destinations, staying/returning to VGC Towers`);
-        updates.push({
-          id: npc.id,
-          data: {
-            resolved_current_location_id: VGC_ID,
-            resolved_current_location_name: 'VGC Towers',
-            resolved_presence_status: 'home',
-            resolved_location_type: 'home',
-            resolved_source_reason: 'no_valid_destinations',
-            presence_state: 'home',
-            source_of_move: 'system',
-            valid_from: now.toISOString(),
-            next_move_at: null,
-          }
-        });
+      if (socialLocations.length === 0) {
+        globalLog.push(`[${ownerEmail}] No valid destinations — all residents stay home`);
         continue;
       }
 
-      const selectedLoc = pickByGravity(finalPool, occupancyMap, nowET);
-      occupancyMap.set(selectedLoc.id, (occupancyMap.get(selectedLoc.id) || 0) + 1);
-
-      log.push(`${npc.name} → ${selectedLoc.name} (${reason})`);
-      updates.push({
-        id: npc.id,
-        data: {
-          resolved_current_location_id: selectedLoc.id,
-          resolved_current_location_name: selectedLoc.name,
-          resolved_presence_status: 'visiting',
-          resolved_location_type: 'visit',
-          resolved_source_reason: reason,
-          presence_state: 'social_visit',
-          presence_reason: reason,
-          source_of_move: 'system',
-          valid_from: now.toISOString(),
-          valid_until: new Date(now.getTime() + 4 * 60 * 60 * 1000).toISOString(),
-          return_location_id: VGC_ID,
-          next_move_at: getNextBlockTimestamp(hour, nowET),
-        }
+      // ── ELIGIBILITY: skip residents blocked by work/school/hospital ──
+      const BLOCKED_PRESENCE = ['at_work', 'at_school'];
+      const eligible = vgcResidents.filter(npc => {
+        if (BLOCKED_PRESENCE.includes(npc.resolved_presence_status)) return false;
+        if (npc.resolved_presence_status === 'sleeping' || npc.resolved_presence_status === 'napping') return false;
+        if (isOnWorkSchedule(npc, nowET)) return false;
+        return true;
       });
+
+      if (eligible.length === 0) {
+        globalLog.push(`[${ownerEmail}] No eligible residents for ${currentBlock.name}`);
+        continue;
+      }
+
+      // ── MOVEMENT DECISION ──
+      const occupancyMap = new Map();
+      const updates = [];
+
+      for (const npc of eligible) {
+        let shouldMove = false;
+        let reason = '';
+
+        if (currentBlock.name === 'DEPARTURE') {
+          // At departure: move everyone who is still home
+          shouldMove = npc.resolved_current_location_id === VGC_ID;
+          reason = 'vgc_departure_block';
+        } else if (currentBlock.name === 'WRAP_UP') {
+          // At wrap-up: always re-evaluate (prepare for 1 AM return)
+          shouldMove = true;
+          reason = 'vgc_wrapup_final_position';
+        } else {
+          // Midday/Afternoon/Evening: rotate if 3+ hours at current location
+          const movedAt = npc.valid_from ? new Date(npc.valid_from).getTime() : 0;
+          const hoursSinceMove = (now.getTime() - movedAt) / 3600000;
+          shouldMove = hoursSinceMove >= 3;
+          reason = shouldMove ? 'vgc_rotation_due' : 'staying_at_location';
+        }
+
+        if (!shouldMove) {
+          updates.push({
+            id: npc.id,
+            data: { next_move_at: getNextBlockTimestamp(hour, nowET) },
+          });
+          continue;
+        }
+
+        // Age filter
+        const npcAge = npc.age || 0;
+        const ageSafeLocations = socialLocations.filter(loc => {
+          if (npcAge < 21) {
+            const nameLC = loc.name.toLowerCase();
+            if (['bar', 'club', 'lounge', 'pub', 'tavern', 'nightclub'].some(kw => nameLC.includes(kw))) return false;
+          }
+          return true;
+        });
+
+        const pool = ageSafeLocations.length > 0 ? ageSafeLocations : socialLocations;
+        const differentPool = pool.filter(l => l.id !== npc.resolved_current_location_id);
+        const finalPool = differentPool.length > 0 ? differentPool : pool;
+
+        if (finalPool.length === 0) {
+          // No valid destination — send home
+          updates.push({
+            id: npc.id,
+            data: {
+              resolved_current_location_id: VGC_ID,
+              resolved_current_location_name: 'VGC Towers',
+              resolved_presence_status: 'home',
+              resolved_location_type: 'home',
+              resolved_source_reason: 'no_valid_destinations',
+              presence_state: 'home',
+              source_of_move: 'system',
+              valid_from: now.toISOString(),
+              next_move_at: null,
+            },
+          });
+          continue;
+        }
+
+        const selectedLoc = pickByGravity(finalPool, occupancyMap, nowET);
+        occupancyMap.set(selectedLoc.id, (occupancyMap.get(selectedLoc.id) || 0) + 1);
+
+        globalLog.push(`[${ownerEmail}] ${npc.name} → ${selectedLoc.name} (${reason})`);
+        updates.push({
+          id: npc.id,
+          data: {
+            resolved_current_location_id: selectedLoc.id,
+            resolved_current_location_name: selectedLoc.name,
+            resolved_presence_status: 'visiting',
+            resolved_location_type: 'visit',
+            resolved_source_reason: reason,
+            presence_state: 'social_visit',
+            source_of_move: 'system',
+            valid_from: now.toISOString(),
+            valid_until: new Date(now.getTime() + 4 * 3600000).toISOString(),
+            return_location_id: VGC_ID,
+            next_move_at: getNextBlockTimestamp(hour, nowET),
+          },
+        });
+        totalMoved++;
+      }
+
+      // Apply all updates in parallel for this account
+      if (updates.length > 0) {
+        await Promise.all(updates.map(u =>
+          base44.asServiceRole.entities.Character.update(u.id, u.data)
+        ));
+      }
     }
-
-    await Promise.all(updates.map(u => base44.entities.Character.update(u.id, u.data)));
-
-    // ── FINAL VERIFICATION ──
-    const [freshByCreated, freshByOwner] = await Promise.all([
-      base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
-      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
-    ]);
-    const freshSeen = new Set();
-    const allFreshChars = [...freshByCreated, ...freshByOwner].filter(c => {
-      if (freshSeen.has(c.id)) return false;
-      freshSeen.add(c.id);
-      return true;
-    });
-
-    const finalNPCStates = vgcResidents.map(npc => {
-      const fresh = allFreshChars.find(c => c.id === npc.id) || npc;
-      return {
-        name: npc.name,
-        location: fresh.resolved_current_location_name,
-        presence_state: fresh.presence_state,
-        next_move_at: fresh.next_move_at,
-      };
-    });
 
     return Response.json({
       success: true,
-      mode: 'active',
-      block: currentBlock.name,
-      timestamp: now.toISOString(),
+      mode: isLockdown ? 'lockdown' : 'active',
+      block: isLockdown ? null : (TRAVEL_BLOCKS.find(b => b.hour === hour)?.name || 'no_block'),
       hoursET: hour,
-      totalVGCResidents: vgcResidents.length,
-      eligible: eligible.length,
-      ineligible,
-      moved: updates.length,
-      socialLocationsAvailable: socialLocations.length,
-      finalNPCStates,
-      log,
+      totalMoved,
+      totalReturned,
+      accountsProcessed: vgcTowersList.length,
+      log: globalLog,
     });
 
   } catch (error) {
     console.error('[distributeVGCTowersNPCsBlockBased]', error.message);
-    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
+    return Response.json({ error: error.message }, { status: 500 });
   }
 });
 
-// ── HELPERS ──
-
-function getNextBlockTime(currentHour) {
-  const blocks = [10, 13, 16, 19, 22];
-  const next = blocks.find(h => h > currentHour);
-  return next ? `${next}:00` : '10:00 (tomorrow)';
-}
+// ── HELPERS ──────────────────────────────────────────────────────────────────
 
 function getNextBlockTimestamp(currentHour, nowET) {
   const blocks = [10, 13, 16, 19, 22];
   const next = blocks.find(h => h > currentHour);
+  const base = new Date(nowET);
   if (!next) {
     // Next block is tomorrow at 10 AM
-    const tomorrow = new Date(nowET);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(10, 0, 0, 0);
-    return tomorrow.toISOString();
+    base.setDate(base.getDate() + 1);
+    base.setHours(10, 0, 0, 0);
+  } else {
+    base.setHours(next, 0, 0, 0);
   }
-  const nextBlock = new Date(nowET);
-  nextBlock.setHours(next, 0, 0, 0);
-  return nextBlock.toISOString();
+  return base.toISOString();
 }
 
-function isOnWorkSchedule(npc, now) {
+function isOnWorkSchedule(npc, nowET) {
   if (!npc.work_days || !npc.work_start_time || !npc.work_end_time) return false;
-  const dayOfWeek = now.getDay();
+  const dayOfWeek = nowET.getDay();
   if (!npc.work_days.includes(dayOfWeek)) return false;
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
   const [sh, sm] = npc.work_start_time.split(':').map(Number);
   const [eh, em] = npc.work_end_time.split(':').map(Number);
   return currentMinutes >= sh * 60 + sm && currentMinutes < eh * 60 + em;
@@ -345,16 +306,15 @@ function isInWindow(currentMinutes, openStr, closeStr) {
 
 const CATEGORY_BASE_POPULARITY = {
   home: 10, workplace: 30, school: 30, gym: 45, grocery: 40,
-  medical: 25, church: 35, park: 55, outdoor: 50, food_drink: 65,
-  bar: 70, social: 75, community: 60, business: 40, government: 20, public: 50,
+  medical: 25, religion: 35, outdoor: 55, food_drink: 65,
+  social: 75, community: 60, business: 40, government: 20, public: 50,
 };
 
 const CATEGORY_TIME_RULES = {
-  gym: [[5, 9, 1.6], [17, 20, 1.5]],
-  food_drink: [[7, 10, 1.4], [12, 14, 1.5], [17, 20, 1.3]],
-  bar: [[20, 23, 1.9], [22, 24, 2.0], [0, 2, 1.7]],
-  social: [[18, 23, 1.8], [14, 17, 1.3]],
-  park: [[8, 12, 1.5], [15, 18, 1.4]],
+  gym:       [[5, 9, 1.6], [17, 20, 1.5]],
+  food_drink:[[7, 10, 1.4], [12, 14, 1.5], [17, 20, 1.3]],
+  social:    [[18, 23, 1.8], [14, 17, 1.3]],
+  outdoor:   [[8, 12, 1.5], [15, 18, 1.4]],
 };
 
 function getTimeMultiplier(category, hour) {
@@ -373,9 +333,8 @@ function calcGravity(location, occupants, nowET) {
     ? location.popularity_score
     : (CATEGORY_BASE_POPULARITY[category] ?? 40);
   const timeMult = getTimeMultiplier(category, hour);
-  const social = occupants === 0 ? 0 : (occupants === 1 ? 5 : (occupants <= 3 ? 20 : 30));
-  const boost = typeof location.activity_boost === 'number' ? location.activity_boost : 0;
-  return Math.max(1, Math.round(base * timeMult + social + boost));
+  const socialBoost = occupants === 0 ? 0 : occupants === 1 ? 5 : occupants <= 3 ? 20 : 30;
+  return Math.max(1, Math.round(base * timeMult + socialBoost));
 }
 
 function pickByGravity(locations, occupancyMap, nowET) {
