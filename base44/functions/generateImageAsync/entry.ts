@@ -120,21 +120,21 @@ function resolveZoneFromLocation(location, promptLower) {
 function selectCameraPosition(zoneName, seed = '', prompt = '') {
   const promptLower = (prompt || '').toLowerCase();
   
-  // HIGHEST PRIORITY: Selfie detection — extremely close, arm's length distance
-  const isSelfie = /selfie|self-portrait|self portrait/.test(promptLower);
-  if (isSelfie) {
-    return 'extreme close-up, selfie perspective, camera at arm\'s length from subject\'s face, personal and intimate framing';
-  }
-  
-  // Context-aware camera positions based on prompt content
-  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table/.test(promptLower);
+  // HIGHEST PRIORITY: Selfie detection — comprehensive match
+  const isSelfie = /selfie|self-?portrait|phone selfie|smartphone selfie|cell phone|taken.*phone|phone.*photo/.test(promptLower);
+  const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table|dining.*table|wooden.*table/.test(promptLower);
   const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
   const isStandingAtCounter = /standing at.*counter|at the counter/.test(promptLower);
-  const isCloseUp = /close|closeup|close-up|tight|focused/.test(promptLower);
+
+  if (isSelfie) {
+    // Selfie + seated context: character holds phone at arm's length, face fills frame, seated position visible below
+    if (isSittingAtTable) {
+      return 'selfie perspective — character is SEATED at the table holding the phone at arm\'s length toward the camera. Face and upper chest dominate the frame. The table and food are partially visible below. Character is NOT standing. Phone is in the character\'s hand extended toward viewer.';
+    }
+    return 'extreme close-up selfie — character holds phone at arm\'s length directly toward camera. Face fills most of the frame. Personal and intimate framing. Character is NOT standing in a wide shot.';
+  }
   
-  // Choose position based on context, not random
   if (isSittingAtTable) {
-    // Character is the primary subject at table — tight, focused frame
     const tablePositions = [
       'tight medium shot, seated eye-level at the table, character is the primary subject',
       'close-up, seated eye-level facing the character at table, table surface in frame',
@@ -154,7 +154,7 @@ function selectCameraPosition(zoneName, seed = '', prompt = '') {
     return 'close-up at counter-level, character and counter are the primary subjects';
   }
   
-  // Default wide-angle positions for general scenes
+  // Default positions for general scenes
   const positions = [
     'from the doorway looking inward',
     'from the left corner of the room',
