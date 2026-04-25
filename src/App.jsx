@@ -21,6 +21,7 @@ import Groups from './pages/Groups';
 import CreateCharacter from './pages/CreateCharacter.jsx';
 import Settings from './pages/Settings';
 import CharacterProfile from './pages/CharacterProfile';
+import DiagnosticChecklist from './pages/DiagnosticChecklist';
 import EditDefaultCharacter from './pages/EditDefaultCharacter';
 import EditCharacterStory from './pages/EditCharacterStory';
 import EditCharacterPhotos from './pages/EditCharacterPhotos';
@@ -93,6 +94,7 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
       <Route path="/edit-character-needs" element={<EditCharacterNeeds />} />
       <Route path="/my-profile" element={<MyProfile />} />
       <Route path="/finance" element={<Finance />} />
+      <Route path="/diagnostic" element={<DiagnosticChecklist />} />
       <Route path="/travel" element={<Travel />} />
       <Route path="/scene" element={<Scene />} />
       <Route path="*" element={<PageNotFound />} />

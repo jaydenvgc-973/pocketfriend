@@ -4,24 +4,34 @@ Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
-    const allChars = await base44.asServiceRole.entities.Character.filter({}, '-created_date', 500);
     
-    const list = allChars.map(c => ({
-      id: c.id,
-      name: c.name,
-      home_location_id: c.home_location_id || c.current_home_location_id || c.resolved_current_location_id || null,
-    }));
+    if (!user?.email) return Response.json({ error: 'No user' }, { status: 401 });
 
-    console.log(`[CHARS] Total characters: ${list.length}`);
-    list.forEach(c => {
-      console.log(`[CHARS] "${c.name}" (${c.id}) → home_loc=${c.home_location_id || 'NONE'}`);
+    // Get user's active characters
+    const activeChars = await base44.asServiceRole.entities.Character.filter({
+      status: 'active',
+      character_type: 'active_created_character'
+    }, null, 50);
+
+    console.log(`\nTotal ACTIVE characters in system: ${activeChars.length}`);
+    activeChars.forEach(c => {
+      console.log(`- ${c.name} (${c.id}) | owner: ${c.created_by || c.owner_email}`);
     });
 
-    return Response.json({ characters: list });
+    return Response.json({
+      total: activeChars.length,
+      characters: activeChars.map(c => ({
+        name: c.name,
+        id: c.id,
+        created_by: c.created_by,
+        owner_email: c.owner_email,
+        has_reference_images: (c.reference_image_urls || []).length > 0,
+        reference_count: (c.reference_image_urls || []).length,
+      }))
+    });
+
   } catch (error) {
-    console.error('[listAllCharacters]', error);
+    console.error('[listAllCharacters] Error:', error.message);
     return Response.json({ error: error.message }, { status: 500 });
   }
 });
