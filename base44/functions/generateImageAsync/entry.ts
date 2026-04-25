@@ -418,25 +418,39 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── 4b. VALIDATE ENV REFS — test that image URLs are actually reachable ──
-    // If CDN conversion produced a URL that 404s or errors, drop it rather than
-    // passing a broken URL that causes the model to invent a generic background.
+    // ── 4b. VALIDATE ENV REFS — verify image is actually loadable, not just reachable ──
+    // HEAD returns 200 but some files are corrupt/incompatible — must do a real GET
+    // and check for image content-type + non-zero body to confirm usability.
     if (envRefs.length > 0) {
-      const reachable = await Promise.all(
-        envRefs.map(url =>
-          fetch(url, { method: 'HEAD' })
-            .then(r => r.ok ? url : null)
-            .catch(() => null)
-        )
+      const validChecks = await Promise.all(
+        envRefs.map(async url => {
+          try {
+            const r = await fetch(url, { method: 'GET' });
+            if (!r.ok) { console.warn(`[validateEnv] ❌ HTTP ${r.status}: ${url}`); return null; }
+            const ct = r.headers.get('content-type') || '';
+            const isImage = ct.startsWith('image/');
+            if (!isImage) { console.warn(`[validateEnv] ❌ Not an image (${ct}): ${url}`); return null; }
+            // Read a small chunk to verify the body has data
+            const reader = r.body.getReader();
+            const { value, done } = await reader.read();
+            reader.cancel();
+            if (done || !value || value.length === 0) { console.warn(`[validateEnv] ❌ Empty body: ${url}`); return null; }
+            console.log(`[validateEnv] ✅ Valid image (${ct}, ${value.length} bytes): ${url}`);
+            return url;
+          } catch (e) {
+            console.warn(`[validateEnv] ❌ Fetch error for ${url}: ${e.message}`);
+            return null;
+          }
+        })
       );
-      const validEnvRefs = reachable.filter(Boolean);
-      console.log(`[generateImageAsync] Env ref validation: ${envRefs.length} attempted → ${validEnvRefs.length} reachable`);
+      const validEnvRefs = validChecks.filter(Boolean);
+      console.log(`[generateImageAsync] Env ref validation: ${envRefs.length} attempted → ${validEnvRefs.length} valid images`);
       envRefs = validEnvRefs;
     }
 
     // ── 5. ASSEMBLE REFS — env first (scene anchor), then identity ────────────
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
-    const CHAR_SLOTS = Math.min(charRefs.length, 2);
+    const CHAR_SLOTS = Math.min(charRefs.length, 3);
     const USER_SLOTS = Math.min(userRefs.length, 2);
 
     const envRefStart  = 1;
