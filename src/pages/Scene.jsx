@@ -301,6 +301,23 @@ export default function Scene() {
     return traveling;
   })();
 
+  // "Here Now" real characters from unified presence resolver — must be selectable in Who's Here
+  const hereNowFromPresence = useMemo(() => {
+    if (!location) return [];
+    return getPresenceAtLocation(location, unifiedPresenceEntities)
+      .filter(e => !characterIds.includes(e.id)) // exclude already-traveled-with
+      .map(entity => ({
+        id: entity.id,
+        name: entity.display_name,
+        avatar_url: entity.avatar_url,
+        role: entity.resolved_presence_status === 'home' ? 'Resident' : 'Here now',
+        isNpc: false,
+        npcType: 'present',
+        personality_summary: entity.personality_summary,
+        emotional_state: entity.emotional_state,
+      }));
+  }, [location, unifiedPresenceEntities, characterIds]);
+
   // Build the full pool of possible NPCs for ANY venue
   const allPossibleNpcs = (() => {
     const npcs = [];
@@ -407,7 +424,11 @@ export default function Scene() {
 
     // For home locations, stop here — no generic venue NPCs, no strangers, no locals.
     // Only residents explicitly listed on the location record are ever present in a home.
+    // BUT still include "Here Now" real characters so they can be selected.
     if (isHomeLocation) {
+      hereNowFromPresence.forEach(n => {
+        if (!npcs.find(x => x.id === n.id)) npcs.push(n);
+      });
       return npcs.filter((n, i, arr) => arr.findIndex(x => x.id === n.id) === i);
     }
 
@@ -513,6 +534,12 @@ export default function Scene() {
           emotional_state: n.emotional_state,
         });
       }
+    });
+
+    // Add "Here Now" real characters from unified presence resolver
+    // These MUST be in allPossibleNpcs so selectedNpcIds can find them
+    hereNowFromPresence.forEach(n => {
+      if (!npcs.find(x => x.id === n.id)) npcs.push(n);
     });
 
     // Dedupe by id
