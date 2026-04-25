@@ -59,16 +59,13 @@ function buildInteractionNote(charA, charB, locationName, locCategory) {
   return contextMap[locCategory] || `met at ${locationName}`;
 }
 
-function buildRelationshipType(locCategory) {
+function buildRelationshipType(locCategory, priorCount) {
+  // First meeting: always "other" regardless of location
+  if (priorCount === 0) return 'other';
+  // After repeated contact, context can inform type
   const map = {
-    gym: 'acquaintance',
     workplace: 'coworker',
     school: 'classmate',
-    food_drink: 'acquaintance',
-    social: 'acquaintance',
-    bar: 'acquaintance',
-    home: 'acquaintance',
-    outdoor: 'acquaintance',
   };
   return map[locCategory] || 'acquaintance';
 }
@@ -200,7 +197,7 @@ Deno.serve(async (req) => {
             const newCount = priorCount + 1;
             const familiarityLabel = getFamiliarityLabel(newCount);
             const interactionNote = buildInteractionNote(charA, charB, locationName, locCategory);
-            const relType = buildRelationshipType(locCategory);
+            const relType = buildRelationshipType(locCategory, priorCount);
             const timestamp = now.toISOString();
 
             // ── CREATE MEMORY FOR CHAR A ────────────────────────────────
@@ -251,17 +248,17 @@ Deno.serve(async (req) => {
                 : {
                     person_name: targetChar.name || targetChar.display_name,
                     related_character_id: targetChar.id,
-                    relationship_type: relType,
-                    description: `Met at ${locationName}.`,
-                    current_status: familiarityLabel,
+                    relationship_type: 'other',
+                    description: `Seen around at ${locationName}.`,
+                    current_status: 'Seen around',
                     last_interaction_summary: `${interactionNote} — ${new Date().toLocaleDateString()}`,
-                    history_summary: `First met at ${locationName} on ${new Date().toLocaleDateString()}.`,
+                    history_summary: `First encountered at ${locationName} on ${new Date().toLocaleDateString()}.`,
                     avatar_url: targetChar.avatar_url || null,
                     current_location_id: targetChar.resolved_current_location_id || null,
-                    friendship_level: 10,
-                    familiarity_level: 10,
-                    trust_level: 10,
-                    user_respect_level: 40,
+                    friendship_level: 0,
+                    familiarity_level: 5,
+                    trust_level: 0,
+                    user_respect_level: 20,
                     romantic_level: 0,
                     attraction_level: 0,
                     chosen_family_level: 0,
@@ -293,23 +290,40 @@ Deno.serve(async (req) => {
               target_character_id: charB.id,
             }).catch(() => []);
 
-            const famChange = 5;
+            // Relationship bar deltas — small increments, context-aware
+            // First encounter: minimal bars. Repeated contact grows them slowly.
+            const isFirstMeet = priorCount === 0;
+            const famDelta = isFirstMeet ? 5 : 4;       // familiarity grows each time
+            const friendDelta = isFirstMeet ? 0 : 2;    // no friendship boost on first meet
+            const trustDelta = isFirstMeet ? 0 : 1;     // trust requires repeated contact
+
+            // Workplace/school context gives small coworker familiarity bump, not friendship
+            const contextFamBonus = ['workplace', 'school'].includes(locCategory) ? 3 : 0;
+
             if (existingRels.length > 0) {
               const rel = existingRels[0];
-              await base44.asServiceRole.entities.CharacterRelationship.update(rel.id, {
-                familiarity_level: Math.min((rel.familiarity_level || 10) + famChange, 100),
-                friendship_level: Math.min((rel.friendship_level || 10) + 2, 100),
-              }).catch(() => {});
+              const updates = {
+                familiarity_level: Math.min((rel.familiarity_level || 5) + famDelta + contextFamBonus, 100),
+                friendship_level: Math.min((rel.friendship_level || 0) + friendDelta, 100),
+                trust_level: Math.min((rel.trust_level || 0) + trustDelta, 100),
+                label_from_source_perspective: familiarityLabel,
+              };
+              // Upgrade relationship_type only after sufficient familiarity (not on first meet)
+              if (!isFirstMeet && rel.relationship_type === 'other') {
+                updates.relationship_type = relType;
+              }
+              await base44.asServiceRole.entities.CharacterRelationship.update(rel.id, updates).catch(() => {});
             } else {
+              // Brand new relationship — start at "other", bars near zero
               await base44.asServiceRole.entities.CharacterRelationship.create({
                 source_character_id: charA.id,
                 target_character_id: charB.id,
-                relationship_type: relType,
-                label_from_source_perspective: familiarityLabel,
-                familiarity_level: 10,
-                friendship_level: 10,
-                trust_level: 10,
-                respect_level: 40,
+                relationship_type: 'other',
+                label_from_source_perspective: 'Seen around',
+                familiarity_level: famDelta,
+                friendship_level: 0,
+                trust_level: 0,
+                respect_level: 20,
                 tension_level: 0,
                 attraction_level: 0,
                 is_household_member: false,
