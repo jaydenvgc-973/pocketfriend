@@ -1,10 +1,9 @@
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
-import { base44 } from "@/api/base44Client";
+import { useRightNow } from "@/hooks/useRightNow";
 
 export default function ChatHeader({
   character,
@@ -26,61 +25,12 @@ export default function ChatHeader({
   onSendMoneyToggle,
   onTroubleshootingToggle,
   onShoppingToggle,
+  onRightNowToggle,
   setMessages,
 }) {
-  const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
-
-  // Right Now — calls generateAutomaticNarrative, then writes message to DB.
-  // The real-time Message subscription in Chat.jsx picks it up automatically.
-  const handleRightNow = async () => {
-    console.log('[RightNow] Clicked | char:', character?.name, '| convoId:', conversationId, '| isGenerating:', isGeneratingRightNow);
-    if (!character || !conversationId || isGeneratingRightNow) {
-      console.warn('[RightNow] Blocked:', { hasChar: !!character, hasConvo: !!conversationId, isGenerating: isGeneratingRightNow });
-      return;
-    }
-    setIsGeneratingRightNow(true);
-    try {
-      console.log('[RightNow] → Calling generateAutomaticNarrative backend...');
-      const res = await base44.functions.invoke('generateAutomaticNarrative', {
-        characterId,
-        trigger: 'manual_right_now',
-        forceGenerate: true,
-      });
-      console.log('[RightNow] Backend response success:', res?.data?.success);
-
-      const narrativeText = res?.data?.narrativeText;
-      if (!narrativeText) {
-        console.warn('[RightNow] No narrativeText in response:', JSON.stringify(res?.data));
-        return;
-      }
-
-      console.log('[RightNow] → Creating message in thread...');
-      const msg = await base44.entities.Message.create({
-        conversation_id: conversationId,
-        sender_type: 'character',
-        character_id: characterId,
-        character_name: character.name,
-        content: narrativeText,
-        is_narrative: true,
-        is_read: true,
-        timestamp: new Date().toISOString(),
-      });
-      console.log('[RightNow] ✓ Message created:', msg.id);
-
-      // Optimistically update local state if setMessages is available
-      // Otherwise the subscription in Chat.jsx will pick it up
-      if (setMessages) {
-        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-        console.log('[RightNow] ✓ Local state updated');
-      } else {
-        console.log('[RightNow] ✓ No setMessages — subscription will deliver message');
-      }
-    } catch (err) {
-      console.error('[RightNow] ERROR:', err.message);
-    } finally {
-      setIsGeneratingRightNow(false);
-    }
-  };
+  // Right Now — manual trigger of the automatic narrative engine
+  // Falls back to prop if provided (Chat page can override), else handles internally
+  const { handleRightNow } = useRightNow({ character, characterId, conversationId, setMessages });
   return (
     <>
       <BackfillNarrativesWrapper conversationId={conversationId} characterId={characterId} character={character} />
