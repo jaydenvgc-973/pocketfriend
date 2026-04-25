@@ -209,15 +209,24 @@ REFERENCE IMAGE ROLE ASSIGNMENT
 `;
 
   if (hasEnv) {
-    const place = [locationName, zoneName].filter(Boolean).join(' → ');
-    preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
-These are photographs of the "${zoneName || place}".
-REPLICATE: walls, floor, furniture, layout, materials, objects, fixtures.
-REGENERATE: lighting (based on ${timeLighting.period}), camera angle (new position), composition.
-⛔ Do NOT copy the lighting, brightness, window glow, or sky from these photos—the time overrides this.
+     const place = [locationName, zoneName].filter(Boolean).join(' → ');
+     preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
+  These are photographs of the "${zoneName || place}".
 
-`;
-  }
+  70–80% REFERENCE LOCK (structural truth):
+  ✅ REPLICATE: walls, floor, furniture types, furniture placement, layout, materials, objects, fixtures, doors, windows.
+
+  20–30% CONTROLLED FLEXIBILITY (required):
+  ✓ REGENERATE: lighting (based on ${timeLighting.period}, not reference image lighting)
+  ✓ REGENERATE: camera angle (new position, not reference image framing)
+  ✓ REGENERATE: composition (different camera placement, distance, framing)
+
+  ⛔ Do NOT copy the lighting, brightness, window glow, or sky from these photos—the time overrides this.
+  ⛔ Do NOT match the reference image camera angle—camera must move to a new position.
+  The zone stays TRUE while viewpoint and lighting CHANGE.
+
+  `;
+   }
   if (hasChar) {
     preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY — 100% AUTHORITY FOR CHARACTER APPEARANCE.
 REPLICATE: face shape, eyes, nose, mouth, skin tone, hair color/texture, facial hair, body type.
