@@ -28,7 +28,7 @@ export default function ChatHeader({
   return (
     <>
       <BackfillNarrativesWrapper conversationId={conversationId} characterId={characterId} character={character} />
-      <div className="sticky top-0 z-[1000] bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 pointer-events-auto">
+      <div className="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 pointer-events-auto">
       <Link to="/home" className="text-muted-foreground hover:text-foreground transition-colors pointer-events-auto cursor-pointer">
         <ArrowLeft className="w-5 h-5" />
       </Link>

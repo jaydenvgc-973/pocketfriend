@@ -16,7 +16,7 @@ export default function BottomNav() {
   ];
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 bg-card border-t border-border">
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-card border-t border-border">
       <div className="max-w-lg mx-auto flex justify-around">
         {navItems.map(({ path, icon: Icon, label }) => (
           <Link key={path} to={path} className="flex-1">

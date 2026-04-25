@@ -448,8 +448,8 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   });
 
   return (
-    <div className="min-h-screen bg-background pb-28">
-      <div className="sticky top-0 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3 z-10">
+    <div className="min-h-screen bg-background pt-16 pb-20">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border px-4 py-3 flex items-center gap-3">
         <Link to="/home" className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="w-5 h-5" />
         </Link>
@@ -474,7 +474,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         </button>
       </div>
 
-      <div className="max-w-lg mx-auto px-4 py-4 space-y-6">
+      <div className="max-w-lg mx-auto px-4 py-4 space-y-6 relative z-10">
 
         {/* Live Presence Map */}
         <AnimatePresence>
@@ -737,7 +737,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-28 right-4 w-80 max-h-96 bg-card border border-border rounded-xl shadow-lg overflow-y-auto z-40 p-4 space-y-3"
+            className="fixed bottom-24 right-4 w-80 max-h-96 bg-card border border-border rounded-xl shadow-lg overflow-y-auto z-30 p-4 space-y-3"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Debug Info</h3>
