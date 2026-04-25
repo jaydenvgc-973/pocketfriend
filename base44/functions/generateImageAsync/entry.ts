@@ -418,6 +418,22 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── 4b. VALIDATE ENV REFS — test that image URLs are actually reachable ──
+    // If CDN conversion produced a URL that 404s or errors, drop it rather than
+    // passing a broken URL that causes the model to invent a generic background.
+    if (envRefs.length > 0) {
+      const reachable = await Promise.all(
+        envRefs.map(url =>
+          fetch(url, { method: 'HEAD' })
+            .then(r => r.ok ? url : null)
+            .catch(() => null)
+        )
+      );
+      const validEnvRefs = reachable.filter(Boolean);
+      console.log(`[generateImageAsync] Env ref validation: ${envRefs.length} attempted → ${validEnvRefs.length} reachable`);
+      envRefs = validEnvRefs;
+    }
+
     // ── 5. ASSEMBLE REFS — env first (scene anchor), then identity ────────────
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
     const CHAR_SLOTS = Math.min(charRefs.length, 2);
