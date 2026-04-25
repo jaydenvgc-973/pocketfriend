@@ -187,21 +187,27 @@ Character is integrated—not scaled or pasted—using the new camera angle and 
 REFERENCE IMAGE HIERARCHY
 ════════════════════════════════════════════════════════════
 
-Room/Zone Identity: 70–80% from reference image
-  ✅ Use: layout, furniture, materials, objects, walls, floor, windows, fixtures
-  ⛔ Ignore: lighting, brightness, window glow, sky color
+STRUCTURAL TRUTH (70–80% from reference image):
+   ✅ Must preserve: layout, furniture identity, materials, objects, walls, floor, windows, fixtures, zone identity
+   ✅ Can change: camera viewpoint, lighting (time-based), framing, perspective angle
+   ⛔ Cannot ignore: what furniture exists and its structural position relative to room
 
-Lighting & Time: 100% from server time (OVERRIDES reference image)
-  ✅ Use: current time-of-day lighting only
-  ⛔ Ignore: any daylight/nighttime in reference image
+DYNAMIC FLEXIBILITY (20–30% controlled adjustment):
+   ✅ Must vary: lighting (from server time, not reference), camera angle, camera position, framing
+   ✅ Must recapture: perspective based on new camera viewpoint
+   ⛔ Cannot change: room structure, furniture types/identities, zone layout
 
-Camera Position: 100% from generated new position (OVERRIDES reference image)
-  ✅ Use: mandated camera offset, side angle, or closer view
-  ⛔ Ignore: reference image framing or composition
+Time-of-Day Lighting: 100% from server time (OVERRIDES reference image lighting)
+   ✅ Use: current time-of-day lighting only
+   ⛔ Ignore: any daylight/nighttime in reference image
+
+Camera Position: 100% from generated new position (OVERRIDES reference image camera angle)
+   ✅ Use: mandated camera offset, side angle, closer view from fresh viewpoint
+   ⛔ Ignore: reference image framing, composition, or camera angle
 
 Character Identity: 100% from provided character (OVERRIDES reference image background)
-  ✅ Use: character face, body, appearance
-  ⛔ Ignore: reference image background behind the character
+   ✅ Use: character face, body, appearance
+   ⛔ Ignore: reference image background behind the character
 
 ════════════════════════════════════════════════════════════
 REFERENCE IMAGE ROLE ASSIGNMENT
@@ -213,16 +219,19 @@ REFERENCE IMAGE ROLE ASSIGNMENT
      preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
   These are photographs of the "${zoneName || place}".
 
-  70–80% REFERENCE LOCK (structural truth):
-  ✅ REPLICATE: walls, floor, furniture types, furniture placement, layout, materials, objects, fixtures, doors, windows.
+  70–80% STRUCTURAL TRUTH (preserve room identity, not camera view):
+  ✅ PRESERVE: walls, floor, furniture types, furniture placement, layout, materials, objects, fixtures, doors, windows
+  ✅ THIS IS TRUTH: the room structure, what's in it, and where things are relative to each other
 
-  20–30% CONTROLLED FLEXIBILITY (required):
+  20–30% DYNAMIC FLEXIBILITY (required for realism):
   ✓ REGENERATE: lighting (based on ${timeLighting.period}, not reference image lighting)
-  ✓ REGENERATE: camera angle (new position, not reference image framing)
+  ✓ REGENERATE: camera angle (new position, not reference image camera view)
   ✓ REGENERATE: composition (different camera placement, distance, framing)
+  ✓ REGENERATE: perspective (entire scene recomposed from new viewpoint)
 
   ⛔ Do NOT copy the lighting, brightness, window glow, or sky from these photos—the time overrides this.
   ⛔ Do NOT match the reference image camera angle—camera must move to a new position.
+  ⛔ Do NOT treat the reference image as a locked flat background—recompose the entire scene from the new camera viewpoint.
   The zone stays TRUE while viewpoint and lighting CHANGE.
 
   `;
@@ -340,23 +349,27 @@ Lighting MUST be: ${timeLighting.desc}
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     envLock = `
 
-════════════════════════════════════════════════════════════
-ENVIRONMENT LOCK — "${place}" — 90% VISUAL AUTHORITY
-════════════════════════════════════════════════════════════
-Reference images ${envRefStart}–${envEnd} define the room structure ONLY.
+  ════════════════════════════════════════════════════════════
+  STRUCTURAL TRUTH — "${place}" — 70–80% IDENTITY, 20–30% DYNAMIC
+  ════════════════════════════════════════════════════════════
+  Reference images ${envRefStart}–${envEnd} define the room structure and identity (NOT the camera view).
 
-MUST MATCH EXACTLY:
-  ✅ Furniture types, colors, shapes, placement
+  STRUCTURAL TRUTH (must preserve):
+  ✅ Furniture types, colors, shapes, structural placement
   ✅ Wall color, floor type, rug, curtains
   ✅ All lighting fixtures and lamps
-  ✅ Wall art and shelves in exact positions
+  ✅ Wall art and shelves in relative positions
+  ✅ Room layout, windows, doors, architectural features
 
-ZERO OBJECT DRIFT — Every object must come from images ${envRefStart}–${envEnd} only.
+  DYNAMIC FLEXIBILITY (required for realism — do NOT freeze reference camera):
+  ✓ Camera position (MUST differ from reference image viewpoint)
+  ✓ Camera angle (MUST be new perspective, not matching reference)
+  ✓ Lighting (MUST match server time, NOT reference image lighting)
+  ✓ Composition (MUST be reframed from new viewpoint)
+  ✓ Depth of field
 
-10% FLEXIBILITY (only):
-  ✓ Camera position (already explicitly defined above)
-  ✓ Lighting based on time of day (already explicitly defined above)
-  ✓ Depth of field`;
+  NO OBJECT INVENTION — Every object must come from the structural truth of images ${envRefStart}–${envEnd}.
+  NO STATIC BACKGROUND LOCK — Recompose the entire scene from the new camera position. The room is the same; the viewpoint is different.`;
   }
 
   let refImageOverride = `
@@ -382,23 +395,26 @@ The scene lighting must match the actual world time, not the reference images.`;
   if (hasChar) {
     identityLock += `
 
-CHARACTER IDENTITY — "${charName}":
-${charRefCount > 0
+  CHARACTER IDENTITY — "${charName}":
+  ${charRefCount > 0
   ? `Images ${charRefStart}–${charEnd} are face/identity reference photographs.${charDesc ? ` Description: ${charDesc}.` : ''}
-Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/style, body type.`
+  Match ONLY: face structure, eyes, nose, mouth, skin tone, hair color/length/style, body type.`
   : `No reference photos. Generate from text description: ${charDesc || 'realistic human'}.`
-}
+  }
 
-CRITICAL GENERATION RULES:
-✅ Generate a new, original pose for this scene
-✅ Render natural, anatomically correct hands (exactly 5 fingers per hand)
-✅ Character MUST be lit consistently with the ${timeLighting.period} lighting defined above
-✅ Shadows, highlights, and skin tones MUST match the time-of-day lighting, NOT reference image lighting
-⛔ Do NOT copy background, room, or pose from reference photos
-⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and room responds
-⛔ Do NOT paste the character in — integrate with matching depth, shadow, and light direction
-⛔ Do NOT copy props or lighting from reference photos
-⛔ LIGHTING COMES ONLY FROM SERVER TIME — NEVER FROM REFERENCE IMAGES`;
+  CRITICAL GENERATION RULES:
+  ✅ Generate a new, original pose for this scene
+  ✅ Render natural, anatomically correct hands (exactly 5 fingers per hand)
+  ✅ Character MUST be lit consistently with the ${timeLighting.period} lighting defined above
+  ✅ Shadows, highlights, and skin tones MUST match the time-of-day lighting, NOT reference image lighting
+  ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — not a separate element pasted over background
+  ✅ Character scale, position, and shadows MUST be consistent with the new camera viewpoint and room perspective
+  ⛔ Do NOT copy background, room, or pose from reference photos
+  ⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and entire room perspective shifts
+  ⛔ Do NOT paste the character in — recompose the entire scene with character integrated, sharing the same perspective and lighting
+  ⛔ Do NOT copy props or lighting from reference photos
+  ⛔ LIGHTING COMES ONLY FROM SERVER TIME — NEVER FROM REFERENCE IMAGES
+  ⛔ Do NOT render the reference image camera angle — render from the newly defined camera position only`;
   }
   if (hasUser) {
     identityLock += `
