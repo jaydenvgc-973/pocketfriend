@@ -127,17 +127,18 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const userEnd   = userRefStart + userRefCount - 1;
 
   // Role preamble — model must read this first
+  // ORDERING: identity refs come first (highest model weight), env refs come last
   let preamble = '════════════════════════════════════════════════════════════\nREFERENCE IMAGE ROLE ASSIGNMENT — READ THIS FIRST\n════════════════════════════════════════════════════════════\n';
 
+  if (hasChar) {
+    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — THIS IS THE MOST IMPORTANT REFERENCE\n"${charName}" — These are real photographs of this specific person. You MUST reproduce their EXACT face.\nMatch with 100% fidelity: face structure, eyes, nose, mouth shape, skin tone, hair color/texture/curl pattern/length, beard/facial hair, body type, skin markings.\n⚠️ This person must be INSTANTLY RECOGNIZABLE as the same individual across all generations.\n\n⛔ BACKGROUND IN THESE PHOTOS = 0% INFLUENCE. Completely ignore everything behind the person.\n⛔ PROPS IN THESE PHOTOS = 0% INFLUENCE. Ignore held objects unless scene prompt calls for them.\n⛔ POSE IN THESE PHOTOS = 0% INFLUENCE. Generate a new pose matching the scene.\n⛔ CLOTHING = contextually appropriate for the scene, not copied from reference photos.\n\n`;
+  }
+  if (hasUser) {
+    preamble += `Images ${userRefStart}–${userEnd}: USER IDENTITY — 100% AUTHORITY ON THIS PERSON\nUse ONLY for: face, skin tone, hair, body type. Background = 0%.\n\n`;
+  }
   if (hasEnv) {
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     preamble += `Images ${envRefStart}–${envEnd}: ROOM ENVIRONMENT — 90% AUTHORITY\nPhotographs of the "${zoneName || place}" ONLY. Use ONLY for: walls, floor, furniture, rug, curtains, lighting, decor, layout.\nYou MUST replicate this exact room. This is not inspiration. This is the room.\n\n`;
-  }
-  if (hasChar) {
-    preamble += `Images ${charRefStart}–${charEnd}: CHARACTER IDENTITY — 90-100% AUTHORITY ON THE PERSON\n"${charName}" — Use ONLY for: face structure, skin tone, hair color/texture/length, body type, markings.\n\n⛔ BACKGROUND IN THESE PHOTOS = 0% INFLUENCE. Completely ignore: walls, windows, rooms, furniture, lighting behind the person.\n⛔ PROPS IN THESE PHOTOS = 0% INFLUENCE. Ignore any objects the person holds or wears (mugs, cups, hats, phones, bags) UNLESS the scene prompt specifically calls for them.\n⛔ POSE IN THESE PHOTOS = 0% INFLUENCE. Generate a new pose matching the scene prompt. Do NOT copy the pose from the reference photo.\n⛔ CLOTHING IN THESE PHOTOS = 0% INFLUENCE unless no outfit is specified. Generate contextually appropriate clothing.\n⛔ FACIAL HAIR STATE = match the reference, but do NOT fuse headwear or accessories into the hair.\n\n`;
-  }
-  if (hasUser) {
-    preamble += `Images ${userRefStart}–${userEnd}: USER IDENTITY — 90-100% AUTHORITY ON THIS PERSON\nUse ONLY for: face, skin tone, hair, body type. Background = 0%.\n\n`;
   }
   preamble += '⛔ DO NOT blend image sets. Each set has one exclusive role.\n════════════════════════════════════════════════════════════\n\n';
 
@@ -448,19 +449,21 @@ Deno.serve(async (req) => {
       envRefs = validEnvRefs;
     }
 
-    // ── 5. ASSEMBLE REFS — env first (scene anchor), then identity ────────────
+    // ── 5. ASSEMBLE REFS — identity FIRST (highest model weight), then env ────
+    // AI image models weight earlier reference images more heavily.
+    // Character identity must come first so the model locks face/hair before reading env.
+    const CHAR_SLOTS = Math.min(charRefs.length, 5);  // up to 5 identity refs
+    const USER_SLOTS = Math.min(userRefs.length, 3);
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
-    const CHAR_SLOTS = Math.min(charRefs.length, 3);
-    const USER_SLOTS = Math.min(userRefs.length, 2);
 
-    const envRefStart  = 1;
-    const charRefStart = ENV_SLOTS + 1;
-    const userRefStart = ENV_SLOTS + CHAR_SLOTS + 1;
+    const charRefStart = 1;
+    const userRefStart = CHAR_SLOTS + 1;
+    const envRefStart  = CHAR_SLOTS + USER_SLOTS + 1;
 
     const referenceImages = [
-      ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
+      ...envRefs.slice(0, ENV_SLOTS),
     ].filter(Boolean);
 
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
