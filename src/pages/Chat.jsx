@@ -1106,8 +1106,8 @@ ${songsInfo}`;
 
       // ── PARALLEL context fetching — run all async lookups simultaneously ──
       const [memoryResult, progressionResult, pastLookupsResult, spatialResult] = await Promise.all([
-        // Memory retrieval (includes backfilled narratives)
-        base44.functions.invoke('retrieveActiveMemoryWithBackfill', {
+        // Memory retrieval (now includes backfilled narratives automatically)
+        base44.functions.invoke('retrieveActiveMemory', {
           characterId,
           currentMessage: text,
           recentMessages: recentMsgs.slice(-6),

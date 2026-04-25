@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
         base44, character, eventTime, timeOfDay
       );
 
-      const backfillEvent = await base44.entities.CharacterAutomaticNarrative.create({
+      const backfillEvent = await base44.entities.AutomaticNarrative.create({
         character_id: characterId,
         character_name: character.name,
         owner_user_id: character.owner_user_id,
@@ -129,7 +129,7 @@ Deno.serve(async (req) => {
         is_catch_up: true,
         visibility: 'memory_only', // Don't show in chat, only in memory context
       }).catch(err => {
-        console.error(`[backfillMissingNarratives] Failed to save event: ${err.message}`);
+        console.error(`[backfillMissingNarratives] Failed to save backfill event: ${err.message}`);
         return null;
       });
 

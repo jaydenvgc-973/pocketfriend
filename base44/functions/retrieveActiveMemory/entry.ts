@@ -6,6 +6,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
 // remain active long-term memory the character can think with.
 
 Deno.serve(async (req) => {
+  // FORCE REDEPLOY: v2_backfill_integration
+  console.log('[retrieveActiveMemory] Function called - backfill enabled');
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
@@ -14,14 +16,53 @@ Deno.serve(async (req) => {
     const { characterId, currentMessage, recentMessages = [], topK = 12 } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    // Fetch ALL memories for this character (up to 500 — full long-term store)
+    console.log(`[retrieveActiveMemory] Starting for char=${characterId}`);
+
+    // ── 1. FETCH BACKFILLED NARRATIVES FIRST (highest priority) ──────────
+    // Backfilled events capture gaps when user returns after inactivity
+    let backfilledNarratives = [];
+    try {
+      // Query for backfilled narratives
+      const allAutoNarratives = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
+        { character_id: characterId },
+        '-timestamp',
+        50
+      ).catch(() => []);
+      console.log(`[retrieveActiveMemory] All auto narratives for char: ${allAutoNarratives.length}`);
+      
+      // Filter to backfilled ones
+      backfilledNarratives = allAutoNarratives.filter(n => n.triggered_by === 'backfill');
+      console.log(`[retrieveActiveMemory] Backfilled narratives found: ${backfilledNarratives.length}`);
+      
+      if (backfilledNarratives.length > 0) {
+        console.log(`[retrieveActiveMemory] First backfill: ${backfilledNarratives[0].narrative_text?.substring(0, 50)}`);
+      }
+    } catch (err) {
+      console.error(`[retrieveActiveMemory] Backfill fetch error: ${err.message}`);
+    }
+
+    // Convert backfilled narratives to memory-like format
+    const backfillMemories = backfilledNarratives.map(n => ({
+      id: n.id,
+      title: `[Timeline] ${n.time_of_day}`,
+      description: n.narrative_text,
+      emotional_impact: 'Contextual continuity',
+      timestamp: n.timestamp,
+      source_context: 'automatic_backfill',
+      _score: 10, // Highest priority
+    }));
+
+    // ── 2. FETCH ALL EXPLICIT MEMORIES (up to 500 — full long-term store) ──────────
     const allMemories = await base44.entities.Memory.filter(
       { character_id: characterId },
       '-timestamp',
       500
     );
 
-    if (allMemories.length === 0) {
+    // ── 3. COMBINE: backfill first, then explicit memories ──────────────────────
+    const combinedWithBackfill = [...backfillMemories, ...allMemories];
+
+    if (combinedWithBackfill.length === 0) {
       return Response.json({ memories: [], total: 0 });
     }
 
@@ -33,7 +74,7 @@ Deno.serve(async (req) => {
 
     // Score each memory by keyword overlap with current context
     // This ensures relevant memories from ANY point in history surface — not just recent
-    const scored = allMemories.map(mem => {
+    const scored = combinedWithBackfill.map(mem => {
       const memText = `${mem.title || ''} ${mem.description || ''} ${mem.emotional_impact || ''}`.toLowerCase();
       const words = contextText.split(/\W+/).filter(w => w.length > 3);
       let score = 0;
@@ -79,8 +120,9 @@ Deno.serve(async (req) => {
     });
 
     // Always include: top scored + always include the most recent 3 regardless of score
+    // Backfilled narratives (score=10) naturally bubble to the top
     const topScored = scored.slice(0, topK - 3);
-    const mostRecent = allMemories.slice(0, 3);
+    const mostRecent = combinedWithBackfill.slice(0, 3);
     const combined = [...topScored];
     for (const mem of mostRecent) {
       if (!combined.find(m => m.id === mem.id)) combined.push(mem);
@@ -98,8 +140,9 @@ Deno.serve(async (req) => {
 
     return Response.json({
       memories: result,
-      total: allMemories.length,
+      total: combinedWithBackfill.length,
       retrieved: result.length,
+      backfillCount: backfilledNarratives.length,
     });
 
   } catch (error) {
