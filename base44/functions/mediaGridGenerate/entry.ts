@@ -143,39 +143,59 @@ Deno.serve(async (req) => {
 
       const envRefs = (zoneImageUrls || []).map(toPublicCDN).filter(isAccessible).slice(0, 4);
 
+      // Use generateImageAsync's unified rules for consistency across all paths
+      // Multi-person images must still obey: camera flexibility, selfie rules, time-of-day lighting,
+      // zone truth, reference balance (70-80% structure / 20-30% flexibility)
       const multiPersonPrompt = `
 ════════════════════════════════════════════════════════════
-MULTI-PERSON IMAGE GENERATION — HARD IDENTITY LOCK
+MULTI-PERSON IMAGE GENERATION — SHARED RULES + IDENTITY LOCK
 ════════════════════════════════════════════════════════════
 
+CORE SCENE PROMPT:
 ${prompt}
 
 ════════════════════════════════════════════════════════════
-SELECTED PEOPLE — VISUAL CONTRACT (MANDATORY)
+REFERENCE IMAGE BALANCE (applies to ALL image generation)
 ════════════════════════════════════════════════════════════
+
+${envRefs.length > 0 ? `ENVIRONMENT (70–80% structural truth, 20–30% dynamic flexibility):
+  Images 1–${envRefs.length}: ROOM/ZONE STRUCTURE
+  ✅ PRESERVE: walls, floor, furniture, fixtures, objects, architecture, layout
+  ✓ REGENERATE: lighting (time-of-day), camera angle, framing, perspective
+  ⛔ Do NOT treat as static background — recompose from new camera viewpoint
+  ⛔ Do NOT invent replacement furniture
+  ⛔ Zone structure stays TRUE while camera and lighting CHANGE
+
+` : ''}
+SELECTED PEOPLE (100% identity lock from reference photos):
 
 ${people.map(p => {
   const label = p.role === 'user' ? 'User' : p.role.replace(/_/g, ' ').toUpperCase();
-  return `${label} (${p.id}): Images ${p.refStart}–${p.refStart + p.refCount - 1}
-  MUST MATCH EXACTLY: face, skin tone, hair, body, age range
-  DO NOT: substitute, approximate, or use generic person`;
+  const startIdx = envRefs.length + p.refStart;
+  const endIdx = envRefs.length + p.refStart + p.refCount - 1;
+  return `${label} (${p.id}): Images ${startIdx}–${endIdx}
+  ✅ MATCH EXACTLY: face structure, skin tone, hair, body type, age
+  ⛔ Do NOT: substitute, distort, use generic person, invent new body`;
 }).join('\n\n')}
 
 ════════════════════════════════════════════════════════════
-FAILURE CONDITIONS — IMAGE IS INVALID IF
+UNIFIED COMPOSITION RULE (all paths)
 ════════════════════════════════════════════════════════════
-🚫 Any selected person is missing or substituted with a generic person
-🚫 A selected person's face is distorted or doesn't match their reference
-🚫 Extra people appear who were not selected
-🚫 Wrong person appears in wrong role/position
-🚫 Identity references are ignored — faces must lock to the provided photos
+The image is ONE COHESIVE SCENE. All people are naturally integrated inside the zone.
+Do NOT:
+  🚫 Paste or enlarge any person over a static background
+  🚫 Disconnect person from room perspective
+  🚫 Change zone structure or replace furniture
+  🚫 Invent mirrors, counters, or other props
+  🚫 Create floating objects
 
-════════════════════════════════════════════════════════════
-SUCCESS CONDITION
-════════════════════════════════════════════════════════════
-EVERY selected person appears in the image, with faces matching their reference photos exactly.
-No substitutes. No generic people. No distortions.
+DO:
+  ✓ Move camera closer/farther if needed
+  ✓ Change camera angle for new viewpoint
+  ✓ Apply time-of-day lighting and fresh shadows
+  ✓ Reframe entire scene from new camera position
 `;
+
 
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
 
@@ -235,11 +255,38 @@ No substitutes. No generic people. No distortions.
       }
     }
 
-    // ── SINGLE-CHARACTER MODE (fallback, existing path) ────────────────────
-    console.log(`[mediaGridGenerate] Single-character mode: ${characterId}`);
+    // ── SINGLE-CHARACTER MODE (use shared generateImageAsync) ──────────────────
+    console.log(`[mediaGridGenerate] Single-character mode: delegating to generateImageAsync`);
 
-    // (existing single-person logic would go here — fallback to legacy flow)
-    return Response.json({ success: false, error: 'Single-character mode not yet implemented in mediaGridGenerate' }, { status: 400 });
+    // All image generation paths must use generateImageAsync for consistency
+    // This ensures selfie rules, time-of-day lighting, camera flexibility, reference balance,
+    // and zone truth rules are applied uniformly across Media Grid, Chat, Scene, and other paths
+    const singleCharRes = await base44.asServiceRole.functions.invoke('generateImageAsync', {
+      messageId,
+      prompt,
+      characterId,
+      characterName,
+      characterReferenceImages: (characterRefImages || []).map(toPublicCDN).filter(isAccessible),
+      userReferenceImages: userRefImages ? (userRefImages || []).map(toPublicCDN).filter(isAccessible) : [],
+      userWorldName: userName || null,
+      subjectType: subjectType || 'character',
+      characterEmotionalState: 'calm',
+      // NO manualLocationId — generateImageAsync resolves from character record
+    });
+
+    if (!singleCharRes?.data?.success) {
+      const errorMsg = singleCharRes?.data?.error || 'Image generation failed';
+      await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      return Response.json({ success: false, error: errorMsg }, { status: singleCharRes?.status || 500 });
+    }
+
+    console.log(`[mediaGridGenerate] ✓ Single-character SUCCESS via generateImageAsync: ${messageId}`);
+    return Response.json({
+      success: true,
+      imageUrl: singleCharRes.data.imageUrl,
+      messageId,
+      subjectType: 'character',
+    });
 
   } catch (error) {
     console.error('[mediaGridGenerate] Fatal:', error.message);
