@@ -3,7 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
-import { useRightNow } from "@/components/chat/RightNowButton";
+import { useRightNow } from "@/hooks/useRightNow";
 
 export default function ChatHeader({
   character,
@@ -66,7 +66,7 @@ export default function ChatHeader({
           if (id === "money") onSendMoneyToggle();
           if (id === "shopping") onShoppingToggle();
           if (id === "troubleshoot") onTroubleshootingToggle();
-          if (id === "right_now") (onRightNowToggle || handleRightNow)();
+          if (id === "right_now") handleRightNow();
         }}
       />
       </div>
