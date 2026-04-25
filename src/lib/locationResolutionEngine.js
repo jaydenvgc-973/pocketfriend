@@ -202,6 +202,30 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         resolved_zone: null,
       };
     }
+    // FALLBACK: Home ID exists but location not in map (legacy characters)
+    // Use the saved resolved_current_location_name field if available
+    if (character.resolved_current_location_name) {
+      return {
+        resolved_current_location_id: resolvedHomeId,
+        resolved_current_location_name: character.resolved_current_location_name,
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'home_free_time_legacy',
+        resolved_zone: null,
+      };
+    }
+  }
+
+  // Final fallback: Use resolved_current_location_name if character has it
+  if (character.resolved_current_location_name && character.resolved_current_location_id) {
+    return {
+      resolved_current_location_id: character.resolved_current_location_id,
+      resolved_current_location_name: character.resolved_current_location_name,
+      resolved_location_type: character.resolved_location_type || 'home',
+      resolved_presence_status: character.resolved_presence_status || 'home',
+      resolved_source_reason: 'database_saved_state',
+      resolved_zone: null,
+    };
   }
 
   // Fallback: Unknown location (should not happen)
