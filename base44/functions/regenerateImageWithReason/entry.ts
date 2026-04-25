@@ -143,6 +143,14 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
    ✓ Composition (MUST be reframed from new camera viewpoint)
    ✓ Depth of field and focus
 
+  ════════════════════════════════════════════════════════════
+  EXISTING OBJECTS FIRST — NO DUPLICATION
+  ════════════════════════════════════════════════════════════
+  CRITICAL: Use EXISTING furniture from images 1–${envEnd} FIRST.
+  If an object needs framing, MOVE THE CAMERA — do NOT invent or duplicate.
+  NEVER create a second table, couch, bed, stove, or counter when one exists.
+  If unframed, adjust camera angle/placement/position. Room truth stays fixed.
+
   NO OBJECT INVENTION — Every object must come from images 1–${envEnd}.
   NO STATIC BACKGROUND LOCK — Recompose the entire scene from the new camera position.`;
   }
@@ -152,34 +160,45 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
   if (reason === 'flawed') {
     reasonBlock = `
 
-FLAWED IMAGE CORRECTION:
-The previous image had rendering failures (body morphing, wrong room, furniture errors, texture glitches).
-Re-render with MAXIMUM fidelity. Every constraint above is non-negotiable.
-Correct: body proportions, furniture exact match, correct face/hair, anatomically correct hands/fingers.`;
+  FLAWED IMAGE CORRECTION:
+  The previous image had rendering failures (body morphing, wrong room, furniture errors, texture glitches, object duplication).
+  Re-render with MAXIMUM fidelity. Every constraint above is non-negotiable.
+  Correct: body proportions, furniture exact match (no duplication), correct face/hair/skin tone, anatomically correct hands/fingers, existing objects only.`;
   } else if (reason === 'no_avatar') {
     reasonBlock = `
 
-IDENTITY CORRECTION — "${charName}":
-The previous image did not look like the character. Fix identity with maximum precision.
-Reference images ${charStart}–${charEnd} are photographs of this exact person.
-Match PRECISELY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
-⛔ Do NOT generate an approximate or generic person.`;
+  IDENTITY CORRECTION — "${charName}":
+  The previous image did not look like the character. Fix identity with MAXIMUM PRECISION.
+  Reference images ${charStart}–${charEnd} are photographs of this exact person.
+  Match PRECISELY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
+  These appearance traits are ABSOLUTE TRUTH — NEVER approximate or substitute.
+  ⛔ Do NOT generate an approximate or generic person.`;
   } else if (reason === 'wrong_location') {
     reasonBlock = `
 
-LOCATION CORRECTION:
-The environment has been corrected. Reference images 1–${envEnd} show the CORRECT room.
-Reproduce this room with exact fidelity. The previous room was wrong — do NOT replicate it.`;
+  LOCATION CORRECTION:
+  The environment has been corrected. Reference images 1–${envEnd} show the CORRECT room.
+  Reproduce this room with EXACT fidelity. Use EXISTING furniture only — NO DUPLICATION or INVENTION.
+  The previous room was wrong — do NOT replicate it. Preserve all furniture from images 1–${envEnd}.`;
   }
 
   let identityLock = '';
   if (hasChar) {
     identityLock = `
 
-CHARACTER IDENTITY — "${charName}":
-Images ${charStart}–${charEnd} are photographs of this exact person.
-Match: face structure, eyes, skin tone, hair color/length/style, body type.
-⛔ Do NOT generate a generic or random person.`;
+  CHARACTER IDENTITY — "${charName}":
+  Images ${charStart}–${charEnd} are photographs of this exact person.
+  Match PRECISELY: face structure, eyes, skin tone, hair color/length/style, body type.
+
+  APPEARANCE LOCK (100% ABSOLUTE TRUTH):
+  ✅ Hair: Match the hairstyle, length, texture, and color from reference images exactly
+  ✅ Facial hair: Match the exact facial hair state (clean-shaven, stubble, beard, etc.)
+  ✅ Skin tone: Match the exact skin tone from reference images
+  ✅ Body type: Match the exact body structure and proportions from reference images
+
+  ⛔ Do NOT generate a generic, approximate, or random person
+  ⛔ Do NOT override appearance traits from the character record
+  ⛔ THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS`;
   }
 
   return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;

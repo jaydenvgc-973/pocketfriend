@@ -403,6 +403,27 @@ Lighting MUST be: ${timeLighting.desc}
   ✓ Composition (MUST be reframed from new viewpoint)
   ✓ Depth of field
 
+  ════════════════════════════════════════════════════════════
+  EXISTING OBJECTS FIRST — NO DUPLICATION
+  ════════════════════════════════════════════════════════════
+  CRITICAL RULE: When the scene requires a character to interact with an object (e.g., 'sitting at a table', 'on a couch', 'at a counter'):
+
+  ✅ ALWAYS use existing furniture from images ${envRefStart}–${envEnd} FIRST
+  ✅ If the object is not visible from current camera angle, MOVE THE CAMERA to frame the existing object correctly
+  ✅ Adjust: camera angle, camera placement, framing, character placement — NOT the furniture
+
+  ⛔ NEVER duplicate, invent, or replace furniture
+  ⛔ NEVER create a second table when one already exists
+  ⛔ NEVER invent a replacement sofa, stove, bed, or counter
+  ⛔ If an existing object cannot be framed comfortably, move the camera — the room truth stays fixed
+
+  REASONABLE CREATION (ONLY when):
+  • User explicitly requests something new (e.g., "add flowers to the table")
+  • Object is logically appropriate for the room
+  • Object does NOT contradict the zone
+  • Object does NOT replace an existing object
+  • Object does NOT duplicate an existing object
+
   NO OBJECT INVENTION — Every object must come from the structural truth of images ${envRefStart}–${envEnd}.
   NO STATIC BACKGROUND LOCK — Recompose the entire scene from the new camera position. The room is the same; the viewpoint is different.`;
   }
@@ -444,10 +465,12 @@ The scene lighting must match the actual world time, not the reference images.`;
   ✅ Shadows, highlights, and skin tones MUST match the time-of-day lighting, NOT reference image lighting
   ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — not a separate element pasted over background
   ✅ Character scale, position, and shadows MUST be consistent with the new camera viewpoint and room perspective
+  ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
   ⛔ Do NOT copy background, room, or pose from reference photos
   ⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and entire room perspective shifts
   ⛔ Do NOT paste the character in — recompose the entire scene with character integrated, sharing the same perspective and lighting
   ⛔ Do NOT copy props or lighting from reference photos
+  ⛔ Do NOT override appearance lock traits (hair, facial hair, skin tone) — these come from the character record, not reference images
   ⛔ LIGHTING COMES ONLY FROM SERVER TIME — NEVER FROM REFERENCE IMAGES
   ⛔ Do NOT render the reference image camera angle — render from the newly defined camera position only`;
   }
@@ -544,10 +567,15 @@ Deno.serve(async (req) => {
 
         // Build appearance descriptor — rich text description used when no reference photos exist
         // This is the PRIMARY identity source for characters without reference_image_urls
+        // CRITICAL: Include appearance_lock details (hair, facial_hair, skin_tone) as absolute identity traits
         const parts = [
           charRecord.age_range ? `${charRecord.age_range} years old` : null,
           charRecord.gender,
           charRecord.ethnicities?.length > 0 ? charRecord.ethnicities.join('/') + ' ethnicity' : null,
+          charRecord.appearance_lock?.skin_tone ? `${charRecord.appearance_lock.skin_tone} skin tone` : null,
+          charRecord.appearance_lock?.hairstyle ? `${charRecord.appearance_lock.hairstyle} hairstyle` : null,
+          charRecord.appearance_lock?.hair_type ? `${charRecord.appearance_lock.hair_type} hair` : null,
+          charRecord.appearance_lock?.facial_hair ? `${charRecord.appearance_lock.facial_hair}` : null,
           charRecord.appearance_notes || null,
           charRecord.avatar_description_text || null, // text description from photo uploader
         ].filter(Boolean);
