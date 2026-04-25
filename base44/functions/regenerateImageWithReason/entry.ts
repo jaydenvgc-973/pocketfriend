@@ -275,23 +275,24 @@ Deno.serve(async (req) => {
 
       if (charRecord) {
         charName = charRecord.name;
-        const allUrls = [charRecord.avatar_url, ...(charRecord.reference_image_urls || [])].filter(Boolean);
-        charRefs = cdnFilter(allUrls).slice(0, 3);
-        console.log(`[regenerateImageWithReason] Character "${charName}" — refs: ${charRefs.length}`);
+        // CRITICAL: Only use reference_image_urls, NOT avatar.
+        // Avatar is typically a raw selfie/mirror shot — when passed as a reference, the AI copies its entire visual context
+        // (background, pose, props, lighting), causing scene contamination. This is the ROOT CAUSE of "pasted character" failures.
+        // If no reference images exist, generate from text description only.
+        const refUrls = cdnFilter(charRecord.reference_image_urls || []);
+        charRefs = refUrls.slice(0, 3);
+        console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs from reference_image_urls only: ${charRefs.length} (NOT using avatar to prevent scene contamination)`);
       }
 
-      // Fallback: use refs stored in generation_context
+      // Fallback: use refs stored in generation_context (which should also be reference images only, not avatar)
       if (charRefs.length === 0 && ctx.character_reference_images?.length > 0) {
         charRefs = cdnFilter(ctx.character_reference_images).slice(0, 3);
         console.log(`[regenerateImageWithReason] Using stored charRefs: ${charRefs.length}`);
       }
 
+      // If still no refs, continue with text-only identity (do NOT fall back to avatar)
       if (charRefs.length === 0) {
-        console.error(`[regenerateImageWithReason] ⛔ Zero identity refs for "${charName}"`);
-        return Response.json({
-          success: false,
-          error: `No usable identity photos for "${charName}". Re-upload the character's avatar photo.`,
-        }, { status: 422 });
+        console.log(`[regenerateImageWithReason] ℹ️ No reference images for "${charName}" — will generate from text description only (no avatar fallback to prevent contamination)`);
       }
     }
 
