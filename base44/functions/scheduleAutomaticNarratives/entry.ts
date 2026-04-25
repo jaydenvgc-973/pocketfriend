@@ -20,8 +20,6 @@ Deno.serve(async (req) => {
       {
         status: 'active',
         character_type: 'active_created_character',
-        is_test_character: false,
-        diagnostic_only: false,
       },
       null,
       500 // Fetch up to 500 active characters

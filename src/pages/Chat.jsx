@@ -20,7 +20,6 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import DialogueSelector from "@/components/chat/DialogueSelector";
 import WorldContactsPopup from "@/components/chat/WorldContactsPopup";
 import TroubleshootingPanel from "@/components/chat/TroubleshootingPanel";
-import { useCatchUpNarrative } from "@/hooks/useCatchUpNarrative";
 import DeleteMemoryChoiceModal from "@/components/chat/DeleteMemoryChoiceModal";
 import ForwardMessageModal from "@/components/chat/ForwardMessageModal";
 import GameLauncher from "@/components/games/GameLauncher";
@@ -82,13 +81,11 @@ export default function Chat() {
   const [showNarrativeAction, setShowNarrativeAction] = useState(false);
   const [showShopping, setShowShopping] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
+  const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
   });
-
-  // ── CATCH-UP NARRATIVES: When user returns after time has passed ────────
-  useCatchUpNarrative(conversationId, characterId, character);
 
   const bottomRef = useRef(null);
   const { activeCharacter } = useActiveCharacter();
@@ -503,22 +500,26 @@ export default function Chat() {
         // This forces CharacterCard.countUnread() to run again and see zero unread
         queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
 
-        console.log(`[BADGE] Conversation ${conversationId} marked as read. CharacterCard will recount on next render.`);
       } catch (err) {
-        console.error(`[BADGE] markThreadRead failed:`, err.message);
-        // Still update local state even if backend call failed
         if (isMounted) {
-          setMessages(prev => prev.map(m =>
-            m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m
-          ));
+          setMessages(prev => prev.map(m => m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m));
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       }
+      // Catch-up narrative: detect time gap since last user message on open
+      if (isMounted && messages.length > 0) {
+        const lastUserMsg = [...messages].reverse().find(m => m.sender_type === 'user');
+        if (lastUserMsg) {
+          const lastTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date);
+          if ((new Date() - lastTime) / 60000 >= 30) {
+            base44.functions.invoke('generateCatchupNarrative', { characterId, lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date })
+              .then(r => { if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText); })
+              .catch(() => {});
+          }
+        }
+      }
     })();
-
-    return () => {
-      isMounted = false;
-    };
+    return () => { isMounted = false; };
   }, [conversationId]);
 
   useEffect(() => {
@@ -1202,6 +1203,11 @@ ${songsInfo}`;
       // ── LIVE NEEDS: full state consistency enforcement ─────────────────────
       const needsContext = buildNeedsContextBlock(character);
 
+      // ── CATCH-UP NARRATIVE CONTEXT: inject when user returns after time away ──
+      const catchupContext = catchupNarrativeText
+        ? `\n\nTIMELINE CATCH-UP — WHAT HAPPENED WHILE THE USER WAS AWAY:\n${catchupNarrativeText}\nThis is real. You lived through it. Reference it naturally when appropriate. Do NOT pretend the last message was just seconds ago.`
+        : "";
+
       // Hard validation: if AI response contradicts resolved presence, it gets corrected before display
       const _presenceForValidation = livePresence;
 
@@ -1312,7 +1318,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
@@ -1462,6 +1468,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
+
+      // Clear catch-up context after it's been used once in the first response
+      if (catchupNarrativeText) {
+        setCatchupNarrativeText(null);
+      }
     } catch (err) {
       if (isMountedRef.current) {
         setIsTyping(false);
