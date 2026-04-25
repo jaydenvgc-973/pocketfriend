@@ -52,20 +52,20 @@ function NeedsEditor({ character }) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-2">
       {NEEDS_DEF.map(({ label, dbKey, emoji }) => {
         const val = values[dbKey];
         const { bar, text, label: statusLabel } = getBarColor(val);
         return (
           <div key={dbKey}>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center justify-between mb-0.5">
               <span className="text-xs font-medium text-foreground">{emoji} {label}</span>
               <div className="flex items-center gap-1.5">
                 <span className="text-[10px] font-mono text-muted-foreground">{val}</span>
                 <span className={`text-[10px] font-semibold ${text}`}>{statusLabel}</span>
               </div>
             </div>
-            <div className="h-2 bg-secondary rounded-full overflow-hidden mb-1.5">
+            <div className="h-2 bg-secondary rounded-full overflow-hidden mb-1">
               <div className={`h-full ${bar} transition-all duration-150`} style={{ width: `${val}%` }} />
             </div>
             <input
