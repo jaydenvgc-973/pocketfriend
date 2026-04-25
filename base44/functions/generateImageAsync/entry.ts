@@ -284,7 +284,11 @@ Deno.serve(async (req) => {
         // copy its pose, background, props, and lighting directly into generated scenes.
         // reference_image_urls are the canonical face/identity sources.
         // Only fall back to avatar if no reference images exist at all.
-        const refUrls = cdnFilter(charRecord.reference_image_urls || []);
+        // Filter out AI-generated images (generated_image.png) — these are AI outputs, not face photos.
+        // Using generated images as identity references causes the model to reproduce them verbatim
+        // instead of generating a new scene. Only real uploaded photos should drive identity.
+        const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
+        const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
         if (refUrls.length > 0) {
           // Use reference images only — skip avatar to prevent pose/background bleed
           charRefs = refUrls.slice(0, 3);
