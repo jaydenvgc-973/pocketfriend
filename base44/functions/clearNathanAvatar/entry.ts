@@ -1,29 +1,24 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+/**
+ * DECOMMISSIONED — clearNathanAvatar
+ *
+ * This function previously set avatar_url = null on a hardcoded character ID.
+ * It has been disabled because:
+ *   - It used a hardcoded ID that may have belonged to a different character than intended
+ *   - Automatically clearing avatar_url is unsafe and violates avatar stability rules
+ *   - The function name references Nathan but the ID may have targeted Ethan
+ *
+ * DO NOT RE-ENABLE this function without verifying the exact character_id,
+ * owner_user_id, and intended operation.
+ *
+ * If you need to reset an avatar, use the universal repairCharacterImages function
+ * which requires explicit character_id confirmation and user consent.
+ */
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-
-    if (!user || user.role !== 'admin') {
-      return Response.json({ error: 'Admin access required' }, { status: 403 });
-    }
-
-    // Update Nathan's avatar to null to allow regeneration
-    // ID from the database read: 69c7b299fe07fcd80eedfdfc
-    const nathanId = '69c7b299fe07fcd80eedfdfc';
-    
-    await base44.asServiceRole.entities.Character.update(nathanId, {
-      avatar_url: null
-    });
-
-    return Response.json({
-      success: true,
-      message: 'Nathan avatar cleared for regeneration',
-      nathanId
-    });
-  } catch (error) {
-    console.error('Error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
-  }
+  return Response.json({
+    status: 'DECOMMISSIONED',
+    message: 'clearNathanAvatar has been permanently disabled. It used a hardcoded character ID and set avatar_url = null without safety checks. Use repairCharacterImages instead.',
+    safe: true,
+  });
 });

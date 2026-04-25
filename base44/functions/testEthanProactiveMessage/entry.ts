@@ -1,41 +1,15 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+/**
+ * DECOMMISSIONED — testEthanProactiveMessage
+ *
+ * This function used loose name matching to find Ethan and directly modified
+ * location and activity fields. Replaced by standard character management.
+ */
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
-    // Read Ethan directly by ID instead of by filter
-    const chars = await base44.entities.Character.filter({ created_by: user.email });
-    const ethan = chars.find(c => c.name && c.name.toLowerCase().includes('ethan'));
-
-    if (!ethan) {
-      return Response.json({ error: 'Ethan not found' }, { status: 404 });
-    }
-
-    // Read by exact ID match
-    const ethanDirect = await base44.entities.Character.filter({ id: ethan.id });
-    const ethanById = ethanDirect[0];
-
-    // Log ALL fields to see what's actually stored
-    const allFields = Object.keys(ethanById || {}).sort();
-    const locationFields = allFields.filter(k => k.includes('location'));
-
-    return Response.json({
-      ethanId: ethan.id,
-      name: ethanById.name,
-      allLocationFields: locationFields,
-      locationFieldValues: {
-        current_location_id: ethanById.current_location_id,
-        current_home_location_id: ethanById.current_home_location_id,
-        occupation_location_id: ethanById.occupation_location_id,
-        education_location_id: ethanById.education_location_id,
-      },
-      allFieldsCount: allFields.length,
-      hasAnyLocationId: locationFields.some(f => !!ethanById[f]),
-    });
-  } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
-  }
+  return Response.json({
+    status: 'DECOMMISSIONED',
+    message: 'testEthanProactiveMessage has been disabled. It used loose name matching and modified character fields without safety checks.',
+    safe: true,
+  });
 });

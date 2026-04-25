@@ -1,79 +1,23 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+/**
+ * DECOMMISSIONED — finalEthanReset
+ *
+ * This function previously found a character by loose name match ("includes ethan")
+ * and applied hardcoded fixes to location, activity, and system_prompt fields.
+ *
+ * It has been disabled because:
+ *   - Loose name matching is unsafe — any character with "ethan" in the name could be targeted
+ *   - It could confuse Ethan and Nathan if either name partially matched
+ *   - It applied automatic changes without user confirmation
+ *   - The same fix logic now exists in the standard character management system
+ *
+ * DO NOT RE-ENABLE. Ethan must be managed through the same standard pipeline as all characters.
+ */
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 Deno.serve(async (req) => {
-  try {
-    const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
-    // Find Ethan
-    const characters = await base44.entities.Character.filter({ created_by: user.email });
-    const ethan = characters.find(c => c.name.toLowerCase().includes('ethan'));
-    
-    if (!ethan) {
-      return Response.json({ error: 'Ethan not found' }, { status: 404 });
-    }
-
-    const fixes = [];
-
-    // Fix 1: Set current_location_id to work location (he's at work right now)
-    if (ethan.occupation_location_id && !ethan.current_location_id) {
-      await base44.entities.Character.update(ethan.id, {
-        current_location_id: ethan.occupation_location_id,
-      });
-      fixes.push({
-        field: 'current_location_id',
-        oldValue: null,
-        newValue: ethan.occupation_location_id,
-        reason: 'Set to work location (Anderson\'s Bar) since it\'s during work hours',
-      });
-    }
-
-    // Fix 2: Ensure current_activity reflects location
-    if (ethan.current_activity === 'sleeping' && ethan.occupation_location_id) {
-      await base44.entities.Character.update(ethan.id, {
-        current_activity: 'working at Anderson\'s Bar',
-      });
-      fixes.push({
-        field: 'current_activity',
-        oldValue: 'sleeping',
-        newValue: 'working at Anderson\'s Bar',
-        reason: 'Updated stale activity to match work schedule',
-      });
-    }
-
-    // Fix 3: Ensure system_prompt is set (complete character data)
-    if (!ethan.system_prompt) {
-      const systemPrompt = `You are ${ethan.name}. ${ethan.profile_summary || ''}`;
-      await base44.entities.Character.update(ethan.id, {
-        system_prompt: systemPrompt,
-      });
-      fixes.push({
-        field: 'system_prompt',
-        oldValue: null,
-        newValue: systemPrompt.substring(0, 50) + '...',
-        reason: 'Generated missing system prompt',
-      });
-    }
-
-    // Verify all fixes applied
-    const ethanVerify = await base44.entities.Character.filter({ id: ethan.id });
-    const updated = ethanVerify[0];
-
-    return Response.json({
-      timestamp: new Date().toISOString(),
-      character: ethan.name,
-      characterId: ethan.id,
-      fixes,
-      verification: {
-        hasCurrentLocationId: !!updated.current_location_id,
-        currentLocationId: updated.current_location_id,
-        currentActivity: updated.current_activity,
-        hasSystemPrompt: !!updated.system_prompt,
-      },
-      status: 'COMPLETE: Ethan location and activity data restored',
-    });
-  } catch (error) {
-    return Response.json({ error: error.message, stack: error.stack }, { status: 500 });
-  }
+  return Response.json({
+    status: 'DECOMMISSIONED',
+    message: 'finalEthanReset has been permanently disabled. It used loose name matching and applied automatic character data changes without safety checks.',
+    safe: true,
+  });
 });
