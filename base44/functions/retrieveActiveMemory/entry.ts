@@ -19,36 +19,25 @@ Deno.serve(async (req) => {
     console.log(`[retrieveActiveMemory] Starting for char=${characterId}`);
 
     // ── 1. FETCH BACKFILLED NARRATIVES FIRST (highest priority) ──────────
-    // Backfilled events are stored in AutomaticNarrative with is_catch_up=true
+    // Backfilled events are stored in AutomaticNarrative with triggered_by='backfill'
     let backfilledNarratives = [];
     try {
-      console.log(`[retrieveActiveMemory] Querying AutomaticNarrative for char_id=${characterId}, is_catch_up=true`);
+      // Query AutomaticNarrative for backfilled records (same entity that backfillMissingNarratives writes to)
       const allAutoNarratives = await base44.asServiceRole.entities.AutomaticNarrative.filter(
         { character_id: characterId, is_catch_up: true },
         '-timestamp',
         50
       );
-      backfilledNarratives = allAutoNarratives || [];
-      console.log(`[retrieveActiveMemory] Query returned: ${backfilledNarratives.length} backfilled records`);
+      console.log(`[retrieveActiveMemory] AutomaticNarrative backfill records for char: ${allAutoNarratives.length}`);
+      backfilledNarratives = allAutoNarratives;
+      
       if (backfilledNarratives.length > 0) {
-        console.log(`[retrieveActiveMemory] First record ID: ${backfilledNarratives[0].id}, text: "${backfilledNarratives[0].narrative_text?.substring(0, 80)}..."`);
+        console.log(`[retrieveActiveMemory] Most recent backfill: ${backfilledNarratives[0].narrative_text?.substring(0, 80)}`);
       }
     } catch (err) {
       console.error(`[retrieveActiveMemory] Backfill fetch error: ${err.message}`);
       backfilledNarratives = [];
     }
-
-    // ── INJECT BACKFILLED NARRATIVES INTO MEMORY CONTEXT ─────────────────
-    // Convert backfilled narratives to memory-like objects with highest priority
-    const backfillMemories = backfilledNarratives.map((n, idx) => ({
-      id: n.id,
-      title: `[Timeline] ${n.time_of_day?.replace(/_/g, ' ') || 'Missed Time'}`,
-      description: n.narrative_text || '',
-      emotional_impact: 'Continuity of timeline',
-      timestamp: n.timestamp,
-      source_context: 'automatic_backfill',
-      _score: 100 - idx, // Backfilled narratives get highest scores
-    }));
 
     // ── 2. FETCH ALL EXPLICIT MEMORIES (up to 500 — full long-term store) ──────────
     const allMemories = await base44.entities.Memory.filter(
@@ -57,8 +46,18 @@ Deno.serve(async (req) => {
       500
     );
 
-    // ── 3. COMBINE: backfill first, then explicit memories ──────────────────────
-    const combinedWithBackfill = [...backfillMemories, ...allMemories];
+    // ── 3. COMBINE: backfilled narratives + explicit memories ──────────────────────
+    // Backfilled narratives are AutomaticNarrative records (same structure as memory objects)
+    const backfillAsMemories = backfilledNarratives.map(n => ({
+      id: n.id,
+      title: `[Timeline] ${n.time_of_day?.replace(/_/g, ' ') || 'Missed Time'}`,
+      description: n.narrative_text,
+      emotional_impact: 'Continuity of timeline',
+      timestamp: n.timestamp,
+      source_context: 'automatic_backfill',
+      _score: 10, // Highest priority
+    }));
+    const combinedWithBackfill = [...backfillAsMemories, ...allMemories];
 
     if (combinedWithBackfill.length === 0) {
       return Response.json({ memories: [], total: 0 });

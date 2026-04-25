@@ -2,7 +2,7 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
  * Generate a catch-up narrative when user returns to chat after time has passed.
- * Uses backfilled CharacterAutomaticNarrative records to build the catch-up text.
+ * Uses backfilled AutomaticNarrative records to build the catch-up text.
  * Called from Chat page before character responds.
  */
 Deno.serve(async (req) => {
@@ -53,8 +53,9 @@ Deno.serve(async (req) => {
     }
 
     // ── 3. FETCH BACKFILLED NARRATIVES ───────────────────────────────────
-    // Read from AutomaticNarrative where backfillMissingNarratives writes
+    // These are AutomaticNarrative records saved by backfillMissingNarratives with triggered_by='backfill'
     let backfilledNarratives = [];
+    
     try {
       backfilledNarratives = await base44.asServiceRole.entities.AutomaticNarrative.filter(
         { character_id: characterId, is_catch_up: true },
@@ -63,7 +64,7 @@ Deno.serve(async (req) => {
       );
       console.log(`[generateCatchupNarrative] Found ${backfilledNarratives.length} backfilled narratives in AutomaticNarrative`);
     } catch (err) {
-      console.error(`[generateCatchupNarrative] Backfill fetch error: ${err.message}`);
+      console.error(`[generateCatchupNarrative] AutomaticNarrative fetch error: ${err.message}`);
       backfilledNarratives = [];
     }
 
