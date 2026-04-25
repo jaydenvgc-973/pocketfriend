@@ -120,6 +120,12 @@ function resolveZoneFromLocation(location, promptLower) {
 function selectCameraPosition(zoneName, seed = '', prompt = '') {
   const promptLower = (prompt || '').toLowerCase();
   
+  // HIGHEST PRIORITY: Selfie detection — extremely close, arm's length distance
+  const isSelfie = /selfie|self-portrait|self portrait/.test(promptLower);
+  if (isSelfie) {
+    return 'extreme close-up, selfie perspective, camera at arm\'s length from subject\'s face, personal and intimate framing';
+  }
+  
   // Context-aware camera positions based on prompt content
   const isSittingAtTable = /sitting at.*table|at.*table.*eating|seated at.*table|at the table/.test(promptLower);
   const isSittingOnCouch = /sitting on.*couch|on the couch|lounging on.*sofa|couch/.test(promptLower);
