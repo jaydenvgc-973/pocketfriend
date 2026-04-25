@@ -35,7 +35,7 @@ Deno.serve(async (req) => {
     const lastUserTime = lastUserMsg ? new Date(lastUserMsg.timestamp || lastUserMsg.created_date) : null;
 
     // Get last automatic narrative for this character
-    const narratives = await base44.entities.CharacterAutomaticNarrative.filter(
+    const narratives = await base44.entities.AutomaticNarrative.filter(
       { character_id: characterId },
       '-timestamp',
       1
