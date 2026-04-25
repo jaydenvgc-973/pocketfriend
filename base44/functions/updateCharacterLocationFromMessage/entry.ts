@@ -21,8 +21,9 @@ function normalizePhrase(p) {
 }
 
 const PLACE_PATTERNS = [
-  /\b(?:i'm at|i am at|i'm in|currently at|just got to|heading to|at the|going to the|at my|made it to|just pulled up to|arrived at)\s+([\w\s'']+?)(?:\s*[,.]|$)/i,
-  /\b(?:i'm|i am)\s+(?:at|in)\s+(?:the\s+)?([\w\s'']+?)(?:\s*[,.]|$)/i,
+  // "heading to the bar", "going to the gym", "at the bar" — stop before "to see/check/find/meet/get", conjunctions, or sentence end
+  /\b(?:i'm at|i am at|i'm in|currently at|just got to|heading to(?:\s+the)?|at the|going to the|going to|at my|made it to|just pulled up to|arrived at)\s+([\w\s'']+?)(?=\s+to\s+(?:see|check|find|meet|get|grab|pick)|[,.]|\s+(?:so|and|but|because|since|where|who|with|for)\b|$)/i,
+  /\b(?:i'm|i am)\s+(?:at|in)\s+(?:the\s+)?([\w\s'']+?)(?=\s+to\s+(?:see|check|find|meet|get)|[,.]|\s+(?:so|and|but|because|since|where|who|with)\b|$)/i,
 ];
 
 const RABBIT_HOLE_TERMS = new Set([
