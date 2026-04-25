@@ -19,12 +19,10 @@ export function useRightNow({ characterId, conversationId, character, setMessage
         forceGenerate: true,
       });
 
-      console.log('[RightNow] Response:', res);
-
-      // Handle response structure: { data: { narrativeText, ... } }
-      const narrativeText = res?.data?.narrativeText || res?.narrativeText;
+      const narrativeText = res?.data?.narrativeText;
       
       if (narrativeText) {
+        // Post to conversation
         const narrativeMsg = await base44.entities.Message.create({
           conversation_id: conversationId,
           sender_type: 'character',
@@ -36,9 +34,6 @@ export function useRightNow({ characterId, conversationId, character, setMessage
           timestamp: new Date().toISOString(),
         });
         setMessages(prev => prev.some(m => m.id === narrativeMsg.id) ? prev : [...prev, narrativeMsg]);
-        console.log('[RightNow] Narrative posted:', narrativeMsg.id);
-      } else {
-        console.warn('[RightNow] No narrative text in response:', res);
       }
     } catch (err) {
       console.error('[RightNow] Failed:', err.message);
