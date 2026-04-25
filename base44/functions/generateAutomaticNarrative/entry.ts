@@ -3,10 +3,11 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    
+
     const {
       characterId,
       forceGenerate = false,
+      trigger = 'interval',
     } = await req.json();
 
     if (!characterId) {
@@ -16,7 +17,7 @@ Deno.serve(async (req) => {
     // ── FETCH CHARACTER ───────────────────────────────────────────────────
     const charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
     const character = charList?.[0];
-    
+
     if (!character) {
       return Response.json({ error: 'Character not found', characterId }, { status: 404 });
     }
@@ -24,51 +25,55 @@ Deno.serve(async (req) => {
     const ownerEmail = character.owner_email || character.created_by;
     const ownerUser = character.owner_user_id;
 
-    console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | owner: ${ownerEmail}`);
+    console.log(`[generateAutomaticNarrative] ▶ Character: ${character.name} (${characterId}) | trigger: ${trigger}`);
 
-    // ── CHECK INTERVAL ────────────────────────────────────────────────────
+    // ── CHECK INTERVAL (skip for manual triggers) ─────────────────────────
     const NOW = new Date();
-    const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
-      { character_id: characterId },
-      '-timestamp',
-      1
-    );
-    const lastNarrative = lastNarrativeList?.[0];
-    const INTERVAL_MINUTES = 30; // Configurable
-    const minIntervalMs = INTERVAL_MINUTES * 60 * 1000;
+    const isManual = trigger === 'manual_right_now';
 
-    if (!forceGenerate && lastNarrative) {
-      const timeSinceLastMs = NOW.getTime() - new Date(lastNarrative.timestamp).getTime();
-      if (timeSinceLastMs < minIntervalMs) {
-        const nextEligibleTime = new Date(new Date(lastNarrative.timestamp).getTime() + minIntervalMs);
-        console.log(`[generateAutomaticNarrative] ⏭️ ${character.name} skipped (interval check): last=${lastNarrative.timestamp} | next eligible=${nextEligibleTime.toISOString()}`);
-        return Response.json({
-          success: false,
-          skipped: true,
-          reason: 'interval_not_reached',
-          lastNarrativeTime: lastNarrative.timestamp,
-          nextEligibleTime: nextEligibleTime.toISOString(),
-        });
+    if (!forceGenerate && !isManual) {
+      const lastNarrativeList = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
+        { character_id: characterId },
+        '-timestamp',
+        1
+      );
+      const lastNarrative = lastNarrativeList?.[0];
+      const INTERVAL_MINUTES = 30;
+      const minIntervalMs = INTERVAL_MINUTES * 60 * 1000;
+
+      if (lastNarrative) {
+        const timeSinceLastMs = NOW.getTime() - new Date(lastNarrative.timestamp).getTime();
+        if (timeSinceLastMs < minIntervalMs) {
+          const nextEligibleTime = new Date(new Date(lastNarrative.timestamp).getTime() + minIntervalMs);
+          console.log(`[generateAutomaticNarrative] ⏭️ Skipped (interval): next=${nextEligibleTime.toISOString()}`);
+          return Response.json({
+            success: false, skipped: true, reason: 'interval_not_reached',
+            lastNarrativeTime: lastNarrative.timestamp,
+            nextEligibleTime: nextEligibleTime.toISOString(),
+          });
+        }
       }
     }
 
-    // ── RESOLVE LOCATION ──────────────────────────────────────────────────
-    const locationId = 
+    // ── RESOLVE LOCATION — single source of truth ─────────────────────────
+    const locationId =
       character.resolved_current_location_id ||
       character.current_home_location_id ||
-      character.home_location_id ||
       null;
 
     let location = null;
-    let resolvedLocationName = 'Location Unknown';
+    let resolvedLocationName = 'home';
     let resolvedZoneName = null;
+    let locationCategory = 'home';
+    let locationDescription = '';
 
     if (locationId) {
       const locList = await base44.asServiceRole.entities.LocationReference.filter({ id: locationId }, null, 1);
       location = locList?.[0];
       if (location) {
         resolvedLocationName = location.name;
-        // Try to pick a zone for the narrative
+        locationCategory = location.category || 'generic';
+        locationDescription = location.description || '';
         if (location.zones && location.zones.length > 0) {
           resolvedZoneName = location.zones[0].zone_name;
         }
@@ -77,19 +82,58 @@ Deno.serve(async (req) => {
 
     console.log(`[generateAutomaticNarrative] Location: ${resolvedLocationName} (${locationId || 'none'})`);
 
-    // ── DETERMINE STATE ───────────────────────────────────────────────────
-    const hour = NOW.getHours();
-    const timeOfDay = 
-      hour >= 5 && hour < 9 ? 'early_morning' :
-      hour >= 9 && hour < 12 ? 'morning' :
-      hour >= 12 && hour < 15 ? 'midday' :
-      hour >= 15 && hour < 18 ? 'afternoon' :
-      hour >= 18 && hour < 21 ? 'evening' :
-      'night';
+    // ── DETERMINE STATE — precise and enforced ────────────────────────────
+    const nowET = new Date(NOW.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const hour = nowET.getHours();
+    const minute = nowET.getMinutes();
+    const currentMinutes = hour * 60 + minute;
 
-    const sleepState = character.location_visibility_state === 'hidden' ? 'sleeping' : 'awake';
-    const travelState = character.travel_status === 'not_traveling' ? 'stationary' : 'in_transit';
-    const workState = 'not_working'; // Simplified for now
+    const timeOfDay =
+      hour >= 5 && hour < 7 ? 'early_morning' :
+      hour >= 7 && hour < 10 ? 'morning' :
+      hour >= 10 && hour < 12 ? 'late_morning' :
+      hour >= 12 && hour < 14 ? 'midday' :
+      hour >= 14 && hour < 17 ? 'afternoon' :
+      hour >= 17 && hour < 20 ? 'evening' :
+      hour >= 20 && hour < 23 ? 'night' :
+      'late_night';
+
+    // Sleep state — use schedule fields
+    const wakeHour = character.wake_up_time ? parseInt(character.wake_up_time.split(':')[0]) : 7;
+    const sleepHour = character.sleep_start_time ? parseInt(character.sleep_start_time.split(':')[0]) : 23;
+    const isAsleep = hour >= sleepHour || hour < wakeHour;
+    const sleepState = isAsleep ? 'asleep' : 'awake';
+
+    // Work state — check schedule fields
+    let workState = 'off_work';
+    let isAtWork = false;
+    if (character.work_days && character.work_start_time && character.work_end_time) {
+      const dayOfWeek = nowET.getDay();
+      const [wsh, wsm] = character.work_start_time.split(':').map(Number);
+      const [weh, wem] = character.work_end_time.split(':').map(Number);
+      const workStart = wsh * 60 + wsm;
+      const workEnd = weh * 60 + wem;
+      if (character.work_days.includes(dayOfWeek) && currentMinutes >= workStart && currentMinutes < workEnd) {
+        workState = 'at_work';
+        isAtWork = true;
+      }
+    }
+    if (character.resolved_presence_status === 'at_work') {
+      workState = 'at_work';
+      isAtWork = true;
+    }
+
+    // Travel state
+    const travelState =
+      character.travel_status && character.travel_status !== 'not_traveling' ? 'traveling' :
+      character.resolved_presence_status === 'traveling' ? 'traveling' :
+      'at_location';
+
+    const isTraveling = travelState === 'traveling';
+    const travelDestination = character.traveling_to_location_name || character.travel_destination_location_id || null;
+
+    // Presence
+    const presenceStatus = character.resolved_presence_status || 'home';
 
     // ── NEEDS SNAPSHOT ────────────────────────────────────────────────────
     const needsSnapshot = {
@@ -103,39 +147,81 @@ Deno.serve(async (req) => {
       comfort: character.comfort_value ?? 70,
     };
 
-    // ── GENERATE NARRATIVE ────────────────────────────────────────────────
-    // Use LLM to create a natural narrative respecting state
-    let narrativePrompt = `Generate a short, natural automatic narrative (2-3 sentences) for ${character.name}.
+    // ── BUILD STATE-ACCURATE PROMPT ───────────────────────────────────────
+    const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    const dayName = nowET.toLocaleDateString('en-US', { weekday: 'long' });
 
-CONSTRAINTS:
-- Current time: ${timeOfDay} (${hour}:${String(NOW.getMinutes()).padStart(2, '0')})
-- Sleep state: ${sleepState}
-- Location: ${resolvedLocationName}${resolvedZoneName ? ` (${resolvedZoneName})` : ''}
-- Current needs: hunger=${needsSnapshot.hunger} energy=${needsSnapshot.energy} social=${needsSnapshot.social}
+    // Derive the dominant constraint
+    let situationBlock = '';
+    if (isAsleep) {
+      situationBlock = `SITUATION: ${character.name} is ASLEEP right now.
+- Do NOT depict them awake, moving, speaking, or doing anything active.
+- Narrative must reflect sleep: physical rest, breathing, stillness, possible dreams, subconscious.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}`;
+    } else if (isTraveling) {
+      situationBlock = `SITUATION: ${character.name} is TRAVELING right now.
+- They are in transit${travelDestination ? ` to ${travelDestination}` : ''}.
+- Narrative must reflect movement, transition, anticipation, or the journey.
+- Do NOT depict them already arrived or stationary at a destination.`;
+    } else if (isAtWork) {
+      situationBlock = `SITUATION: ${character.name} is AT WORK right now.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Occupation: ${character.occupation || 'their job'}
+- Narrative must reflect work tasks, work environment, coworkers, or professional mindset.
+- Do NOT depict them at home, relaxing, or away from work.`;
+    } else {
+      situationBlock = `SITUATION: ${character.name} is AWAKE and ${presenceStatus === 'home' ? 'at home' : `at ${resolvedLocationName}`}.
+- Location: ${resolvedLocationName}${resolvedZoneName ? ` — ${resolvedZoneName}` : ''}
+- Category: ${locationCategory}
+${locationDescription ? `- Environment: ${locationDescription}` : ''}
+- Narrative must reflect what they'd realistically be doing here at this time.`;
+    }
 
-CHARACTER CONTEXT:
-Personality: ${character.personality_summary || 'unknown'}
-Current activity: ${character.current_activity || 'none'}
+    // Needs color
+    const needsHints = [];
+    if (needsSnapshot.hunger < 40) needsHints.push('they are noticeably hungry');
+    if (needsSnapshot.energy < 35) needsHints.push('they feel exhausted');
+    if (needsSnapshot.social < 30) needsHints.push('they feel isolated or lonely');
+    if (needsSnapshot.hygiene < 35) needsHints.push('they feel like they need to clean up');
+    if (needsSnapshot.mental < 30) needsHints.push('they are mentally stressed or overwhelmed');
+    const needsLine = needsHints.length > 0
+      ? `\nCURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join(', ')}.`
+      : '';
 
-RULES:
-- If ${sleepState === 'sleeping'}, describe sleeping/resting state only, not awake activities
-- Use real current time (${timeOfDay}), not fictional time
-- Reflect needs naturally (low energy = might rest, high hunger = might think of food)
-- Keep narrative short and internal (what they're experiencing, thinking, or doing)
-- Do NOT narrate actions that would violate their sleep state
+    const narrativePrompt = `Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${character.name} is experiencing RIGHT NOW.
 
-Generate narrative text only, no labels.`;
+TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
+
+${situationBlock}
+
+CHARACTER:
+- Name: ${character.name}
+- Personality: ${character.personality_summary || 'not defined'}
+- Emotional state: ${character.emotional_state || 'calm'}
+- Current activity context: ${character.current_activity || 'none noted'}
+${needsLine}
+
+CRITICAL RULES:
+1. NEVER contradict the situation block above — it is the ground truth.
+2. Write in present tense, third-person (${character.name} is..., they are...).
+3. Make it immersive and specific to the location and time.
+4. Reflect needs subtly if relevant — don't over-explain.
+5. No dialogue. No speculation about the future. Just this exact moment.
+6. 2-4 sentences only. No preamble, no labels.
+
+Write the narrative now:`;
 
     const narrativeRes = await base44.asServiceRole.integrations.Core.InvokeLLM({
       prompt: narrativePrompt,
       model: 'gemini_3_flash',
     });
 
-    const narrativeText = narrativeRes?.trim() || `${character.name} continues through the ${timeOfDay}, present at ${resolvedLocationName}.`;
+    const narrativeText = narrativeRes?.trim() ||
+      `${character.name} is ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} during the ${timeOfDay.replace(/_/g, ' ')}.`;
 
-    const memorySummary = `${timeOfDay.replace(/_/g, ' ')}: at ${resolvedLocationName}${resolvedZoneName ? ` (${resolvedZoneName})` : ''}`;
+    const memorySummary = `[Right Now] ${timeStr} ${dayName}: ${isAsleep ? 'asleep' : `at ${resolvedLocationName}`} — ${narrativeText.substring(0, 80)}...`;
 
-    // ── SAVE NARRATIVE ────────────────────────────────────────────────────
+    // ── SAVE TO CharacterAutomaticNarrative (same table as automatic system) ──
     const narrative = await base44.asServiceRole.entities.CharacterAutomaticNarrative.create({
       character_id: characterId,
       character_name: character.name,
@@ -145,19 +231,21 @@ Generate narrative text only, no labels.`;
       narrative_text: narrativeText,
       memory_summary: memorySummary,
       timestamp: NOW.toISOString(),
-      local_time: `${hour}:${String(NOW.getMinutes()).padStart(2, '0')}`,
+      local_time: timeStr,
       time_of_day: timeOfDay,
       location_id: locationId,
       location_name: resolvedLocationName,
       zone_name: resolvedZoneName,
-      sleep_state: sleepState,
-      travel_state: travelState,
+      sleep_state: isAsleep ? 'asleep' : 'awake',
+      travel_state: isTraveling ? 'traveling' : 'at_location',
       work_state: workState,
       needs_snapshot: needsSnapshot,
-      triggered_by: 'interval',
+      emotional_state: character.emotional_state || 'calm',
+      triggered_by: isManual ? 'manual' : 'scheduled',
+      visibility: isManual ? 'visible_in_chat' : 'visible_in_chat',
     });
 
-    console.log(`[generateAutomaticNarrative] ✓ Narrative saved for ${character.name}: ${narrative.id}`);
+    console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
 
     return Response.json({
       success: true,

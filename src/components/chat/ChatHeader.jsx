@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
+import { useRightNow } from "@/components/chat/RightNowButton";
 
 export default function ChatHeader({
   character,
@@ -24,7 +25,12 @@ export default function ChatHeader({
   onSendMoneyToggle,
   onTroubleshootingToggle,
   onShoppingToggle,
+  onRightNowToggle,
+  setMessages,
 }) {
+  // Right Now — manual trigger of the automatic narrative engine
+  // Falls back to prop if provided (Chat page can override), else handles internally
+  const { handleRightNow } = useRightNow({ character, characterId, conversationId, setMessages });
   return (
     <>
       <BackfillNarrativesWrapper conversationId={conversationId} characterId={characterId} character={character} />
@@ -49,6 +55,7 @@ export default function ChatHeader({
           money: !!character,
           shopping: !!character,
           troubleshoot: !!character && !!conversationId,
+          right_now: !!character && !!conversationId,
         }}
         onSelect={(id) => {
           if (id === "media") onMediaGalleryToggle();
@@ -59,6 +66,7 @@ export default function ChatHeader({
           if (id === "money") onSendMoneyToggle();
           if (id === "shopping") onShoppingToggle();
           if (id === "troubleshoot") onTroubleshootingToggle();
+          if (id === "right_now") (onRightNowToggle || handleRightNow)();
         }}
       />
       </div>
