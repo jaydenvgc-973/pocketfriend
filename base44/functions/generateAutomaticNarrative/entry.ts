@@ -247,6 +247,22 @@ Write the narrative now:`;
 
     console.log(`[generateAutomaticNarrative] ✓ Saved for ${character.name}: ${narrative.id} | trigger=${trigger}`);
 
+    // Save to Memory so character remembers it
+    try {
+      await base44.asServiceRole.entities.Memory.create({
+        character_id: characterId,
+        title: `[Right Now] ${timeStr} ${dayName}`,
+        description: narrativeText,
+        memory_type: 'event',
+        importance_score: 3,
+        confidence_score: 0.9,
+        permanence: 'long_term',
+        timestamp: NOW.toISOString(),
+      });
+    } catch (memErr) {
+      console.warn(`[generateAutomaticNarrative] Memory save failed (non-blocking):`, memErr.message);
+    }
+
     return Response.json({
       success: true,
       narrativeId: narrative.id,
