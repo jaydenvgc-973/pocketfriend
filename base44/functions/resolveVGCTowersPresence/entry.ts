@@ -99,15 +99,16 @@ Deno.serve(async (req) => {
       const vgcHome = allVgcLocs.find(l => l.name === 'VGC Towers');
       const toReturn = allChars.filter(c =>
         isEligible(c, vgcHome?.id) &&
-        c.current_live_location_id &&
-        c.current_live_location_id !== c.home_location_id
+        c.resolved_current_location_id &&
+        c.resolved_current_location_id !== vgcHome?.id
       );
       for (const char of toReturn) {
         await base44.asServiceRole.entities.Character.update(char.id, {
-          current_live_location_id: char.home_location_id || null,
-          current_live_location_name: char.home_location_name || 'VGC Towers',
-          current_location_source: 'home',
-          current_activity: 'idle',
+          resolved_current_location_id: vgcHome?.id,
+          resolved_current_location_name: 'VGC Towers',
+          resolved_presence_status: 'home',
+          resolved_location_type: 'home',
+          resolved_source_reason: 'outside_travel_hours',
         });
       }
       return Response.json({ message: 'Outside travel window — residents returned home', returned: toReturn.length });
@@ -151,8 +152,8 @@ Deno.serve(async (req) => {
 
       if (!shouldMove) {
         // Keep current location if it's still valid
-        if (char.current_live_location_id && char.current_live_location_id !== char.home_location_id) {
-          const currentLoc = allLocations.find(l => l.id === char.current_live_location_id);
+        if (char.resolved_current_location_id && char.resolved_current_location_id !== vgcTowers?.id) {
+          const currentLoc = allLocations.find(l => l.id === char.resolved_current_location_id);
           if (currentLoc && isLocationOpenNow(currentLoc, nowET)) {
             stayedCount++;
             continue;
@@ -160,10 +161,11 @@ Deno.serve(async (req) => {
         }
         // Otherwise send home
         await base44.asServiceRole.entities.Character.update(char.id, {
-          current_live_location_id: char.home_location_id || vgcTowers?.id || null,
-          current_live_location_name: char.home_location_name || 'VGC Towers',
-          current_location_source: 'home',
-          current_activity: 'idle',
+          resolved_current_location_id: vgcTowers?.id,
+          resolved_current_location_name: 'VGC Towers',
+          resolved_presence_status: 'home',
+          resolved_location_type: 'home',
+          resolved_source_reason: 'location_closed',
         });
         stayedCount++;
         continue;
@@ -183,15 +185,16 @@ Deno.serve(async (req) => {
 
       // Pick a destination, weighted away from current location
       // Allow user-owned + shared locations as valid destinations
-      const choices = ageFilteredDests.filter(l => l.id !== char.current_live_location_id);
+      const choices = ageFilteredDests.filter(l => l.id !== char.resolved_current_location_id);
       const pool = choices.length > 0 ? choices : ageFilteredDests;
       const dest = pool[Math.floor(Math.random() * pool.length)];
 
       await base44.asServiceRole.entities.Character.update(char.id, {
-        current_live_location_id: dest.id,
-        current_live_location_name: dest.name,
-        current_location_source: 'travel',
-        current_activity: 'socializing',
+        resolved_current_location_id: dest.id,
+        resolved_current_location_name: dest.name,
+        resolved_presence_status: 'visiting',
+        resolved_location_type: 'visit',
+        resolved_source_reason: 'vgc_travel_block',
       });
       movedCount++;
     }
