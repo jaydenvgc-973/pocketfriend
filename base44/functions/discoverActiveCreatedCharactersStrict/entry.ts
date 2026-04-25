@@ -6,9 +6,10 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Use USER-SCOPED query (matches UI behavior that successfully surfaces 10 characters)
+    // Use USER-SCOPED query with owner_email filter (RLS enforces user context)
     const characters = await base44.entities.Character.filter({
       character_type: 'active_created_character',
+      owner_email: user.email,
     });
 
     const filtered = characters.filter(c => 
