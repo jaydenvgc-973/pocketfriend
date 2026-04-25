@@ -114,7 +114,6 @@ export default function Chat() {
 
   // ACCOUNT-SCOPED: useUserSettings always filters by created_by: user.email — never reads globally
   const { settings: userSettings } = useUserSettings();
-  const settings = userSettings ? [userSettings] : [];
 
   // CORE VOICE PLAYBACK FUNCTION - This is the single source of truth for all voice playback
   const playCharacterVoice = async (messageId, text, characterData, userSettings, bypassCache = false) => {
@@ -1815,6 +1814,7 @@ Reply with ONLY the single emoji or the word "none".`,
         characterId={characterId}
         isPhone={isPhone}
         conversationId={conversationId}
+        setMessages={setMessages}
         onMediaGalleryToggle={() => setShowMediaGallery(true)}
         onGameLauncherToggle={() => setShowGameLauncher(true)}
         onNarrativeActionToggle={() => setShowNarrativeAction(true)}
