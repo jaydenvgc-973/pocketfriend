@@ -17,9 +17,8 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
-
+    
+    // ── SERVICE ROLE: Process all users' VGC Towers residents automatically ──
     const now = new Date();
     const nowET = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const hour = nowET.getHours();
@@ -39,16 +38,15 @@ Deno.serve(async (req) => {
     const isLockdown = hour >= 1 && hour < 10;
     const log = [];
 
-    // Load characters
-    const [byCreatedBy, byOwnerEmail, userLocations, sharedLocations] = await Promise.all([
-      base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
-      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
-      base44.entities.LocationReference.filter({ created_by: user.email }),
-      base44.entities.LocationReference.filter({ scope: 'shared' }),
+    // Load ALL characters and locations (service role — no user context needed)
+    const [characterList, userLocations, sharedLocations] = await Promise.all([
+      base44.asServiceRole.entities.Character.filter({ status: 'active' }, null, 500),
+      base44.asServiceRole.entities.LocationReference.filter({}, null, 500),
+      base44.asServiceRole.entities.LocationReference.filter({ scope: 'shared' }, null, 500),
     ]);
 
     const charSeen = new Set();
-    const allCharacters = [...byCreatedBy, ...byOwnerEmail].filter(c => {
+    const allCharacters = characterList.filter(c => {
       if (charSeen.has(c.id)) return false;
       charSeen.add(c.id);
       return true;
