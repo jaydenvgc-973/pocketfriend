@@ -62,29 +62,30 @@ const PLACE_OPTIONS = [
 ];
 
 const MEMORY_PRESETS = [
-  // ── Adversity ──────────────────────────────────────────────────────
-  { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not.", category: "adversity" },
-  { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot.", category: "adversity" },
-  { title: "A moment they lost control", description: "A situation where they went further than they meant to — emotionally or otherwise.", category: "adversity" },
-  { title: "A loss they haven't processed", description: "Someone or something they lost that still sits with them quietly.", category: "adversity" },
-  { title: "A time they were humiliated", description: "A public or private moment where they felt small. It hardened something in them.", category: "adversity" },
-  { title: "A decision they regret", description: "A fork in the road they took wrong. They know it. They don't talk about it much.", category: "adversity" },
-  { title: "A falling out with family", description: "A rupture with someone in their family — said or unsaid. Still complicated.", category: "adversity" },
-  { title: "A secret they've never told anyone", description: "Something they carry alone. No one knows. Maybe they'll tell you.", category: "adversity" },
-  // ── Positive & Connection ─────────────────────────────────────────
-  { title: "Their first real win", description: "The moment they proved something to themselves. The thing they hold onto.", category: "positive" },
-  { title: "A moment of unexpected kindness", description: "Someone showed up for them when they didn't expect it. It stayed.", category: "positive" },
-  { title: "A deep friendship that shaped them", description: "A person who genuinely got them — made them feel less alone. Defines how they connect.", category: "positive" },
-  { title: "A time they were truly loved", description: "A relationship, family moment, or friendship where they felt completely accepted.", category: "positive" },
-  { title: "Something they built or created", description: "A project, career move, community, or creative work they're quietly proud of.", category: "positive" },
-  { title: "A celebration they'll never forget", description: "A moment of pure joy — a milestone, a party, a trip, a night that still makes them smile.", category: "positive" },
-  { title: "A place that felt like home", description: "A city, neighborhood, house, or room where they finally felt like themselves.", category: "positive" },
+  // ── Challenges ────────────────────────────────────────────────────
+  { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not.", category: "challenges" },
+  { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot.", category: "challenges" },
+  { title: "A moment they lost control", description: "A situation where they went further than they meant to — emotionally or otherwise.", category: "challenges" },
+  { title: "A loss they haven't fully processed", description: "Someone or something they lost that still sits with them quietly.", category: "challenges" },
+  { title: "A time they felt rejected or overlooked", description: "A moment where they were passed over, dismissed, or made to feel invisible.", category: "challenges" },
+  { title: "A period where everything felt uncertain", description: "A stretch of life where they didn't know what came next. It changed how they plan.", category: "challenges" },
+  // ── Positive Experiences ──────────────────────────────────────────
+  { title: "A moment they felt truly loved", description: "A relationship, friendship, or family moment where they felt completely accepted.", category: "positive" },
+  { title: "A time they were proud of themselves", description: "The moment they proved something to themselves. The thing they quietly hold onto.", category: "positive" },
+  { title: "A meaningful friendship they still value", description: "A person who genuinely got them — made them feel less alone. Defines how they connect.", category: "positive" },
+  { title: "A time they helped someone and it mattered", description: "They showed up for someone in a real way. That person still crosses their mind.", category: "positive" },
+  { title: "A moment of joy they still remember clearly", description: "A night, a trip, a celebration — pure happiness. They go back to it sometimes.", category: "positive" },
+  { title: "A goal they worked hard to achieve", description: "Something they earned through effort, not luck. It shaped what they believe they're capable of.", category: "positive" },
+  { title: "A place or experience that made them feel alive", description: "A trip, a job, a moment — something that reminded them why it's worth showing up.", category: "positive" },
+  { title: "A time they felt at peace with themselves", description: "A rare window where things were still and they were okay with who they were.", category: "positive" },
   // ── Growth & Resilience ───────────────────────────────────────────
-  { title: "A hard lesson that changed them", description: "Something painful that ultimately made them wiser. They don't regret it anymore.", category: "growth" },
-  { title: "A time they surprised themselves", description: "A moment they handled something better than expected. Quietly built confidence.", category: "growth" },
-  { title: "When they decided to change", description: "A turning point — they let go of something old and chose a different direction.", category: "growth" },
-  { title: "A person who helped them grow", description: "A mentor, friend, or stranger who said or did something that shifted how they see life.", category: "growth" },
-  { title: "Rebuilding after failure", description: "Something fell apart — job, relationship, plan — and they started over. They're still here.", category: "growth" },
+  { title: "They learned from a mistake and changed", description: "Something they did wrong — and actually did the work to understand it and shift.", category: "growth" },
+  { title: "They grew stronger after a difficult time", description: "Hard stretch. They came out different — more capable, more grounded, more themselves.", category: "growth" },
+  { title: "They rebuilt something after losing it", description: "A job, a relationship, a sense of self — it fell apart and they built it back.", category: "growth" },
+  { title: "They developed better coping skills", description: "They used to handle things poorly. They found a better way. Still a work in progress.", category: "growth" },
+  { title: "They became more confident over time", description: "Wasn't always sure of themselves. Something shifted. They carry themselves differently now.", category: "growth" },
+  { title: "They are learning to trust again", description: "Trust got broken somewhere. They're opening back up — slowly, carefully.", category: "growth" },
+  { title: "They are working on becoming better", description: "Active self-improvement. Not perfect. But moving in the right direction.", category: "growth" },
 ];
 
 const DRAFT_KEY = "create_character_draft";
@@ -1249,29 +1250,45 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
             <div key={m.title} className={`flex items-center gap-1.5 border rounded-full px-3 py-1.5 ${
               m.category === 'positive' ? 'bg-emerald-500/10 border-emerald-500/20' :
               m.category === 'growth' ? 'bg-blue-500/10 border-blue-500/20' :
-              'bg-primary/10 border-primary/20'
+              'bg-rose-500/10 border-rose-500/20'
             }`}>
               <span className={`text-xs font-medium ${
                 m.category === 'positive' ? 'text-emerald-400' :
                 m.category === 'growth' ? 'text-blue-400' :
-                'text-primary'
+                'text-rose-400'
               }`}>{m.title}</span>
               <button onClick={() => removeMemory(m.title)} className="text-muted-foreground/50 hover:text-destructive transition-colors"><X className="w-3 h-3" /></button>
             </div>
           ))}
         </div>
       )}
+      {/* Balance warning */}
+      {(() => {
+        const hasPositiveOrGrowth = data.memories.some(m => m.category === 'positive' || m.category === 'growth');
+        const hasChallenges = data.memories.some(m => m.category === 'challenges');
+        const showWarning = hasChallenges && !hasPositiveOrGrowth && data.memories.length > 0;
+        return showWarning ? (
+          <div className="flex items-start gap-2 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
+            <span className="text-amber-400 text-sm mt-0.5">⚖️</span>
+            <p className="text-xs text-amber-300 leading-relaxed">This character only has challenges selected. Add at least one <span className="font-semibold text-amber-200">positive experience</span> or <span className="font-semibold text-amber-200">growth moment</span> — people are more than their hardships.</p>
+          </div>
+        ) : null;
+      })()}
+
       {/* Grouped preset sections */}
       {[
-        { key: "adversity", label: "Adversity", color: "text-rose-400", borderColor: "border-rose-500/20", bgActive: "bg-rose-500/10" },
-        { key: "positive", label: "Positive & Connection", color: "text-emerald-400", borderColor: "border-emerald-500/20", bgActive: "bg-emerald-500/10" },
-        { key: "growth", label: "Growth & Resilience", color: "text-blue-400", borderColor: "border-blue-500/20", bgActive: "bg-blue-500/10" },
+        { key: "challenges", label: "Challenges", color: "text-rose-400", desc: "Experiences that tested them" },
+        { key: "positive", label: "Positive Experiences", color: "text-emerald-400", desc: "Things that brought them joy, love, or pride" },
+        { key: "growth", label: "Growth & Resilience", color: "text-blue-400", desc: "How they've changed and grown" },
       ].map(group => {
         const groupPresets = MEMORY_PRESETS.filter(p => p.category === group.key && !data.memories.find(m => m.title === p.title));
         if (groupPresets.length === 0) return null;
         return (
           <div key={group.key}>
-            <p className={`text-[10px] font-semibold uppercase tracking-widest mb-2 ${group.color}`}>{group.label}</p>
+            <div className="mb-2">
+              <p className={`text-[10px] font-bold uppercase tracking-widest ${group.color}`}>{group.label}</p>
+              <p className="text-[10px] text-muted-foreground">{group.desc}</p>
+            </div>
             <div className="space-y-2">
               {groupPresets.map(preset => (
                 <button key={preset.title} onClick={() => addPresetMemory(preset)} className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
