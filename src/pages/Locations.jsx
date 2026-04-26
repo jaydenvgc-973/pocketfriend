@@ -97,15 +97,47 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
               </span>
             )}
             {(location.category === 'home' || location.category === 'generic') && (() => {
-              const residentNames = (location.residents || []).map(r => r.character_name).filter(Boolean);
-              const legacyActiveNames = (location.resident_character_ids || []).map(id => {
+              // Deduplicate: collect IDs from residents[] and resident_character_ids[] without double-counting
+              const seenIds = new Set();
+              const seenNames = new Set();
+              const dedupedNames = [];
+
+              // residents[] (newer format) — authoritative for named residents
+              (location.residents || []).forEach(r => {
+                if (r.character_id) {
+                  if (seenIds.has(r.character_id)) return;
+                  seenIds.add(r.character_id);
+                }
+                const name = r.character_name;
+                if (name && !seenNames.has(name.toLowerCase())) {
+                  seenNames.add(name.toLowerCase());
+                  dedupedNames.push(name);
+                }
+              });
+
+              // resident_character_ids[] (legacy) — skip any ID already counted
+              (location.resident_character_ids || []).forEach(id => {
+                if (seenIds.has(id)) return;
+                seenIds.add(id);
                 const found = characters.find(c => c.id === id);
-                return found?.name || null;
-              }).filter(Boolean);
-              const npcNames = (location.resident_family_members || []).map(f => f.name).filter(Boolean);
-              const allNames = [...residentNames, ...legacyActiveNames, ...npcNames];
-              return allNames.length > 0 ? (
-                <span className="text-xs text-blue-400/80 font-medium">{allNames.join(', ')}</span>
+                const name = found?.name;
+                if (name && !seenNames.has(name.toLowerCase())) {
+                  seenNames.add(name.toLowerCase());
+                  dedupedNames.push(name);
+                }
+              });
+
+              // resident_family_members[] — NPC/family, dedupe by name only
+              (location.resident_family_members || []).forEach(f => {
+                const name = f.name;
+                if (name && !seenNames.has(name.toLowerCase())) {
+                  seenNames.add(name.toLowerCase());
+                  dedupedNames.push(name);
+                }
+              });
+
+              return dedupedNames.length > 0 ? (
+                <span className="text-xs text-blue-400/80 font-medium">{dedupedNames.join(', ')}</span>
               ) : null;
             })()}
             {location.category !== 'home' && location.category !== 'generic' && location.resident_character_ids?.length > 0 && (

@@ -100,31 +100,38 @@ export function resolveTravelPresenceEntities({
  *   These characters are not travel-capable, so home is the correct default.
  */
 function normalizeCharacterToPresenceEntity(char, locationMap) {
-  const homeLocId = char.current_home_location_id;
-  const isHomeResident = !!homeLocId;
+  // Resolve home ID from all possible field paths
+  const homeLocId = char.current_home_location_id || char.home_location_id || char.residence_id || char.assigned_residence || null;
+
+  // Also scan locationMap for resident-list-based home assignment
+  const scannedHomeLocId = homeLocId || resolveHomeFromLocationMap(char.id, locationMap);
+  const effectiveHomeLocId = scannedHomeLocId;
+  const isHomeResident = !!effectiveHomeLocId;
 
   let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
 
   if (char.character_type === 'active_created_character') {
     // LIVE RESOLUTION: applies work schedule, school schedule, sleep, and home logic
+    // resolveCharacterLocation now also handles no-home safe states, so it never returns null
     const live = resolveCharacterLocation(char, locationMap);
     resolvedLocId = live.resolved_current_location_id;
     resolvedLocName = live.resolved_current_location_name;
     resolvedStatus = live.resolved_presence_status || 'home';
-    isCurrentlyPresent = !!resolvedLocId;
+    // Always mark as present if we have a location ID OR if they have a named away state
+    isCurrentlyPresent = !!resolvedLocId || live.resolved_source_reason === 'no_home_safe_away';
   } else {
-    // NPCs + family: use saved DB field; home fallback if nothing resolved
+    // NPCs + family: use saved DB field; home fallback (all paths) if nothing resolved
     const currentLocId = char.resolved_current_location_id;
     isCurrentlyPresent = false;
     resolvedStatus = char.resolved_presence_status || 'home';
 
-    if (currentLocId) {
+    if (currentLocId && locationMap[currentLocId]) {
       resolvedLocId = currentLocId;
       resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
       isCurrentlyPresent = true;
-    } else if (homeLocId) {
-      resolvedLocId = homeLocId;
-      resolvedLocName = locationMap[homeLocId]?.name;
+    } else if (effectiveHomeLocId && locationMap[effectiveHomeLocId]) {
+      resolvedLocId = effectiveHomeLocId;
+      resolvedLocName = locationMap[effectiveHomeLocId]?.name;
       resolvedStatus = 'home';
       isCurrentlyPresent = true;
     }
@@ -137,17 +144,35 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     character_type: char.character_type,
     avatar_url: char.avatar_url || char.image_avatar_url,
     initials: resolveInitials(char),
+    personality_summary: char.personality_summary,
+    emotional_state: char.emotional_state,
 
     resolved_current_location_id: resolvedLocId,
     resolved_current_location_name: resolvedLocName,
     resolved_presence_status: resolvedStatus,
-    residence_location_id: homeLocId,
+    residence_location_id: effectiveHomeLocId,
 
     is_home_resident: isHomeResident,
     is_currently_present: isCurrentlyPresent,
-    is_home: isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
-    is_away: isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId,
+    is_home: isCurrentlyPresent && !!effectiveHomeLocId && resolvedLocId === effectiveHomeLocId,
+    is_away: isCurrentlyPresent && !!effectiveHomeLocId && !!resolvedLocId && resolvedLocId !== effectiveHomeLocId,
   };
+}
+
+/**
+ * Scan locationMap to find a home/generic location that lists this character as a resident.
+ * Used as a fallback when character.current_home_location_id is empty but Locations page shows them assigned.
+ */
+function resolveHomeFromLocationMap(characterId, locationMap) {
+  if (!characterId) return null;
+  for (const [locId, loc] of Object.entries(locationMap)) {
+    if (loc.category !== 'home' && loc.category !== 'generic') continue;
+    // Check resident_character_ids (legacy flat list)
+    if ((loc.resident_character_ids || []).includes(characterId)) return locId;
+    // Check residents[] array (newer format)
+    if ((loc.residents || []).some(r => r.character_id === characterId)) return locId;
+  }
+  return null;
 }
 
 /**

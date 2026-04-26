@@ -197,12 +197,20 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 7: Home fallback — check both current_home_location_id and home_location_id
-  if (resolvedHomeId) {
-    const homeLocation = locationMap[resolvedHomeId];
+  // LAYER 7: Home fallback — check all known home field paths on the character
+  // Priority: current_home_location_id → home_location_id → residence_id → assigned_residence
+  const allHomeFieldCandidates = [
+    character.current_home_location_id,
+    character.home_location_id,
+    character.residence_id,
+    character.assigned_residence,
+  ].filter(Boolean);
+
+  for (const candidateId of allHomeFieldCandidates) {
+    const homeLocation = locationMap[candidateId];
     if (homeLocation) {
       return {
-        resolved_current_location_id: resolvedHomeId,
+        resolved_current_location_id: candidateId,
         resolved_current_location_name: homeLocation.name || 'Home',
         resolved_location_type: 'home',
         resolved_presence_status: 'home',
@@ -212,8 +220,61 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // Fallback: Unknown location (should not happen)
-  return createFailedResolution('No valid location resolved');
+  // LAYER 7.5: Scan locationMap for any home/generic location that lists this character as a resident
+  // This handles cases where current_home_location_id is not set but the Locations page shows them assigned.
+  for (const [locId, loc] of Object.entries(locationMap)) {
+    if (loc.category !== 'home' && loc.category !== 'generic') continue;
+    const residentIds = loc.resident_character_ids || [];
+    if (residentIds.includes(character.id)) {
+      return {
+        resolved_current_location_id: locId,
+        resolved_current_location_name: loc.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'home_from_location_residents',
+        resolved_zone: null,
+      };
+    }
+    // Also check residents[] array (newer format)
+    const residents = loc.residents || [];
+    if (residents.some(r => r.character_id === character.id)) {
+      return {
+        resolved_current_location_id: locId,
+        resolved_current_location_name: loc.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'home_from_location_residents',
+        resolved_zone: null,
+      };
+    }
+  }
+
+  // LAYER 8: No home found — use safe rabbit-hole/away presence (never disappear)
+  // Character has no resolvable home but must still be visible.
+  if (character.resolved_current_location_id) {
+    // They were last at a known location — keep them there
+    const lastLoc = locationMap[character.resolved_current_location_id];
+    if (lastLoc) {
+      return {
+        resolved_current_location_id: character.resolved_current_location_id,
+        resolved_current_location_name: lastLoc.name || character.resolved_current_location_name || 'Unknown',
+        resolved_location_type: character.resolved_location_type || 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: 'last_known_no_home',
+        resolved_zone: null,
+      };
+    }
+  }
+
+  // Final safe fallback: no home, no last location — mark as away (rabbit hole), never disappear
+  return {
+    resolved_current_location_id: null,
+    resolved_current_location_name: 'Away',
+    resolved_location_type: 'rabbit_hole',
+    resolved_presence_status: 'rabbit_hole',
+    resolved_source_reason: 'no_home_safe_away',
+    resolved_zone: null,
+  };
 }
 
 /**
