@@ -769,6 +769,15 @@ export default function Scene() {
   // - selectedNpcIds change (explicit user selection changes who appears)
   }, [location?.id, sceneImage, activeZone, selectedNpcIds]);
 
+  // Ensure child caregiver presence on home location load
+  useEffect(() => {
+    if (!isHomeLocation || !location?.id || !currentUser?.email) return;
+    base44.functions.invoke('ensureChildCaregiverPresence', {
+      locationId: location.id,
+      userEmail: currentUser.email,
+    }).then(() => queryClient.invalidateQueries({ queryKey: ['characters', currentUser.email] })).catch(() => {});
+  }, [isHomeLocation, location?.id, currentUser?.email]);
+
   const generateSceneImage = async (actionOverridePrompt = null) => {
     if (!location || isGeneratingImage) return;
     setIsGeneratingImage(true);
@@ -1165,16 +1174,8 @@ export default function Scene() {
         `${m.sender === "user" ? displayName : m.senderName || "Character"}: ${m.content}`
       ).join("\n");
 
-      // knownChars / selectedNpcList kept for LLM scene context (who is physically present),
-      // but dialogue eligibility is separately enforced by dialogueEligible below.
       const knownChars = displayCharacters.filter(c => !c.isNpc);
-      const selectedNpcList = selectedNpcs.map(n => `${n.name} (${n.role || "NPC"})`).join(", ");
-
-      const privateNote = privateTarget
-        ? `\nNOTE: ${displayName} has pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond — absolutely no one else, not even other characters who are present.`
-        : "";
-
-      // DIALOGUE TARGETING: only picker-selected NPCs or private target may respond
+      const privateNote = privateTarget ? `\nNOTE: ${displayName} pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond.` : "";
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
         : selectedNpcs.length > 0
@@ -1195,6 +1196,15 @@ If no one is listed, return an empty responses array. Do NOT invent responses fr
 
       const memSection = eligibleKnownChars.filter(c => crossMem[c.id]).map(c => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
 
+      // AGE GATING: Babies (<3) only 1-2 words; toddlers (3-5) max 5-word phrases
+      const ageGateRules = dialogueEligible.map(char => {
+        const age = char.age || (char.age_range?.match(/\d+/) ? parseInt(char.age_range.match(/\d+/)[0]) : null);
+        if (!age || age >= 6) return null;
+        if (age < 3) return `${char.name} is a baby: speak ONLY 1-2 words max (e.g., "mama", "no", "up"). Never full sentences.`;
+        if (age < 6) return `${char.name} is a toddler: max 5 words, missing words (e.g., "want juice", "go play").`;
+        return null;
+      }).filter(Boolean).join('\n');
+
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
 
@@ -1208,6 +1218,7 @@ ${displayName} just said: "${text}"
 ${fromAction ? "(This was from a scene action, not typed directly)" : ""}
 
 ${npcInstruction}
+${ageGateRules ? `\nAGE SPEECH RULES (mandatory):\n${ageGateRules}\n` : ''}
 Keep each response 1-2 sentences, natural and in-character.
 CRITICAL: Do NOT say your character's own name in the response — never speak about yourself in third person. Use "I", "we", "me", or "us" instead. Only mention your name if ${displayName} directly asks for it.
 
@@ -1364,7 +1375,6 @@ Return JSON:
     setActionCooldown(true);
     setTimeout(() => setActionCooldown(false), 3000);
 
-    // ── EATING ACTIONS: immediately sync hunger state ────────────────────────
     const eatingActionIds = ['eat', 'order', 'drinks', 'char_pays', 'check', 'order_takeout', 'drink', 'buy_round', 'char_buy_round'];
     if (eatingActionIds.includes(action.id) && broughtCharacters.length > 0) {
       const mealSize = ['buy_round', 'char_buy_round', 'drinks', 'drink'].includes(action.id) ? 'snack'
