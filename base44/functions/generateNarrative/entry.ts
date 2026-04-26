@@ -269,6 +269,45 @@ ${needsComboStr}
 NARRATIVE MUST REFLECT THESE. Do not describe fatigue if energy is stable. Do not describe hunger if hunger is stable. Do not describe illness if health is strong (unless an injury/illness flag is active). Do not describe financial stress if financial is stable. All physical and emotional descriptions must match the above states.
 ════════════════════════════════════`;
 
+    // ── BUILD AGE-BASED COMMUNICATION CONSTRAINT ──────────────────────────────
+    function resolveCharacterAge(c) {
+      if (c.age && typeof c.age === 'number' && c.age > 0) return c.age;
+      if (c.age_range) {
+        const r = c.age_range.toLowerCase();
+        if (r.includes('early 20')) return 21;
+        if (r.includes('mid 20'))   return 25;
+        if (r.includes('late 20'))  return 28;
+        if (r.includes('early 30')) return 31;
+        if (r.includes('mid 30'))   return 35;
+        if (r.includes('late 30'))  return 38;
+        if (r.includes('40')) return 43;
+        if (r.includes('50')) return 53;
+        if (r.includes('60')) return 63;
+        if (r.includes('70')) return 73;
+      }
+      return null;
+    }
+
+    function buildNarrativeAgeBlock(c) {
+      const age = resolveCharacterAge(c);
+      if (!age || age >= 11) return '';
+      if (age <= 3) return `
+⛔ AGE ENFORCEMENT — TODDLER (age ${age}):
+This is a toddler. All narrative must treat them as such.
+They do not speak in full sentences. They react — cry, laugh, point, say one word.
+Narrative describing their behavior must match toddler-level cognition and motor skills.`;
+      if (age <= 5) return `
+⛔ AGE ENFORCEMENT — EARLY CHILDHOOD (age ${age}):
+Very simple language only. 4–8 word sentences max. Literal thinking. No complex reasoning.
+Narrative must reflect their age-level curiosity and limited vocabulary.`;
+      if (age <= 10) return `
+⛔ AGE ENFORCEMENT — CHILD (age ${age}):
+Full simple sentences allowed. Basic reasoning. School-level vocabulary.
+No adult emotional complexity in narrative. Reflect their developmental stage accurately.`;
+      return '';
+    }
+    const narrativeAgeBlock = buildNarrativeAgeBlock(char);
+
     // ── BUILD STATUS CONTEXT STRING ───────────────────────────────────────────
     const locationContext = resolvedLocationName
       ? `Current location: ${resolvedLocationName}`
@@ -568,7 +607,7 @@ The narrative MUST reflect all of them exactly.
 Do NOT contradict or ignore any of these facts.
 ════════════════════════════════════
 Character: ${characterName}
-${locationContext}
+${narrativeAgeBlock ? narrativeAgeBlock + '\n' : ''}${locationContext}
 ${sleepContext}
 ${presenceContext ? presenceContext + '\n' : ''}${activityContext ? activityContext + '\n' : ''}Current time: ${timeStr} (${timeOfDayDesc})
 ════════════════════════════════════

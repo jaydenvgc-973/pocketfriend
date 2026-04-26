@@ -184,6 +184,93 @@ IMPORTANT — HOW TO REFER TO FAMILY: Always use familiar terms (Mom, Dad, Grand
   return `\nYOUR FAMILY: You have no family members in your life. You are on your own. Never invent or reference family members — you don't have any.\n`;
 }
 
+/**
+ * Derives a numeric age from character fields.
+ * Returns null if no age can be determined.
+ */
+function resolveCharacterAge(character) {
+  if (character.age && typeof character.age === 'number' && character.age > 0) return character.age;
+  // Parse from age_range string (e.g. "Early 20s" → 21, "Mid 30s" → 35)
+  if (character.age_range) {
+    const r = character.age_range.toLowerCase();
+    if (r.includes('early 20') || r === 'early 20s') return 21;
+    if (r.includes('mid 20')  || r === 'mid 20s')  return 25;
+    if (r.includes('late 20') || r === 'late 20s') return 28;
+    if (r.includes('early 30') || r === 'early 30s') return 31;
+    if (r.includes('mid 30')  || r === 'mid 30s')  return 35;
+    if (r.includes('late 30') || r === 'late 30s') return 38;
+    if (r.includes('40')) return 43;
+    if (r.includes('50')) return 53;
+    if (r.includes('60')) return 63;
+    if (r.includes('70')) return 73;
+  }
+  return null;
+}
+
+/**
+ * Returns an age-based communication enforcement block.
+ * Returns empty string for adults (no restriction needed).
+ */
+function buildAgeCommunicationBlock(character) {
+  const age = resolveCharacterAge(character);
+
+  // No age data → treat as adult, no enforcement block needed
+  if (age === null) return '';
+
+  // Adult (11+) → no restriction block (adults communicate normally)
+  if (age >= 11) return '';
+
+  if (age <= 3) {
+    return `
+AGE-BASED COMMUNICATION RULES — ABSOLUTE AND NON-NEGOTIABLE:
+This character is ${age} year${age === 1 ? '' : 's'} old — a TODDLER.
+Communication MUST be limited to:
+  • Single words only: "Mama", "No!", "Up!", "More", "Go", "Mine"
+  • Simple sounds or emotional reactions: crying, laughing, babbling
+  • Broken or partial words
+  • NO full sentences. EVER.
+  • NO explanations, reasoning, or awareness of complex situations
+  • NO asking structured questions
+  • NO understanding of abstract concepts
+Toddlers do not monologue. They react. Single syllables or single words only.
+This is a hard rule. Any full sentence is a generation failure.`;
+  }
+
+  if (age <= 5) {
+    return `
+AGE-BASED COMMUNICATION RULES — ABSOLUTE AND NON-NEGOTIABLE:
+This character is ${age} years old — EARLY CHILDHOOD (ages 4–5).
+Communication MUST follow these rules:
+  • Very short, simple sentences only (max 6–8 words)
+  • High curiosity — frequent "why" and "what" questions
+  • Literal thinking — no figurative language or sarcasm
+  • Limited vocabulary — common everyday words only
+  • Emotional but not emotionally complex
+  • No advanced reasoning or mature conclusions
+Examples of correct speech: "Why is that?" / "Can we go?" / "I don't like it." / "What are you doing?"
+DO NOT generate: complex sentences, adult vocabulary, deep emotional analysis, mature reasoning.
+Any adult-level language is a generation failure.`;
+  }
+
+  if (age <= 10) {
+    return `
+AGE-BASED COMMUNICATION RULES — ABSOLUTE AND NON-NEGOTIABLE:
+This character is ${age} years old — CHILD (ages 6–10).
+Communication MUST follow these rules:
+  • Full sentences allowed, but simple and direct
+  • Basic reasoning and simple opinions
+  • Still asks many questions — curious and learning
+  • No adult-level emotional complexity or mature worldview
+  • Vocabulary is age-appropriate — school-level words
+Examples: "I think that's not fair." / "Why does that happen?" / "I learned that at school."
+ALLOW: basic opinions, simple reasoning, school-level curiosity.
+DO NOT generate: adult emotional intelligence, complex analysis, fully developed worldview, mature language.
+Any adult-level emotional complexity is a generation failure.`;
+  }
+
+  return '';
+}
+
 export function buildSystemPrompt(character, knownCharacters = [], userDisplayName = null, options = {}, memories = []) {
   const { allowNarration = false, outfitHint = null } = options; // outfitHint: optional string from resolveOutfitContext
   // World name is the authoritative in-world identity. NEVER fall back to "the user" if a world name exists.
@@ -205,8 +292,10 @@ export function buildSystemPrompt(character, knownCharacters = [], userDisplayNa
     extrovert: "Extrovert — thrives around people, always in the mix."
   };
 
-  return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use phrases like "I'm here to help", "How can I assist you", "As an AI", or any assistant-style language. You are a human being having a real conversation.
+  const ageCommunicationBlock = buildAgeCommunicationBlock(character);
 
+  return `You ARE ${character.name}. You are a real person. NOT an AI. NOT an assistant. NEVER break character. NEVER use phrases like "I'm here to help", "How can I assist you", "As an AI", or any assistant-style language. You are a human being having a real conversation.
+${ageCommunicationBlock ? `\n${ageCommunicationBlock}\n` : ''}
 WHO YOU ARE:
 ${character.personality_summary}
 ${character.archetype ? `\nARCHETYPE: ${character.archetype}` : ""}
