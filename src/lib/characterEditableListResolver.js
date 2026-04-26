@@ -354,19 +354,19 @@ export function resolveCharacterPresenceAtLocation(character, location, currentT
     };
   }
 
-  // Home fallback: resident with no explicit location elsewhere → treat as home
-  // EXCEPT active_created_character who have an explicit resolved_current_location_id pointing elsewhere
-  // (that case is already caught above by the "traveling_elsewhere" branch)
-  if (isResident && character.current_home_location_id === location.id) {
-    const notTraveling = !character.travel_status || character.travel_status === 'not_traveling';
-    if (notTraveling) {
-      return {
-        isPresent: true,
-        presenceStatus: 'home',
-        isResident,
-        reasonCode: 'home_and_not_traveling'
-      };
-    }
+  // Home fallback: resident with no explicit location elsewhere → treat as home.
+  // ONLY applies to npc_fictitious and npc_family_member.
+  // active_created_character MUST NOT use this fallback — they are travel-capable and can only be
+  // physically present where their resolved_current_location_id points. Using the home fallback for
+  // them causes duplicate presence (appearing both at their actual location AND at home).
+  if (character.character_type !== 'active_created_character' &&
+      isResident && character.current_home_location_id === location.id) {
+    return {
+      isPresent: true,
+      presenceStatus: 'home',
+      isResident,
+      reasonCode: 'home_and_not_traveling'
+    };
   }
 
   // Not present

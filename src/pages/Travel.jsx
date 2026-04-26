@@ -625,12 +625,17 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
                   });
 
-                  // Also check resident_character_ids for named residents
+                  // Also check resident_character_ids for named residents — but only if they are NOT
+                  // active_created_character who may be physically elsewhere. For active chars, only
+                  // show them if their resolved_current_location_id matches this location (already handled
+                  // above via presentHere). For NPCs/family, show them as residents.
                   (selectedLocation.resident_character_ids || []).forEach(resId => {
                     const resChar = allCharactersForFamilyScan.find(c => c.id === resId);
                     if (!resChar) return;
                     const name = resChar.display_name || resChar.name;
                     if (!name || seenNames.has(name.toLowerCase())) return;
+                    // Skip active_created_character — they appear via the unified presence resolver above only
+                    if (resChar.character_type === 'active_created_character') return;
                     seenNames.add(name.toLowerCase());
                     lines.push({ name, status: 'home', color: 'text-green-400' });
                   });

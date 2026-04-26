@@ -7,6 +7,8 @@
  * Ensures map pins, location popups, side-panel counts, and vacancy labels all use identical presence data.
  */
 
+import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
+
 /**
  * Resolve all user-scoped presence entities for the Travel page.
  * 
@@ -89,34 +91,43 @@ export function resolveTravelPresenceEntities({
 
 /**
  * Normalize a Character record into a presence entity shape.
- * Handles missing fields, legacy names, and fallbacks.
+ *
+ * active_created_character: uses resolveCharacterLocation() for LIVE work/school/schedule logic —
+ *   this ensures work schedules are applied even when the DB field is stale.
+ *   No home fallback — active characters must have a confirmed location to appear.
+ *
+ * npc_fictitious / npc_family_member: reads saved DB fields with home fallback.
+ *   These characters are not travel-capable, so home is the correct default.
  */
 function normalizeCharacterToPresenceEntity(char, locationMap) {
   const homeLocId = char.current_home_location_id;
-  const currentLocId = char.resolved_current_location_id;
-
-  // Determine if home resident (assigned to live somewhere)
   const isHomeResident = !!homeLocId;
 
-  // Resolve current location truth
-  let resolvedLocId = currentLocId;
-  let resolvedLocName = char.resolved_current_location_name;
-  let resolvedStatus = char.resolved_presence_status || 'home';
-  let isCurrentlyPresent = false;
+  let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
 
-  if (currentLocId) {
-    // Character is explicitly at a location
-    resolvedLocId = currentLocId;
-    resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
-    isCurrentlyPresent = true;
-  } else if (homeLocId && char.character_type !== 'active_created_character') {
-    // Home fallback for NPCs and family members with no explicit current location
-    // active_created_character must have an explicit resolved_current_location_id to be shown anywhere —
-    // without one they do not appear on the map (avoids duplicating them at home AND current location)
-    resolvedLocId = homeLocId;
-    resolvedLocName = locationMap[homeLocId]?.name;
-    resolvedStatus = 'home';
-    isCurrentlyPresent = true;
+  if (char.character_type === 'active_created_character') {
+    // LIVE RESOLUTION: applies work schedule, school schedule, sleep, and home logic
+    const live = resolveCharacterLocation(char, locationMap);
+    resolvedLocId = live.resolved_current_location_id;
+    resolvedLocName = live.resolved_current_location_name;
+    resolvedStatus = live.resolved_presence_status || 'home';
+    isCurrentlyPresent = !!resolvedLocId;
+  } else {
+    // NPCs + family: use saved DB field; home fallback if nothing resolved
+    const currentLocId = char.resolved_current_location_id;
+    isCurrentlyPresent = false;
+    resolvedStatus = char.resolved_presence_status || 'home';
+
+    if (currentLocId) {
+      resolvedLocId = currentLocId;
+      resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
+      isCurrentlyPresent = true;
+    } else if (homeLocId) {
+      resolvedLocId = homeLocId;
+      resolvedLocName = locationMap[homeLocId]?.name;
+      resolvedStatus = 'home';
+      isCurrentlyPresent = true;
+    }
   }
 
   return {
@@ -126,19 +137,16 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     character_type: char.character_type,
     avatar_url: char.avatar_url || char.image_avatar_url,
     initials: resolveInitials(char),
-    
-    // Presence truth
+
     resolved_current_location_id: resolvedLocId,
     resolved_current_location_name: resolvedLocName,
     resolved_presence_status: resolvedStatus,
     residence_location_id: homeLocId,
-    
+
     is_home_resident: isHomeResident,
     is_currently_present: isCurrentlyPresent,
-    // is_home: physically at their home location (either explicitly resolved there, or NPC home fallback)
     is_home: isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
-    // is_away: active character explicitly at a location that is NOT their home
-    is_away: isCurrentlyPresent && !!homeLocId && !!currentLocId && currentLocId !== homeLocId,
+    is_away: isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId,
   };
 }
 
