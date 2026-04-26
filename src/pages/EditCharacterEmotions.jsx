@@ -84,6 +84,7 @@ export default function EditCharacterEmotions() {
       emotional_triggers_deep: char.emotional_triggers_deep || [],
       emotional_baggage: char.emotional_baggage || "",
       upset_reaction: char.upset_reaction || "",
+      memories: char.memories || [],
       voice_enabled: char.voice_enabled || false,
       voice_name: char.voice_name || "",
       voice_style_note: char.voice_style_note || "",
@@ -121,12 +122,13 @@ Make it feel like a real person, not a description. No flowery language.`
       systemPromptUrl = uploadRes.file_url;
     }
 
-    const { voice_enabled, voice_name, voice_style_note, ...formWithoutVoice } = form;
+    const { voice_enabled, voice_name, voice_style_note, memories, ...formWithoutVoice } = form;
     const updateData = {
       ...formWithoutVoice,
       voice_enabled,
       voice_name,
       voice_style_note,
+      memories,
       personality_summary: personality,
     };
 
@@ -157,7 +159,7 @@ Make it feel like a real person, not a description. No flowery language.`
           </Link>
         )}
         <h2 className="text-sm font-semibold">
-          {selectedChar ? `Edit Emotions — ${selectedChar.name}` : "Edit Character Emotions"}
+          {selectedChar ? `Edit Emotions & Experiences — ${selectedChar.name}` : "Edit Character Emotions & Experiences"}
         </h2>
       </div>
 
@@ -230,6 +232,56 @@ Make it feel like a real person, not a description. No flowery language.`
                 placeholder="How they respond when triggered..."
                 className="rounded-xl min-h-[80px] text-sm resize-none"
               />
+            </div>
+
+            {/* What they've been through */}
+            <div className="space-y-3 pt-4 border-t border-border">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">What They've Been Through</label>
+                <p className="text-xs text-muted-foreground mt-1">Experiences that shaped them — struggles, wins, and growth.</p>
+              </div>
+
+              {/* Existing memories */}
+              {(form.memories || []).map((mem, idx) => (
+                <div key={idx} className="border border-border rounded-xl p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <input
+                      type="text"
+                      value={mem.title}
+                      onChange={e => {
+                        const updated = [...form.memories];
+                        updated[idx] = { ...updated[idx], title: e.target.value };
+                        setForm(p => ({ ...p, memories: updated }));
+                      }}
+                      placeholder="Experience title..."
+                      className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <button
+                      onClick={() => setForm(p => ({ ...p, memories: p.memories.filter((_, i) => i !== idx) }))}
+                      className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 mt-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <Textarea
+                    value={mem.description || ""}
+                    onChange={e => {
+                      const updated = [...form.memories];
+                      updated[idx] = { ...updated[idx], description: e.target.value };
+                      setForm(p => ({ ...p, memories: updated }));
+                    }}
+                    placeholder="What happened, how it affected them..."
+                    className="rounded-lg min-h-[70px] text-sm resize-none"
+                  />
+                </div>
+              ))}
+
+              <button
+                onClick={() => setForm(p => ({ ...p, memories: [...(p.memories || []), { title: "", description: "", emotional_impact: "", lesson_learned: "" }] }))}
+                className="w-full flex items-center gap-2 justify-center py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-sm"
+              >
+                <Plus className="w-4 h-4" /> Add experience
+              </button>
             </div>
 
             <div className="pt-4 border-t border-border">

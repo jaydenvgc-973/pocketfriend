@@ -693,7 +693,7 @@ export default function Settings() {
               </div>
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">Edit Character Emotions</p>
-                <p className="text-xs text-muted-foreground">Triggers, emotional state, baggage & reactions</p>
+                <p className="text-xs text-muted-foreground">Triggers, emotional state, baggage, reactions & what they've been through</p>
               </div>
             </button>
           </Link>
