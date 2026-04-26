@@ -1301,6 +1301,19 @@ export default function Locations() {
       }
     }
 
+    // ── HOME ASSIGNMENT: write current_home_location_id back to each resident Character ──
+    // This is the authoritative source — if a character is listed as a resident here,
+    // their Character record must reflect this location as their home.
+    if (formData.category === 'home' || formData.category === 'generic') {
+      const residentIds = formData.resident_character_ids || [];
+      for (const charId of residentIds) {
+        if (!charId || charId === currentUser?.id) continue; // skip user player slot
+        base44.entities.Character.update(charId, {
+          current_home_location_id: locationId,
+        }).catch(() => {});
+      }
+    }
+
     const workerIds = formData.worker_character_ids || [];
     const isEducation = formData.category === 'school' || formData.category === 'education';
     for (const charId of workerIds) {
