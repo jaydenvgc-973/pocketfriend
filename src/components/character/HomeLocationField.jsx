@@ -10,19 +10,15 @@ export default function HomeLocationField({ character, currentUser }) {
   const [showRepair, setShowRepair] = useState(false);
   const [isRepairingLink, setIsRepairingLink] = useState(false);
 
-  // Fetch ALL user locations (not just category=home, since users can live in any location)
+  // Fetch ALL user-visible locations using the same authoritative source as Locations page
+  // This includes owned, character-linked, resident-linked, and admin-shared locations
   const { data: userLocations = [] } = useQuery({
     queryKey: ['userLocations', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      // Load ALL locations visible to this user — don't filter by category
-      // Users can assign any location as home (generic, workplace, etc.)
-      const locs = await base44.entities.LocationReference.filter(
-        { owner_email: currentUser.email },
-        '-created_date',
-        500
-      );
-      return locs;
+      // Use the same function that the Locations page uses — applies all visibility rules
+      const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
+      return res?.data?.locations || [];
     },
     enabled: !!currentUser?.email,
   });
