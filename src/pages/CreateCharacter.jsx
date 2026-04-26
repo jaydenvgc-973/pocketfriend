@@ -62,16 +62,29 @@ const PLACE_OPTIONS = [
 ];
 
 const MEMORY_PRESETS = [
-  { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not." },
-  { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot." },
-  { title: "A moment they lost control", description: "A situation where they went further than they meant to — emotionally or otherwise." },
-  { title: "A loss they haven't processed", description: "Someone or something they lost that still sits with them quietly." },
-  { title: "A time they were humiliated", description: "A public or private moment where they felt small. It hardened something in them." },
-  { title: "A decision they regret", description: "A fork in the road they took wrong. They know it. They don't talk about it much." },
-  { title: "A moment of unexpected kindness", description: "Someone showed up for them when they didn't expect it. It stayed." },
-  { title: "A falling out with family", description: "A rupture with someone in their family — said or unsaid. Still complicated." },
-  { title: "Their first real win", description: "The moment they proved something to themselves. The thing they hold onto." },
-  { title: "A secret they've never told anyone", description: "Something they carry alone. No one knows. Maybe they'll tell you." },
+  // ── Adversity ──────────────────────────────────────────────────────
+  { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not.", category: "adversity" },
+  { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot.", category: "adversity" },
+  { title: "A moment they lost control", description: "A situation where they went further than they meant to — emotionally or otherwise.", category: "adversity" },
+  { title: "A loss they haven't processed", description: "Someone or something they lost that still sits with them quietly.", category: "adversity" },
+  { title: "A time they were humiliated", description: "A public or private moment where they felt small. It hardened something in them.", category: "adversity" },
+  { title: "A decision they regret", description: "A fork in the road they took wrong. They know it. They don't talk about it much.", category: "adversity" },
+  { title: "A falling out with family", description: "A rupture with someone in their family — said or unsaid. Still complicated.", category: "adversity" },
+  { title: "A secret they've never told anyone", description: "Something they carry alone. No one knows. Maybe they'll tell you.", category: "adversity" },
+  // ── Positive & Connection ─────────────────────────────────────────
+  { title: "Their first real win", description: "The moment they proved something to themselves. The thing they hold onto.", category: "positive" },
+  { title: "A moment of unexpected kindness", description: "Someone showed up for them when they didn't expect it. It stayed.", category: "positive" },
+  { title: "A deep friendship that shaped them", description: "A person who genuinely got them — made them feel less alone. Defines how they connect.", category: "positive" },
+  { title: "A time they were truly loved", description: "A relationship, family moment, or friendship where they felt completely accepted.", category: "positive" },
+  { title: "Something they built or created", description: "A project, career move, community, or creative work they're quietly proud of.", category: "positive" },
+  { title: "A celebration they'll never forget", description: "A moment of pure joy — a milestone, a party, a trip, a night that still makes them smile.", category: "positive" },
+  { title: "A place that felt like home", description: "A city, neighborhood, house, or room where they finally felt like themselves.", category: "positive" },
+  // ── Growth & Resilience ───────────────────────────────────────────
+  { title: "A hard lesson that changed them", description: "Something painful that ultimately made them wiser. They don't regret it anymore.", category: "growth" },
+  { title: "A time they surprised themselves", description: "A moment they handled something better than expected. Quietly built confidence.", category: "growth" },
+  { title: "When they decided to change", description: "A turning point — they let go of something old and chose a different direction.", category: "growth" },
+  { title: "A person who helped them grow", description: "A mentor, friend, or stranger who said or did something that shifted how they see life.", category: "growth" },
+  { title: "Rebuilding after failure", description: "Something fell apart — job, relationship, plan — and they started over. They're still here.", category: "growth" },
 ];
 
 const DRAFT_KEY = "create_character_draft";
@@ -410,7 +423,11 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
           prompt: `Create a personality summary (2-3 sentences, raw and real, third person) for: ${charProfile}. Make it feel like a real person, not a description. No flowery language.`
         }),
         base44.integrations.Core.InvokeLLM({
-          prompt: `Generate 4 specific memories for this character that shaped who they are. CHARACTER: ${charProfile}. Return ONLY a JSON object with a "memories" array. Each memory: { title, description, emotional_impact, lesson_learned }`,
+          prompt: `Generate 4 specific memories for this character that shaped who they are. CHARACTER: ${charProfile}.
+
+CRITICAL BALANCE RULE: At least 2 of the 4 memories MUST be positive, joyful, or growth-based — a win, a meaningful connection, a moment of pride, a time they overcame something, or a relationship that gave them strength. Do NOT generate only trauma or hardship. Real people have both struggle and joy.
+
+Return ONLY a JSON object with a "memories" array. Each memory: { title, description, emotional_impact, lesson_learned }`,
           response_json_schema: {
             type: "object",
             properties: {
@@ -622,6 +639,24 @@ Return ONLY a JSON object with a "members" array. Each item: { name: string, rel
 CHARACTER: ${charProfile}
 
 MEMORY THEMES TO COVER (use these as seeds, not scripts): ${memoryThemes}
+
+CRITICAL BALANCE RULE — MANDATORY:
+This character's memory bank MUST include emotional diversity. Do NOT generate only negative or trauma-based memories.
+
+REQUIRED DISTRIBUTION: At least 2 of the 4-6 memories must be positive, joyful, or growth-oriented experiences. Examples:
+  - A time they felt genuinely proud of themselves
+  - A friendship or relationship that gave them strength
+  - A win — big or small — that proved something to them
+  - A moment of real happiness, celebration, or connection
+  - A time they overcame something and came out stronger
+  - A place, person, or experience that made them feel alive
+
+Negative experiences are allowed and human — but they must be BALANCED with:
+  - resilience (they survived, adapted, or grew)
+  - positive memories (things they cherish, not just things they survived)
+  - growth (something they learned, not just something they endured)
+
+FAILURE CONDITION: A memory bank made entirely of heartbreak, loss, betrayal, and regret is a simulation failure. Real people have both.
 
 Each memory must:
 - Be a specific, grounded scene — not vague. Include real names, places, situations.
@@ -1205,27 +1240,49 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
     <div key="memories" className="space-y-4">
       <div>
         <h2 className="text-sm font-semibold text-foreground mb-1">What have they been through?</h2>
-        <p className="text-xs text-muted-foreground mb-1">Pick the types of experiences that shaped them.</p>
-        <p className="text-xs text-muted-foreground/60 mb-4">The AI will write the actual memories — specific, named, real-feeling scenes — when you create. Skip this step and they'll still get a full past.</p>
+        <p className="text-xs text-muted-foreground mb-1">Pick the experiences that shaped them — struggles, wins, and growth.</p>
+        <p className="text-xs text-muted-foreground/60 mb-4">The AI will write the actual memories — specific, vivid, real-feeling scenes — when you create. Skip this and they'll still get a full, balanced past.</p>
       </div>
       {data.memories.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2">
           {data.memories.map(m => (
-            <div key={m.title} className="flex items-center gap-1.5 bg-primary/10 border border-primary/20 rounded-full px-3 py-1.5">
-              <span className="text-xs font-medium text-primary">{m.title}</span>
-              <button onClick={() => removeMemory(m.title)} className="text-primary/50 hover:text-destructive transition-colors"><X className="w-3 h-3" /></button>
+            <div key={m.title} className={`flex items-center gap-1.5 border rounded-full px-3 py-1.5 ${
+              m.category === 'positive' ? 'bg-emerald-500/10 border-emerald-500/20' :
+              m.category === 'growth' ? 'bg-blue-500/10 border-blue-500/20' :
+              'bg-primary/10 border-primary/20'
+            }`}>
+              <span className={`text-xs font-medium ${
+                m.category === 'positive' ? 'text-emerald-400' :
+                m.category === 'growth' ? 'text-blue-400' :
+                'text-primary'
+              }`}>{m.title}</span>
+              <button onClick={() => removeMemory(m.title)} className="text-muted-foreground/50 hover:text-destructive transition-colors"><X className="w-3 h-3" /></button>
             </div>
           ))}
         </div>
       )}
-      <div className="space-y-2">
-        {MEMORY_PRESETS.filter(p => !data.memories.find(m => m.title === p.title)).map(preset => (
-          <button key={preset.title} onClick={() => addPresetMemory(preset)} className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
-            <p className="text-sm font-medium text-foreground">{preset.title}</p>
-            <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
-          </button>
-        ))}
-      </div>
+      {/* Grouped preset sections */}
+      {[
+        { key: "adversity", label: "Adversity", color: "text-rose-400", borderColor: "border-rose-500/20", bgActive: "bg-rose-500/10" },
+        { key: "positive", label: "Positive & Connection", color: "text-emerald-400", borderColor: "border-emerald-500/20", bgActive: "bg-emerald-500/10" },
+        { key: "growth", label: "Growth & Resilience", color: "text-blue-400", borderColor: "border-blue-500/20", bgActive: "bg-blue-500/10" },
+      ].map(group => {
+        const groupPresets = MEMORY_PRESETS.filter(p => p.category === group.key && !data.memories.find(m => m.title === p.title));
+        if (groupPresets.length === 0) return null;
+        return (
+          <div key={group.key}>
+            <p className={`text-[10px] font-semibold uppercase tracking-widest mb-2 ${group.color}`}>{group.label}</p>
+            <div className="space-y-2">
+              {groupPresets.map(preset => (
+                <button key={preset.title} onClick={() => addPresetMemory(preset)} className="w-full text-left p-3 rounded-xl border border-border bg-card hover:border-primary/40 transition-colors">
+                  <p className="text-sm font-medium text-foreground">{preset.title}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        );
+      })}
       {showMemoryForm ? (
         <div className="space-y-2 border border-border rounded-xl p-3">
           <Input value={newMemory.title} onChange={e => setNewMemory(prev => ({ ...prev, title: e.target.value }))} placeholder="Describe the experience type..." className="h-10 rounded-lg text-sm" />
