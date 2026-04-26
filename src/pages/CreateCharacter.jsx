@@ -171,6 +171,17 @@ export default function CreateCharacter() {
   const [pendingFamilyMembers, setPendingFamilyMembers] = useState([]); // proposed — not yet approved
   const [isGeneratingOccupation, setIsGeneratingOccupation] = useState(false);
   const [isGeneratingCriminalRecord, setIsGeneratingCriminalRecord] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+
+  const handleCancelCharacter = () => {
+    localStorage.removeItem(DRAFT_KEY);
+    setData(defaultData);
+    setStep(0);
+    setAvatarUrl(null);
+    setReferenceUrls([]);
+    setShowCancelConfirm(false);
+    navigate("/home");
+  };
 
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
@@ -1467,9 +1478,62 @@ Return ONLY a JSON object with sleep_start_time and wake_up_time in HH:MM 24-hou
             )}
           </div>
         )}
+
+        {/* Cancel Character button — always visible after step 0 or if any data entered */}
+        <div className="mt-4 flex justify-center">
+          <button
+            onClick={() => setShowCancelConfirm(true)}
+            className="text-xs text-muted-foreground hover:text-destructive transition-colors underline underline-offset-2"
+          >
+            Cancel Character
+          </button>
+        </div>
       </div>
       <div className="pb-28" />
       <BottomNav />
+
+      {/* Cancel Confirmation Dialog */}
+      <AnimatePresence>
+        {showCancelConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-6"
+            onClick={() => setShowCancelConfirm(false)}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              transition={{ duration: 0.15 }}
+              onClick={e => e.stopPropagation()}
+              className="bg-card border border-border rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-xl"
+            >
+              <div>
+                <h3 className="text-base font-semibold text-foreground mb-1">Cancel this character?</h3>
+                <p className="text-sm text-muted-foreground">This will remove all entered information. You'll start fresh next time.</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                <Button
+                  variant="destructive"
+                  className="w-full rounded-xl"
+                  onClick={handleCancelCharacter}
+                >
+                  Yes, Cancel Character
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full rounded-xl"
+                  onClick={() => setShowCancelConfirm(false)}
+                >
+                  No, Keep Editing
+                </Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
