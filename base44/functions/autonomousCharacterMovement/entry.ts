@@ -1,20 +1,26 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * AUTONOMOUS CHARACTER MOVEMENT TRIGGER
+ * AUTONOMOUS CHARACTER MOVEMENT — NEEDS-DRIVEN
  *
- * THRESHOLD RULE (internal urgency, not UI label):
- *   > 70   → no urgency, optional movement only
- *   50–70  → awareness, begin evaluating
- *   < 50   → URGENT: must attempt movement
- *   < 25   → HIGH URGENCY: strong prioritization
- *   < 10   → EMERGENCY: forced/critical response
+ * Runs every 30 minutes. Evaluates each active_created_character's raw need
+ * values and moves them to the best available location.
  *
- * Blocking a movement below 50 requires a proven reason.
- * Silent skipping is a system failure.
+ * THRESHOLD (internal urgency — NOT UI labels):
+ *   > 70    no urgency — optional movement only (25% chance)
+ *   50–70   awareness  — begin evaluating (50% chance)
+ *   < 50    URGENT     — mandatory movement attempt
+ *   < 25    HIGH       — strong prioritization, no delay
+ *   < 10    EMERGENCY  — maximum urgency score
+ *
+ * Below 50 = system MUST attempt movement or prove a blocking reason.
+ * Silent skipping at < 50 is a SYSTEM FAILURE.
+ *
+ * OWNER_EMAIL ISOLATION: character may only move to locations where
+ *   destination.owner_email === character.owner_email
  */
 
-// ── RAW VALUE READERS ──────────────────────────────────────────────────────────
+// ── RAW NEED VALUES ────────────────────────────────────────────────────────────
 function needValues(char) {
   return {
     hunger:   char.hunger_value          ?? 70,
@@ -28,19 +34,25 @@ function needValues(char) {
   };
 }
 
-// ── URGENCY LEVEL (internal behavior driver) ───────────────────────────────────
-// Returns: 0 = none, 1 = awareness, 2 = urgent, 3 = high urgency, 4 = emergency
+// ── URGENCY LEVEL ──────────────────────────────────────────────────────────────
+// 0 = none | 1 = awareness | 2 = urgent | 3 = high | 4 = emergency
 function urgencyLevel(value) {
-  if (value < 10) return 4; // emergency
-  if (value < 25) return 3; // high urgency
-  if (value < 50) return 2; // urgent — movement required
-  if (value < 70) return 1; // awareness — start evaluating
-  return 0;                 // no urgency
+  if (value < 10) return 4;
+  if (value < 25) return 3;
+  if (value < 50) return 2;
+  if (value < 70) return 1;
+  return 0;
+}
+
+// ── LOWEST URGENCY NEED ────────────────────────────────────────────────────────
+function highestUrgencyEntry(vals) {
+  return Object.entries(vals)
+    .map(([k, v]) => ({ key: k, value: v, urgency: urgencyLevel(v) }))
+    .sort((a, b) => b.urgency - a.urgency || a.value - b.value)[0];
 }
 
 // ── LOCATION SCORER ────────────────────────────────────────────────────────────
-// Scores a location based on raw need values + urgency.
-// Higher urgency = larger score differential between correct and wrong venues.
+// Score scales with urgency so correct category wins harder when need is worse.
 function scoreLocation(location, char, vals) {
   let score = 0;
   const cat = location.category || 'generic';
@@ -58,20 +70,19 @@ function scoreLocation(location, char, vals) {
   if (hungerU >= 2) {
     if (cat === 'food_drink') score += 3 + hungerU * 2;
     if (cat === 'grocery')    score += 2 + hungerU;
-    if (cat === 'home')       score += 1; // cook at home
+    if (cat === 'home')       score += 1;       // can cook at home
   }
 
-  // ENERGY → rest at home (low energy → home; critical energy → forced home)
+  // ENERGY → rest at home
   if (energyU >= 2) {
     if (cat === 'home') score += 3 + energyU * 2;
-    // Gym drains energy — penalize if energy is low
-    if (cat === 'gym')  score -= energyU;
+    if (cat === 'gym')  score -= energyU;       // gym makes it worse
   }
 
-  // SOCIAL → go out (extrovert/ambivert); quiet for introverts
+  // SOCIAL → go out (extrovert/ambivert) OR quiet (introvert)
   if (socialU >= 2) {
-    const isIntrovert = ['introvert', 'mostly_introvert'].includes(se);
-    if (isIntrovert) {
+    const isIntro = ['introvert', 'mostly_introvert'].includes(se);
+    if (isIntro) {
       if (cat === 'outdoor' || cat === 'home') score += 2 + socialU;
     } else {
       if (cat === 'social' || cat === 'food_drink') score += 3 + socialU * 2;
@@ -79,19 +90,18 @@ function scoreLocation(location, char, vals) {
     }
   }
 
-  // HEALTH → medical care
+  // HEALTH → medical care — scales most aggressively
   if (healthU >= 2) {
-    if (cat === 'medical')  score += 4 + healthU * 3; // scales hard with urgency
-    if (cat === 'home')     score += 1 + healthU;     // rest helps mildly
-    if (cat === 'gym')      score -= healthU * 2;     // avoid gym when sick
-    if (cat === 'social')   score -= healthU;         // avoid crowds when sick
+    if (cat === 'medical')  score += 4 + healthU * 3;
+    if (cat === 'home')     score += 1 + healthU;
+    if (cat === 'gym')      score -= healthU * 2;
+    if (cat === 'social')   score -= healthU;
   }
 
   // MENTAL / STRESS → calm environments
   if (mentalU >= 2) {
-    if (cat === 'outdoor' || cat === 'home' || cat === 'religion') score += 2 + mentalU;
-    if (cat === 'gym')    score += 1 + mentalU; // exercise helps stress
-    if (cat === 'social') score -= (mentalU > 2 ? 1 : 0); // crowded = more stress if very low
+    if (['outdoor', 'home', 'religion'].includes(cat)) score += 2 + mentalU;
+    if (cat === 'gym') score += 1 + mentalU;
   }
 
   // HYGIENE → home to freshen up
@@ -102,19 +112,17 @@ function scoreLocation(location, char, vals) {
   // COMFORT → change of scenery
   if (comfortU >= 2) {
     if (cat === 'outdoor' || cat === 'food_drink') score += 1 + comfortU;
-    // Don't stay home if comfort is low — that's the problem
-    if (cat === 'home') score -= 1;
+    if (cat === 'home') score -= 1; // staying home IS the comfort problem
   }
 
-  // BASE SOCIAL ENERGY PREFERENCE (minor baseline, overridden by urgent needs)
-  if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat)) score += 1;
+  // BASE social energy preference (minor, overridden by urgent needs)
+  if (se === 'extrovert' && ['social', 'food_drink', 'outdoor'].includes(cat))      score += 1;
   if (['introvert', 'mostly_introvert'].includes(se) && ['home', 'outdoor'].includes(cat)) score += 1;
-  if (se === 'ambivert') score += 0; // neutral
 
   return score;
 }
 
-// ── LOCATION SELECTOR ─────────────────────────────────────────────────────────
+// ── BEST LOCATION SELECTOR ─────────────────────────────────────────────────────
 function selectBestLocation(locations, char, vals) {
   if (!locations || locations.length === 0) return null;
 
@@ -122,29 +130,29 @@ function selectBestLocation(locations, char, vals) {
     .map(loc => ({ location: loc, score: scoreLocation(loc, char, vals) }))
     .sort((a, b) => b.score - a.score);
 
-  // Require a minimum positive score — don't move just to move
+  // Must score positive — no movement just to move
   const positives = scored.filter(s => s.score > 0);
   if (positives.length === 0) return null;
 
-  // Weighted random from top 3 to avoid robotics
+  // Weighted random from top 3 to avoid robotic repetition
   const top = positives.slice(0, Math.min(3, positives.length));
   const weights = top.length === 1 ? [1] : top.length === 2 ? [0.65, 0.35] : [0.50, 0.30, 0.20];
   const roll = Math.random();
-  let cumulative = 0;
+  let cum = 0;
   for (let i = 0; i < top.length; i++) {
-    cumulative += weights[i] || 0;
-    if (roll <= cumulative) return top[i].location;
+    cum += weights[i] || 0;
+    if (roll <= cum) return top[i].location;
   }
   return top[0].location;
 }
 
-// ── MAIN HANDLER ──────────────────────────────────────────────────────────────
+// ── MAIN HANDLER ───────────────────────────────────────────────────────────────
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     try { await base44.auth.me(); } catch { /* scheduled — no session */ }
 
-    // Load all active_created_character
+    // ── LOAD ALL active_created_character ────────────────────────────────────
     const characters = await base44.entities.Character.filter({
       character_type: 'active_created_character',
     });
@@ -162,7 +170,7 @@ Deno.serve(async (req) => {
 
     console.log(`[autonomousMovement] Eligible: ${eligible.length}`);
 
-    // Group by owner_email
+    // ── GROUP BY owner_email (strict isolation) ──────────────────────────────
     const byUser = {};
     for (const c of eligible) {
       if (!byUser[c.owner_email]) byUser[c.owner_email] = [];
@@ -171,9 +179,11 @@ Deno.serve(async (req) => {
 
     let totalMoved = 0;
     const moveLog = [];
+    const blockedLog = [];
     const skippedLog = [];
 
     for (const [userEmail, userChars] of Object.entries(byUser)) {
+      // Load ONLY this user's locations (owner_email scope)
       let userLocations = [];
       try {
         userLocations = await base44.entities.LocationReference.filter({ owner_email: userEmail });
@@ -186,50 +196,66 @@ Deno.serve(async (req) => {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
 
-        // ── HARD BLOCKS: proven physical constraints ────────────────────────
-        const isBlocked =
-          status === 'sleeping' ||
-          status === 'napping'  ||
+        // ── PROVEN HARD BLOCKS ──────────────────────────────────────────────
+        if (
+          status === 'sleeping'   ||
+          status === 'napping'    ||
+          status === 'passed_out' ||
+          status === 'hospitalized' ||
           reason === 'work_schedule'   ||
           reason === 'school_schedule' ||
           reason === 'praying_at_home' ||
-          char.is_jailed;
-
-        if (isBlocked) {
-          console.log(`[autonomousMovement] ${char.name}: BLOCKED (${reason || status})`);
+          char.is_jailed
+        ) {
+          console.log(`[autonomousMovement] ${char.name}: HARD BLOCK (${reason || status})`);
           continue;
         }
 
         // ── READ RAW NEED VALUES ────────────────────────────────────────────
         const vals = needValues(char);
+        const top = highestUrgencyEntry(vals);
 
-        // ── CHECK URGENCY: any need below 50 = urgent action required ──────
-        const urgentNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) >= 2);
+        // ── DECIDE IF MOVEMENT IS REQUIRED ─────────────────────────────────
+        // < 50 on any need = mandatory. 50-70 = probabilistic. > 70 = skip/rare.
+        let shouldAttempt = false;
+        let isMandatory = false;
 
-        if (urgentNeeds.length === 0) {
-          // No need below 50 — no mandatory movement
-          // Optional: still allow movement for awareness-level needs (50–70) sometimes
-          const awarenessNeeds = Object.entries(vals).filter(([, v]) => urgencyLevel(v) === 1);
-          if (awarenessNeeds.length === 0 || Math.random() > 0.25) {
-            console.log(`[autonomousMovement] ${char.name}: All needs OK, skipping`);
-            continue;
-          }
+        if (top.urgency >= 2) {
+          // Below 50 on at least one need — MANDATORY
+          shouldAttempt = true;
+          isMandatory = true;
+        } else if (top.urgency === 1) {
+          // 50–70 awareness window — 50% chance to evaluate
+          shouldAttempt = Math.random() < 0.50;
+        } else {
+          // All needs above 70 — 25% chance for personality-driven optional movement
+          shouldAttempt = Math.random() < 0.25;
+        }
+
+        if (!shouldAttempt) {
+          console.log(`[autonomousMovement] ${char.name}: needs OK, skipping`);
+          skippedLog.push(`${char.name}: all needs OK`);
+          continue;
         }
 
         // ── SELECT BEST LOCATION ────────────────────────────────────────────
         const bestLocation = selectBestLocation(userLocations, char, vals);
 
         if (!bestLocation) {
-          // SYSTEM: Log this as a proven block (no valid locations)
-          const msg = `${char.name}: URGENT needs (${urgentNeeds.map(([k]) => k).join(', ')}) but NO valid location found`;
-          skippedLog.push(msg);
-          console.warn(`[autonomousMovement] ${msg}`);
+          // SYSTEM MUST REPORT: mandatory trigger, no valid location
+          const urgentNeeds = Object.entries(vals)
+            .filter(([, v]) => urgencyLevel(v) >= 2)
+            .map(([k, v]) => `${k}(${Math.round(v)})`)
+            .join(', ');
+          const msg = `${char.name}: URGENT [${urgentNeeds}] — NO valid location in scope`;
+          blockedLog.push(msg);
+          console.warn(`[autonomousMovement] BLOCK: ${msg}`);
           continue;
         }
 
-        // ── ALREADY THERE? ──────────────────────────────────────────────────
+        // ── ALREADY THERE — no-op ───────────────────────────────────────────
         if (char.resolved_current_location_id === bestLocation.id) {
-          console.log(`[autonomousMovement] ${char.name}: Already at ${bestLocation.name}`);
+          console.log(`[autonomousMovement] ${char.name}: already at ${bestLocation.name}`);
           continue;
         }
 
@@ -246,12 +272,17 @@ Deno.serve(async (req) => {
           });
 
           totalMoved++;
-          const urgentList = urgentNeeds.map(([k, v]) => `${k}(${Math.round(v)})`).join(', ');
-          const msg = `${char.name} → ${bestLocation.name} [urgent: ${urgentList}]`;
+          const urgentList = Object.entries(vals)
+            .filter(([, v]) => urgencyLevel(v) >= 2)
+            .map(([k, v]) => `${k}(${Math.round(v)})`)
+            .join(', ') || `${top.key}(${Math.round(top.value)})`;
+          const mandatory = isMandatory ? '[MANDATORY]' : '[optional]';
+          const msg = `${char.name} → ${bestLocation.name} ${mandatory} needs: ${urgentList}`;
           moveLog.push(msg);
           console.log(`[autonomousMovement] ✓ ${msg}`);
         } catch (e) {
-          console.error(`[autonomousMovement] Move failed for ${char.name}:`, e.message);
+          console.error(`[autonomousMovement] Move FAILED for ${char.name}:`, e.message);
+          blockedLog.push(`${char.name}: write failed — ${e.message}`);
         }
       }
     }
@@ -261,7 +292,8 @@ Deno.serve(async (req) => {
       users_processed: Object.keys(byUser).length,
       characters_moved: totalMoved,
       moves: moveLog,
-      blocked_with_reason: skippedLog,
+      blocked_with_reason: blockedLog,
+      skipped: skippedLog.length,
       timestamp: new Date().toISOString(),
     });
 
