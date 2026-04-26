@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { MapPin, Check, AlertCircle } from 'lucide-react';
+import { MapPin, Check, AlertCircle, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function HomeLocationField({ character, currentUser }) {
@@ -9,19 +9,28 @@ export default function HomeLocationField({ character, currentUser }) {
   const [selectedLocationId, setSelectedLocationId] = useState(character?.current_home_location_id || '');
   const [showRepair, setShowRepair] = useState(false);
   const [isRepairingLink, setIsRepairingLink] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
 
   // Fetch ALL user-visible locations using the same authoritative source as Locations page
   // This includes owned, character-linked, resident-linked, and admin-shared locations
-  const { data: userLocations = [] } = useQuery({
+  const { data: fetchResult, isLoading } = useQuery({
     queryKey: ['userLocations', currentUser?.email],
     queryFn: async () => {
-      if (!currentUser?.email) return [];
+      if (!currentUser?.email) return { locations: [], totalCount: 0 };
       // Use the same function that the Locations page uses — applies all visibility rules
       const res = await base44.functions.invoke('fetchAllLocationsForUser', {});
-      return res?.data?.locations || [];
+      return {
+        locations: res?.data?.locations || [],
+        totalCount: res?.data?.totalCount || 0,
+        summary: res?.data?.summary || {},
+      };
     },
     enabled: !!currentUser?.email,
   });
+
+  const userLocations = fetchResult?.locations || [];
+  const totalCount = fetchResult?.totalCount || 0;
+  const isTruncated = userLocations.length < totalCount;
 
   // Check for residence assignment on Locations page (fallback truth)
   const [locationPageHome, setLocationPageHome] = useState(null);
@@ -148,6 +157,59 @@ export default function HomeLocationField({ character, currentUser }) {
         )}
         {!selectedLocationId && locationPageHome && !showRepair && (
           <p className="text-xs text-blue-500">Home found on Locations page: {locationPageHome.name}</p>
+        )}
+
+        {/* Truncation warning */}
+        {isTruncated && (
+          <div className="p-2 rounded-lg bg-red-500/5 border border-red-500/20">
+            <p className="text-xs text-red-600 font-medium">
+              ⚠️ Truncated: showing {userLocations.length} of {totalCount} locations
+            </p>
+          </div>
+        )}
+
+        {/* Diagnostics toggle */}
+        <button
+          onClick={() => setShowDiagnostics(!showDiagnostics)}
+          className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-secondary/50 hover:bg-secondary text-muted-foreground hover:text-foreground text-xs transition-colors"
+        >
+          <span>Show Dropdown Diagnostics</span>
+          <ChevronDown className={`w-3 h-3 transition-transform ${showDiagnostics ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Diagnostics panel */}
+        {showDiagnostics && (
+          <div className="p-3 rounded-lg bg-slate-950/20 border border-border space-y-2 max-h-48 overflow-y-auto">
+            <p className="text-xs font-mono text-muted-foreground">
+              Total locations: {userLocations.length} / {totalCount}
+            </p>
+            {fetchResult?.summary && (
+              <>
+                <p className="text-xs font-mono text-muted-foreground">
+                  Owned: {fetchResult.summary.ownedByAccount || 0}
+                </p>
+                <p className="text-xs font-mono text-muted-foreground">
+                  Char-linked: {fetchResult.summary.characterLinked || 0}
+                </p>
+                <p className="text-xs font-mono text-muted-foreground">
+                  Admin-shared: {fetchResult.summary.adminShared || 0}
+                </p>
+              </>
+            )}
+            <p className="text-xs font-mono text-muted-foreground border-t border-border pt-2 mt-2">Dropdown options:</p>
+            <div className="space-y-1">
+              {userLocations.slice(0, 20).map(loc => (
+                <p key={loc.id} className="text-xs font-mono text-muted-foreground truncate">
+                  • {loc.name} <span className="text-muted-foreground/50">({loc.id.slice(0, 8)})</span>
+                </p>
+              ))}
+              {userLocations.length > 20 && (
+                <p className="text-xs font-mono text-muted-foreground">
+                  ... and {userLocations.length - 20} more
+                </p>
+              )}
+            </div>
+          </div>
         )}
       </div>
     </div>
