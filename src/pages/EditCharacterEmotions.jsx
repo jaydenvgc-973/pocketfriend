@@ -241,47 +241,129 @@ Make it feel like a real person, not a description. No flowery language.`
                 <p className="text-xs text-muted-foreground mt-1">Experiences that shaped them — struggles, wins, and growth.</p>
               </div>
 
-              {/* Existing memories */}
-              {(form.memories || []).map((mem, idx) => (
-                <div key={idx} className="border border-border rounded-xl p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <input
-                      type="text"
-                      value={mem.title}
-                      onChange={e => {
-                        const updated = [...form.memories];
-                        updated[idx] = { ...updated[idx], title: e.target.value };
-                        setForm(p => ({ ...p, memories: updated }));
-                      }}
-                      placeholder="Experience title..."
-                      className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                    />
-                    <button
-                      onClick={() => setForm(p => ({ ...p, memories: p.memories.filter((_, i) => i !== idx) }))}
-                      className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 mt-1"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <Textarea
-                    value={mem.description || ""}
-                    onChange={e => {
-                      const updated = [...form.memories];
-                      updated[idx] = { ...updated[idx], description: e.target.value };
-                      setForm(p => ({ ...p, memories: updated }));
-                    }}
-                    placeholder="What happened, how it affected them..."
-                    className="rounded-lg min-h-[70px] text-sm resize-none"
-                  />
+              {/* Currently selected memories — editable chips */}
+              {(form.memories || []).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {(form.memories || []).map((mem, idx) => {
+                    const catColor = mem.category === 'positive' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                      : mem.category === 'growth' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                      : 'bg-rose-500/10 border-rose-500/20 text-rose-400';
+                    return (
+                      <div key={idx} className={`flex items-center gap-1.5 border rounded-full px-3 py-1.5 ${catColor}`}>
+                        <span className="text-xs font-medium">{mem.title || "Untitled"}</span>
+                        <button onClick={() => setForm(p => ({ ...p, memories: p.memories.filter((_, i) => i !== idx) }))} className="opacity-60 hover:opacity-100 transition-opacity">
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              )}
 
+              {/* Preset groups — same as create page */}
+              {[
+                { key: "challenges", label: "Challenges", color: "text-rose-400", desc: "Experiences that tested them" },
+                { key: "positive", label: "Positive Experiences", color: "text-emerald-400", desc: "Things that brought them joy, love, or pride" },
+                { key: "growth", label: "Growth & Resilience", color: "text-blue-400", desc: "How they've changed and grown" },
+              ].map(group => {
+                const PRESETS = [
+                  { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not.", category: "challenges" },
+                  { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot.", category: "challenges" },
+                  { title: "A moment they lost control", description: "A situation where they went further than they meant to — emotionally or otherwise.", category: "challenges" },
+                  { title: "A loss they haven't fully processed", description: "Someone or something they lost that still sits with them quietly.", category: "challenges" },
+                  { title: "A time they felt rejected or overlooked", description: "A moment where they were passed over, dismissed, or made to feel invisible.", category: "challenges" },
+                  { title: "A period where everything felt uncertain", description: "A stretch of life where they didn't know what came next. It changed how they plan.", category: "challenges" },
+                  { title: "A moment they felt truly loved", description: "A relationship, friendship, or family moment where they felt completely accepted.", category: "positive" },
+                  { title: "A time they were proud of themselves", description: "The moment they proved something to themselves. The thing they quietly hold onto.", category: "positive" },
+                  { title: "A meaningful friendship they still value", description: "A person who genuinely got them — made them feel less alone. Defines how they connect.", category: "positive" },
+                  { title: "A time they helped someone and it mattered", description: "They showed up for someone in a real way. That person still crosses their mind.", category: "positive" },
+                  { title: "A moment of joy they still remember clearly", description: "A night, a trip, a celebration — pure happiness. They go back to it sometimes.", category: "positive" },
+                  { title: "A goal they worked hard to achieve", description: "Something they earned through effort, not luck. It shaped what they believe they're capable of.", category: "positive" },
+                  { title: "A place or experience that made them feel alive", description: "A trip, a job, a moment — something that reminded them why it's worth showing up.", category: "positive" },
+                  { title: "A time they felt at peace with themselves", description: "A rare window where things were still and they were okay with who they were.", category: "positive" },
+                  { title: "They learned from a mistake and changed", description: "Something they did wrong — and actually did the work to understand it and shift.", category: "growth" },
+                  { title: "They grew stronger after a difficult time", description: "Hard stretch. They came out different — more capable, more grounded, more themselves.", category: "growth" },
+                  { title: "They rebuilt something after losing it", description: "A job, a relationship, a sense of self — it fell apart and they built it back.", category: "growth" },
+                  { title: "They developed better coping skills", description: "They used to handle things poorly. They found a better way. Still a work in progress.", category: "growth" },
+                  { title: "They became more confident over time", description: "Wasn't always sure of themselves. Something shifted. They carry themselves differently now.", category: "growth" },
+                  { title: "They are learning to trust again", description: "Trust got broken somewhere. They're opening back up — slowly, carefully.", category: "growth" },
+                  { title: "They are working on becoming better", description: "Active self-improvement. Not perfect. But moving in the right direction.", category: "growth" },
+                ];
+                const groupPresets = PRESETS.filter(p => p.category === group.key);
+                return (
+                  <div key={group.key}>
+                    <div className="mb-2">
+                      <p className={`text-[10px] font-bold uppercase tracking-widest ${group.color}`}>{group.label}</p>
+                      <p className="text-[10px] text-muted-foreground">{group.desc}</p>
+                    </div>
+                    <div className="space-y-2">
+                      {groupPresets.map(preset => {
+                        const alreadyAdded = (form.memories || []).some(m => m.title === preset.title);
+                        return (
+                          <button
+                            key={preset.title}
+                            disabled={alreadyAdded}
+                            onClick={() => {
+                              if (alreadyAdded) return;
+                              setForm(p => ({ ...p, memories: [...(p.memories || []), { title: preset.title, description: preset.description, category: preset.category, emotional_impact: "", lesson_learned: "" }] }));
+                            }}
+                            className={`w-full text-left p-3 rounded-xl border transition-colors ${alreadyAdded ? "border-border bg-secondary/30 opacity-40 cursor-default" : "border-border bg-card hover:border-primary/40 cursor-pointer"}`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium text-foreground">{preset.title}</p>
+                              {alreadyAdded && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Custom add */}
               <button
-                onClick={() => setForm(p => ({ ...p, memories: [...(p.memories || []), { title: "", description: "", emotional_impact: "", lesson_learned: "" }] }))}
+                onClick={() => setForm(p => ({ ...p, memories: [...(p.memories || []), { title: "", description: "", category: "challenges", emotional_impact: "", lesson_learned: "" }] }))}
                 className="w-full flex items-center gap-2 justify-center py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors text-sm"
               >
-                <Plus className="w-4 h-4" /> Add experience
+                <Plus className="w-4 h-4" /> Add a custom experience
               </button>
+
+              {/* Inline editor for blank/custom memories */}
+              {(form.memories || []).filter(m => !m.title || m._editing).map((mem, idx) => {
+                const realIdx = (form.memories || []).indexOf(mem);
+                return (
+                  <div key={realIdx} className="border border-border rounded-xl p-3 space-y-2">
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="text"
+                        value={mem.title}
+                        onChange={e => {
+                          const updated = [...form.memories];
+                          updated[realIdx] = { ...updated[realIdx], title: e.target.value };
+                          setForm(p => ({ ...p, memories: updated }));
+                        }}
+                        placeholder="Experience title..."
+                        className="flex-1 bg-secondary/30 border border-border rounded-lg px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      />
+                      <button onClick={() => setForm(p => ({ ...p, memories: p.memories.filter((_, i) => i !== realIdx) }))} className="text-muted-foreground hover:text-destructive transition-colors flex-shrink-0 mt-1">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <Textarea
+                      value={mem.description || ""}
+                      onChange={e => {
+                        const updated = [...form.memories];
+                        updated[realIdx] = { ...updated[realIdx], description: e.target.value };
+                        setForm(p => ({ ...p, memories: updated }));
+                      }}
+                      placeholder="Any specific details... (optional)"
+                      className="rounded-lg min-h-[60px] text-sm resize-none"
+                    />
+                  </div>
+                );
+              })}
             </div>
 
             <div className="pt-4 border-t border-border">
