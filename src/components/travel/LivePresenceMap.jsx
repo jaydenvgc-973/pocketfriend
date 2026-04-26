@@ -790,10 +790,29 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
       {/* Side detail panel — slides in on right */}
       <AnimatePresence>
         {activeLocation && (() => {
-          // PRESENCE RULE: "Who's here" = only real travel-capable characters with is_currently_present=true.
-          // resident_family_members are PROTECTED INTERNAL HOUSEHOLD DATA — residence ≠ presence.
-          // They must NOT appear as physical occupants. They remain visible in household/family sections.
-          const finalOccupants = groupedByLocation.get(activeLocation.id) ?? [];
+          // Build occupants: travel-capable characters with confirmed presence PLUS resident_family_members
+          // resident_family_members are household residents shown in "Who's here" — they are NOT travel actors
+          const markerOccupants = groupedByLocation.get(activeLocation.id) ?? [];
+          const finalOccupants = [...markerOccupants];
+          const seenNames = new Set(markerOccupants.map(m => m.name?.toLowerCase()));
+
+          // Add resident_family_members from the location record (household display — unchanged behavior)
+          (activeLocation.resident_family_members || []).forEach(fam => {
+            const famNameLC = fam.name?.toLowerCase();
+            if (famNameLC && !seenNames.has(famNameLC)) {
+              seenNames.add(famNameLC);
+              const resolvedAvatar = fam.photo_url || familyAvatarMap[famNameLC] || null;
+              finalOccupants.push({
+                characterId: `family_${fam.name}`,
+                name: fam.name,
+                initials: fam.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2),
+                type: 'npc_family_member',
+                avatarUrl: resolvedAvatar,
+                isFamilyMember: true,
+                isAsleep: false,
+              });
+            }
+          });
           
           return (
             <LocationDetailPanel
