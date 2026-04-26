@@ -27,15 +27,30 @@ Deno.serve(async (req) => {
     ];
 
     // ==================================================
-    // STEP 1: FETCH CHARACTERS (STRICT OWNER_EMAIL ONLY)
+    // STEP 1: DEBUG QUERIES (ISOLATION TEST)
     // ==================================================
-    const allCharacters = await base44.asServiceRole.entities.Character.filter(
+    // Query 1: owner_email only
+    const byOwnerEmail = await base44.asServiceRole.entities.Character.filter(
       { owner_email: userEmail },
       null,
       TRUNCATION_LIMIT
     );
 
-    if (allCharacters.length === TRUNCATION_LIMIT) {
+    // Query 2: character_type only
+    const byCharType = await base44.asServiceRole.entities.Character.filter(
+      { character_type: "active_created_character" },
+      null,
+      TRUNCATION_LIMIT
+    );
+
+    // Query 3: owner_email + character_type together
+    const byBoth = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: userEmail, character_type: "active_created_character" },
+      null,
+      TRUNCATION_LIMIT
+    );
+
+    if (byOwnerEmail.length === TRUNCATION_LIMIT || byCharType.length === TRUNCATION_LIMIT || byBoth.length === TRUNCATION_LIMIT) {
       return Response.json({
         success: false,
         TRUNCATION_RISK: true,
@@ -43,28 +58,41 @@ Deno.serve(async (req) => {
       });
     }
 
+    const allCharacters = byBoth;
+
     const activeCharacters = allCharacters.filter(c =>
-      c.character_type === "active_created_character" &&
       c.is_test_character !== true &&
       c.diagnostic_only !== true &&
       c.exclude_from_homepage !== true
     );
 
     // ==================================================
-    // STEP 2: VALIDATE EXPECTED CHARACTERS
+    // STEP 2: DEBUG OUTPUT
     // ==================================================
     const returnedNames = activeCharacters.map(c => c.name);
     const missing = EXPECTED_CHARACTERS.filter(name => !returnedNames.includes(name));
 
+    // Return debug info regardless of match
+    const debugOutput = {
+      success: missing.length === 0,
+      user_email: userEmail,
+      entity_queried: 'Character',
+      query_counts: {
+        by_owner_email_only: byOwnerEmail.length,
+        by_character_type_only: byCharType.length,
+        by_owner_email_and_character_type: byBoth.length
+      },
+      by_owner_email_names: byOwnerEmail.map(c => c.name),
+      by_character_type_names: byCharType.map(c => c.name),
+      total_characters_returned: activeCharacters.length,
+      returned_character_names: returnedNames,
+      expected_character_names: EXPECTED_CHARACTERS,
+      missing_characters: missing,
+      DIAGNOSTIC_SOURCE_MISMATCH: missing.length > 0
+    };
+
     if (missing.length > 0) {
-      return Response.json({
-        success: false,
-        OWNER_EMAIL_SCOPE_FAILURE: true,
-        total_characters_returned: activeCharacters.length,
-        returned_character_names: returnedNames,
-        expected_character_names: EXPECTED_CHARACTERS,
-        missing_characters: missing
-      });
+      return Response.json(debugOutput);
     }
 
     // ==================================================
