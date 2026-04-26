@@ -10,18 +10,19 @@ export default function HomeLocationField({ character, currentUser }) {
   const [showRepair, setShowRepair] = useState(false);
   const [isRepairingLink, setIsRepairingLink] = useState(false);
 
-  // Fetch user's home locations
+  // Fetch ALL user locations (not just category=home, since users can live in any location)
   const { data: userLocations = [] } = useQuery({
     queryKey: ['userLocations', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      // Load ALL home locations visible to this user (owner_email scope is the authority)
+      // Load ALL locations visible to this user — don't filter by category
+      // Users can assign any location as home (generic, workplace, etc.)
       const locs = await base44.entities.LocationReference.filter(
         { owner_email: currentUser.email },
         '-created_date',
-        200
+        500
       );
-      return locs.filter(l => l.category === 'home');
+      return locs;
     },
     enabled: !!currentUser?.email,
   });
