@@ -153,9 +153,15 @@ Deno.serve(async (req) => {
     try { await base44.auth.me(); } catch { /* scheduled — no session */ }
 
     // ── LOAD ALL active_created_character ────────────────────────────────────
-    const characters = await base44.entities.Character.filter({
-      character_type: 'active_created_character',
-    });
+    // Use session user if available, fall back to service role for scheduled runs
+    let characters = [];
+    try {
+      const allChars = await base44.entities.Character.list('-updated_date', 500);
+      characters = allChars.filter(c => c.character_type === 'active_created_character');
+    } catch {
+      const allChars = await base44.asServiceRole.entities.Character.list('-updated_date', 500);
+      characters = allChars.filter(c => c.character_type === 'active_created_character');
+    }
 
     const eligible = characters.filter(c =>
       c.owner_email &&
@@ -165,7 +171,8 @@ Deno.serve(async (req) => {
       !c.is_test_character &&
       !c.diagnostic_only &&
       !c.exclude_from_homepage &&
-      c.current_home_location_id
+      // Accept home via either explicit field OR resolved location marked as home type
+      (c.current_home_location_id || (c.resolved_current_location_id && c.resolved_location_type === 'home'))
     );
 
     console.log(`[autonomousMovement] Eligible: ${eligible.length}`);
@@ -187,9 +194,13 @@ Deno.serve(async (req) => {
       let userLocations = [];
       try {
         userLocations = await base44.entities.LocationReference.filter({ owner_email: userEmail });
-      } catch (e) {
-        console.warn(`[autonomousMovement] Location load failed for ${userEmail}:`, e.message);
-        continue;
+      } catch {
+        try {
+          userLocations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: userEmail });
+        } catch (e2) {
+          console.warn(`[autonomousMovement] Location load failed for ${userEmail}:`, e2.message);
+          continue;
+        }
       }
 
       for (const char of userChars) {
@@ -262,14 +273,19 @@ Deno.serve(async (req) => {
         // ── MOVE ────────────────────────────────────────────────────────────
         try {
           const newStatus = bestLocation.category === 'home' ? 'home' : 'visiting';
-          await base44.entities.Character.update(char.id, {
+          const updatePayload = {
             resolved_current_location_id:   bestLocation.id,
             resolved_current_location_name: bestLocation.name,
             resolved_presence_status:       newStatus,
             resolved_location_type:         bestLocation.category,
             resolved_source_reason:         'autonomous_needs_driven',
             resolved_last_updated_at:       new Date().toISOString(),
-          });
+          };
+          try {
+            await base44.entities.Character.update(char.id, updatePayload);
+          } catch {
+            await base44.asServiceRole.entities.Character.update(char.id, updatePayload);
+          }
 
           totalMoved++;
           const urgentList = Object.entries(vals)

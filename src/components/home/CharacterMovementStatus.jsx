@@ -72,15 +72,6 @@ function getPlainStatus(character) {
 
   // Home and stale (> 4 hours, no needs triggering movement)
   if ((status === 'home' || !status) && hoursSinceUpdate > 4) {
-    const noHome = !character.current_home_location_id;
-    if (noHome) {
-      return {
-        text: `${name} needs a valid home assigned before they can move.`,
-        color: 'text-red-400',
-        needsRepair: true,
-        repairLabel: 'Refresh Movement',
-      };
-    }
     return {
       text: `${name} has been home for a while — movement can be refreshed.`,
       color: 'text-amber-400',
