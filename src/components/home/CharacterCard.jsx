@@ -8,6 +8,7 @@ import { useActiveCharacter } from "@/lib/ActiveCharacterContext";
 import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
+import CharacterMovementStatus from "@/components/home/CharacterMovementStatus";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -66,6 +67,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const [unreadChat, setUnreadChat] = useState(0);
   const [unreadPhone, setUnreadPhone] = useState(0);
   const isMovedAway = character.status === "moved_away";
+  const isDefault = character.is_default;
   const queryClient = useQueryClient();
   const { activeCharacter, setActiveCharacter } = useActiveCharacter();
 
@@ -452,6 +454,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
               </DropdownMenu>
             )}
           </div>
+        )}
+        {!isMovedAway && !isDefault && (
+          <CharacterMovementStatus character={character} userEmail={character.owner_email || character.created_by} />
         )}
       </motion.div>
     </>
