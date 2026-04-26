@@ -5,6 +5,30 @@
  * Each person in the photo must be instantly recognizable as their exact avatar.
  */
 
+import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
+
+/**
+ * Build outfit enforcement text for a list of characters and optionally the user.
+ */
+function buildPhotoOutfitBlock(selectedChars, user = null, locationCategory = null) {
+  const lines = [];
+  for (const c of selectedChars) {
+    const outfit = resolveCurrentOutfit(c, '', locationCategory);
+    const text = buildOutfitPromptText(outfit);
+    if (text) lines.push(`${c.name}: wearing ${text}`);
+  }
+  if (user) {
+    const userOutfit = user.current_outfit || user.selected_outfit || null;
+    if (userOutfit) {
+      const text = buildOutfitPromptText(userOutfit);
+      const name = user.fictional_world_name || user.full_name || 'User';
+      if (text) lines.push(`${name}: wearing ${text}`);
+    }
+  }
+  if (lines.length === 0) return '';
+  return `\n\nOUTFIT LOCK — MANDATORY:\nEach person MUST appear in exactly the outfit listed. Do NOT invent or substitute clothing.\n${lines.join('\n')}`;
+}
+
 export function buildPhotoIdentityLockPrompt(selectedChars, displayName) {
   const charList = selectedChars.map((c, idx) => {
     const ageInfo = c.age ? ` (age ${c.age})` : '';
@@ -41,8 +65,9 @@ VALIDATION:
 ════════════════════════════════════════════════════════════════`;
 }
 
-export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, displayName) {
+export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, displayName, user = null) {
   const identityLock = buildPhotoIdentityLockPrompt(selectedChars, displayName);
+  const outfitBlock = buildPhotoOutfitBlock(selectedChars, user, location?.category || null);
   
   const charSummary = selectedChars.length > 0
     ? selectedChars.map(c => `${c.name}${c.age ? ` (${c.age})` : ''}`).join(', ')
@@ -55,7 +80,7 @@ export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, 
 Location: ${location.name}
 People in the photo: ${allNames}
 
-${identityLock}
+${identityLock}${outfitBlock}
 
 Additional context: Photorealistic, candid, authentic moment. Include ALL listed people in the photo.`;
 }

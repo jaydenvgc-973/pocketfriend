@@ -38,6 +38,60 @@ function cdnFilter(urls) {
   return (urls || []).map(toPublicCDN).filter(isAccessible);
 }
 
+// ── OUTFIT RESOLVER ───────────────────────────────────────────────────────────
+// Resolves a character's current outfit from their closet or current_outfit field.
+// Returns a text description string suitable for prompt injection, or null.
+
+function resolveCharacterOutfitForPrompt(character) {
+  if (!character) return null;
+
+  // Priority 1: manually set current_outfit (set by user today)
+  const current = character.current_outfit;
+  if (current) {
+    const text = buildOutfitText(current);
+    if (text) return text;
+  }
+
+  // Priority 2: resolve from closet by situation
+  const closet = character.character_closet || [];
+  const outfits = closet.filter(item => item.outfit_id);
+  if (outfits.length === 0) return null;
+
+  // Determine category from presence status
+  const presenceStatus = character.resolved_presence_status || 'home';
+  let targetCategory = 'daily_casual';
+  if (presenceStatus === 'sleeping' || presenceStatus === 'napping') targetCategory = 'sleepwear';
+  else if (presenceStatus === 'at_work') targetCategory = 'work';
+  else if (presenceStatus === 'home') targetCategory = 'lounge';
+
+  const FALLBACK = {
+    sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
+    work:         ['work', 'formal', 'daily_casual'],
+    lounge:       ['lounge', 'daily_casual'],
+    daily_casual: ['daily_casual', 'outdoor', 'lounge'],
+  };
+
+  const chain = FALLBACK[targetCategory] || ['daily_casual'];
+  for (const cat of chain) {
+    const pool = outfits.filter(o => o.category === cat);
+    if (pool.length > 0) {
+      const text = buildOutfitText(pool[0]);
+      if (text) return text;
+    }
+  }
+
+  // Last resort: any outfit
+  const text = buildOutfitText(outfits[0]);
+  return text || null;
+}
+
+function buildOutfitText(outfit) {
+  if (!outfit) return null;
+  if (outfit.full_description) return outfit.full_description;
+  const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories].filter(Boolean);
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
 // ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
 // STRICT ZONE ISOLATION: only the matched zone's images are ever used.
 // No cross-zone fallback. No "first available zone" fallback.
@@ -486,6 +540,7 @@ The scene lighting must match the actual world time, not the reference images.`;
   ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — not a separate element pasted over background
   ✅ Character scale, position, and shadows MUST be consistent with the new camera viewpoint and room perspective
   ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
+  ✅ OUTFIT LOCK: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `Character MUST be wearing: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}. Do NOT invent or substitute clothing. Do NOT ignore the outfit.` : 'Clothing should match their personality and context.'}
   ⛔ Do NOT copy background, room, or pose from reference photos
   ⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and entire room perspective shifts
   ⛔ Do NOT paste the character in — recompose the entire scene with character integrated, sharing the same perspective and lighting
@@ -600,6 +655,14 @@ Deno.serve(async (req) => {
           charRecord.avatar_description_text || null, // text description from photo uploader
         ].filter(Boolean);
         charDesc = parts.join(', ');
+
+        // ── OUTFIT RESOLUTION ────────────────────────────────────────────
+        // Resolve the character's current outfit from closet or current_outfit field.
+        // This is injected into the prompt so the AI renders the correct clothing.
+        const outfitObj = resolveCharacterOutfitForPrompt(charRecord);
+        if (outfitObj) {
+          charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitObj}` : `Currently wearing: ${outfitObj}`;
+        }
       }
 
       // Fallback to UI-provided refs if DB had none (only reference_image_urls — NOT avatar)

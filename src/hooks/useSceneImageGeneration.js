@@ -4,6 +4,44 @@ import { enforceZoneLock, buildAvatarIdentityBlock } from '@/lib/sceneImageGener
 import { prioritizeAvatarReferences } from '@/lib/characterIdentityLock';
 import { isResidentialLocation, resolveSceneImagePeople, buildResidentialImageConstraint } from '@/lib/residentialSceneFiltering';
 import { buildIdentityLockBlock } from '@/lib/characterIdentityLock';
+import { resolveCurrentOutfit, buildOutfitPromptText } from '@/lib/outfitRotationEngine';
+
+/**
+ * Resolve outfit description for a character or user for prompt injection.
+ * Returns a string like "wearing: white tee, black joggers, Air Force 1s" or null.
+ */
+function resolveOutfitText(person, locationCategory = null) {
+  if (!person) return null;
+
+  // For user: check current_outfit or selected_outfit
+  if (person._isUser) {
+    const outfit = person.current_outfit || person.selected_outfit || null;
+    if (!outfit) return null;
+    const text = buildOutfitPromptText(outfit);
+    return text ? `wearing: ${text}` : null;
+  }
+
+  // For characters: use the rotation engine
+  const outfit = resolveCurrentOutfit(person, '', locationCategory);
+  const text = buildOutfitPromptText(outfit);
+  return text ? `wearing: ${text}` : null;
+}
+
+/**
+ * Build the outfit enforcement block for all visible people in the scene.
+ */
+function buildOutfitEnforcementBlock(people, locationCategory = null) {
+  const lines = [];
+  for (const person of people) {
+    const name = person.name || person.full_name || 'Person';
+    const outfitText = resolveOutfitText(person, locationCategory);
+    if (outfitText) {
+      lines.push(`${name}: ${outfitText}`);
+    }
+  }
+  if (lines.length === 0) return '';
+  return `\n\nOUTFIT IDENTITY LOCK — NON-NEGOTIABLE:\nEach person MUST appear in EXACTLY the outfit listed below. Do NOT invent clothing. Do NOT substitute. Do NOT ignore the outfit.\n${lines.join('\n')}\nThe outfit is part of their identity. It must be visually present and accurate.`;
+}
 
 /**
  * Hook for managing scene image generation with strict zone-lock and identity enforcement.
@@ -46,6 +84,11 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
 
       let prompt;
 
+      const locationCategory = location.category || null;
+
+      // Tag currentUser so outfit resolver knows it's a user (not a character)
+      const taggedUser = currentUser ? { ...currentUser, _isUser: true } : null;
+
       if (isResidentialLocation(location)) {
         // ── RESIDENTIAL SCENE ──────────────────────────────────────────────
         const validResidentialPeople = resolveSceneImagePeople(
@@ -59,6 +102,10 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
         const residentialConstraint = buildResidentialImageConstraint(location, validResidentialPeople);
         const identityLockBlock = buildIdentityLockBlock(validResidentialPeople, currentUser);
         const avatarRefInstructions = buildAvatarIdentityBlock(validResidentialPeople);
+        const outfitBlock = buildOutfitEnforcementBlock(
+          [...validResidentialPeople.slice(0, 3), ...(taggedUser ? [taggedUser] : [])],
+          locationCategory
+        );
 
         const strictPeopleRule = visibleNames.length > 0
           ? `STRICT RULE: The ONLY people who may appear are: ${visibleNames.join(", ")}. No other people, no strangers, no background figures.`
@@ -68,17 +115,22 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
           ? " The home is clearly lived-in: warm, fully furnished, decorated with personal belongings."
           : "";
 
-        prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}. Photorealistic.`;
+        prompt = `${envNote} Scene: ${location.name}${zoneSuffix}, ${timeOfDay} lighting.${atmosphereSuffix} ${strictPeopleRule}${residentialConstraint}${identityLockBlock}${avatarRefInstructions}${outfitBlock}. Photorealistic.`;
       } else {
         // ── NON-RESIDENTIAL SCENE ────────────────────────────────────────────
         const isGlobal = location.location_type === "global";
 
         if (isGlobal) {
-          const charNames = resolvedWhosHereList.slice(0, 3).map(c => c.name).join(", ");
+          const visiblePeople = resolvedWhosHereList.slice(0, 3);
+          const charNames = visiblePeople.map(c => c.name).join(", ");
           const peopleDesc = charNames ? `with ${charNames} among other patrons` : "with other people around";
-          const charIdentityLocks = buildIdentityLockBlock(resolvedWhosHereList.slice(0, 3), currentUser);
-          const avatarRefInstructions = buildAvatarIdentityBlock(resolvedWhosHereList);
-          prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}. Photorealistic.`;
+          const charIdentityLocks = buildIdentityLockBlock(visiblePeople, currentUser);
+          const avatarRefInstructions = buildAvatarIdentityBlock(visiblePeople);
+          const outfitBlock = buildOutfitEnforcementBlock(
+            [...visiblePeople, ...(taggedUser ? [taggedUser] : [])],
+            locationCategory
+          );
+          prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}.${charIdentityLocks}${avatarRefInstructions}${outfitBlock}. Photorealistic.`;
         } else {
           const physicallyPresent = resolvedWhosHereList.slice(0, 3);
           const peopleDesc = physicallyPresent.length > 0
@@ -87,7 +139,11 @@ export function useSceneImageGeneration(location, locationZones, currentUser, di
 
           const charIdentityLocks = buildIdentityLockBlock(physicallyPresent, currentUser);
           const avatarRefInstructions = buildAvatarIdentityBlock(physicallyPresent);
-          prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}. Photorealistic.`;
+          const outfitBlock = buildOutfitEnforcementBlock(
+            [...physicallyPresent, ...(taggedUser ? [taggedUser] : [])],
+            locationCategory
+          );
+          prompt = `${envNote} Realistic scene at ${location.name}${zoneSuffix}, ${location.category} setting, ${timeOfDay} lighting. ${peopleDesc}${charIdentityLocks}${avatarRefInstructions}${outfitBlock}. Photorealistic.`;
         }
       }
 
