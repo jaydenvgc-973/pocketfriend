@@ -22,6 +22,7 @@ import CharacterAliasEditor from "@/components/character/CharacterAliasEditor.js
 import AppearanceAgeField from "@/components/character/AppearanceAgeField.jsx";
 import AppearanceLockEditor from "@/components/character/AppearanceLockEditor.jsx";
 import CharacterEditSettingsPanel from "@/components/character/CharacterEditSettingsPanel.jsx";
+import HomeLocationField from "@/components/character/HomeLocationField.jsx";
 import CharacterExpenseManager from "@/components/finance/CharacterExpenseManager";
 import MonthlyStatementPanel from "@/components/finance/MonthlyStatementPanel";
 import CharacterNeedsPanel from "@/components/character/CharacterNeedsPanel";
@@ -711,6 +712,9 @@ export default function CharacterProfile() {
             })()}
           </div>
         )}
+
+        {/* Home Location */}
+        <HomeLocationField character={character} currentUser={currentUser} />
 
         {/* Criminal Record */}
         <div className="bg-card border border-border rounded-2xl p-4">

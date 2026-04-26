@@ -120,7 +120,7 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     // Always mark as present if we have a location ID OR if they have a named away state
     isCurrentlyPresent = !!resolvedLocId || live.resolved_source_reason === 'no_home_safe_away';
   } else {
-    // NPCs + family: use saved DB field; home fallback (all paths) if nothing resolved
+    // NPCs + family: use saved DB field; check location page resident list as fallback
     const currentLocId = char.resolved_current_location_id;
     isCurrentlyPresent = false;
     resolvedStatus = char.resolved_presence_status || 'home';
@@ -130,6 +130,7 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
       resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
       isCurrentlyPresent = true;
     } else if (effectiveHomeLocId && locationMap[effectiveHomeLocId]) {
+      // FALLBACK: If character field is empty, check if they're listed on a location's resident roster
       resolvedLocId = effectiveHomeLocId;
       resolvedLocName = locationMap[effectiveHomeLocId]?.name;
       resolvedStatus = 'home';
