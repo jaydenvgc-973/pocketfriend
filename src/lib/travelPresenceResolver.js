@@ -105,17 +105,14 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
   let isCurrentlyPresent = false;
 
   if (currentLocId) {
-    // Character is explicitly at a location
+    // Character is explicitly at a location — ONLY source of truth for physical presence
     resolvedLocId = currentLocId;
     resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
     isCurrentlyPresent = true;
-  } else if (homeLocId && !char.travel_status?.includes('traveling')) {
-    // HOME FALLBACK: No explicit location but assigned home and not traveling
-    resolvedLocId = homeLocId;
-    resolvedLocName = locationMap[homeLocId]?.name;
-    resolvedStatus = 'home';
-    isCurrentlyPresent = true;
   }
+  // NO HOME FALLBACK — residence != presence.
+  // If resolved_current_location_id is not set, character has no confirmed physical location.
+  // Do not assume they are home just because they live there.
 
   return {
     id: char.id,
@@ -133,8 +130,8 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     
     is_home_resident: isHomeResident,
     is_currently_present: isCurrentlyPresent,
-    is_away: resolvedStatus === 'away' || (currentLocId && currentLocId !== homeLocId && !isHomeResident),
-    is_home: resolvedStatus === 'home' || (!currentLocId && homeLocId),
+    is_away: isCurrentlyPresent && currentLocId && currentLocId !== homeLocId,
+    is_home: isCurrentlyPresent && resolvedStatus === 'home',
   };
 }
 
