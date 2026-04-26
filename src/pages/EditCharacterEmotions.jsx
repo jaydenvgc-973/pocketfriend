@@ -232,31 +232,34 @@ Make it feel like a real person, not a description. No flowery language.`
                 <p className="text-xs text-muted-foreground mt-1">Experiences that shaped them — struggles, wins, and growth.</p>
               </div>
 
-              {/* Currently selected memories — editable chips */}
-              {(form.memories || []).length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {(form.memories || []).map((mem, idx) => {
-                    const catColor = mem.category === 'positive' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
-                      : mem.category === 'growth' ? 'bg-blue-500/10 border-blue-500/20 text-blue-400'
-                      : 'bg-rose-500/10 border-rose-500/20 text-rose-400';
-                    return (
-                      <div key={idx} className={`flex items-center gap-1.5 border rounded-full px-3 py-1.5 ${catColor}`}>
-                        <span className="text-xs font-medium">{mem.title || "Untitled"}</span>
-                        <button onClick={() => setForm(p => ({ ...p, memories: p.memories.filter((_, i) => i !== idx) }))} className="opacity-60 hover:opacity-100 transition-opacity">
-                          <X className="w-3 h-3" />
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              {/* Custom (non-preset) memories — show as removable chips */}
+              {(() => {
+                const PRESET_TITLES = new Set([
+                  "First heartbreak","A betrayal by someone close","A moment they lost control","A loss they haven't fully processed","A time they felt rejected or overlooked","A period where everything felt uncertain",
+                  "A moment they felt truly loved","A time they were proud of themselves","A meaningful friendship they still value","A time they helped someone and it mattered","A moment of joy they still remember clearly","A goal they worked hard to achieve","A place or experience that made them feel alive","A time they felt at peace with themselves",
+                  "They learned from a mistake and changed","They grew stronger after a difficult time","They rebuilt something after losing it","They developed better coping skills","They became more confident over time","They are learning to trust again","They are working on becoming better",
+                ]);
+                const customMemories = (form.memories || []).filter(m => m.title && !PRESET_TITLES.has(m.title));
+                if (customMemories.length === 0) return null;
+                return (
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">Custom Experiences</p>
+                    <div className="flex flex-wrap gap-2">
+                      {customMemories.map((mem, i) => (
+                        <div key={i} className="flex items-center gap-1.5 border border-border bg-secondary/30 rounded-full px-3 py-1.5">
+                          <span className="text-xs font-medium text-foreground">{mem.title}</span>
+                          <button onClick={() => setForm(p => ({ ...p, memories: p.memories.filter(m => m.title !== mem.title) }))} className="opacity-60 hover:opacity-100 transition-opacity">
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
 
-              {/* Preset groups — same as create page */}
-              {[
-                { key: "challenges", label: "Challenges", color: "text-rose-400", desc: "Experiences that tested them" },
-                { key: "positive", label: "Positive Experiences", color: "text-emerald-400", desc: "Things that brought them joy, love, or pride" },
-                { key: "growth", label: "Growth & Resilience", color: "text-blue-400", desc: "How they've changed and grown" },
-              ].map(group => {
+              {/* Preset groups — toggleable, pre-selected if already on character */}
+              {(() => {
                 const PRESETS = [
                   { title: "First heartbreak", description: "A relationship that ended badly and left a mark — whether they show it or not.", category: "challenges" },
                   { title: "A betrayal by someone close", description: "Someone they trusted completely turned on them. They never fully forgot.", category: "challenges" },
@@ -280,38 +283,53 @@ Make it feel like a real person, not a description. No flowery language.`
                   { title: "They are learning to trust again", description: "Trust got broken somewhere. They're opening back up — slowly, carefully.", category: "growth" },
                   { title: "They are working on becoming better", description: "Active self-improvement. Not perfect. But moving in the right direction.", category: "growth" },
                 ];
-                const groupPresets = PRESETS.filter(p => p.category === group.key);
-                return (
-                  <div key={group.key}>
-                    <div className="mb-2">
-                      <p className={`text-[10px] font-bold uppercase tracking-widest ${group.color}`}>{group.label}</p>
-                      <p className="text-[10px] text-muted-foreground">{group.desc}</p>
+
+                const togglePreset = (preset) => {
+                  const currentMemories = form.memories || [];
+                  const isSelected = currentMemories.some(m => m.title === preset.title);
+                  if (isSelected) {
+                    // Remove it
+                    setForm(p => ({ ...p, memories: p.memories.filter(m => m.title !== preset.title) }));
+                  } else {
+                    // Add it
+                    setForm(p => ({ ...p, memories: [...(p.memories || []), { title: preset.title, description: preset.description, category: preset.category, emotional_impact: "", lesson_learned: "" }] }));
+                  }
+                };
+
+                return [
+                  { key: "challenges", label: "Challenges", color: "text-rose-400", selectedColor: "border-rose-500/40 bg-rose-500/10", desc: "Experiences that tested them" },
+                  { key: "positive", label: "Positive Experiences", color: "text-emerald-400", selectedColor: "border-emerald-500/40 bg-emerald-500/10", desc: "Things that brought them joy, love, or pride" },
+                  { key: "growth", label: "Growth & Resilience", color: "text-blue-400", selectedColor: "border-blue-500/40 bg-blue-500/10", desc: "How they've changed and grown" },
+                ].map(group => {
+                  const groupPresets = PRESETS.filter(p => p.category === group.key);
+                  return (
+                    <div key={group.key}>
+                      <div className="mb-2">
+                        <p className={`text-[10px] font-bold uppercase tracking-widest ${group.color}`}>{group.label}</p>
+                        <p className="text-[10px] text-muted-foreground">{group.desc}</p>
+                      </div>
+                      <div className="space-y-2">
+                        {groupPresets.map(preset => {
+                          const isSelected = (form.memories || []).some(m => m.title === preset.title);
+                          return (
+                            <button
+                              key={preset.title}
+                              onClick={() => togglePreset(preset)}
+                              className={`w-full text-left p-3 rounded-xl border transition-colors ${isSelected ? group.selectedColor : "border-border bg-card hover:border-primary/40"}`}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-sm font-medium text-foreground">{preset.title}</p>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      {groupPresets.map(preset => {
-                        const alreadyAdded = (form.memories || []).some(m => m.title === preset.title);
-                        return (
-                          <button
-                            key={preset.title}
-                            disabled={alreadyAdded}
-                            onClick={() => {
-                              if (alreadyAdded) return;
-                              setForm(p => ({ ...p, memories: [...(p.memories || []), { title: preset.title, description: preset.description, category: preset.category, emotional_impact: "", lesson_learned: "" }] }));
-                            }}
-                            className={`w-full text-left p-3 rounded-xl border transition-colors ${alreadyAdded ? "border-border bg-secondary/30 opacity-40 cursor-default" : "border-border bg-card hover:border-primary/40 cursor-pointer"}`}
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-medium text-foreground">{preset.title}</p>
-                              {alreadyAdded && <Check className="w-3.5 h-3.5 text-primary flex-shrink-0" />}
-                            </div>
-                            <p className="text-xs text-muted-foreground mt-0.5">{preset.description}</p>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
 
               {/* Custom add */}
               <button
