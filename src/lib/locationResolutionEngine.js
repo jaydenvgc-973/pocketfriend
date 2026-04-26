@@ -132,21 +132,29 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // LAYER 3.5: Social visit — NPC has been explicitly moved away from home by system
+  // LAYER 3.5: Social visit — NPC/character has been explicitly moved away from home by system
   // This MUST come before sleep/home fallback to prevent home override
-  if (
-    character.presence_state === 'social_visit' &&
-    character.resolved_current_location_id &&
-    character.resolved_current_location_id !== (character.current_home_location_id || character.home_location_id)
-  ) {
-    const socialLocation = locationMap[character.resolved_current_location_id];
+  const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
+  const resolvedLocIdForVisit = character.resolved_current_location_id;
+  const isAwayFromHome = resolvedLocIdForVisit && resolvedLocIdForVisit !== homeIdForVisitCheck;
+
+  // Matches: presence_state=social_visit, OR presence_status=visiting, OR autonomous_movement source
+  const isSystemPlacedVisit =
+    character.presence_state === 'social_visit' ||
+    character.resolved_presence_status === 'visiting' ||
+    character.resolved_source_reason === 'autonomous_needs_driven' ||
+    character.resolved_source_reason === 'autonomous_movement' ||
+    character.resolved_source_reason === 'user_travel';
+
+  if (isAwayFromHome && isSystemPlacedVisit) {
+    const socialLocation = locationMap[resolvedLocIdForVisit];
     if (socialLocation) {
       return {
-        resolved_current_location_id: character.resolved_current_location_id,
+        resolved_current_location_id: resolvedLocIdForVisit,
         resolved_current_location_name: socialLocation.name || character.resolved_current_location_name || 'Visiting',
         resolved_location_type: 'visit',
-        resolved_presence_status: 'visiting',
-        resolved_source_reason: 'social_visit_from_system',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
         resolved_zone: null,
       };
     }
