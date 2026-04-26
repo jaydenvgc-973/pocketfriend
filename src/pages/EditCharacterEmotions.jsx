@@ -234,12 +234,12 @@ Make it feel like a real person, not a description. No flowery language.`
 
               {/* Custom (non-preset) memories — show as removable chips */}
               {(() => {
-                const PRESET_TITLES = new Set([
-                  "First heartbreak","A betrayal by someone close","A moment they lost control","A loss they haven't fully processed","A time they felt rejected or overlooked","A period where everything felt uncertain",
-                  "A moment they felt truly loved","A time they were proud of themselves","A meaningful friendship they still value","A time they helped someone and it mattered","A moment of joy they still remember clearly","A goal they worked hard to achieve","A place or experience that made them feel alive","A time they felt at peace with themselves",
-                  "They learned from a mistake and changed","They grew stronger after a difficult time","They rebuilt something after losing it","They developed better coping skills","They became more confident over time","They are learning to trust again","They are working on becoming better",
+                const PRESET_TITLES_LOWER = new Set([
+                  "first heartbreak","a betrayal by someone close","a moment they lost control","a loss they haven't fully processed","a time they felt rejected or overlooked","a period where everything felt uncertain",
+                  "a moment they felt truly loved","a time they were proud of themselves","a meaningful friendship they still value","a time they helped someone and it mattered","a moment of joy they still remember clearly","a goal they worked hard to achieve","a place or experience that made them feel alive","a time they felt at peace with themselves",
+                  "they learned from a mistake and changed","they grew stronger after a difficult time","they rebuilt something after losing it","they developed better coping skills","they became more confident over time","they are learning to trust again","they are working on becoming better",
                 ]);
-                const customMemories = (form.memories || []).filter(m => m.title && !PRESET_TITLES.has(m.title));
+                const customMemories = (form.memories || []).filter(m => m.title && !PRESET_TITLES_LOWER.has(m.title.trim().toLowerCase()));
                 if (customMemories.length === 0) return null;
                 return (
                   <div>
@@ -284,14 +284,15 @@ Make it feel like a real person, not a description. No flowery language.`
                   { title: "They are working on becoming better", description: "Active self-improvement. Not perfect. But moving in the right direction.", category: "growth" },
                 ];
 
+                const matchesPreset = (mem, preset) =>
+                  mem.title?.trim().toLowerCase() === preset.title.trim().toLowerCase();
+
                 const togglePreset = (preset) => {
                   const currentMemories = form.memories || [];
-                  const isSelected = currentMemories.some(m => m.title === preset.title);
+                  const isSelected = currentMemories.some(m => matchesPreset(m, preset));
                   if (isSelected) {
-                    // Remove it
-                    setForm(p => ({ ...p, memories: p.memories.filter(m => m.title !== preset.title) }));
+                    setForm(p => ({ ...p, memories: p.memories.filter(m => !matchesPreset(m, preset)) }));
                   } else {
-                    // Add it
                     setForm(p => ({ ...p, memories: [...(p.memories || []), { title: preset.title, description: preset.description, category: preset.category, emotional_impact: "", lesson_learned: "" }] }));
                   }
                 };
@@ -310,7 +311,7 @@ Make it feel like a real person, not a description. No flowery language.`
                       </div>
                       <div className="space-y-2">
                         {groupPresets.map(preset => {
-                          const isSelected = (form.memories || []).some(m => m.title === preset.title);
+                          const isSelected = (form.memories || []).some(m => matchesPreset(m, preset));
                           return (
                             <button
                               key={preset.title}
