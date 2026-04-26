@@ -13,8 +13,7 @@ export default function FixLocationsButton({ currentUserEmail }) {
     setMessage("");
     try {
       const res = await base44.functions.invoke("fixCharacterLocationDisplay", {});
-      const corrected = res?.data?.corrected_count || 0;
-      setMessage(corrected > 0 ? `${corrected} card${corrected > 1 ? "s" : ""} updated` : "All displays in sync");
+      setMessage(res?.data?.summary || (res?.data?.corrected_count > 0 ? `${res.data.corrected_count} location${res.data.corrected_count > 1 ? "s" : ""} synced` : "All displays in sync"));
       setStatus("done");
 
       // Refresh characters to reflect updated location display
@@ -42,8 +41,8 @@ export default function FixLocationsButton({ currentUserEmail }) {
         {isRunning ? "Fixing..." : "Fix Locations"}
       </button>
       {status === "done" && (
-        <span className="flex items-center gap-1 text-xs text-green-400">
-          <CheckCircle2 className="w-3.5 h-3.5" /> {message}
+        <span className="flex items-start gap-1 text-xs text-green-400 max-w-xs leading-tight">
+          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" /> {message}
         </span>
       )}
       {status === "error" && (
