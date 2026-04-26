@@ -70,32 +70,12 @@ function getPlainStatus(character) {
     };
   }
 
-  // Home and stale (> 4 hours, no needs triggering movement)
-  if ((status === 'home' || !status) && hoursSinceUpdate > 4) {
-    return {
-      text: `${name} has been home for a while — movement can be refreshed.`,
-      color: 'text-amber-400',
-      needsRepair: true,
-      repairLabel: 'Refresh Movement',
-    };
-  }
-
-  // Home, recently updated
-  if (status === 'home') {
+  // Home (any recency) — just show as home, no alarm
+  if (status === 'home' || !status) {
     return {
       text: `${name} is at home.`,
       color: 'text-pink-400',
       needsRepair: false,
-    };
-  }
-
-  // Fallback — stale / unknown
-  if (hoursSinceUpdate > 8) {
-    return {
-      text: `${name}'s movement status is outdated.`,
-      color: 'text-orange-400',
-      needsRepair: true,
-      repairLabel: 'Refresh Movement',
     };
   }
 
