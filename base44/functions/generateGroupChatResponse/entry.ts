@@ -124,9 +124,24 @@ Deno.serve(async (req) => {
         .map(c => c.name)
         .join(', ');
 
+      // Fetch cross-page memory for this character (Chat, Scene, Text history + stored memories)
+      let crossPageMemoryBlock = '';
+      try {
+        const memRes = await base44.functions.invoke('retrieveCrossPageMemory', {
+          characterId: character.id,
+          limitMessages: 12,
+        });
+        if (memRes?.contextText) {
+          crossPageMemoryBlock = `\n=== MEMORY ACROSS ALL PAGES (Chat, Scene, Text, Group) ===\nYou MUST use this to maintain continuity. Do NOT act like you're meeting the user for the first time if prior conversations exist.\n${memRes.contextText}\n===`;
+        }
+      } catch {
+        // non-blocking
+      }
+
       const systemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender}. ${character.personality_summary || ''} ${character.background_story || ''}`;
 
       const fullPrompt = `${systemPrompt}
+${crossPageMemoryBlock}
 
 YOU ARE IN A GROUP CHAT with: ${otherParticipants ? `the user and ${otherParticipants}` : 'just you and the user'}.
 This is a real group conversation. You can — and should — speak to the other characters directly, not just the user. Address them by name. React to what they said. Disagree, agree, laugh, clap back. You are all real people having a conversation together.

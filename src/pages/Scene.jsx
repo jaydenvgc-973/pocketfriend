@@ -655,6 +655,12 @@ export default function Scene() {
     }
   }, [location?.id, activeZone]);
 
+  // CHILD SAFETY: When entering a home scene, ensure a caregiver is present if a child is alone.
+  useEffect(() => {
+    if (!location || location.category !== 'home') return;
+    base44.functions.invoke('ensureChildCaregiverPresence', { locationId: location.id }).catch(() => {});
+  }, [location?.id]);
+
   // PRESENCE ENFORCEMENT: When characters arrive at a scene, write to the AUTHORITATIVE resolved fields.
   // This is the single location truth that propagates across ALL UI surfaces:
   // Home page card, Travel page, Travel pop-ups, Chat/Narrative, Image generation.
@@ -1136,9 +1142,14 @@ export default function Scene() {
     }
 
     setIsTyping(true);
-
-    // Update actions based on new message context
     setActions(getLocationActions(location.category, text));
+
+    // Cross-page memory — fetch in parallel, non-blocking
+    const _memIds = [...broughtCharacters, ...selectedNpcs].filter(c => !c.isNpc && c.id).map(c => c.id);
+    const crossMem = {};
+    await Promise.all(_memIds.map(async id => {
+      try { const r = await base44.functions.invoke('retrieveCrossPageMemory', { characterId: id, limitMessages: 12 }); if (r?.data?.contextText) crossMem[id] = r.data.contextText; } catch {}
+    }));
 
     try {
       // In private mode, only the pulled-aside character responds
@@ -1163,23 +1174,7 @@ export default function Scene() {
         ? `\nNOTE: ${displayName} has pulled ${privateTarget.name} aside for a PRIVATE conversation. Only ${privateTarget.name} may respond — absolutely no one else, not even other characters who are present.`
         : "";
 
-      // DIALOGUE TARGETING RULE:
-      // Only these categories are eligible to respond:
-      //   1. Characters the user explicitly traveled with (traveledWithChars / broughtCharacters)
-      //   2. Characters explicitly selected by the user in the "Who's here" picker (selectedNpcs)
-      //   3. Characters added via invite/join flow (extraNpcs)
-      //   4. The private conversation target (if in private mode)
-      //
-      // NEVER eligible to auto-respond just because they are present:
-      //   - Residents already home (they are NOT travel companions)
-      //   - Workers on shift (unless explicitly selected via picker)
-      //   - Location owners (ownership ≠ presence ≠ permission to answer)
-      //   - VGC Towers distributed NPCs (must be explicitly engaged)
-      //   - Diagnostic/test characters (already filtered from characters array)
-
-      // DIALOGUE TARGETING: ONLY characters explicitly selected via the "Who's here" picker may respond.
-      // Nothing else — not traveled-with chars, not extraNpcs, not residents, not workers.
-      // Private mode overrides to a single target only.
+      // DIALOGUE TARGETING: only picker-selected NPCs or private target may respond
       const dialogueEligible = privateTarget
         ? sceneCharacters.filter(c => c.id === privateTarget.id || c.name === privateTarget.name)
         : selectedNpcs.length > 0
@@ -1198,12 +1193,15 @@ export default function Scene() {
 Residents, location owners, and employees who are merely present but NOT in the above lists must NOT respond.
 If no one is listed, return an empty responses array. Do NOT invent responses from ambient strangers, unselected residents, or unselected staff.${privateNote}`;
 
+      const memSection = eligibleKnownChars.filter(c => crossMem[c.id]).map(c => `[${c.name}'s memory]\n${crossMem[c.id]}`).join('\n\n');
+
       const responses = await base44.integrations.Core.InvokeLLM({
         prompt: `You are managing a ${privateTarget ? "private one-on-one" : "group"} scene at ${location.name} (${location.category}).
 
 People present: ${displayName}, ${charSummaries || "no one they know"}
+${memSection ? `\n=== CROSS-PAGE MEMORY (Chat/Text/Scene/GroupChat) — use this for continuity, do NOT act like strangers ===\n${memSection}\n===` : ''}
 
-Recent conversation:
+Recent scene conversation:
 ${conversationHistory}
 
 ${displayName} just said: "${text}"
