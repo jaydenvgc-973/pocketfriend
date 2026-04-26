@@ -113,14 +113,10 @@ Make it feel like a real person, not a description. No flowery language.`
     merged.personality_summary = personality;
     const systemPrompt = buildSystemPrompt(merged);
 
-    // Upload system prompt if it's too large
-    let systemPromptUrl = null;
-    if (systemPrompt.length > 50000) {
-      const uploadRes = await base44.integrations.Core.UploadFile({
-        file: new Blob([systemPrompt], { type: "text/plain" })
-      });
-      systemPromptUrl = uploadRes.file_url;
-    }
+    // Always upload system prompt as a file to avoid size limit
+    const uploadRes = await base44.integrations.Core.UploadFile({
+      file: new Blob([systemPrompt], { type: "text/plain" })
+    });
 
     const { voice_enabled, voice_name, voice_style_note, memories, ...formWithoutVoice } = form;
     const updateData = {
@@ -130,13 +126,8 @@ Make it feel like a real person, not a description. No flowery language.`
       voice_style_note,
       memories,
       personality_summary: personality,
+      system_prompt_url: uploadRes.file_url,
     };
-
-    if (systemPromptUrl) {
-      updateData.system_prompt_url = systemPromptUrl;
-    } else {
-      updateData.system_prompt = systemPrompt;
-    }
 
     await base44.entities.Character.update(selectedChar.id, updateData);
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
