@@ -131,6 +131,7 @@ CRITICAL RULES — violating any = wrong answer:
 4. Sound like a real person thinking quietly — not performing, not explaining.
 5. No bullet points. No headers. No labels. Just the raw feeling + the reason behind it.
 6. YOUR TEXT MUST BE CONSISTENT WITH THE NUMERIC VALUES BELOW. If respect is high, do not express dismissal. If respect is low, do not claim deep admiration.
+7. EMOTIONAL BALANCE RULE: Do not default to heavy, negative, or grief-saturated language unless the values clearly support it. Characters may feel warmth, curiosity, ease, comfort, appreciation, humor, or simple fondness. Reflect the FULL emotional range — including positive and neutral states when they are accurate.
 
 WRONG (third person — forbidden):
 "${character.name} feels deep admiration for ${nickname}. He is grappling with..."

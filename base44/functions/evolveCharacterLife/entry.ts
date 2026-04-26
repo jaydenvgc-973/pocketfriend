@@ -499,6 +499,50 @@ REALISM RULES — READ CAREFULLY:
 11. OCCUPATION SHAPES LIFE: If ${name} recently changed jobs or started training, that affects their stress, schedule, income, and daily narrative.
 12. EDUCATION MATTERS: If ${name} is enrolled in something, it affects their time, social circle, aspirations, and daily stress.
 
+EMOTIONAL BALANCE ENFORCEMENT — MANDATORY:
+Characters experience the FULL range of human emotion. Do NOT default to negative states without cause.
+
+NO MONOTONE EMOTION RULE: If ${name}'s recent event history contains repeated negative events WITHOUT corresponding recovery or positive events — the simulation MUST introduce an emotional shift. Sustained sadness, anxiety, or depression without recovery is a system failure, not realism.
+
+POSITIVE STATE GENERATION (required without prompting):
+Even without explicit positive events, characters naturally experience:
+  • Moments of enjoyment, humor, or lightness
+  • Relief after stress resolves
+  • Satisfaction from completing tasks
+  • Warmth from social connection
+  • Calm during routine activities
+  • Curiosity, excitement, or anticipation
+  • Pride in small wins
+
+RESILIENCE RULE: Characters are NOT defined solely by their trauma or hardship. Past negative experiences must ALSO allow: growth, coping, reflection, earned strength, and emotional recovery over time. A character with a difficult past may be guarded, but they can also be joyful, funny, grounded, or warm.
+
+PERSONALITY-DRIVEN EMOTIONAL RANGE: Apply ${name}'s specific personality traits to determine the correct emotional state:
+  • Optimistic characters → lean toward content, calm, or joyful even under mild stress
+  • Grounded characters → stay stable, not pulled into anxiety by minor events
+  • Humorous characters → find levity even in difficulty
+  • Resilient characters → process and recover, not dwell
+  • Emotionally reactive characters → may spike but also come down
+
+EMOTIONAL_STATE SELECTION BIAS CORRECTION:
+The emotional_state field must NOT default to sad, anxious, overwhelmed, or grief without clear evidence in the event history.
+  • If events are neutral/routine → calm, content, or reflective
+  • If events show genuine stress → appropriate negative state — but brief
+  • If events show positive progress → joyful, excited, content, or pride
+  • If events are mixed → reflective, calm, or bored (not depressed by default)
+  • Negative states require active evidence. Positive states do NOT require extraordinary events — they are the default human baseline.
+
+RECOVERY LOOP (mandatory when character was recently negative):
+If ${name} has been in a negative state recently, this update MUST consider:
+  1. Whether the cause of that state has resolved or reduced
+  2. What coping behavior may have occurred (movement, social, rest, activity)
+  3. Whether an emotional shift (partial or full) is now warranted
+
+FAILURE CONDITION — DO NOT GENERATE:
+  ✗ Characters who are perpetually sad, anxious, or overwhelmed without recovery
+  ✗ Emotional_state consistently defaulting to negative without specific triggering events
+  ✗ Characters who never experience joy, pride, humor, or relief
+  ✗ Identical emotional outputs regardless of personality differences between characters
+
 CHARACTER EVOLUTION SYSTEM (EXTENSION — integrate naturally):
 Characters are NOT static. Based on the event history and life context above, consider whether ${name} might be:
 - SHIFTING PRIORITIES (e.g. money vs relationships, independence vs connection, routine vs spontaneity)

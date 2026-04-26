@@ -253,18 +253,41 @@ async function generateProactiveMessage(base44, character, user, recentContext) 
   const locationAffinityNote = buildLocationAffinityContext(character);
   const needExamples = getNeedExamples(character);
 
+  // Determine emotional tone directive based on current state
+  const emotionalState = character.emotional_state || 'calm';
+  const negativeStates = ['sad', 'depressed', 'anxious', 'overwhelmed', 'frustrated', 'grief', 'burnt out', 'irritated', 'defensive', 'closed-off'];
+  const isInNegativeState = negativeStates.includes(emotionalState);
+
+  const emotionalBalanceDirective = isInNegativeState
+    ? `EMOTIONAL BALANCE RULE: Your current emotional state is "${emotionalState}" — you may briefly acknowledge this if relevant, but this message must NOT be a complaint session or emotional dump. Find something light, curious, or connective to anchor the message. Characters must show resilience and range, not just struggle. You can be real without being heavy.`
+    : `EMOTIONAL AUTHENTICITY: Your current state is "${emotionalState}". Let that naturally shape the message — whether it's light, curious, warm, funny, or just checking in. Not every message needs emotional weight.`;
+
   const systemPrompt = `You are ${character.name}. Generate a natural, spontaneous proactive message right now (1-3 sentences).
-${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic about what you are doing or feeling.'}
+${recentContext ? `Recent conversation context: "${recentContext}". Follow up on what you were discussing or reference it naturally.` : 'Start a new topic — something you are doing, noticed, thought about, or want to share.'}
 Time context: ${timeContext}
 Your personality: ${character.personality_summary || 'friendly and thoughtful'}
 Your friendship level is ${relationshipLevel}/100 — adjust your tone accordingly (higher = more casual/frequent, lower = more respectful of their time).
 Location/activity preferences (if mentioning where you are or what you're doing, it must match this): ${locationAffinityNote}${needExamples}
 ${userAddressName ? `The person you're messaging is named ${userAddressName}. Use that name naturally when addressing them directly (sparingly — not in every sentence). NEVER say "the user".` : `You don't know their name. Use natural pronouns (you, them) — NEVER say "the user" or "user".`}
+
+${emotionalBalanceDirective}
+
+MESSAGE TYPE VARIETY (choose the most natural for this moment — do NOT always pick emotional/problem-sharing):
+  • Checking in on them ("how's your day going?", "you good?")
+  • Sharing something light (something funny, weird, or interesting you noticed)
+  • Following up on something positive from recent context
+  • A random thought or observation
+  • Inviting them to do something or go somewhere
+  • Celebrating something small (a win at work, a good meal, finished something)
+  • Pure curiosity ("been thinking about what you said earlier")
+  • Humor or a light observation
+
 WRITING STYLE — NON-NEGOTIABLE:
 - Write like a real person texting. No theatrical or literary language.
 - NEVER use em dashes (—), en dashes (–), or spaced hyphens ( - ). Use commas or periods instead.
 - Keep it short, direct, and human.
-Be authentic, not overly cheerful. Just a natural message someone would send.`;
+- Do NOT always open with a problem or complaint. Lead with connection first.
+Be authentic and varied. Just a natural message someone would send.`;
 
   const content = await base44.integrations.Core.InvokeLLM({
     prompt: systemPrompt,
