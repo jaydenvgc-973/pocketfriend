@@ -440,12 +440,36 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
     ? "Go alone"
     : `Go with ${selectedCharacterIds.length} character${selectedCharacterIds.length > 1 ? "s" : ""}`;
 
-  const sortedLocations = [...locationsData].sort((a, b) => {
-    const aHasImages = (a.zones || []).some(z => z.image_urls?.length > 0);
-    const bHasImages = (b.zones || []).some(z => z.image_urls?.length > 0);
-    if (aHasImages !== bHasImages) return bHasImages ? 1 : -1;
-    return (a.name || "").localeCompare(b.name || "");
-  });
+  // Location hours check
+  const isLocationOpen = (location) => {
+    if (!location?.operating_hours || location.operating_hours.length === 0) return null;
+    const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const dayOfWeek = nowET.getDay();
+    const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
+    const isInWindow = (open, close) => {
+      const o = (open || '').split(':').map(Number);
+      const c = (close || '').split(':').map(Number);
+      const oMin = o[0] * 60 + (o[1] || 0), cMin = c[0] * 60 + (c[1] || 0);
+      if (oMin == null || cMin == null) return false;
+      return oMin <= cMin ? currentMinutes >= oMin && currentMinutes <= cMin : currentMinutes >= oMin || currentMinutes <= cMin;
+    };
+    const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+    const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+    const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
+    if (todayEntries.length > 0) return todayEntries.some(h => isInWindow(h.open_time, h.close_time));
+    if (daySpecific.length > 0 && todayEntries.length === 0) return false;
+    if (dayAgnostic.length > 0) return dayAgnostic.some(h => isInWindow(h.open_time, h.close_time));
+    return null;
+  };
+
+  const sortedLocations = [...locationsData]
+    .filter(loc => isLocationOpen(loc) !== false) // Remove permanently closed
+    .sort((a, b) => {
+      const aHasImages = (a.zones || []).some(z => z.image_urls?.length > 0);
+      const bHasImages = (b.zones || []).some(z => z.image_urls?.length > 0);
+      if (aHasImages !== bHasImages) return bHasImages ? 1 : -1;
+      return (a.name || "").localeCompare(b.name || "");
+    });
 
   return (
     <div className="min-h-screen bg-background pt-16 pb-20">

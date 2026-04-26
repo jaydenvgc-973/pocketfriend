@@ -1,5 +1,44 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Check if location is currently open based on operating hours
+function toMinutes(timeStr) {
+  if (!timeStr) return null;
+  const [h, m] = timeStr.split(':').map(Number);
+  return h * 60 + (m || 0);
+}
+
+function isInWindow(currentMinutes, openStr, closeStr) {
+  const open = toMinutes(openStr);
+  const close = toMinutes(closeStr);
+  if (open == null || close == null) return false;
+  if (open <= close) {
+    return currentMinutes >= open && currentMinutes <= close;
+  }
+  return currentMinutes >= open || currentMinutes <= close;
+}
+
+function isLocationOpen(location) {
+  if (!location?.operating_hours || location.operating_hours.length === 0) {
+    return true; // No hours = always open
+  }
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfWeek = nowET.getDay();
+  const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
+  const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+  const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
+  if (todayEntries.length > 0) {
+    return todayEntries.some(h => isInWindow(currentMinutes, h.open_time, h.close_time));
+  }
+  if (daySpecific.length > 0 && todayEntries.length === 0) {
+    return false;
+  }
+  if (dayAgnostic.length > 0) {
+    return dayAgnostic.some(h => isInWindow(currentMinutes, h.open_time, h.close_time));
+  }
+  return true;
+}
+
 /**
  * AUTONOMOUS CHARACTER MOVEMENT — NEEDS-DRIVEN
  *
@@ -249,8 +288,11 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── FILTER OUT CLOSED LOCATIONS ─────────────────────────────────────
+        const openLocations = userLocations.filter(loc => isLocationOpen(loc));
+
         // ── SELECT BEST LOCATION ────────────────────────────────────────────
-        const bestLocation = selectBestLocation(userLocations, char, vals);
+        const bestLocation = selectBestLocation(openLocations, char, vals);
 
         if (!bestLocation) {
           // SYSTEM MUST REPORT: mandatory trigger, no valid location
