@@ -354,18 +354,8 @@ export function resolveCharacterPresenceAtLocation(character, location, currentT
     };
   }
 
-  // Fallback: if resident and home, count as present
-  if (isResident && character.current_home_location_id === location.id) {
-    const notTraveling = !character.travel_status || character.travel_status === 'not_traveling';
-    if (notTraveling) {
-      return {
-        isPresent: true,
-        presenceStatus: 'home',
-        isResident,
-        reasonCode: 'home_and_not_traveling'
-      };
-    }
-  }
+  // RULE: No home fallback. residence_location_id ≠ physical presence.
+  // A character with no resolved_current_location_id has no confirmed physical location.
 
   // Not present
   return {
@@ -399,39 +389,11 @@ export function getLocationPresence(location, characters = []) {
     }
   });
 
-  // Family members from resident list
-  (location.resident_family_members || []).forEach(familyMember => {
-    if (!familyMember.name) return;
-    // Check if this NPC is actually present at this location (from fictional_relationships)
-    let npcAtThisLocation = false;
-    for (const char of characters) {
-      const rel = (char.fictional_relationships || []).find(
-        r => r.person_name?.trim().toLowerCase() === familyMember.name.trim().toLowerCase() && !r.related_character_id
-      );
-      if (rel && rel.current_location_id === location.id) {
-        npcAtThisLocation = true;
-        break;
-      }
-    }
-    
-    // Family members assigned to home are present unless proven elsewhere
-    if (!npcAtThisLocation || location.category === 'home' || location.category === 'generic') {
-      presence.push({
-        character: {
-          id: `family_${familyMember.name}`,
-          name: familyMember.name,
-          character_type: 'npc_family_member',
-          avatar_url: null,
-        },
-        presence: {
-          isPresent: true,
-          presenceStatus: 'home',
-          isResident: true,
-          reasonCode: 'family_resident'
-        }
-      });
-    }
-  });
+  // PROTECTED INTERNAL FILE RULE:
+  // resident_family_members are household relationship data — NOT travel actors.
+  // They must NOT be injected into physical presence lists.
+  // They remain visible in household/family sections (LocationDetailPanel, profile views).
+  // Do NOT add them here.
 
   return presence;
 }

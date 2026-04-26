@@ -790,35 +790,10 @@ export default function LivePresenceMap({ locations = [], characters = [], onLoc
       {/* Side detail panel — slides in on right */}
       <AnimatePresence>
         {activeLocation && (() => {
-          // CRITICAL: Build occupants from BOTH markers AND location resident records
-          // Markers only include those with explicit is_currently_present=true
-          // But location.resident_character_ids and resident_family_members are the source of truth
-          const markerOccupants = groupedByLocation.get(activeLocation.id) ?? [];
-          
-          // Deduplicate by adding resident family names if not already in markers
-          const finalOccupants = [...markerOccupants];
-          const seenNames = new Set(markerOccupants.map(m => m.name?.toLowerCase()));
-          
-          // Add family residents from location record that aren't already in markers
-          // Use familyAvatarMap to hydrate photo_url from parent character's family_members[] array
-          (activeLocation.resident_family_members || []).forEach(fam => {
-            const famNameLC = fam.name?.toLowerCase();
-            if (famNameLC && !seenNames.has(famNameLC)) {
-              seenNames.add(famNameLC);
-              // AVATAR HYDRATION: location record photo_url OR familyAvatarMap from parent character's family_members[]
-              const resolvedAvatar = fam.photo_url || familyAvatarMap[famNameLC] || null;
-              console.log(`[MapPanel] Family resident ${fam.name}: avatar=${resolvedAvatar ? 'found' : 'initials fallback'}`);
-              finalOccupants.push({
-                characterId: `family_${fam.name}`,
-                name: fam.name,
-                initials: fam.name.split(' ').map(p => p[0]).join('').toUpperCase().slice(0, 2),
-                type: 'npc_family_member',
-                avatarUrl: resolvedAvatar,
-                isFamilyMember: true,
-                isAsleep: false,
-              });
-            }
-          });
+          // PRESENCE RULE: "Who's here" = only real travel-capable characters with is_currently_present=true.
+          // resident_family_members are PROTECTED INTERNAL HOUSEHOLD DATA — residence ≠ presence.
+          // They must NOT appear as physical occupants. They remain visible in household/family sections.
+          const finalOccupants = groupedByLocation.get(activeLocation.id) ?? [];
           
           return (
             <LocationDetailPanel

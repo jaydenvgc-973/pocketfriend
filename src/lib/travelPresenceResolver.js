@@ -128,10 +128,14 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     resolved_presence_status: resolvedStatus,
     residence_location_id: homeLocId,
     
+    // residence_location_id = where they LIVE (never implies physical presence)
     is_home_resident: isHomeResident,
+    // is_currently_present = they have an explicit resolved_current_location_id (travel-capable chars only)
     is_currently_present: isCurrentlyPresent,
-    is_away: isCurrentlyPresent && currentLocId && currentLocId !== homeLocId,
-    is_home: isCurrentlyPresent && resolvedStatus === 'home',
+    // is_home = physically present AND their current location IS their home location
+    is_home: isCurrentlyPresent && !!homeLocId && currentLocId === homeLocId,
+    // is_away = physically present somewhere BUT it is NOT their home location
+    is_away: isCurrentlyPresent && !!homeLocId && currentLocId !== homeLocId,
   };
 }
 
