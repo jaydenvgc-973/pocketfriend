@@ -613,23 +613,25 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   const lines = [];
                   const seenNames = new Set();
 
-                  // From unified presence entities (Character records)
+                  // Build resident ID set from all resident fields on the location
+                  const residentIdSet = new Set([
+                    ...(selectedLocation.resident_character_ids || []),
+                    ...(selectedLocation.residents || []).map(r => r.character_id).filter(Boolean),
+                  ]);
+
+                  // From unified presence entities — characters physically AT this location right now
                   presentHere.forEach(entity => {
                     const name = entity.display_name;
                     if (seenNames.has(name?.toLowerCase())) return;
                     seenNames.add(name?.toLowerCase());
 
-                    // RESIDENT CHECK: if this entity is a permanent resident of this location,
-                    // never label them as "visiting" — they are home (or away if physically elsewhere)
                     const isResidentHere = entity.residence_location_id === selectedLocation.id ||
-                      (selectedLocation.resident_character_ids || []).includes(entity.id) ||
-                      (selectedLocation.residents || []).some(r => r.character_id === entity.id);
+                      residentIdSet.has(entity.id);
 
                     let status = entity.resolved_presence_status || (isHome ? 'home' : 'here');
-                    // Override: resident at their own home must never show as "visiting"
-                    if (isResidentHere && status === 'visiting') {
-                      status = 'home';
-                    }
+                    // Resident physically here — never label as "visiting"
+                    if (isResidentHere && status === 'visiting') status = 'home';
+
                     let color = (isHome || isResidentHere) ? 'text-green-400' : 'text-blue-400';
                     if (status === 'visiting') { color = 'text-amber-400'; }
                     if (status === 'home' || status === 'sleeping' || status === 'napping') {
@@ -651,8 +653,18 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name, status, color });
                   });
 
+                  // RESIDENTS WHO ARE AWAY: show residents not physically here as "out"
+                  // This covers VGC Towers NPCs who were distributed to other locations
+                  allPresenceEntities.forEach(entity => {
+                    if (!residentIdSet.has(entity.id) && entity.residence_location_id !== selectedLocation.id) return;
+                    if (entity.resolved_current_location_id === selectedLocation.id) return; // already shown above
+                    const name = entity.display_name;
+                    if (!name || seenNames.has(name?.toLowerCase())) return;
+                    seenNames.add(name.toLowerCase());
+                    lines.push({ name, status: 'out', color: 'text-amber-400' });
+                  });
+
                   // LOCATION RECORD FALLBACK: Also show resident_family_members listed directly on location
-                  // These may not have Character records, but they ARE residents per the Location page
                   (selectedLocation.resident_family_members || []).forEach(fam => {
                     if (!fam.name) return;
                     if (seenNames.has(fam.name.toLowerCase())) return;
@@ -660,16 +672,12 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     lines.push({ name: fam.name, status: 'home', color: 'text-green-400' });
                   });
 
-                  // Also check resident_character_ids for named residents — but only if they are NOT
-                  // active_created_character who may be physically elsewhere. For active chars, only
-                  // show them if their resolved_current_location_id matches this location (already handled
-                  // above via presentHere). For NPCs/family, show them as residents.
+                  // resident_character_ids fallback for NPCs/family not caught above
                   (selectedLocation.resident_character_ids || []).forEach(resId => {
                     const resChar = allCharactersForFamilyScan.find(c => c.id === resId);
                     if (!resChar) return;
                     const name = resChar.display_name || resChar.name;
                     if (!name || seenNames.has(name.toLowerCase())) return;
-                    // Skip active_created_character — they appear via the unified presence resolver above only
                     if (resChar.character_type === 'active_created_character') return;
                     seenNames.add(name.toLowerCase());
                     lines.push({ name, status: 'home', color: 'text-green-400' });
