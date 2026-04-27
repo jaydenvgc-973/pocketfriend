@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
 
       // Get the conversation for this character (usually exists from chat)
       const conversations = await base44.entities.Conversation.filter({
-        character_id: characterId,
+        character_ids: characterId,
         created_by: user.email
       });
 
