@@ -6,6 +6,14 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * Moves active_created_characters home in batches of 5.
  * Triggered when locations close or travel periods end.
  * 
+ * PROTECTED FIELDS (never written):
+ * - resolved_last_updated_at (system only)
+ * - current_home_location_id, occupation_location_id (read-only sources of truth)
+ * - travel_status, travel_destination_location_id (preserve if valid travel)
+ * 
+ * CONDITIONAL WRITES:
+ * - current_activity: only cleared if verified conflict with resolved location
+ * 
  * Processing order:
  * 1. Characters at closed locations
  * 2. Characters past 2.5 hour non-home limit
@@ -80,14 +88,21 @@ function getCharacterWorkLocation(char, locationsByUser) {
 }
 
 function isWorkScheduleSoon(char, nowET, minutesWindow = 120) {
-  if (!char.work_start_time || !char.work_days) return false;
-  const dayOfWeek = nowET.getDay();
-  if (!char.work_days.includes(dayOfWeek)) return false;
-  const [sh, sm] = char.work_start_time.split(':').map(Number);
-  const now = nowET.getHours() * 60 + nowET.getMinutes();
-  const startMin = sh * 60 + sm;
-  const minutesUntilWork = startMin - now;
-  return minutesUntilWork > 0 && minutesUntilWork <= minutesWindow;
+   if (!char.work_start_time || !char.work_days) return false;
+   const dayOfWeek = nowET.getDay();
+   if (!char.work_days.includes(dayOfWeek)) return false;
+   const [sh, sm] = char.work_start_time.split(':').map(Number);
+   const now = nowET.getHours() * 60 + nowET.getMinutes();
+   const startMin = sh * 60 + sm;
+   const minutesUntilWork = startMin - now;
+   return minutesUntilWork > 0 && minutesUntilWork <= minutesWindow;
+}
+
+function isSchoolScheduleActive(char, nowET) {
+   if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+   // If school schedule details not available, assume standard 8 AM - 3 PM
+   const now = nowET.getHours() * 60 + nowET.getMinutes();
+   return now >= 480 && now < 900; // 8:00 AM - 3:00 PM
 }
 
 Deno.serve(async (req) => {
@@ -177,22 +192,43 @@ Deno.serve(async (req) => {
 
       // DISPATCH TO WORK (priority over home)
       if (isWorkActive && !isAtHome) {
-        const workLoc = getCharacterWorkLocation(char, locationsByUser);
-        if (workLoc && char.resolved_current_location_id !== workLoc.id) {
-          candidates.push({
-            id: char.id,
-            name: char.name,
-            currentLocId: char.resolved_current_location_id,
-            currentLocName: char.resolved_current_location_name,
-            destLocId: workLoc.id,
-            destLocName: workLoc.name,
-            category: 'work_active',
-            isWorkActive: true,
-            isClosed: false,
-            pastLimit: false,
-          });
-        }
-        continue; // Process work dispatch, don't check other conditions
+         const workLoc = getCharacterWorkLocation(char, locationsByUser);
+         if (workLoc && char.resolved_current_location_id !== workLoc.id) {
+           candidates.push({
+             id: char.id,
+             name: char.name,
+             currentLocId: char.resolved_current_location_id,
+             currentLocName: char.resolved_current_location_name,
+             destLocId: workLoc.id,
+             destLocName: workLoc.name,
+             category: 'work_active',
+             isWorkActive: true,
+             isClosed: false,
+             pastLimit: false,
+           });
+         }
+         continue; // Process work dispatch, don't check other conditions
+      }
+
+      // DISPATCH TO SCHOOL (priority equal to work)
+      const isSchoolActive = isSchoolScheduleActive(char, nowET);
+      if (isSchoolActive && !isAtHome && char.education_location_id) {
+         const schoolLoc = locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === char.education_location_id);
+         if (schoolLoc && char.resolved_current_location_id !== schoolLoc.id && isLocationOpen(schoolLoc, nowET) !== false) {
+           candidates.push({
+             id: char.id,
+             name: char.name,
+             currentLocId: char.resolved_current_location_id,
+             currentLocName: char.resolved_current_location_name,
+             destLocId: schoolLoc.id,
+             destLocName: schoolLoc.name,
+             category: 'school_active',
+             isWorkActive: false,
+             isClosed: false,
+             pastLimit: false,
+           });
+         }
+         continue; // Process school dispatch, don't check other conditions
       }
 
       // RETURN HOME (for closed locations or expired leisure time)
@@ -212,8 +248,8 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Sort by category priority: work_active first, then closed, time_limit, work_soon
-    const categoryOrder = { work_active: 0, closed_location: 1, time_limit: 2, work_soon: 3 };
+    // Sort by category priority: work_active and school_active first (priority 0), then closed, time_limit, work_soon
+    const categoryOrder = { work_active: 0, school_active: 0, closed_location: 1, time_limit: 2, work_soon: 3 };
     candidates.sort((a, b) => categoryOrder[a.category] - categoryOrder[b.category]);
 
     // Process in batches of 5
@@ -236,22 +272,33 @@ Deno.serve(async (req) => {
         const destLocName = cand.destLocName;
 
         try {
-          const presenceStatus = cand.category === 'work_active' ? 'at_work' : 'home';
-          const locationType = cand.category === 'work_active' ? 'work' : 'home';
-          const reason = cand.category === 'work_active' ? 'work_schedule_dispatch' : `${cand.category}_auto`;
+           const presenceStatus = cand.category === 'work_active' ? 'at_work' : (cand.category === 'school_active' ? 'at_school' : 'home');
+           const locationType = cand.category === 'work_active' ? 'work' : (cand.category === 'school_active' ? 'school' : 'home');
+           const reason = cand.category === 'work_active' ? 'work_schedule_dispatch' : (cand.category === 'school_active' ? 'school_schedule_dispatch' : `${cand.category}_auto`);
 
-          const updatePayload = {
-            resolved_current_location_id: destLocId,
-            resolved_current_location_name: destLocName,
-            resolved_presence_status: presenceStatus,
-            resolved_location_type: locationType,
-            resolved_source_reason: reason,
-            resolved_last_updated_at: new Date().toISOString(),
-            // Clear stale travel/activity fields
-            travel_status: 'not_traveling',
-            travel_destination_location_id: null,
-            current_activity: null,
-          };
+           // Detect stale current_activity conflict with resolved location
+           let hasActivityConflict = false;
+           if (char.current_activity) {
+             // Conflict: new location contradicts current_activity narrative
+             // (e.g., moving home but current_activity = "At Rumba Cubano")
+             if (cand.category !== 'work_active' && cand.category !== 'school_active') {
+               // Non-work/school dispatch: if going home and activity isn't home-oriented, it's stale
+               hasActivityConflict = true;
+             }
+           }
+
+           const updatePayload = {
+             resolved_current_location_id: destLocId,
+             resolved_current_location_name: destLocName,
+             resolved_presence_status: presenceStatus,
+             resolved_location_type: locationType,
+             resolved_source_reason: hasActivityConflict ? 'stale_activity_conflict' : reason,
+           };
+
+           // Only write current_activity if conflict detected
+           if (hasActivityConflict) {
+             updatePayload.current_activity = null;
+           }
 
           if (useServiceRole) {
             await base44.asServiceRole.entities.Character.update(cand.id, updatePayload);
@@ -259,12 +306,12 @@ Deno.serve(async (req) => {
             await base44.entities.Character.update(cand.id, updatePayload);
           }
 
-          if (cand.category === 'work_active') {
+          if (cand.category === 'work_active' || cand.category === 'school_active') {
             batchResult.characters.push({
               name: cand.name,
               from: cand.currentLocName,
               to: destLocName,
-              reason: 'work_schedule_dispatch',
+              reason: reason,
             });
             batchResult.dispatched++;
           } else {
