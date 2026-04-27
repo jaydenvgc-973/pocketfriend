@@ -32,6 +32,7 @@ import PendingLifeEventApproval from "@/components/approvals/PendingLifeEventApp
 import { useApprovalEvents } from "@/hooks/useApprovalEvents";
 import { useNarrativeCorrection } from "@/hooks/useNarrativeCorrection";
 import { useUserSettings } from "@/hooks/useUserSettings";
+import { useVoicePlayback } from "@/hooks/useVoicePlayback";
 import {
   getCharacterStatus,
   getChatDelayMs,
@@ -50,9 +51,6 @@ import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import ChatMessageList from "@/components/chat/ChatMessageList";
 
-const voiceCache = new Map();
-const activeAudioRef = new Map();
-
 export default function Chat() {
   const { characterId } = useParams();
   const urlParams = new URLSearchParams(window.location.search);
@@ -69,8 +67,6 @@ export default function Chat() {
   const [showNarrativeBuilder, setShowNarrativeBuilder] = useState(false);
   const [showWorldContacts, setShowWorldContacts] = useState(false);
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
-  const [playingAudioId, setPlayingAudioId] = useState(null);
-  const [voiceErrors, setVoiceErrors] = useState({});
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [forwardTarget, setForwardTarget] = useState(null);
   const [newPeopleDetected, setNewPeopleDetected] = useState(null);
@@ -109,202 +105,9 @@ export default function Chat() {
     enabled: !!characterId,
   });
 
-  // Unified behaviour engine — placed after character query to avoid 'cannot access before initialization'
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
-
-  // ACCOUNT-SCOPED: useUserSettings always filters by created_by: user.email — never reads globally
   const { settings: userSettings } = useUserSettings();
-
-  // CORE VOICE PLAYBACK FUNCTION - This is the single source of truth for all voice playback
-  const playCharacterVoice = async (messageId, text, characterData, userSettings, bypassCache = false) => {
-    // DIAGNOSTIC: Log everything from the start
-    const diagnosticId = `[VOICE-${messageId.substring(0, 8)}]`;
-    
-    console.log(`${diagnosticId} VOICE PLAYBACK INITIATED`);
-    console.log(`${diagnosticId} messageId: ${messageId}`);
-    console.log(`${diagnosticId} text source: ${text ? `"${text.substring(0, 100)}..."` : 'MISSING'}`);
-    console.log(`${diagnosticId} text from message.content (final saved chat text)`);
-    console.log(`${diagnosticId} characterData.name: ${characterData?.name}`);
-    console.log(`${diagnosticId} characterData.voice_name: ${characterData?.voice_name}`);
-    console.log(`${diagnosticId} userSettings.voice_enabled: ${userSettings?.voice_enabled}`);
-    console.log(`${diagnosticId} userSettings.openai_api_key present: ${!!userSettings?.openai_api_key}`);
-    
-    if (!messageId || !text || !characterData || !userSettings) {
-      console.warn(`${diagnosticId} ABORT: Missing critical parameters`, { 
-        messageId: !!messageId, 
-        text: !!text, 
-        characterData: !!characterData, 
-        userSettings: !!userSettings 
-      });
-      setPlayingAudioId(null);
-      return;
-    }
-
-    try {
-      setVoiceErrors(prev => ({ ...prev, [messageId]: null }));
-      setPlayingAudioId(messageId);
-
-      // Step 1: Check conditions
-      const voiceGloballyEnabled = userSettings?.voice_enabled === true;
-      const charHasVoice = characterData?.voice_enabled === true && characterData?.voice_name;
-      const hasApiKey = userSettings?.openai_api_key;
-      const isNotPhone = chatType !== "phone";
-
-      console.log(`${diagnosticId} CONDITION CHECK:`);
-      console.log(`${diagnosticId}   - voice_enabled (global): ${voiceGloballyEnabled}`);
-      console.log(`${diagnosticId}   - character.voice_enabled: ${characterData?.voice_enabled}`);
-      console.log(`${diagnosticId}   - character.voice_name: ${characterData?.voice_name}`);
-      console.log(`${diagnosticId}   - API key present: ${hasApiKey ? 'YES' : 'NO'}`);
-      console.log(`${diagnosticId}   - chatType !== 'phone': ${isNotPhone} (chatType=${chatType})`);
-
-      if (!voiceGloballyEnabled) {
-        console.log(`${diagnosticId} ABORT: voice_enabled is false at user settings level`);
-        setPlayingAudioId(null);
-        return;
-      }
-      
-      if (!charHasVoice) {
-        console.log(`${diagnosticId} ABORT: character voice not enabled or no voice_name`);
-        setPlayingAudioId(null);
-        return;
-      }
-      
-      if (!hasApiKey) {
-        console.log(`${diagnosticId} ABORT: No OpenAI API key found`);
-        setPlayingAudioId(null);
-        return;
-      }
-      
-      if (!isNotPhone) {
-        console.log(`${diagnosticId} ABORT: Phone chat mode, voice disabled`);
-        setPlayingAudioId(null);
-        return;
-      }
-
-      console.log(`${diagnosticId} ✓ All conditions passed`);
-
-      // Step 2: Check cache first
-      const cacheKey = `${characterData.id}_${characterData.voice_name}_${text}`;
-      let audioUrl = voiceCache.get(cacheKey);
-
-      if (audioUrl && !bypassCache) {
-        console.log(`${diagnosticId} CACHE HIT: Using previously generated audio`);
-        await playAudio(messageId, audioUrl);
-        return;
-      }
-
-      if (audioUrl && bypassCache) {
-        console.log(`${diagnosticId} Cache bypassed - forcing regeneration`);
-      }
-
-      // Step 3: Generate speech
-      console.log(`${diagnosticId} GENERATING SPEECH via OpenAI TTS`);
-      console.log(`${diagnosticId}   - text to speak: "${text.substring(0, 150)}${text.length > 150 ? '...' : ''}"`);
-      console.log(`${diagnosticId}   - voice: ${characterData.voice_name}`);
-      console.log(`${diagnosticId}   - voice_style_note: ${characterData.voice_style_note || '(none)'}`);
-      
-      const res = await base44.functions.invoke('generateSpeech', {
-        text: text,
-        voice: characterData.voice_name,
-        voiceStyleNote: characterData.voice_style_note,
-        apiKey: userSettings.openai_api_key,
-      });
-
-      console.log(`${diagnosticId} generateSpeech response:`, res?.data ? 'SUCCESS' : 'FAILED');
-
-      if (!res?.data?.audioUrl) {
-        throw new Error('No audio URL returned from generateSpeech');
-      }
-
-      audioUrl = res.data.audioUrl;
-      voiceCache.set(cacheKey, audioUrl);
-
-      console.log(`${diagnosticId} ✓ Audio generated successfully (${(audioUrl.length / 1024).toFixed(1)}KB)`);
-
-      // Step 4: Verify stored audio URL (now a proper file URL, not base64)
-      console.log(`${diagnosticId} VERIFYING audio URL before storage...`);
-      console.log(`${diagnosticId} Audio URL type: ${typeof audioUrl}`);
-      console.log(`${diagnosticId} Audio URL length: ${audioUrl.length} chars (within database field limit)`);
-      console.log(`${diagnosticId} Audio URL is valid file URL: ${audioUrl.startsWith('http')}`);
-      console.log(`${diagnosticId} Audio URL preview: ${audioUrl.substring(0, 80)}...`);
-
-      // Step 5: Save audio to message
-      console.log(`${diagnosticId} SAVING audio URL to message entity...`);
-      await base44.entities.Message.update(messageId, { audio_url: audioUrl });
-      console.log(`${diagnosticId} ✓ Audio URL saved to message.audio_url`);
-
-      // Step 6: Update usage tracking
-      const estimatedMinutes = res.data.estimatedMinutes || 0.1;
-      if (userSettings.id) {
-        base44.entities.UserSettings.update(userSettings.id, {
-          voice_minutes_used: (userSettings.voice_minutes_used || 0) + estimatedMinutes,
-        }).catch(() => {});
-      }
-
-      // Step 7: Play audio from stored URL
-      console.log(`${diagnosticId} PLAYING audio from stored URL...`);
-      await playAudio(messageId, audioUrl);
-      console.log(`${diagnosticId} ✓ Playback complete`);
-
-    } catch (err) {
-      console.error(`${diagnosticId} ✗ ERROR:`, err.message);
-      setVoiceErrors(prev => ({ ...prev, [messageId]: err.message }));
-      setPlayingAudioId(null);
-    }
-  };
-
-  // Helper function to actually play audio
-  const playAudio = async (messageId, audioUrl) => {
-    const diagnosticId = `[PLAYBACK-${messageId.substring(0, 8)}]`;
-    
-    return new Promise((resolve) => {
-      try {
-        console.log(`${diagnosticId} Creating Audio element from: ${audioUrl.substring(0, 50)}...`);
-        
-        // Stop any existing audio for this message
-        const existingAudio = activeAudioRef.get(messageId);
-        if (existingAudio) {
-          console.log(`${diagnosticId} Stopping previous audio for this message`);
-          existingAudio.pause();
-          existingAudio.currentTime = 0;
-        }
-
-        const audio = new Audio(audioUrl);
-        activeAudioRef.set(messageId, audio);
-        console.log(`${diagnosticId} Audio element created and registered`);
-
-        audio.onended = () => {
-          console.log(`${diagnosticId} ✓ Playback finished`);
-          activeAudioRef.delete(messageId);
-          setPlayingAudioId(null);
-          resolve();
-        };
-
-        audio.onerror = (err) => {
-          console.error(`${diagnosticId} ✗ Audio playback error:`, err);
-          activeAudioRef.delete(messageId);
-          setPlayingAudioId(null);
-          resolve();
-        };
-
-        console.log(`${diagnosticId} Calling audio.play()...`);
-        audio.play().then(() => {
-          console.log(`${diagnosticId} ✓ Play promise resolved, audio streaming`);
-        }).catch(err => {
-          console.error(`${diagnosticId} ✗ Play failed:`, err.message);
-          activeAudioRef.delete(messageId);
-          setPlayingAudioId(null);
-          resolve();
-        });
-      } catch (err) {
-        console.error(`${diagnosticId} ✗ Audio setup error:`, err);
-        setPlayingAudioId(null);
-        resolve();
-      }
-    });
-  };
-
-
+  const { playingAudioId, voiceErrors, playCharacterVoice } = useVoicePlayback(chatType);
 
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
@@ -320,7 +123,6 @@ export default function Chat() {
     enabled: !!characterId && showSendMoney,
   });
 
-  // Initialize voice settings on first load
   useEffect(() => {
     base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
   }, []);
@@ -328,17 +130,13 @@ export default function Chat() {
   useEffect(() => {
     if (!characterId || !character || !currentUser.email) return;
     
-    // Reset state immediately when switching characters to prevent cross-contamination
-    isMountedRef.current = true; // re-arm for this character session
+    isMountedRef.current = true;
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
     
     const loadConvo = async () => {
       try {
-        // Fetch conversations for this character
-        // STRICT ISOLATION: for direct/phone, only use conversations where character_ids contains
-        // EXACTLY this one character (length === 1). This prevents cross-character contamination.
         const allConvos = await base44.entities.Conversation.filter(
           { type: chatType, character_ids: [characterId], created_by: currentUser.email },
           "-updated_date",
@@ -354,7 +152,6 @@ export default function Chat() {
 
         if (convos.length > 0) {
           convoId = convos[0].id;
-          // Protected characters (e.g. Ethan) load ALL messages; others load recent 50
           const PROTECTED_CHARACTER_IDS = ['69c0d59d7e382cc866ded9c9'];
           const isProtected = PROTECTED_CHARACTER_IDS.includes(characterId);
           const msgLimit = isProtected ? 1000 : 50;
@@ -365,11 +162,9 @@ export default function Chat() {
           );
           
           if (loadedMsgs && loadedMsgs.length > 0) {
-            // Reverse to chronological order for display
             setMessages(loadedMsgs.reverse());
             setConversationId(convoId);
 
-            // Mark unread character messages as read (fire-and-forget)
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {
               unread.forEach(m => {
@@ -381,7 +176,6 @@ export default function Chat() {
             setConversationId(convoId);
           }
         } else {
-          // Create conversation if none exists
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
             type: chatType,
@@ -390,7 +184,6 @@ export default function Chat() {
           setConversationId(convo.id);
         }
 
-        // Load pending messages and deliver them
         const pending = await base44.entities.PendingMessage.filter(
           { character_id: characterId, delivered: false }
         );
@@ -415,7 +208,6 @@ export default function Chat() {
               last_message_date: new Date().toISOString(),
             });
             
-            // Add slight delay between deliveries
             await new Promise(r => setTimeout(r, 500));
           }
           queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
@@ -432,30 +224,24 @@ export default function Chat() {
   useEffect(() => {
     if (!conversationId || !characterId) return;
 
-    // Unsubscribe from previous subscription
     if (unsubscribeRef.current) unsubscribeRef.current();
 
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Only process events for this conversation and character combo
       if (event.data?.conversation_id !== conversationId) return;
 
       if (event.type === "create") {
         setMessages(prev => {
-          // Prevent duplicates: check if message already exists
           if (prev.some(m => m.id === event.data.id)) return prev;
           return [...prev, event.data];
         });
         
-        // Auto-mark character messages as read
         if (event.data.sender_type === "character" && !event.data.is_read) {
           base44.entities.Message.update(event.data.id, { is_read: true }).catch(() => {});
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       } else if (event.type === "update") {
-        // Update existing message without losing state
         setMessages(prev => prev.map(m => m.id === event.data.id ? { ...m, ...event.data } : m));
       } else if (event.type === "delete") {
-        // Remove deleted messages
         setMessages(prev => prev.filter(m => m.id !== event.data.id));
       }
     });
@@ -470,9 +256,6 @@ export default function Chat() {
     conversationIdRef.current = conversationId;
   }, [conversationId]);
 
-  // FORCE-TO-ZERO: When page opens and we have a conversation + messages loaded,
-  // call backend markThreadRead for instant, authoritative clearing.
-  // Awaits backend, verifies success, updates local state, invalidates badge.
   useEffect(() => {
     if (!conversationId) return;
 
@@ -480,7 +263,6 @@ export default function Chat() {
 
     (async () => {
       try {
-        // BACKEND CALL — authoritative. Handles any unread messages in DB (not just local)
         const res = await base44.functions.invoke('markThreadRead', { conversationId, characterId });
 
         if (!isMounted) return;
@@ -490,13 +272,10 @@ export default function Chat() {
 
         console.log(`[BADGE] Backend markThreadRead returned: marked=${markedCount} | finalUnread=${finalUnread} | conversationId=${conversationId}`);
 
-        // Update local state to match backend reality
         setMessages(prev => prev.map(m =>
           m.sender_type === "character" ? { ...m, is_read: true } : m
         ));
 
-        // CRITICAL: Invalidate conversations query so CharacterCard recounts
-        // This forces CharacterCard.countUnread() to run again and see zero unread
         queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
 
       } catch (err) {
@@ -505,7 +284,6 @@ export default function Chat() {
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       }
-      // Catch-up narrative: detect time gap since last user message on open
       if (isMounted && messages.length > 0) {
         const lastUserMsg = [...messages].reverse().find(m => m.sender_type === 'user');
         if (lastUserMsg) {
@@ -522,14 +300,11 @@ export default function Chat() {
   }, [conversationId]);
 
   useEffect(() => {
-    // Only auto-scroll to bottom on initial load (empty messages becoming populated)
-    // or when user is already at the bottom, not when they manually scrolled up
     if (!userScrolledAway) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages.length > 0 && messages[messages.length - 1]?.id, userScrolledAway]); // Only react to new messages when already at bottom
+  }, [messages.length > 0 && messages[messages.length - 1]?.id, userScrolledAway]);
 
-  // Detect when user scrolls away from bottom
   useEffect(() => {
     const container = document.querySelector('[data-chat-container="true"]');
     if (!container) return;
@@ -545,14 +320,12 @@ export default function Chat() {
 
   const [sendError, setSendError] = useState(null);
 
-  // Step 1: User taps delete — show memory-choice modal instead of deleting immediately
   const handleDeleteMessage = (messageId) => {
     const msg = messages.find(m => m.id === messageId);
     if (!msg) return;
     setDeleteTarget(msg);
   };
 
-  // Step 2a: "Remember this" — remove from visible thread, keep in memory/archive
   const handleDeleteRemember = async () => {
     const msg = deleteTarget;
     setDeleteTarget(null);
@@ -560,14 +333,12 @@ export default function Chat() {
 
     console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=remember | removed_from_view=yes | retained_in_memory=yes`);
 
-    // Archive (hide from thread) without deleting — sets archived_date so it's not visible
     setMessages(prev => prev.filter(m => m.id !== msg.id));
     await base44.entities.Message.update(msg.id, {
       archived_date: new Date().toISOString(),
     }).catch(() => {});
   };
 
-  // Step 2b: "Forget this" — remove from visible thread AND mark as forgotten in memory
   const handleDeleteForget = async () => {
     const msg = deleteTarget;
     setDeleteTarget(null);
@@ -575,14 +346,10 @@ export default function Chat() {
 
     console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=forget | removed_from_view=yes | retained_in_memory=no | memory_excluded=yes`);
 
-    // Remove from local state
     setMessages(prev => prev.filter(m => m.id !== msg.id));
 
-    // Delete the message entity entirely (removes it as a memory source)
     await base44.entities.Message.delete(msg.id).catch(() => {});
 
-    // If the message has meaningful content, store a "forgotten" marker memory so the
-    // character knows NOT to reference this. Fire-and-forget.
     if (msg.content?.trim() && msg.sender_type === "character" && characterId) {
       base44.entities.Memory.create({
         character_id: characterId,
@@ -598,7 +365,6 @@ export default function Chat() {
   };
 
   const handleDeleteImage = async (messageId) => {
-    // Update message to remove image_url but keep content
     setMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, image_url: null } : msg));
     try {
       await base44.entities.Message.update(messageId, { image_url: null });
@@ -615,17 +381,14 @@ export default function Chat() {
     const existingUserReaction = currentReactions.find(r => r.reactor_type === "user");
     const isSameEmoji = existingUserReaction?.emoji === emoji;
 
-    // One reaction per user per message: toggle off if same, replace if different
     const nonUserReactions = currentReactions.filter(r => r.reactor_type !== "user");
     const updatedReactions = isSameEmoji
-      ? nonUserReactions  // remove reaction
-      : [...nonUserReactions, { emoji, reactor_type: "user", reactor_id: "user" }];  // replace/set
+      ? nonUserReactions
+      : [...nonUserReactions, { emoji, reactor_type: "user", reactor_id: "user" }];
 
-    // Optimistic update
     setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: updatedReactions } : m));
     await base44.entities.Message.update(messageId, { reactions: updatedReactions });
 
-    // If user reacted (not removed) to a character's message, trigger relationship update
     if (msg.sender_type === "character" && !isSameEmoji && character) {
       base44.functions.invoke("updateRelationshipLevels", {
         characterId,
@@ -666,7 +429,6 @@ export default function Chat() {
     if (isVideo) {
       msgData.videos_watched = res.data.video ? [res.data.video] : [];
     } else {
-      // Both single song AND playlist: use res.data.songs (array) or fall back to res.data.song (single)
       msgData.songs_heard = res.data.songs?.length > 0
         ? res.data.songs
         : res.data.song
@@ -677,39 +439,30 @@ export default function Chat() {
      console.log('[handleShareSong] Creating message with:', msgData);
      const newMsg = await base44.entities.Message.create(msgData);
      console.log('[handleShareSong] Message created:', newMsg?.id);
-     console.log('[handleShareSong] Returned message has:', { songs: newMsg?.songs_heard?.length, videos: newMsg?.videos_watched?.length });
 
-     // Always update conversation and refresh queries
      await base44.entities.Conversation.update(conversationIdRef.current, {
        last_message_preview: msgData.content,
        last_message_date: new Date().toISOString(),
      });
      queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
 
-     // Add to local state immediately
      if (isMountedRef.current) {
        console.log('[handleShareSong] Adding to local state:', newMsg?.id);
        setMessages(prev => [...prev, newMsg]);
      }
 
-     // Trigger deep media research & character knowledge building (non-blocking)
      if (msgData.songs_heard?.length > 0) {
        msgData.songs_heard.forEach(song => {
-         // Layer 1: Analyze media understanding
          base44.functions.invoke('analyzeMediaUnderstanding', {
            mediaObject: song,
            sources: {},
          }).then(res1 => {
            const understanding = res1?.data?.understanding;
-
-           // Layer 2: Deep research on artist, tracks, context
            base44.functions.invoke('deepMediaResearch', {
              mediaObject: song,
              tracks: song.tracks || [],
            }).then(res2 => {
              const deepResearch = res2?.data?.deepResearch;
-
-             // Layer 3: Build character-specific knowledge
              base44.functions.invoke('buildCharacterMediaKnowledge', {
                character,
                mediaObject: song,
@@ -717,21 +470,13 @@ export default function Chat() {
                deepResearch,
              }).then(res3 => {
                const knowledge = res3?.data?.knowledge;
-
-               // Store all layers on message for character & narrative access
                base44.entities.Message.update(newMsg.id, {
                  songs_heard: msgData.songs_heard.map(s => 
                    s.spotify_id === song.spotify_id 
-                     ? { 
-                         ...s, 
-                         _understanding: understanding,
-                         _deepResearch: deepResearch,
-                         _characterKnowledge: knowledge,
-                       }
+                     ? { ...s, _understanding: understanding, _deepResearch: deepResearch, _characterKnowledge: knowledge }
                      : s
                  ),
                }).catch(() => {});
-
                console.log(`[Media Research] Complete for "${song.title}": ${knowledge?.knowledgeLevel?.level || 'unknown'}`);
              }).catch(err => console.error('[buildKnowledge] Failed:', err.message));
            }).catch(err => console.error('[deepResearch] Failed:', err.message));
@@ -760,29 +505,24 @@ export default function Chat() {
     if (!character) return;
     setSendError(null);
 
-    // Fix: command — treat as admin backend directive, do NOT store or process as chat
     if (text.trim().toLowerCase().startsWith("fix:")) {
       const directive = text.trim().slice(4).trim();
-      // Just acknowledge silently — no message stored, no memory, no narrative
       console.info("[Fix: directive]", directive);
       return;
     }
 
-    // Check for music platform links (Spotify, Apple Music, YouTube Music, Amazon Music, Tidal, SoundCloud, etc.)
     const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0], false);
-      return; // Don't generate character response for media links
+      return;
     }
 
-    // Check for video links (YouTube, Vimeo, TikTok, Instagram, Twitch, etc.)
     const videoLinkMatch = text.match(/https?:\/\/[^\s]*(youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com|twitch\.tv|dailymotion\.com)[^\s]*/i);
     if (videoLinkMatch) {
       await handleShareSong(videoLinkMatch[0], true);
-      return; // Don't generate character response for media links
+      return;
     }
 
-    // Check if user is asking character to look something up
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
     let convoId = conversationIdRef.current || conversationId;
@@ -811,17 +551,13 @@ export default function Chat() {
       setSendError("Message failed to save. Try again.");
       return;
     }
-    // Message is persisted to database immediately, subscription will add it if needed
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
-    // Award $5 income for sending a message (fire-and-forget)
     base44.functions.invoke('processUserIncome', { mode: 'message' }).catch(() => {});
 
-    // TEXT MODE: Insert status system message immediately if applicable
     if (isPhone) {
       const sysMsg = getTextSystemMessage(character);
       if (sysMsg) {
-        // PERSIST the status message to DB so it survives navigation
         const persistedSysMsg = await base44.entities.Message.create({
           conversation_id: convoId,
           sender_type: 'character',
@@ -836,17 +572,14 @@ export default function Chat() {
         console.log(`[SYSTEM-MSG] Text mode status message persisted: "${sysMsg}" | id=${persistedSysMsg.id}`);
       }
 
-      // If asleep in text mode — schedule wake-up reply and stop here
       if (getCharacterStatus(character) === 'asleep') {
         console.log(`[TIMING] TEXT blocked — character is asleep. Scheduling wake-up reply.`);
         
-        // Schedule a wake-up follow-up autonomy event
         const wakeTime = character.wake_up_time || '07:00';
         const now = new Date();
         const [wakeHour, wakeMin] = wakeTime.split(':').map(Number);
         const wakeDate = new Date(now);
         wakeDate.setHours(wakeHour, wakeMin, 0, 0);
-        // If wake time is in the past (e.g. it's 10am and wake is 7am), schedule for tomorrow
         if (wakeDate <= now) wakeDate.setDate(wakeDate.getDate() + 1);
 
         base44.entities.CharacterAutonomyEvent.create({
@@ -874,7 +607,6 @@ export default function Chat() {
 
     if (isMountedRef.current) setIsTyping(true);
 
-    // Exponential backoff retry for rate limits — defined here so it's available throughout sendMessage
     const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
       let retryCount = 0;
       while (retryCount <= maxRetries) {
@@ -906,20 +638,15 @@ export default function Chat() {
       const chatHistory = recentMsgs.map(m => ({
         role: m.sender_type === "user" ? "user" : "assistant",
         content: m.content,
-        // Track who the "user" slot actually represents for prompt labeling
         _speakerName: m.sender_type === "user" ? (activeCharacter?.name || "User") : character.name,
       }));
 
-      // userSettings comes from the account-scoped useUserSettings hook above
-      // Use unified behaviour tone instead of generic instructions
       const toneFromBehaviour = behaviour?.tone || 'neutral';
       const lengthInstruction = { short: "Keep responses to 1-2 sentences max.", medium: "Keep responses natural length, 1-4 sentences.", long: "You can elaborate more, up to a paragraph." }[userSettings.response_length || "medium"];
       const toneContext = toneFromBehaviour !== 'neutral' ? `\n\nTONE FILTER: Based on your current state (${toneFromBehaviour}), adjust your response tone accordingly. If tired, be brief. If stressed, be clipped. If warm, be open.` : '';
       const intensityInstruction = { low: "React with mild emotional responses.", medium: "React naturally with moderate emotional responses.", high: "React with strong, intense emotional responses." }[userSettings.emotional_intensity || "medium"];
 
-      // ── UNIFIED TEMPORAL STATE — single source of truth for time/daypart/continuity ──
-      // Pull the last message timestamp from the thread for elapsed-time calculation
-      const lastThreadMsg = recentMsgs.length > 0 ? recentMsgs[recentMsgs.length - 2] : null; // -2 because userMsg is already appended
+      const lastThreadMsg = recentMsgs.length > 0 ? recentMsgs[recentMsgs.length - 2] : null;
       const lastThreadTimestamp = lastThreadMsg?.timestamp || lastThreadMsg?.created_date || null;
       const temporalState = buildTemporalState(character, lastThreadTimestamp);
       const timeContext = buildTemporalContextBlock(temporalState) +
@@ -955,88 +682,51 @@ export default function Chat() {
 
       let songsContext = "";
       if (character.songs_heard && character.songs_heard.length > 0) {
-        console.log('[DEBUG] songs_heard:', JSON.stringify(character.songs_heard, null, 2));
         const songsInfo = character.songs_heard.map(song => {
           let info = `ALBUM/PLAYLIST TITLE: "${song.title}" by ${song.artist}`;
-          
-          // Layer 1: Track list
           if (song.tracks && Array.isArray(song.tracks) && song.tracks.length > 0) {
             const trackList = song.tracks.map(t => `${t.name}${t.artist ? ` (${t.artist})` : ''}`).join(' | ');
             info += ` | ACTUAL TRACKS ON IT: ${trackList}`;
           } else {
             info += ` | (track list not available)`;
           }
-
-          // Layer 2: Music understanding (mood, themes, energy)
           if (song._understanding) {
-            const understanding = song._understanding;
-            info += `\n  MOOD & FEEL: ${understanding.overallMood?.join(', ') || 'unanalyzed'} | Energy: ${understanding.energyProfile}`;
-            if (understanding.themes?.length > 0) {
-              info += `\n  THEMES: ${understanding.themes.join(', ')}`;
-            }
-            if (understanding.narrativeSummary) {
-              info += `\n  ANALYSIS: ${understanding.narrativeSummary}`;
-            }
+            const u = song._understanding;
+            info += `\n  MOOD & FEEL: ${u.overallMood?.join(', ') || 'unanalyzed'} | Energy: ${u.energyProfile}`;
+            if (u.themes?.length > 0) info += `\n  THEMES: ${u.themes.join(', ')}`;
+            if (u.narrativeSummary) info += `\n  ANALYSIS: ${u.narrativeSummary}`;
           }
-
-          // Layer 3: Deep research (artist intent, track context, critical info)
           if (song._deepResearch) {
-            const deep = song._deepResearch;
-            if (deep.artistContext?.background) {
-              info += `\n  ARTIST CONTEXT: ${deep.artistContext.background.substring(0, 200)}...`;
-            }
-            if (deep.trackInsights && deep.trackInsights.length > 0) {
-              const topTracks = deep.trackInsights.slice(0, 3).map(t => 
-                `"${t.trackName}": ${t.analysis?.substring(0, 80) || 'no details'}...`
-              ).join(' | ');
+            const d = song._deepResearch;
+            if (d.artistContext?.background) info += `\n  ARTIST CONTEXT: ${d.artistContext.background.substring(0, 200)}...`;
+            if (d.trackInsights?.length > 0) {
+              const topTracks = d.trackInsights.slice(0, 3).map(t => `"${t.trackName}": ${t.analysis?.substring(0, 80) || 'no details'}...`).join(' | ');
               info += `\n  TRACK INSIGHTS: ${topTracks}`;
             }
-            if (deep.contextualArticles?.length > 0) {
-              info += `\n  CONTEXT: ${deep.contextualArticles[0].summary?.substring(0, 150)}...`;
-            }
+            if (d.contextualArticles?.length > 0) info += `\n  CONTEXT: ${d.contextualArticles[0].summary?.substring(0, 150)}...`;
           }
-
-          // Layer 4: Character-specific knowledge (resonance, interpretation)
           if (song._characterKnowledge) {
-            const knowledge = song._characterKnowledge;
-            if (knowledge.personalResonance?.likelyInterpretation) {
-              info += `\n  YOUR TAKE: ${knowledge.personalResonance.likelyInterpretation}`;
-            }
-            if (knowledge.conversationHooks?.directReferences?.length > 0) {
-              info += `\n  YOU CAN REFERENCE: ${knowledge.conversationHooks.directReferences.map(r => r.theme).join(', ')}`;
-            }
+            const k = song._characterKnowledge;
+            if (k.personalResonance?.likelyInterpretation) info += `\n  YOUR TAKE: ${k.personalResonance.likelyInterpretation}`;
+            if (k.conversationHooks?.directReferences?.length > 0) info += `\n  YOU CAN REFERENCE: ${k.conversationHooks.directReferences.map(r => r.theme).join(', ')}`;
           }
-
           return info;
         }).join('\n\n---\n\n');
         
-        songsContext = `\n\nMUSIC SHARED WITH YOU: Multi-layer understanding has been built for these songs/albums:
-CRITICAL RULES:
-1. Use the ACTUAL TRACKS list (not made-up songs)
-2. Reference the MOOD & FEEL, THEMES, and TRACK INSIGHTS provided
-3. Use ARTIST CONTEXT and TRACK INSIGHTS to inform your interpretation
-4. Draw on YOUR TAKE section for how this connects to you emotionally
-5. You can now discuss the music as though you understand it deeply — because you do.
-6. NEVER pretend to know info not listed. If it's there, use it. If not, say you haven't heard those details.
-
-${songsInfo}`;
+        songsContext = `\n\nMUSIC SHARED WITH YOU: Multi-layer understanding has been built for these songs/albums:\nCRITICAL RULES:\n1. Use the ACTUAL TRACKS list (not made-up songs)\n2. Reference the MOOD & FEEL, THEMES, and TRACK INSIGHTS provided\n3. Use ARTIST CONTEXT and TRACK INSIGHTS to inform your interpretation\n4. Draw on YOUR TAKE section for how this connects to you emotionally\n5. You can now discuss the music as though you understand it deeply — because you do.\n6. NEVER pretend to know info not listed. If it's there, use it. If not, say you haven't heard those details.\n\n${songsInfo}`;
       }
 
-      // Weather context — only inject when user explicitly mentions weather or outdoor plans
-      // STRICT RULES: no repetition within 8 hours, no injection into unrelated topics
       let weatherContext = "";
       const weatherKeywords = /\b(weather|rain|raining|sunny|cold|hot|warm|freezing|snow|snowing|storm|cloudy|outside|outdoors|going out|what's it like|nice out|bad out|degrees|temperature|humid|windy|fog|foggy)\b/i;
       const outdoorPlanKeywords = /\b(going out|heading out|outside|outdoor|park|walk|run|hike|beach|drive|trip|picnic|bbq|barbecue)\b/i;
       const userMentionsWeather = weatherKeywords.test(text) || outdoorPlanKeywords.test(text);
 
       if (userMentionsWeather && (character.city || character.state)) {
-        // Check if weather was mentioned recently in the last 8 messages (proxy for 8 hours)
         const recentWeatherMention = recentMsgs.slice(-16).some(m =>
           m.sender_type === "character" && weatherKeywords.test(m.content || "")
         );
 
         if (!recentWeatherMention) {
-          // Only inject weather if user is asking about it or discussing outdoor plans
           if (character.weather_summary) {
             weatherContext = `\n\nCURRENT WEATHER (for ${[character.city, character.state].filter(Boolean).join(", ")}): ${character.weather_summary}. You are aware of this. ONLY reference it if the user directly asked about weather or is making outdoor plans — do NOT volunteer it into unrelated topics.`;
           } else if (weatherKeywords.test(text)) {
@@ -1048,11 +738,8 @@ ${songsInfo}`;
             }
           }
         }
-        // If weather was already mentioned recently, silently skip — no injection
       }
-      // If user didn't mention weather at all — NO weather context is injected at all
 
-      // Fetch recent events ONLY if conversation seems news/current-events-related
       let recentEventsContext = "";
       const newsKeywords = /\b(news|heard about|did you see|what's going on|what happened|current events|trending|politics|election|sports|game|match|celebrity|scandal|viral|social media|twitter|tiktok|instagram)\b/i;
       if (newsKeywords.test(text)) {
@@ -1064,7 +751,6 @@ ${songsInfo}`;
         }
       }
 
-      // Cultural & Entertainment Awareness: Detect if user references entertainment/culture
       let culturalContext = "";
       const culturalKeywords = /\b(show|shows|watch|watching|netflix|hulu|disney|prime|streaming|movie|film|music|song|artist|singer|actor|actress|celebrity|famous|viral|tiktok|youtube|podcast|album|concert|tour|coachella|grammy|oscar|emmy|celebrity|star|band|rapper|actor|influencer|meme|trend|trending|cardi|taylor|drake|beyonce|kanye|rihanna|dua|weekend|post|malone|billie|ariana|this is us|stranger|breaking bad|game of thrones)\b/i;
       if (culturalKeywords.test(text) || culturalKeywords.test(recentMsgs.slice(-3).map(m => m.content).join(" "))) {
@@ -1076,7 +762,6 @@ ${songsInfo}`;
         }
       }
 
-      // Detect frequented places and update emotional state asynchronously (non-blocking)
       const frequentedPlaces = character.frequented_places || [];
       if (frequentedPlaces.length > 0) {
         const fullText = (text + " " + (recentMsgs.slice(-3).map(m => m.content).join(" "))).toLowerCase();
@@ -1097,31 +782,23 @@ ${songsInfo}`;
         }
       }
 
-      // Perform web lookup asynchronously if user asked for one (non-blocking)
       if (lookupMatch && lookupMatch[1]) {
         const query = lookupMatch[1].trim();
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
-      // ── PARALLEL context fetching — run all async lookups simultaneously ──
       const [memoryResult, progressionResult, pastLookupsResult, spatialResult] = await Promise.all([
-        // Memory retrieval (now includes backfilled narratives automatically)
         base44.functions.invoke('retrieveActiveMemory', {
           characterId,
           currentMessage: text,
           recentMessages: recentMsgs.slice(-6),
           topK: 14,
         }).catch(async () => {
-          // Fallback: direct query
           const mems = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 12).catch(() => []);
           return { data: { memories: mems, total: mems.length, _fallback: true } };
         }),
-        // Progression-filtered life context — replaces raw LifeEvent injection
-        // Newer domain-changing events lock forward truth; older states are invalidated
         base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }).catch(() => null),
-        // Web lookups
         base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
-        // Spatial awareness
         (character.occupation_location_id || character.current_activity)
           ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
               const allLocs = allLocRes?.data?.locations || [];
@@ -1133,7 +810,6 @@ ${songsInfo}`;
           : Promise.resolve(null),
       ]);
 
-      // Build memory context
       let memoryContext = "";
       const memData = memoryResult?.data;
       if (memData?._fallback) {
@@ -1149,17 +825,12 @@ ${songsInfo}`;
         }
       }
 
-      // Build life event context — progression-filtered
-      // Raw LifeEvent dump is replaced by a structured, domain-locked context.
-      // Newer progression events (moved out, new job, breakup) lock present-day truth.
-      // Older states for the same domain are marked as historical — not usable as current reality.
       let lifeEventContext = "";
       const progressionData = progressionResult?.data;
       if (progressionData?.progressionContext) {
         lifeEventContext = `\n\n${progressionData.progressionContext}`;
       }
 
-      // Build research context
       let researchContext = "";
       const pastLookups = Array.isArray(pastLookupsResult) ? pastLookupsResult : [];
       if (pastLookups.length > 0) {
@@ -1167,7 +838,6 @@ ${songsInfo}`;
         researchContext = `\n\nTHINGS YOU'VE LOOKED UP:\n${researchInfo}`;
       }
 
-      // Build spatial context
       let spatialContext = "";
       if (spatialResult) {
         spatialContext = `\n\nSPATIAL AWARENESS: ${spatialResult} If the conversation naturally touches on being somewhere or running into someone, you can acknowledge this shared presence.`;
@@ -1189,34 +859,26 @@ ${songsInfo}`;
       const userNameForPrompts = userDisplayName || null;
       const modeInstruction = isPhone ? "\n\nYOU ARE TEXTING. Keep messages short like real texts. Use casual abbreviations sometimes. No long paragraphs." : "";
 
-      // Status-aware nuance (chat only) and sleep interruption context
       const charStatus = getCharacterStatus(character);
       const statusContext = !isPhone ? buildStatusPromptContext(character, isPhone, recentMsgs.slice(-10)) : "";
       const sleepContext = charStatus === 'asleep' ? buildSleepInterruptionContext(character) : "";
 
-      // ── LIVE PRESENCE: single source of truth for location in AI context ─────
-      // buildLiveLocationContext enforces operating hours + home/work desync prevention
       const livePresence = getCharacterLivePresence(character, {});
       const awarenessContext = buildLiveLocationContext(character, {});
 
-      // ── LIVE NEEDS: full state consistency enforcement ─────────────────────
       const needsContext = buildNeedsContextBlock(character);
 
-      // ── CATCH-UP NARRATIVE CONTEXT: inject when user returns after time away ──
       const catchupContext = catchupNarrativeText
         ? `\n\nTIMELINE CATCH-UP — WHAT HAPPENED WHILE THE USER WAS AWAY:\n${catchupNarrativeText}\nThis is real. You lived through it. Reference it naturally when appropriate. Do NOT pretend the last message was just seconds ago.`
         : "";
 
-      // Hard validation: if AI response contradicts resolved presence, it gets corrected before display
       const _presenceForValidation = livePresence;
 
       let playAsInstruction = "";
       if (activeCharacter) {
-        // Find the relationship entry the receiving character has toward the active (sender) character
         const senderRelEntry = (character.fictional_relationships || []).find(
           r => r.related_character_id === activeCharacter.id
         );
-        // Also look for memories mentioning the sender
         const senderMemories = await base44.entities.Memory.filter({ character_id: characterId }, "-timestamp", 50);
         const relevantMemories = senderMemories
           .filter(m => m.description?.toLowerCase().includes(activeCharacter.name.toLowerCase()))
@@ -1237,37 +899,28 @@ ${songsInfo}`;
         Your response must: 1. Treat ${activeCharacter.name} as a REAL CHARACTER in your life, not as "the user" 2. Recognize them immediately — you know who they are 3. Have a conversation with THEM, not about them 4. NEVER explain "I thought you were someone else" or act confused about their identity. This is character-to-character interaction.`;
       }
 
-      // --- MEDIA FREQUENCY GATING ---
-      // Count messages and media sent in this conversation to enforce frequency limits
       const totalMsgsInConvo = messages.length;
       const mediaSentInConvo = messages.filter(m => m.sender_type === "character" && m.image_url).length;
       const isPhotogenic = !!character.is_photogenic;
 
-      // Detect explicit user image request and how many they want
       const userTextLower = text.toLowerCase();
       const explicitImageRequest = /\b(send|show|give|share|post).{0,20}(pic|photo|picture|image|selfie|shot)\b|\b(pic|photo|picture|selfie|image)\b.{0,10}(of you|of me|please|now|quick|real quick)\b/i.test(text);
       const quantityMatch = text.match(/\b(\d+)\s+(pic|photo|picture|image|selfie|shot)s?\b/i);
       const requestedQuantity = quantityMatch ? parseInt(quantityMatch[1]) : (explicitImageRequest ? 1 : 0);
 
-      // Photogenic characters ALWAYS comply with explicit image requests — no limits apply
-      // For unprompted images: photogenic = 2 per 10 messages, normal = 3 per 20 messages
       const mediaRatioLimit = isPhotogenic ? (2 / 10) : (3 / 20);
       const currentRatio = totalMsgsInConvo > 0 ? mediaSentInConvo / totalMsgsInConvo : 0;
       const atMediaLimit = currentRatio >= mediaRatioLimit && !explicitImageRequest;
 
-      // Cooldown: photogenic characters have NO cooldown on explicit requests, others still respect it
       const recentCharMsgs = messages.filter(m => m.sender_type === "character").slice(-5);
       const lastMediaIdx = recentCharMsgs.map(m => !!m.image_url).lastIndexOf(true);
       const msgsSinceLastMedia = lastMediaIdx === -1 ? 999 : (recentCharMsgs.length - 1 - lastMediaIdx);
       const cooldownMsgs = isPhotogenic ? 2 : 5;
-      // Photogenic characters bypass cooldown entirely on explicit requests
       const inCooldown = msgsSinceLastMedia < cooldownMsgs && !(explicitImageRequest || isPhotogenic);
 
-      // Random weighted chance for unprompted images
       const baseImageChance = isPhotogenic ? 0.25 : 0.08;
       const passedRandomCheck = Math.random() < baseImageChance;
 
-      // Final gate: explicit request always wins; photogenic always allows on explicit; others rate-limited
       const allowImageThisTurn = explicitImageRequest || (!atMediaLimit && !inCooldown && passedRandomCheck);
 
       const imageCountInstruction = requestedQuantity > 1
@@ -1295,17 +948,15 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
-${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}`
+${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.\n- CRITICAL: If the user's name "${userNameForPrompts}" appears in the prompt as a subject of the photo, start the image prompt with "[USER]" — NOT "[CHARACTER]".` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}`
         : explicitImageRequest && !isPhotogenic
         ? `MESSAGE TYPE RULES: The user asked for a photo but you've already sent several recently. Politely acknowledge you're not available to send one right now, and use message_type "text_only".`
         : `MESSAGE TYPE RULES: You MUST use message_type "text_only" this turn. Do NOT include any image fields. Images are rate-limited and you have sent enough recently.`;
 
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
-      // EVIDENCE PRIORITY & CONTEXT SEPARATION RULES
       const evidenceInstruction = `\n\nEVIDENCE PRIORITY & CONTEXT RULES:
-${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth for this turn.
-• New evidence OVERRIDES vague or prior assumptions. Treat it as an intentional correction.` : `• Focus on the CURRENT user request as the primary goal.`}
+${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth for this turn.\n• New evidence OVERRIDES vague or prior assumptions. Treat it as an intentional correction.` : `• Focus on the CURRENT user request as the primary goal.`}
 • CONTEXT LAYERS:
   - Past conversation: Background only. Do NOT repeat or dwell unless directly relevant.
   - Long-term memory: Use only if it directly supports understanding the CURRENT task.
@@ -1324,11 +975,9 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       if (responseLagEnabled) {
         if (isPhone) {
-          // TEXT MODE: exact timing per status rules
           const textDelayMs = getTextDelayMs(character);
 
           if (textDelayMs === null) {
-            // Character is ASLEEP — no response allowed in text mode
             console.log(`[TIMING] TEXT blocked — character is asleep. No response sent.`);
             setIsTyping(false);
             return;
@@ -1337,21 +986,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           console.log(`[TIMING] TEXT delay: ${Math.round(textDelayMs / 1000)}s | status=${getCharacterStatus(character)}`);
           await new Promise(r => setTimeout(r, textDelayMs));
         } else {
-          // CHAT MODE: always 0–60 seconds, no status blocking
           const chatDelayMs = getChatDelayMs(character);
           console.log(`[TIMING] CHAT delay: ${Math.round(chatDelayMs / 1000)}s`);
           await new Promise(r => setTimeout(r, chatDelayMs));
         }
       }
 
-
-      // parseCharacterResponse is imported from @/lib/chatResponseParser
-
-      // ── LOCATION VALIDATION: prevent AI from contradicting resolved presence ──
       const validateLocationInResponse = (text, presence) => {
         if (!text || !presence) return text;
         const lower = text.toLowerCase();
-        // If traveling but AI says "I'm at [destination]" — force correction
         if (presence.status === 'in_transit') {
           const dest = (presence.label || '').replace('Traveling to ', '').toLowerCase();
           if (dest && lower.includes(`i'm at ${dest}`) || lower.includes(`im at ${dest}`)) {
@@ -1368,7 +1011,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         responseObj = parseCharacterResponse(response);
       } catch (llmErr) {
         console.error('[sendMessage] LLM error:', llmErr.message);
-        // Network or timeout error — use fallback response
         if (llmErr?.message?.includes('Network') || llmErr?.message?.includes('timeout') || llmErr?.message?.includes('429')) {
           responseObj = {
             message_type: "text_only",
@@ -1381,21 +1023,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
 
       msgType = responseObj.message_type || "text_only";
-      // Photogenic + explicit request: force image even if LLM returned text_only
       if (isPhotogenic && explicitImageRequest && msgType === "text_only") {
         msgType = "text_then_image";
       }
       const hasText = ["text_only", "text_then_image", "image_then_text"].includes(msgType);
       const hasImage = allowImageThisTurn && ["image_only", "text_then_image", "image_then_text"].includes(msgType);
 
-      // text_content is for visible dialogue ONLY — never an image prompt
       responseText = hasText ? (responseObj.text_content?.trim() || "") : "";
-      // Safety net: if responseText looks like raw JSON or a prompt blob, clear it
       if (responseText.startsWith("{") || responseText.startsWith("```") || responseText.startsWith("[IMAGE]") || responseText.startsWith("[CHARACTER]") || responseText.startsWith("[USER]") || responseText.startsWith("[JOINT]")) {
         responseText = "";
       }
-      // NARRATION BLEED FILTER: strip any third-person narration that leaked into dialogue despite strict prompt
-      // Detect patterns like "CharacterName verb..." or "He/She/They verb..." prose blocks
       if (responseText) {
         const charFirstName = character.name.split(' ')[0];
         const narrationLinePattern = new RegExp(
@@ -1413,21 +1050,16 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           return true;
         });
         responseText = cleanLines.join('\n').trim();
-        // If filtering left nothing, keep a minimal fallback so message isn't empty
         if (!responseText && hasText) responseText = '...';
       }
 
-      // LOCATION VALIDATION: correct any AI response that contradicts resolved presence
       if (responseText) {
         responseText = validateLocationInResponse(responseText, _presenceForValidation);
       }
 
-      // DASH FILTER & NAME PREFIX FILTER: clean up response text
       responseText = filterDashes(responseText);
       responseText = stripCharacterNamePrefix(responseText, character.name);
 
-      // image_generation_prompts is INTERNAL ONLY — never shown to user
-      // If photogenic + explicit request forced an image but LLM gave no prompt, generate a natural selfie prompt
       if (hasImage && responseObj.image_generation_prompts?.length === 0 && isPhotogenic && explicitImageRequest) {
         imagePrompts = [`[CHARACTER] Candid selfie, ${character.name} looking natural and confident, ready for the camera, good lighting, genuine expression`];
       } else {
@@ -1438,7 +1070,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 
       console.log(`[MSG-TYPE] message_type="${msgType}" | hasText=${hasText} | hasImage=${hasImage} | imagePrompts=${imagePrompts.length} | textLength=${responseText.length}`);
 
-      // Persist scheduled events extracted from this chat turn
       if (responseObj.scheduled_events?.length > 0 && convoId) {
         for (const ev of responseObj.scheduled_events) {
           if (!ev.trigger_time || !ev.description) continue;
@@ -1456,19 +1087,17 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
         }
       }
 
-      // Calculate typing delay based on user's WPM setting — capped at 6s max
       let typingDelayMs = 0;
       const typingSpeedEnabled = userSettings.typing_speed_enabled !== false;
       if (typingSpeedEnabled) {
         const wpm = userSettings.words_per_minute || 41;
         const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
-        typingDelayMs = Math.min((wordCount / wpm) * 60000, 6000); // cap at 6s
+        typingDelayMs = Math.min((wordCount / wpm) * 60000, 6000);
       }
 
       await new Promise(r => setTimeout(r, typingDelayMs));
       emotionalState = character.emotional_state || "calm";
 
-      // Clear catch-up context after it's been used once in the first response
       if (catchupNarrativeText) {
         setCatchupNarrativeText(null);
       }
@@ -1485,33 +1114,31 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     // --- STRICT MESSAGE SEPARATION ---
     // Resolve subject type for image generation (used across all image messages)
     const msgLower = text.toLowerCase();
+    const worldNameLower = userSettings?.fictional_world_name?.toLowerCase() || '';
+    const worldNameInPrompt = worldNameLower && msgLower.includes(worldNameLower);
+
     const isJointRequest = /\b(us|together|both|with (you and me|me and you|each other)|the two of us|selfie with (me|you))\b/i.test(msgLower);
     const isUserRequest = !isJointRequest && (
+      worldNameInPrompt || // CRITICAL: user's world name in prompt = user avatar reference
       /\b(pic|photo|picture|image|selfie|shot)\s*(of me|of myself)\b/i.test(msgLower) ||
       /\b(send|show|give|share)\s*(me\s*)?(a\s*)?(pic|photo|picture|selfie)\s*(of me|of myself)\b/i.test(msgLower) ||
       /\bpicture of me\b|\bphoto of me\b|\bpic of me\b/i.test(msgLower)
     );
     const subjectType = isJointRequest ? "joint" : isUserRequest ? "user" : "character";
-    // Authoritative user reference images — generated avatars first (stronger identity signal), then raw uploads
-    // Also fall back to userSettings avatars in case auth user object is stale
+
+    if (worldNameInPrompt) {
+      console.log(`[SUBJECT-TYPE] World name "${worldNameLower}" detected in prompt → subjectType=user`);
+    }
+
     const userRefImages = [
       ...(currentUser.generated_avatar_urls || []),
       ...(userSettings.generated_avatar_urls || []),
       ...(currentUser.reference_image_urls || []),
       ...(userSettings.reference_image_urls || []),
-    ].filter((v, i, a) => v && a.indexOf(v) === i); // dedupe, non-empty
+    ].filter((v, i, a) => v && a.indexOf(v) === i);
     const useUserRefs = (subjectType === "joint" || subjectType === "user") && userRefImages.length > 0;
-    // CRITICAL: Do NOT pass avatar_url as a character reference for image generation.
-    // The avatar is typically a raw uploaded photo (selfie, mirror shot, etc.) and when passed
-    // as a reference image, the AI model copies its ENTIRE visual context: background, pose,
-    // props in hand, lighting, accessories — causing scene contamination.
-    // Only pass reference_image_urls (dedicated face/identity shots with clean backgrounds).
-    // The backend (generateImageAsync) will handle the identity-only extraction from these.
-    // If reference_image_urls is empty, pass nothing — the backend will use text description only.
     const charRefs = (character.reference_image_urls || []).filter(Boolean);
 
-    // Helper: create a stable image-only message and kick off async generation
-    // If user navigated away, write directly to DB as unread (no local state update)
     const createImageMessage = async (imageGenPrompt, delayMs = 500) => {
       const navigatedAway = !isMountedRef.current;
       let imgMsg;
@@ -1536,8 +1163,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       }
       const targetMsgId = imgMsg.id;
       console.log(`[Chat] Image msg created: ${targetMsgId} | char=${character.name} | subject=${subjectType} | prompt="${imageGenPrompt.substring(0, 80)}"`);
-      // dispatchImageGeneration resolves location from character file + LocationReference records
-      // It does NOT pass manualLocationId — see ChatImageDispatch.js for the critical fix details
       setTimeout(() => dispatchImageGeneration({
         targetMsgId, imageGenPrompt, charRefs, userRefImages, useUserRefs,
         character, userSettings, currentUser, subjectType, characterId,
@@ -1546,8 +1171,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       return imgMsg;
     };
 
-    // Helper: create a text-only message and auto-play voice
-    // If user navigated away, message is saved unread so the badge fires on CharacterCard
     const createTextMessage = async (textContent) => {
       if (!textContent?.trim()) return null;
       const navigatedAway = !isMountedRef.current;
@@ -1570,12 +1193,10 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!txtMsg?.id) return null;
       if (!navigatedAway) {
         setMessages(prev => prev.some(m => m.id === txtMsg.id) ? prev : [...prev, txtMsg]);
-        // TTS only when user is still on the page
         setTimeout(() => {
           playCharacterVoice(txtMsg.id, textContent, character, userSettings, false);
         }, 500);
       } else {
-        // User is away — update conversation so unread badge shows on CharacterCard
         base44.entities.Conversation.update(convoId, {
           last_message_preview: textContent.substring(0, 100),
           last_message_date: new Date().toISOString(),
@@ -1588,24 +1209,20 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
     let primaryTextMsg = null;
 
     if (msgType === "text_only") {
-      // --- TEXT ONLY ---
       primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
       if (!primaryTextMsg) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_only") {
-      // --- IMAGE ONLY --- send image as standalone message, no text bubble
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 300);
         for (let i = 1; i < imagePrompts.length; i++) {
           await createImageMessage(imagePrompts[i], 300 + i * 800);
         }
       } else {
-        // Fallback: LLM said image_only but gave no prompt — send text if available
         primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
       }
 
     } else if (msgType === "text_then_image") {
-      // --- TEXT FIRST, THEN IMAGE ---
       primaryTextMsg = await createTextMessage(responseText || "");
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 800);
@@ -1616,24 +1233,20 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else if (msgType === "image_then_text") {
-      // --- IMAGE FIRST, THEN TEXT ---
       if (imagePrompts.length > 0) {
         await createImageMessage(imagePrompts[0], 300);
         for (let i = 1; i < imagePrompts.length; i++) {
           await createImageMessage(imagePrompts[i], 300 + i * 800);
         }
       }
-      // Text arrives after a short delay so image appears first visually
       await new Promise(r => setTimeout(r, 600));
       primaryTextMsg = await createTextMessage(responseText || "");
       if (!primaryTextMsg && imagePrompts.length === 0) { setSendError("Character response failed to save. Try again."); return; }
 
     } else {
-      // Unknown type fallback — text only
       primaryTextMsg = await createTextMessage(responseText || "Sorry, something went wrong.");
     }
 
-    // Use primary text message for relationship/conversation tracking (or first image msg id for context)
     const charMsg = primaryTextMsg;
 
     if (emotionalState !== character.emotional_state) {
@@ -1641,7 +1254,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
     
-    // Character occasionally reacts with an emoji to the user's message — LLM decides based on message impact
     if (Math.random() > 0.5) {
       setTimeout(async () => {
         const isImage = !!userImageUrl;
@@ -1675,7 +1287,6 @@ Reply with ONLY the single emoji or the word "none".`,
         const picked = emojiRes?.trim();
         const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
         if (picked && validEmojis.includes(picked)) {
-          // One character reaction per message — replace any existing character reaction
           const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
           const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
           await base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions });
@@ -1693,7 +1304,6 @@ Reply with ONLY the single emoji or the word "none".`,
     };
     setPreviousLevels(prevLevels);
 
-    // Check for achievements based on user message (fire-and-forget)
     base44.functions.invoke("checkAchievements", {
       characterId,
       characterName: character.name,
@@ -1709,15 +1319,12 @@ Reply with ONLY the single emoji or the word "none".`,
       },
     }).catch(() => {});
 
-    // Check for life event approval pop-ups (move-in, marriage, birth) — non-blocking
     if (responseText) {
       base44.entities.Character.filter({ created_by: currentUser.email }).then(allCharsForApproval => {
         checkForApprovalEvents(responseText, character, allCharsForApproval || [], text);
       }).catch(() => {});
     }
 
-    // Classify life events from this conversation turn (fire-and-forget)
-    // This fans out to memory, mood, relationship, and achievement systems
     base44.functions.invoke("classifyConversationEvent", {
       characterId,
       characterName: character.name,
@@ -1746,15 +1353,11 @@ Reply with ONLY the single emoji or the word "none".`,
       }).catch(() => {});
     }
 
-    // Update character location/activity from USER message (fire-and-forget)
-    // This extracts activity like "I'm at work" from what the user sends
     base44.functions.invoke("updateCharacterActivityFromMessage", {
       characterId,
       messageContent: text,
     }).catch(() => {});
 
-    // Update character location if character response mentions being somewhere
-    // If location is unresolved, show alias resolution popup
     if (responseText) {
       base44.functions.invoke("updateCharacterLocationFromMessage", {
         characterId,
@@ -1767,7 +1370,6 @@ Reply with ONLY the single emoji or the word "none".`,
             characterName: res.data.characterName || character?.name,
           });
         } else if (res?.data?.updated) {
-          // Location updated — refresh character data so card reflects it
           queryClient.invalidateQueries({ queryKey: ["character", characterId] });
         }
       }).catch(() => {});
@@ -1781,7 +1383,6 @@ Reply with ONLY the single emoji or the word "none".`,
       playingAsCharacterId: activeCharacter?.id || null,
     }).then(async res => {
       if (res?.data?.reason) setLastChangeReason(res.data.reason);
-      // Inject milestone narrative messages into the conversation
       if (res?.data?.milestone_messages?.length > 0) {
         for (const milestone of res.data.milestone_messages) {
           await base44.entities.Message.create({
