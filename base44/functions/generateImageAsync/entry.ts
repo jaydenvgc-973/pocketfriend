@@ -116,19 +116,26 @@ const ZONE_KEYWORD_MAP = [
   { keywords: ['laundry', 'laundry room', 'washer', 'dryer'], zone: 'laundry' },
 ];
 
+function cdnFilterNoGenerated(urls) {
+  return cdnFilter(urls).filter(url => !url.includes('generated_image'));
+}
+
 function resolveZoneFromLocation(location, promptLower) {
-  const zones = (location.zones || []).filter(z => cdnFilter(z.image_urls || []).length > 0);
+  // CRITICAL: Filter out AI-generated images from zone refs — passing generated images back as
+  // environment references causes Vertex AI content filter violations (same reason we filter
+  // generated_image from charRefs). Only real uploaded zone photos are valid env refs.
+  const zones = (location.zones || []).filter(z => cdnFilterNoGenerated(z.image_urls || []).length > 0);
 
   if (zones.length === 0) {
     // No zones with images at all — use flat image_urls (last resort, no zone name)
-    const flat = cdnFilter(location.image_urls || []).slice(0, 4);
+    const flat = cdnFilterNoGenerated(location.image_urls || []).slice(0, 4);
     return { images: flat, zoneName: null };
   }
 
   // 1. Exact zone name match in prompt — highest priority
   for (const zone of zones) {
     if (zone.zone_name && promptLower.includes(zone.zone_name.toLowerCase())) {
-      const imgs = cdnFilter(zone.image_urls).slice(0, 4);
+      const imgs = cdnFilterNoGenerated(zone.image_urls).slice(0, 4);
       if (imgs.length > 0) {
         console.log(`[resolveZone] Exact zone name match: "${zone.zone_name}"`);
         return { images: imgs, zoneName: zone.zone_name };
@@ -143,7 +150,7 @@ function resolveZoneFromLocation(location, promptLower) {
         z.zone_name && z.zone_name.toLowerCase().includes(entry.zone)
       );
       if (matched) {
-        const imgs = cdnFilter(matched.image_urls).slice(0, 4);
+        const imgs = cdnFilterNoGenerated(matched.image_urls).slice(0, 4);
         if (imgs.length > 0) {
           console.log(`[resolveZone] Keyword match: prompt→"${entry.zone}" matched zone "${matched.zone_name}"`);
           return { images: imgs, zoneName: matched.zone_name };
@@ -154,17 +161,14 @@ function resolveZoneFromLocation(location, promptLower) {
 
   // 3. STRICT RULE: if only one zone exists, use it (unambiguous)
   if (zones.length === 1) {
-    const imgs = cdnFilter(zones[0].image_urls).slice(0, 4);
+    const imgs = cdnFilterNoGenerated(zones[0].image_urls).slice(0, 4);
     console.log(`[resolveZone] Only one zone exists — using "${zones[0].zone_name}"`);
     return { images: imgs, zoneName: zones[0].zone_name };
   }
 
   // 4. Multiple zones, no keyword match — use the FIRST zone with images as a safe default.
-  // This is far better than returning no environment at all, which causes the AI to invent
-  // a background (or copy it from identity reference photos — the root cause of avatar bleed).
-  // The first zone is typically the main living area (living room, lobby, etc).
   const firstZoneWithImages = zones[0];
-  const imgs = cdnFilter(firstZoneWithImages.image_urls).slice(0, 4);
+  const imgs = cdnFilterNoGenerated(firstZoneWithImages.image_urls).slice(0, 4);
   console.log(`[resolveZone] Multiple zones, no keyword match — falling back to first zone "${firstZoneWithImages.zone_name}" (${imgs.length} imgs) to prevent background invention`);
   return { images: imgs, zoneName: firstZoneWithImages.zone_name };
 }
