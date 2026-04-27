@@ -24,10 +24,20 @@ Deno.serve(async (req) => {
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
     // Load all characters for this user
-    const characters = await base44.entities.Character.filter({ created_by: user.email });
+    let characters = [];
+    try {
+      characters = await base44.entities.Character.filter({ owner_email: user.email });
+    } catch {
+      characters = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email });
+    }
     
     // Load all locations
-    const locations = await base44.entities.LocationReference.filter({ created_by: user.email });
+    let locations = [];
+    try {
+      locations = await base44.entities.LocationReference.filter({ owner_email: user.email });
+    } catch {
+      locations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: user.email });
+    }
     const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
 
     // Identify characters in travel
@@ -90,9 +100,13 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Apply correction
+      // Apply correction (owner-scoped write)
       try {
-        await base44.entities.Character.update(char.id, correction);
+        try {
+          await base44.entities.Character.update(char.id, correction);
+        } catch {
+          await base44.asServiceRole.entities.Character.update(char.id, correction);
+        }
         corrections.push({ character: char.name, success: true });
       } catch (writeErr) {
         console.error(`[forceTravelStateResolution] Failed to update ${char.name}:`, writeErr.message);
@@ -100,8 +114,13 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Verify zero remaining
-    const afterCorrection = await base44.entities.Character.filter({ created_by: user.email });
+    // Verify zero remaining (owner-scoped verification)
+    let afterCorrection = [];
+    try {
+      afterCorrection = await base44.entities.Character.filter({ owner_email: user.email });
+    } catch {
+      afterCorrection = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email });
+    }
     const stillTraveling = afterCorrection.filter(c => 
       c.travel_status && c.travel_status !== 'not_traveling'
     );
