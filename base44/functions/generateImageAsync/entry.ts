@@ -87,9 +87,25 @@ function resolveCharacterOutfitForPrompt(character) {
 
 function buildOutfitText(outfit) {
   if (!outfit) return null;
-  if (outfit.full_description) return outfit.full_description;
+  // CRITICAL: Prefer individual clothing fields over full_description.
+  // full_description often contains scene/pose/lighting metadata
+  // (e.g. "In a relaxed indoor setting, a man stands confidently...")
+  // which contaminates the image prompt with wrong scene directives.
+  // Only individual fields (top, bottom, shoes, etc.) describe clothing only.
   const parts = [outfit.top, outfit.bottom, outfit.shoes, outfit.outerwear, outfit.accessories].filter(Boolean);
-  return parts.length > 0 ? parts.join(', ') : null;
+  if (parts.length > 0) return parts.join(', ');
+  // Only fall back to full_description if no individual fields exist,
+  // and strip any leading scene/setting preamble before the clothing.
+  if (outfit.full_description) {
+    // Strip common scene preamble patterns like "In a relaxed indoor setting, a man stands..."
+    const stripped = outfit.full_description
+      .replace(/^in [^,.]+(,|\.) ?/i, '')
+      .replace(/^a (man|woman|person)[^,.]*(,|\.) ?/i, '')
+      .replace(/^[^,.]+(stands|sits|lounges|poses)[^,.]*(,|\.) ?/i, '')
+      .trim();
+    return stripped || outfit.full_description;
+  }
+  return null;
 }
 
 // ── ZONE RESOLUTION ────────────────────────────────────────────────────────────
@@ -550,7 +566,7 @@ The scene lighting must match the actual world time, not the reference images.`;
   ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — not a separate element pasted over background
   ✅ Character scale, position, and shadows MUST be consistent with the new camera viewpoint and room perspective
   ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
-  ✅ OUTFIT LOCK: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `Character MUST be wearing: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}. Do NOT invent or substitute clothing. Do NOT ignore the outfit.` : 'Clothing should match their personality and context.'}
+  ✅ OUTFIT: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `If the scene prompt specifies clothing, use THAT clothing. If no clothing is described in the scene prompt, default to: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}.` : 'Clothing should match what the scene prompt describes, or their personality and context if unspecified.'}
   ⛔ Do NOT copy background, room, or pose from reference photos
   ⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and entire room perspective shifts
   ⛔ Do NOT paste the character in — recompose the entire scene with character integrated, sharing the same perspective and lighting
@@ -843,10 +859,34 @@ Deno.serve(async (req) => {
 
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
 
+    // ── 5b. SANITIZE PROMPT ───────────────────────────────────────────────────
+    // Vertex AI content filters can block prompts with certain language patterns even when
+    // the content is completely benign. Strip known trigger words/phrases while preserving
+    // the core scene intent. These are purely cosmetic rewrites — same scene, safer phrasing.
+    function sanitizePrompt(p) {
+      return p
+        // "raw photo" → "candid photo"
+        .replace(/\braw,?\s*(nighttime|night|daytime|day|outdoor|indoor|photo|photograph|image|pic)\b/gi, 'candid $1')
+        .replace(/\braw\s+(photo|photograph|image|pic)\b/gi, 'candid $1')
+        // "sitting alone" → "sitting by himself" / "seated"
+        .replace(/\bsitting alone\b/gi, 'seated by himself')
+        // "somber" → "serious"
+        .replace(/\bsomber\b/gi, 'serious')
+        // "dim and natural" lighting → just "natural"
+        .replace(/\bdim and natural\b/gi, 'natural low-light')
+        // Remove "[CHARACTER]" prefix tag — it's for routing, not for the model
+        .replace(/^\[CHARACTER\]\s*/i, '')
+        .trim();
+    }
+    const sanitizedPrompt = sanitizePrompt(prompt);
+    if (sanitizedPrompt !== prompt.replace(/^\[CHARACTER\]\s*/i, '').trim()) {
+      console.log(`[generateImageAsync] Prompt sanitized for content filter compliance`);
+    }
+
     // ── 6. BUILD PROMPT ───────────────────────────────────────────────────────
     const serverTime = new Date();
     const finalPrompt = buildPrompt({
-      prompt,
+      prompt: sanitizedPrompt,
       charName: charRecord?.name || characterName || 'the character',
       charDesc,
       locationName: resolvedLocationName,
