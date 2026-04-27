@@ -54,6 +54,31 @@ function isWorkScheduleActive(char, nowET) {
   return now >= startMin && now < endMin;
 }
 
+function getCharacterWorkLocation(char, locationsByUser) {
+  const email = char.owner_email || char.created_by;
+  const locations = locationsByUser[email] || [];
+  
+  // Check primary work location
+  if (char.occupation_location_id) {
+    const loc = locations.find(l => l.id === char.occupation_location_id);
+    if (loc) return { id: loc.id, name: loc.name };
+  }
+  
+  // Check current work location
+  if (char.current_work_location_id) {
+    const loc = locations.find(l => l.id === char.current_work_location_id);
+    if (loc) return { id: loc.id, name: loc.name };
+  }
+  
+  // Check additional occupation locations
+  if (char.additional_occupation_locations?.length > 0) {
+    const loc = locations.find(l => l.id === char.additional_occupation_locations[0].location_id);
+    if (loc) return { id: loc.id, name: loc.name };
+  }
+  
+  return null;
+}
+
 function isWorkScheduleSoon(char, nowET, minutesWindow = 120) {
   if (!char.work_start_time || !char.work_days) return false;
   const dayOfWeek = nowET.getDay();
@@ -126,11 +151,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Identify candidates for return-home
+    // Identify candidates for return-home or dispatch-to-work
     const candidates = [];
     for (const char of characters) {
-      // Skip if already home
-      if (char.resolved_current_location_id === char.current_home_location_id) continue;
       // Skip if no home assigned
       if (!char.current_home_location_id) continue;
       // Skip if in valid travel
@@ -149,27 +172,48 @@ Deno.serve(async (req) => {
       const nonHomeDurationMin = char.last_arrived_time 
         ? Math.floor((nowET.getTime() - new Date(char.last_arrived_time).getTime()) / 60000)
         : null;
-      const pastLimit = nonHomeDurationMin && nonHomeDurationMin > 150; // 2.5 hours
+      const pastLimit = nonHomeDurationMin && nonHomeDurationMin > 150; // 2.5 hours (non-home leisure only)
+      const isAtHome = char.resolved_current_location_id === char.current_home_location_id;
 
-      if (isWorkActive) continue; // Don't interrupt active work
+      // DISPATCH TO WORK (priority over home)
+      if (isWorkActive && !isAtHome) {
+        const workLoc = getCharacterWorkLocation(char, locationsByUser);
+        if (workLoc && char.resolved_current_location_id !== workLoc.id) {
+          candidates.push({
+            id: char.id,
+            name: char.name,
+            currentLocId: char.resolved_current_location_id,
+            currentLocName: char.resolved_current_location_name,
+            destLocId: workLoc.id,
+            destLocName: workLoc.name,
+            category: 'work_active',
+            isWorkActive: true,
+            isClosed: false,
+            pastLimit: false,
+          });
+        }
+        continue; // Process work dispatch, don't check other conditions
+      }
+
+      // RETURN HOME (for closed locations or expired leisure time)
       if (isClosed || pastLimit || isWorkSoon) {
         candidates.push({
           id: char.id,
           name: char.name,
           currentLocId: char.resolved_current_location_id,
           currentLocName: char.resolved_current_location_name,
-          homeLocId: char.current_home_location_id,
+          destLocId: char.current_home_location_id,
+          destLocName: locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === char.current_home_location_id)?.name || 'Home',
           category: isClosed ? 'closed_location' : pastLimit ? 'time_limit' : 'work_soon',
-          isWorkActive,
-          isWorkSoon,
+          isWorkActive: false,
           isClosed,
           pastLimit,
         });
       }
     }
 
-    // Sort by category priority
-    const categoryOrder = { closed_location: 0, time_limit: 1, work_soon: 2 };
+    // Sort by category priority: work_active first, then closed, time_limit, work_soon
+    const categoryOrder = { work_active: 0, closed_location: 1, time_limit: 2, work_soon: 3 };
     candidates.sort((a, b) => categoryOrder[a.category] - categoryOrder[b.category]);
 
     // Process in batches of 5
@@ -181,22 +225,32 @@ Deno.serve(async (req) => {
       const batchResult = {
         batch_number: batchNum,
         characters: [],
+        dispatched: 0,
         returned: 0,
         failed: 0,
       };
 
       for (const cand of batch) {
         const char = characters.find(c => c.id === cand.id);
-        const homeLocId = cand.homeLocId;
-        const homeLocName = locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === homeLocId)?.name || 'Home';
+        const destLocId = cand.destLocId;
+        const destLocName = cand.destLocName;
 
         try {
+          const presenceStatus = cand.category === 'work_active' ? 'at_work' : 'home';
+          const locationType = cand.category === 'work_active' ? 'work' : 'home';
+          const reason = cand.category === 'work_active' ? 'work_schedule_dispatch' : `${cand.category}_auto`;
+
           const updatePayload = {
-            resolved_current_location_id: homeLocId,
-            resolved_current_location_name: homeLocName,
-            resolved_presence_status: 'home',
-            resolved_location_type: 'home',
-            resolved_source_reason: 'return_home_batched',
+            resolved_current_location_id: destLocId,
+            resolved_current_location_name: destLocName,
+            resolved_presence_status: presenceStatus,
+            resolved_location_type: locationType,
+            resolved_source_reason: reason,
+            resolved_last_updated_at: new Date().toISOString(),
+            // Clear stale travel/activity fields
+            travel_status: 'not_traveling',
+            travel_destination_location_id: null,
+            current_activity: null,
           };
 
           if (useServiceRole) {
@@ -205,17 +259,27 @@ Deno.serve(async (req) => {
             await base44.entities.Character.update(cand.id, updatePayload);
           }
 
-          batchResult.characters.push({
-            name: cand.name,
-            from: cand.currentLocName,
-            to: homeLocName,
-            reason: cand.category,
-          });
-          batchResult.returned++;
+          if (cand.category === 'work_active') {
+            batchResult.characters.push({
+              name: cand.name,
+              from: cand.currentLocName,
+              to: destLocName,
+              reason: 'work_schedule_dispatch',
+            });
+            batchResult.dispatched++;
+          } else {
+            batchResult.characters.push({
+              name: cand.name,
+              from: cand.currentLocName,
+              to: destLocName,
+              reason: cand.category,
+            });
+            batchResult.returned++;
+          }
           results.total_returned++;
         } catch (e) {
           batchResult.failed++;
-          console.error(`[returnHomeB] Failed to return ${cand.name}:`, e.message);
+          console.error(`[returnHome] Failed to move ${cand.name}:`, e.message);
         }
       }
 
