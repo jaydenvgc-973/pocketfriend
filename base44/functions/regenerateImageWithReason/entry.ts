@@ -386,6 +386,16 @@ Deno.serve(async (req) => {
       }
     }
 
+    // ── 2b. RESOLVE USER IDENTITY REFS ───────────────────────────────────────
+    let userRefs = [];
+    if (ctx.subject_type === 'user' || ctx.subject_type === 'joint') {
+      // Use user refs from generation_context (the ORIGINAL saved refs)
+      if (ctx.user_reference_images?.length > 0) {
+        userRefs = cdnFilter(ctx.user_reference_images).slice(0, 3);
+        console.log(`[regenerateImageWithReason] Using saved user refs from context: ${userRefs.length}`);
+      }
+    }
+
     // ── 3a. DETERMINE SCENE PROMPT (needed for zone resolution) ──────────────
     let scenePrompt = originalPrompt;
     if (reason === 'dont_like' && customPrompt?.trim()) {
@@ -458,11 +468,13 @@ Deno.serve(async (req) => {
 
     // ── 5. ASSEMBLE REFS — env first, then identity ───────────────────────────
     const ENV_SLOTS  = Math.min(envRefs.length, 4);
-    const CHAR_SLOTS = Math.min(charRefs.length, 2);
+    const CHAR_SLOTS = Math.min(charRefs.length, 3);
+    const USER_SLOTS = Math.min(userRefs.length, 3);
 
     const referenceImages = [
       ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
+      ...userRefs.slice(0, USER_SLOTS),
     ].filter(Boolean);
 
     console.log(`[regenerateImageWithReason] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} total=${referenceImages.length} | reason=${reason}`);

@@ -914,6 +914,7 @@ Deno.serve(async (req) => {
       prompt,
       character_id: characterId || null,
       character_reference_images: charRefs,
+      user_reference_images: userRefs,
       location_id: charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null,
       zone_name: resolvedZoneName,
       location_name: resolvedLocationName,
