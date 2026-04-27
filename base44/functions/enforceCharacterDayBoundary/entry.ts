@@ -133,10 +133,21 @@ Deno.serve(async (req) => {
           });
           continue;
         }
+        // Valid active travel destination exists — protect this state, do not return home
+        continue;
       }
 
       // Rule 3: General day boundary — no infinite outings
-      // If character has been away from home longer than sleep duration, return at day boundary
+      // Only return characters without explicit travel approval (marked by presence_state or special reason)
+      const hasOvernightApproval = 
+        char.presence_state === 'authorized_overnight' ||
+        char.resolved_source_reason === 'user_approved_overnight' ||
+        char.resolved_source_reason === 'authorized_travel';
+      if (hasOvernightApproval) {
+        continue;
+      }
+
+      // No approval — return to home
       toReturn.push({
         id: char.id,
         name: char.name,
@@ -159,10 +170,8 @@ Deno.serve(async (req) => {
           resolved_presence_status: 'home',
           resolved_location_type: 'home',
           resolved_source_reason: `day_boundary_${item.reason}`,
-          resolved_last_updated_at: new Date().toISOString(),
           travel_status: 'not_traveling',
           travel_destination_location_id: null,
-          current_activity: null,
         };
 
         try {
