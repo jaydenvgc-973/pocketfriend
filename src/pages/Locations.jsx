@@ -518,6 +518,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const userAvatarUrl = currentUser?.selected_avatar_url || currentUser?.user_avatar_url || currentUser?.generated_avatar_urls?.[0] || currentUser?.reference_image_urls?.[0] || null;
   const [newZoneName, setNewZoneName] = useState("");
   const [showCustomInput, setShowCustomInput] = useState(false);
+  const [residentSearch, setResidentSearch] = useState("");
 
   const update = (field, val) => setForm(p => ({ ...p, [field]: val }));
 
@@ -813,76 +814,136 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <p className="text-xs text-muted-foreground italic">No residents added yet.</p>
             )}
           </div>
-          <div className="space-y-1 max-h-96 overflow-y-auto rounded-xl border border-border bg-card p-1">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">The Player</p>
-            {(() => {
-              const userId = currentUser?.id;
-              const alreadyResident = userId && form.resident_character_ids?.includes(userId);
-              return (
-                <button onClick={() => { if (!alreadyResident && userId) update("resident_character_ids", [...(form.resident_character_ids || []), userId]); }}
-                  disabled={alreadyResident || !userId}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                  {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
-                    <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
-                      <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
-                    </div>
-                  )}
-                  <span className="text-sm text-foreground font-medium flex-1">{worldName}</span>
-                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                </button>
-              );
-            })()}
-            {activeChars.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">Active Characters</p>}
-            {activeChars.map(char => {
-              const alreadyResident = form.resident_character_ids?.includes(char.id);
-              return (
-                <button key={char.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), char.id]); }} disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                  <CharacterAvatar character={char} size="sm" />
-                  <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
-                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                </button>
-              );
-            })}
-            {npcFictitious.length > 0 && <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Fictitious Characters</p>}
-            {npcFictitious.map(npc => {
-              const alreadyResident = form.resident_character_ids?.includes(npc.id);
-              return (
-                <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
-                  className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                  <CharacterAvatar character={npc} size="sm" />
-                  <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
-                  {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                </button>
-              );
-            })}
-            {(() => {
-              const npcFamilyChars = allCharacters.filter(c =>
-                c.character_type === 'npc_family_member' &&
-                c.status !== 'deleted' && c.status !== 'moved_away' &&
-                (c.owner_email === currentUser?.email || c.created_by === currentUser?.email)
-              ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-              if (npcFamilyChars.length === 0) return null;
-              return (
-                <>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>
-                  {npcFamilyChars.map(npc => {
-                    const alreadyResident = form.resident_character_ids?.includes(npc.id);
-                    return (
-                      <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
-                        className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
-                        <CharacterAvatar character={npc} size="sm" />
-                        <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
-                        <span className="text-[10px] text-muted-foreground/60">Family</span>
-                        {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
-                      </button>
-                    );
-                  })}
-                </>
-              );
-            })()}
+          {/* Resident selector with search */}
+          {(() => {
+            const q = residentSearch.toLowerCase();
 
-                       </div>
+            const npcFamilyChars = allCharacters.filter(c =>
+              c.character_type === 'npc_family_member' &&
+              c.status !== 'deleted' && c.status !== 'moved_away' &&
+              (c.owner_email === currentUser?.email || c.created_by === currentUser?.email)
+            ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+            const userId = currentUser?.id;
+            const playerMatchesSearch = !q || worldName.toLowerCase().includes(q);
+            const filteredActive = activeChars.filter(c => !q || (c.display_name || c.name || '').toLowerCase().includes(q));
+            const filteredNpcFict = npcFictitious.filter(c => !q || (c.display_name || c.name || '').toLowerCase().includes(q));
+            const filteredNpcFamily = npcFamilyChars.filter(c => !q || (c.name || '').toLowerCase().includes(q));
+
+            const SectionHeader = ({ label, count }) => (
+              <div className="sticky top-0 z-10 flex items-center justify-between px-2 py-1 bg-card border-b border-border/50">
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">{label}</p>
+                <span className="text-[10px] text-muted-foreground/60 bg-secondary px-1.5 py-0.5 rounded-full">{count}</span>
+              </div>
+            );
+
+            return (
+              <div className="space-y-1">
+                {/* Search input */}
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground pointer-events-none" />
+                  <input
+                    type="text"
+                    value={residentSearch}
+                    onChange={e => setResidentSearch(e.target.value)}
+                    placeholder="Search characters..."
+                    className="w-full h-8 pl-8 pr-7 rounded-lg bg-secondary border border-border text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+                  />
+                  {residentSearch && (
+                    <button onClick={() => setResidentSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Scrollable list */}
+                <div className="max-h-96 overflow-y-auto rounded-xl border border-border bg-card">
+                  {/* The Player */}
+                  {playerMatchesSearch && (
+                    <>
+                      <SectionHeader label="The Player" count={1} />
+                      {(() => {
+                        const alreadyResident = userId && form.resident_character_ids?.includes(userId);
+                        return (
+                          <button onClick={() => { if (!alreadyResident && userId) update("resident_character_ids", [...(form.resident_character_ids || []), userId]); }}
+                            disabled={alreadyResident || !userId}
+                            className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                            {userAvatarUrl ? <img src={userAvatarUrl} alt={worldName} className="w-7 h-7 rounded-full object-cover flex-shrink-0" /> : (
+                              <div className="w-7 h-7 rounded-full bg-primary/20 border-2 border-primary flex items-center justify-center flex-shrink-0">
+                                <span className="text-xs font-bold text-primary">{worldName[0]?.toUpperCase()}</span>
+                              </div>
+                            )}
+                            <span className="text-sm text-foreground font-medium flex-1">{worldName}</span>
+                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                          </button>
+                        );
+                      })()}
+                    </>
+                  )}
+
+                  {/* Active Characters */}
+                  {filteredActive.length > 0 && (
+                    <>
+                      <SectionHeader label="Active Characters" count={filteredActive.length} />
+                      {filteredActive.map(char => {
+                        const alreadyResident = form.resident_character_ids?.includes(char.id);
+                        return (
+                          <button key={char.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), char.id]); }} disabled={alreadyResident}
+                            className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                            <CharacterAvatar character={char} size="sm" />
+                            <span className="text-sm text-foreground font-medium flex-1">{char.name}</span>
+                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {/* NPC Fictitious */}
+                  {filteredNpcFict.length > 0 && (
+                    <>
+                      <SectionHeader label="NPC Fictitious" count={filteredNpcFict.length} />
+                      {filteredNpcFict.map(npc => {
+                        const alreadyResident = form.resident_character_ids?.includes(npc.id);
+                        return (
+                          <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
+                            className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                            <CharacterAvatar character={npc} size="sm" />
+                            <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
+                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {/* NPC Family Members */}
+                  {filteredNpcFamily.length > 0 && (
+                    <>
+                      <SectionHeader label="NPC Family Members" count={filteredNpcFamily.length} />
+                      {filteredNpcFamily.map(npc => {
+                        const alreadyResident = form.resident_character_ids?.includes(npc.id);
+                        return (
+                          <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
+                            className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                            <CharacterAvatar character={npc} size="sm" />
+                            <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
+                            <span className="text-[10px] text-muted-foreground/60">Family</span>
+                            {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                          </button>
+                        );
+                      })}
+                    </>
+                  )}
+
+                  {/* Empty state */}
+                  {!playerMatchesSearch && filteredActive.length === 0 && filteredNpcFict.length === 0 && filteredNpcFamily.length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center py-4">No characters match "{residentSearch}"</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
