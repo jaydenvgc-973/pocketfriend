@@ -102,13 +102,25 @@ Deno.serve(async (req) => {
       let targetLocationName = null;
       const repairActions = [];
 
-      // Priority 1: If has valid work location and during work hours
-      if (npc.occupation_location_id && isInTravelWindow) {
-        const workLoc = locations.find(l => l.id === npc.occupation_location_id);
-        if (workLoc) {
-          targetLocationId = workLoc.id;
-          targetLocationName = workLoc.name;
-          repairActions.push('ASSIGNED_TO_WORK_LOCATION');
+      // Priority 1: If has valid work location and work schedule is active now
+      if (npc.occupation_location_id && npc.work_start_time && npc.work_end_time && npc.work_days) {
+        const dayOfWeek = nowET.getDay();
+        if (npc.work_days.includes(dayOfWeek)) {
+          const [wsh, wsm] = npc.work_start_time.split(':').map(Number);
+          const [weh, wem] = npc.work_end_time.split(':').map(Number);
+          const now = nowET.getHours() * 60 + nowET.getMinutes();
+          const startMin = wsh * 60 + wsm;
+          const endMin = weh * 60 + wem;
+          const isNowInShift = (endMin < startMin) ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin);
+          
+          if (isNowInShift) {
+            const workLoc = locations.find(l => l.id === npc.occupation_location_id);
+            if (workLoc) {
+              targetLocationId = workLoc.id;
+              targetLocationName = workLoc.name;
+              repairActions.push('ASSIGNED_TO_WORK_LOCATION');
+            }
+          }
         }
       }
 
@@ -154,11 +166,22 @@ Deno.serve(async (req) => {
 
       // Apply repair
       if (targetLocationId) {
+        // Determine correct status and type based on assignment
+        let presenceStatus = 'home';
+        let locationType = 'home';
+        if (repairActions.includes('ASSIGNED_TO_WORK_LOCATION')) {
+          presenceStatus = 'at_work';
+          locationType = 'work';
+        } else if (isInSleepWindow) {
+          presenceStatus = 'sleeping';
+          locationType = 'home';
+        }
+        
         await base44.asServiceRole.entities.Character.update(npc.id, {
           resolved_current_location_id: targetLocationId,
           resolved_current_location_name: targetLocationName,
-          resolved_presence_status: isInSleepWindow ? 'sleeping' : 'home',
-          resolved_last_updated_at: new Date().toISOString(),
+          resolved_presence_status: presenceStatus,
+          resolved_location_type: locationType,
         });
 
         repairs.push({
