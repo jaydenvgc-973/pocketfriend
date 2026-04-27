@@ -834,23 +834,26 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
   };
 
-  // "Move to Known" from World — for now just opens as normal (link modal handles it in WorldPeopleEditor)
-  // but we also need to handle NPC fictitious ones (those with related_character_id pointing to npc-type)
-  // → strip the related_character_id so they become unlinked, then the user can re-link to an active char
+  // "Move to Known" — promotes an NPC-type Character to active so it appears in Characters They Know.
+  // NEVER strips related_character_id — doing so would create an orphan name entry.
+  // If the entry has no related_character_id, the ghost link modal in WorldPeopleEditor handles it.
   const handleMoveToKnown = async (rel) => {
-    // If this rel has no related_character_id, open link modal — handled inside WorldPeopleEditor
-    // If it points to an NPC-type, we detach it from NPC and make it unlinked so user can relink
-    if (!rel.related_character_id) return; // handled by link modal
-    // Just strip the link — user can then re-link via ghost link modal
-    const updated = (character.fictional_relationships || []).map(r => {
-      if (r.related_character_id === rel.related_character_id && r.person_name === rel.person_name) {
-        const { related_character_id, ...rest } = r;
-        return rest;
+    if (!rel.related_character_id) return; // handled by ghost link modal in WorldPeopleEditor
+    try {
+      const linkedChars = await base44.entities.Character.filter({ id: rel.related_character_id });
+      const linked = linkedChars[0];
+      if (linked && ['npc_fictitious', 'npc_fictitious_person', 'npc_regular'].includes(linked.character_type)) {
+        await base44.entities.Character.update(linked.id, {
+          character_type: 'active_created_character',
+          is_active_character: true,
+          exclude_from_homepage: false,
+        });
       }
-      return r;
-    });
-    await base44.entities.Character.update(character.id, { fictional_relationships: updated });
+    } catch (err) {
+      console.warn('[CharacterEditSettingsPanel] Could not promote NPC to active:', err.message);
+    }
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    queryClient.invalidateQueries({ queryKey: ["accountCharacters"] });
   };
 
   if (!isOpen || !character) return null;

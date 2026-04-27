@@ -1,21 +1,25 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+/**
+ * addNPCRelationships
+ *
+ * Creates real NPC Character records for named people and links them
+ * to the specified active characters via fictional_relationships.
+ *
+ * Each NPC gets a full Character entity (via createNPCCharacter) — never a name-only label.
+ */
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
     const user = await base44.auth.me();
-    
+
     if (!user) {
       return Response.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Get all characters created by this user
+    // Get all characters created by this user to find speaking characters by name
     const characters = await base44.entities.Character.filter({ created_by: user.email });
-    
-    // Log all character names for debugging
-    const allNames = characters.map(c => ({ id: c.id, name: c.name, type: c.character_type }));
-    console.log('All characters:', allNames);
-    
+
     const relationships = {
       'Ava Dei Park': ['Mia Chen', 'Leah Park', 'Jordan Li'],
       'Matt Lopez': ['Carlos Mendez'],
@@ -34,37 +38,38 @@ Deno.serve(async (req) => {
 
       const currentRels = character.fictional_relationships || [];
       const existingNames = new Set(currentRels.map(r => r.person_name?.toLowerCase()));
-      
-      const newRels = npcNames
-        .filter(npcName => !existingNames.has(npcName.toLowerCase()))
-        .map(npcName => ({
-          person_name: npcName,
-          related_character_id: null,
-          relationship_type: 'acquaintance',
-          description: '',
-          current_status: '',
-          emotional_impact: '',
-          last_interaction_summary: '',
-          history_summary: '',
-          avatar_url: '',
-          user_respect_level: 50,
-          friendship_level: 75,
-          romantic_level: 0,
-          attraction_level: 0,
-          chosen_family_level: 0
-        }));
 
-      if (newRels.length > 0) {
-        await base44.entities.Character.update(character.id, {
-          fictional_relationships: [...currentRels, ...newRels]
-        });
-        results[charName] = { status: 'updated', added: newRels.map(r => r.person_name), addedCount: newRels.length };
-      } else {
-        results[charName] = { status: 'skipped', reason: 'all NPCs already present', existingCount: existingNames.size };
+      const added = [];
+      const skipped = [];
+
+      for (const npcName of npcNames) {
+        if (existingNames.has(npcName.toLowerCase())) {
+          skipped.push(npcName);
+          continue;
+        }
+
+        // Create or find a real Character record for this NPC via the existing createNPCCharacter function
+        try {
+          const res = await base44.functions.invoke('createNPCCharacter', {
+            name: npcName,
+            relationship_type: 'acquaintance',
+            speaking_character_id: character.id,
+          });
+
+          if (res?.data?.success) {
+            added.push(npcName);
+          } else {
+            console.error(`[addNPCRelationships] createNPCCharacter failed for "${npcName}":`, res?.data);
+          }
+        } catch (err) {
+          console.error(`[addNPCRelationships] Error creating NPC "${npcName}":`, err.message);
+        }
       }
+
+      results[charName] = { status: 'processed', added, skipped };
     }
 
-    return Response.json({ success: true, results, allCharacterNames: characters.map(c => c.name) });
+    return Response.json({ success: true, results });
   } catch (error) {
     return Response.json({ error: error.message }, { status: 500 });
   }

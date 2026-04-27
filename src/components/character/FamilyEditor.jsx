@@ -62,32 +62,81 @@ function defaultLevels(relationshipType) {
 }
 
 // Sync family members into fictional_relationships so they appear in the world list
-async function syncFamilyToRelationships(character, familyMembers) {
+// Also ensures each named family member has a real Character record (npc_family_member type)
+async function syncFamilyToRelationships(character, familyMembers, currentUser) {
   const existing = character.fictional_relationships || [];
 
   // Remove old family-sourced entries, keep non-family ones
   const nonFamily = existing.filter(r => !r._from_family);
 
-  // Build new entries from family members
-  const familyEntries = familyMembers
-    .filter(m => m.name?.trim())
-    .map(m => ({
-      person_name: m.name,
-      relationship_type: m.relationship_type || "family",
-      description: `${m.name} is ${character.name}'s ${m.relationship_type || "family member"}.`,
-      current_status: "part of the family",
-      emotional_impact: "",
-      history_summary: "",
-      last_interaction_summary: "",
-      photo_url: m.photo_url || null,
-      _from_family: true,
-      ...defaultLevels(m.relationship_type),
-    }));
+  // Build new entries from family members — ensuring real Character records exist
+  const familyEntries = await Promise.all(
+    familyMembers
+      .filter(m => m.name?.trim())
+      .map(async (m) => {
+        // If already linked to a Character ID, use it directly
+        let linkedCharId = m._linked_character_id || null;
+
+        // For unlinked family members with a real name, ensure a Character record exists
+        if (!linkedCharId && currentUser?.email && currentUser?.id) {
+          try {
+            // Check if a Character record already exists for this name under this user
+            const existing = await base44.entities.Character.filter({
+              name: m.name.trim(),
+              owner_email: currentUser.email,
+            });
+            const existingNPC = existing.find(c =>
+              c.status !== 'deleted' && c.status !== 'soft_deleted' &&
+              ['npc_family_member', 'npc_fictitious', 'npc_fictitious_person', 'npc_regular'].includes(c.character_type)
+            );
+
+            if (existingNPC) {
+              linkedCharId = existingNPC.id;
+            } else {
+              // Create a real npc_family_member Character record
+              const newFamilyNPC = await base44.entities.Character.create({
+                name: m.name.trim(),
+                character_type: 'npc_family_member',
+                owner_email: currentUser.email,
+                owner_user_id: currentUser.id,
+                created_by_role: currentUser.role || 'user',
+                status: 'active',
+                is_active_character: false,
+                visibility_scope: 'account_private',
+                data_scope: 'private_user',
+                exclude_from_homepage: true,
+                exclude_from_roster: true,
+                avatar_url: m.photo_url || null,
+              });
+              linkedCharId = newFamilyNPC.id;
+            }
+          } catch (err) {
+            console.warn('[FamilyEditor] Could not create Character for family member:', m.name, err.message);
+          }
+        }
+
+        return {
+          person_name: m.name,
+          related_character_id: linkedCharId || null,
+          relationship_type: m.relationship_type || "family",
+          description: `${m.name} is ${character.name}'s ${m.relationship_type || "family member"}.`,
+          current_status: "part of the family",
+          emotional_impact: "",
+          history_summary: "",
+          last_interaction_summary: "",
+          photo_url: m.photo_url || null,
+          avatar_url: m.photo_url || null,
+          _from_family: true,
+          ...defaultLevels(m.relationship_type),
+        };
+      })
+  );
 
   return [...nonFamily, ...familyEntries];
 }
 
 export default function FamilyEditor({ character, readOnly = false, allCharacters = [], currentUser = null, userSettings = null }) {
+  // currentUser is passed from parent (CharacterProfile) and used for Character record creation
   const queryClient = useQueryClient();
   const [members, setMembers] = useState(character.family_members || []);
   const [saving, setSaving] = useState(false);
@@ -173,21 +222,21 @@ export default function FamilyEditor({ character, readOnly = false, allCharacter
         );
         if (match?.photo_url) {
           // Reuse existing photo from the other parent and store as reference
-          const updatedMembers = members.map((m, i) => i === idx ? { ...m, photo_url: match.photo_url } : m);
-          setMembers(updatedMembers);
-          const valid = updatedMembers.filter(m => m.name?.trim());
-          const updatedRelationships = await syncFamilyToRelationships(character, valid);
-          const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
-          let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
-          if (systemPrompt) {
-            const file = new File([systemPrompt], "system_prompt.txt", { type: "text/plain" });
+          const updatedMembers2 = members.map((m, i) => i === idx ? { ...m, photo_url: match.photo_url } : m);
+          setMembers(updatedMembers2);
+          const valid2 = updatedMembers2.filter(m => m.name?.trim());
+          const updatedRelationships2 = await syncFamilyToRelationships(character, valid2, currentUser);
+          const systemPrompt2 = buildSystemPrompt({ ...character, family_members: valid2 });
+          let updateData2 = { family_members: valid2, fictional_relationships: updatedRelationships2 };
+          if (systemPrompt2) {
+            const file = new File([systemPrompt2], "system_prompt.txt", { type: "text/plain" });
             const { file_url } = await base44.integrations.Core.UploadFile({ file });
-            updateData.system_prompt_url = file_url;
+            updateData2.system_prompt_url = file_url;
           }
           const existingRefs = character.reference_image_urls || [];
-          updateData.reference_image_urls = existingRefs.includes(match.photo_url) ? existingRefs : [...existingRefs, match.photo_url];
+          updateData2.reference_image_urls = existingRefs.includes(match.photo_url) ? existingRefs : [...existingRefs, match.photo_url];
           
-          await base44.entities.Character.update(character.id, updateData);
+          await base44.entities.Character.update(character.id, updateData2);
           queryClient.invalidateQueries({ queryKey: ["character", character.id] });
           queryClient.invalidateQueries({ queryKey: ["characters"] });
           setGeneratingIdx(null);
@@ -276,7 +325,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
 
         // Auto-save to this character
         const valid = updatedMembers.filter(m => m.name?.trim());
-        const updatedRelationships = await syncFamilyToRelationships(character, valid);
+        const updatedRelationships = await syncFamilyToRelationships(character, valid, currentUser);
         const systemPrompt = buildSystemPrompt({ ...character, family_members: valid });
         let updateData = { family_members: valid, fictional_relationships: updatedRelationships };
         if (systemPrompt) {
@@ -314,7 +363,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
               const otherUpdated = otherChar.family_members.map((fm, i) =>
                 i === otherIdx ? { ...fm, photo_url: result.url } : fm
               );
-              const otherRelationships = await syncFamilyToRelationships(otherChar, otherUpdated.filter(m => m.name?.trim()));
+              const otherRelationships = await syncFamilyToRelationships(otherChar, otherUpdated.filter(m => m.name?.trim()), currentUser);
               await base44.entities.Character.update(otherChar.id, {
                 family_members: otherUpdated,
                 fictional_relationships: otherRelationships,
@@ -339,7 +388,7 @@ Natural lighting, unposed, like a real person's photo. NOT a cartoon, NOT illust
       const userEntry = members.find(m => m._is_user);
       const valid = members.filter(m => m.name?.trim() && !m._is_user);
       if (userEntry) valid.push(userEntry); // keep user entry intact
-      const updatedRelationships = await syncFamilyToRelationships(character, valid);
+      const updatedRelationships = await syncFamilyToRelationships(character, valid, currentUser);
       const updated = { ...character, family_members: valid };
       const systemPrompt = buildSystemPrompt(updated);
 
