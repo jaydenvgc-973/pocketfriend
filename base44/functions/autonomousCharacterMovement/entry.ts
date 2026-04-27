@@ -312,14 +312,35 @@ Deno.serve(async (req) => {
           continue;
         }
 
+        // ── HOME WRITE PROTECTION ────────────────────────────────────────────
+        // If the best location is home-category but NOT this character's authoritative home,
+        // that write is invalid. Re-select from non-home locations only.
+        let finalLocation = bestLocation;
+        if (bestLocation.category === 'home' && bestLocation.id !== char.current_home_location_id) {
+          console.warn(`[autonomousMovement] BLOCKED_INVALID_HOME_WRITE: ${char.name} → ${bestLocation.name} (not their home). Re-selecting.`);
+          blockedLog.push(`${char.name}: BLOCKED_INVALID_HOME_WRITE — ${bestLocation.name} is not their authoritative home`);
+          const nonHomeLocations = openLocations.filter(loc => loc.category !== 'home' && loc.category !== 'generic');
+          const fallback = selectBestLocation(nonHomeLocations, char, vals);
+          if (!fallback) {
+            console.log(`[autonomousMovement] ${char.name}: no non-home fallback, skipping`);
+            skippedLog.push(`${char.name}: blocked wrong home write, no non-home fallback`);
+            continue;
+          }
+          if (fallback.score <= 0) {
+            skippedLog.push(`${char.name}: no positive-scoring non-home location`);
+            continue;
+          }
+          finalLocation = fallback;
+        }
+
         // ── MOVE ────────────────────────────────────────────────────────────
         try {
-          const newStatus = bestLocation.category === 'home' ? 'home' : 'visiting';
+          const newStatus = finalLocation.category === 'home' ? 'home' : 'visiting';
           const updatePayload = {
-            resolved_current_location_id:   bestLocation.id,
-            resolved_current_location_name: bestLocation.name,
+            resolved_current_location_id:   finalLocation.id,
+            resolved_current_location_name: finalLocation.name,
             resolved_presence_status:       newStatus,
-            resolved_location_type:         bestLocation.category,
+            resolved_location_type:         finalLocation.category,
             resolved_source_reason:         'autonomous_needs_driven',
             resolved_last_updated_at:       new Date().toISOString(),
           };
@@ -335,7 +356,7 @@ Deno.serve(async (req) => {
             .map(([k, v]) => `${k}(${Math.round(v)})`)
             .join(', ') || `${top.key}(${Math.round(top.value)})`;
           const mandatory = isMandatory ? '[MANDATORY]' : '[optional]';
-          const msg = `${char.name} → ${bestLocation.name} ${mandatory} needs: ${urgentList}`;
+          const msg = `${char.name} → ${finalLocation.name} ${mandatory} needs: ${urgentList}`;
           moveLog.push(msg);
           console.log(`[autonomousMovement] ✓ ${msg}`);
         } catch (e) {

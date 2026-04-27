@@ -38,6 +38,34 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     return createFailedResolution('No character provided');
   }
 
+  // HOME CONTRADICTION GUARD (runs before all layers):
+  // If the DB claims resolved_presence_status = home but the resolved location is NOT
+  // the character's authoritative current_home_location_id, reject the stale state
+  // immediately and return the correct home — or flag it if the home is not in the map.
+  const trueHomeId = character.current_home_location_id || character.home_location_id;
+  if (
+    character.resolved_presence_status === 'home' &&
+    character.resolved_current_location_id &&
+    trueHomeId &&
+    character.resolved_current_location_id !== trueHomeId
+  ) {
+    const trueHome = locationMap[trueHomeId];
+    if (trueHome) {
+      // Correct silently to authoritative home
+      return {
+        resolved_current_location_id: trueHomeId,
+        resolved_current_location_name: trueHome.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'home_contradiction_corrected',
+        resolved_zone: null,
+      };
+    }
+    // True home not in locationMap — do NOT preserve the stale wrong location.
+    // Fall through to normal layer resolution which will find the home via LAYER 7.
+    // Clear the stale resolved fields from local view so layers don't read them.
+  }
+
   // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
   // Collect every location this character is linked to as a worker
   const allWorkLocIds = [];
