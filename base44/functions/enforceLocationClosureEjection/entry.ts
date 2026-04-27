@@ -48,6 +48,41 @@ function isLocationOpen(location) {
   return true;
 }
 
+function isWorkScheduleActive(char) {
+  if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfWeek = nowET.getDay();
+  if (!char.work_days.includes(dayOfWeek)) return false;
+  const [sh, sm] = char.work_start_time.split(':').map(Number);
+  const [eh, em] = char.work_end_time.split(':').map(Number);
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (endMin < startMin) return now >= startMin || now < endMin;
+  return now >= startMin && now < endMin;
+}
+
+function isSchoolScheduleActive(char) {
+  if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  return now >= 480 && now < 900; // 8:00 AM - 3:00 PM
+}
+
+function hasValidActiveTravel(char) {
+  return char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id;
+}
+
+function shouldProtectFromHomeReturn(char) {
+  // MANDATORY GUARD: protect all active obligations before forcing home
+  if (isWorkScheduleActive(char)) return true;
+  if (isSchoolScheduleActive(char)) return true;
+  if (hasValidActiveTravel(char)) return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
+  return false;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -90,6 +125,11 @@ Deno.serve(async (req) => {
       let newReason = 'location_closed_safe_away';
 
       if (char.character_type === 'active_created_character') {
+        // GUARD: Do NOT force home if character has active obligations
+        if (shouldProtectFromHomeReturn(char)) {
+          console.log(`[ejection] ${char.name} protected by active obligation — skipping home return`);
+          continue;
+        }
         // active_created: return home
         newLocationId = char.current_home_location_id || char.home_location_id || char.residence_id || char.assigned_residence;
         if (newLocationId && locationMap[newLocationId]) {

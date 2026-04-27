@@ -6,6 +6,41 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
  * Forces all npc_fictitious residents of VGC Towers back home.
  * Guarantees travel window closure and home restoration.
  */
+function isWorkScheduleActive(char) {
+  if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfWeek = nowET.getDay();
+  if (!char.work_days.includes(dayOfWeek)) return false;
+  const [sh, sm] = char.work_start_time.split(':').map(Number);
+  const [eh, em] = char.work_end_time.split(':').map(Number);
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (endMin < startMin) return now >= startMin || now < endMin;
+  return now >= startMin && now < endMin;
+}
+
+function isSchoolScheduleActive(char) {
+  if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  return now >= 480 && now < 900; // 8:00 AM - 3:00 PM
+}
+
+function hasValidActiveTravel(char) {
+  return char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id;
+}
+
+function shouldProtectFromHomeReturn(char) {
+  // MANDATORY GUARD: protect all active obligations before forcing home
+  if (isWorkScheduleActive(char)) return true;
+  if (isSchoolScheduleActive(char)) return true;
+  if (hasValidActiveTravel(char)) return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
+  return false;
+}
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -57,6 +92,11 @@ Deno.serve(async (req) => {
 
       if (toReturn.length > 0) {
         await Promise.all(toReturn.map(npc => {
+          // GUARD: Do NOT force home if NPC has active obligations
+          if (shouldProtectFromHomeReturn(npc)) {
+            console.log(`[1AM return] ${npc.name} protected by active obligation — skipping home return`);
+            return Promise.resolve();
+          }
           log.push(`[${ownerEmail}] ${npc.name} → VGC Towers (1 AM return-home)`);
           return base44.asServiceRole.entities.Character.update(npc.id, {
             resolved_current_location_id: VGC_ID,
