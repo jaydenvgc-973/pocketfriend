@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { base44 } from "@/api/base44Client";
 import { useQuery } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ export default function Travel() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [selectedLocation, setSelectedLocation] = useState(null);
+  const popupRef = useRef(null);
   const [hasRunDistribution, setHasRunDistribution] = useState(false);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState([]);
   const [convincedCharacterIds, setConvincedCharacterIds] = useState([]);
@@ -195,6 +196,25 @@ export default function Travel() {
     };
     ensureLocationsMapped(locationsData, saveLocation).catch(() => {});
   }, [locationsData.length, currentUser?.email]);
+
+  // Close popup on outside click/tap or Escape key
+  useEffect(() => {
+    if (!selectedLocation) return;
+    const handlePointerDown = (e) => {
+      if (popupRef.current && !popupRef.current.contains(e.target)) {
+        setSelectedLocation(null);
+      }
+    };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') setSelectedLocation(null);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectedLocation]);
 
   // Auto-distribute VGC NPCs on page load so UI shows their real locations
   useEffect(() => {
@@ -578,6 +598,7 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
         <AnimatePresence>
           {selectedLocation && (
             <motion.div
+              ref={popupRef}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10 }}
@@ -588,12 +609,15 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                   <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
                     <MapPin className="w-5 h-5 text-primary" />
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-semibold text-foreground">{selectedLocation.name}</p>
                     <p className="text-xs text-muted-foreground capitalize">
                       {selectedCharacterIds.length === 0 ? "Going alone" : `${selectedCharacterIds.length + 1} people`}
                     </p>
                   </div>
+                  <button onClick={() => setSelectedLocation(null)} className="p-1.5 text-muted-foreground hover:text-foreground rounded-lg transition-colors">
+                    <span className="text-base leading-none">✕</span>
+                  </button>
                 </div>
                 {(() => {
                   const homeAccess = checkHomeAccess(selectedLocation);
