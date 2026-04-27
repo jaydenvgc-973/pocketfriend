@@ -39,8 +39,10 @@ Deno.serve(async (req) => {
       });
     }
 
-    const today = new Date();
-    const dateStr = today.toLocaleDateString('en-US', { 
+    // Support backfill via payload parameter
+    const payload = await req.json().catch(() => ({}));
+    const targetDate = payload.targetDate ? new Date(payload.targetDate) : new Date();
+    const dateStr = targetDate.toLocaleDateString('en-US', { 
       weekday: 'long', 
       year: 'numeric', 
       month: 'long', 
