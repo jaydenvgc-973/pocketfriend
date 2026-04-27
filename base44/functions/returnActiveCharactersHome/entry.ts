@@ -232,7 +232,8 @@ Deno.serve(async (req) => {
       }
 
       // RETURN HOME (for closed locations or expired leisure time)
-      if (isClosed || pastLimit || isWorkSoon) {
+      // GUARD: DO NOT force home if work schedule is CURRENTLY ACTIVE
+      if ((isClosed || pastLimit || isWorkSoon) && !isWorkActive) {
         candidates.push({
           id: char.id,
           name: char.name,
