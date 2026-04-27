@@ -354,7 +354,9 @@ Deno.serve(async (req) => {
         // (background, pose, props, lighting), causing scene contamination. This is the ROOT CAUSE of "pasted character" failures.
         // If no reference images exist, generate from text description only.
         const refUrls = cdnFilter(charRecord.reference_image_urls || []);
-        charRefs = refUrls.slice(0, 3);
+        // CRITICAL FIX: Filter out generated images to avoid perpetuating flawed identity from previous generations
+        const validRefUrls = refUrls.filter(url => !url.includes('generated_image'));
+        charRefs = validRefUrls.slice(0, 3);
         console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs from reference_image_urls only: ${charRefs.length} (NOT using avatar to prevent scene contamination)`);
         
         // Build appearance descriptor for text-based generation — CRITICAL: include appearance_lock traits as immutable truth
