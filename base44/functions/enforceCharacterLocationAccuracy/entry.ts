@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
 
     // Fetch all locations
     const allLocations = await base44.asServiceRole.entities.LocationReference.filter({
-      created_by: user.email
+      owner_email: user.email
     });
     const locationMap = Object.fromEntries(allLocations.map(l => [l.id, l]));
 

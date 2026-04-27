@@ -19,7 +19,7 @@ Deno.serve(async (req) => {
 
     // Get all active characters
     const characters = await base44.entities.Character.filter(
-      { created_by: user.email, status: 'active' },
+      { owner_email: user.email, status: 'active' },
       "-updated_date"
     );
 
