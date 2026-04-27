@@ -594,6 +594,17 @@ Deno.serve(async (req) => {
     }
     const requestingUser = message.created_by || user.email;
 
+    // ── SANITIZE PROMPT EARLY ─────────────────────────────────────────
+    // Do this before outfit resolution so we can check if prompt specifies clothing
+    function sanitizePrompt(p) {
+      // Minimal sanitization: ONLY strip the routing tag
+      // Keep all scene details, emotion, lighting, and style intact
+      return p
+        .replace(/^\[CHARACTER\]\s*/i, '')
+        .trim();
+    }
+    const sanitizedPrompt = sanitizePrompt(prompt);
+
     // ── 2. RESOLVE CHARACTER ──────────────────────────────────────────────────
     let charRecord = null;
     let charRefs = [];
