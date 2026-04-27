@@ -608,7 +608,7 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   }
 
   // ── PRIORITY 2: TRANSIT STATE ──────────────────────────────────────────────
-  if (character.travel_status && character.travel_status !== 'not_traveling') {
+  if (presenceStatus === 'traveling') {
     const destLoc = locationMap[character.travel_destination_location_id];
     const destName = destLoc?.name || character.traveling_to_location_name || 'destination';
     return { status: 'in_transit', label: `Traveling to ${destName}`, sublabel: null, isTransit: true, isSleeping: false };
