@@ -136,8 +136,13 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
                 }
               });
 
+              const displayCount = 2;
+              const shown = dedupedNames.slice(0, displayCount);
+              const remaining = dedupedNames.length - displayCount;
               return dedupedNames.length > 0 ? (
-                <span className="text-xs text-blue-400/80 font-medium">{dedupedNames.join(', ')}</span>
+                <span className="text-xs text-blue-400/80 font-medium truncate">
+                  {shown.join(', ')}{remaining > 0 ? ` +${remaining}` : ''}
+                </span>
               ) : null;
             })()}
             {location.category !== 'home' && location.category !== 'generic' && location.resident_character_ids?.length > 0 && (
