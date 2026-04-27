@@ -97,12 +97,12 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
               </span>
             )}
             {(location.category === 'home' || location.category === 'generic') && (() => {
-              // Deduplicate: collect IDs from residents[] and resident_character_ids[] without double-counting
+              // Build name list from what we can resolve, but use the raw counts for the total
               const seenIds = new Set();
               const seenNames = new Set();
-              const dedupedNames = [];
+              const resolvedNames = [];
 
-              // residents[] (newer format) — authoritative for named residents
+              // residents[] has character_name embedded — always use these first
               (location.residents || []).forEach(r => {
                 if (r.character_id) {
                   if (seenIds.has(r.character_id)) return;
@@ -111,11 +111,11 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
                 const name = r.character_name;
                 if (name && !seenNames.has(name.toLowerCase())) {
                   seenNames.add(name.toLowerCase());
-                  dedupedNames.push(name);
+                  resolvedNames.push(name);
                 }
               });
 
-              // resident_character_ids[] (legacy) — skip any ID already counted
+              // resident_character_ids[] — resolve name if possible, otherwise still count
               (location.resident_character_ids || []).forEach(id => {
                 if (seenIds.has(id)) return;
                 seenIds.add(id);
@@ -123,27 +123,35 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
                 const name = found?.name;
                 if (name && !seenNames.has(name.toLowerCase())) {
                   seenNames.add(name.toLowerCase());
-                  dedupedNames.push(name);
+                  resolvedNames.push(name);
                 }
               });
 
-              // resident_family_members[] — NPC/family, dedupe by name only
+              // resident_family_members[] — name embedded
               (location.resident_family_members || []).forEach(f => {
                 const name = f.name;
                 if (name && !seenNames.has(name.toLowerCase())) {
                   seenNames.add(name.toLowerCase());
-                  dedupedNames.push(name);
+                  resolvedNames.push(name);
                 }
               });
 
-              const displayCount = 2;
-              const shown = dedupedNames.slice(0, displayCount);
-              const remaining = dedupedNames.length - displayCount;
-              return dedupedNames.length > 0 ? (
+              // Total count = raw field lengths (authoritative), not just resolved names
+              const totalCount = new Set([
+                ...(location.resident_character_ids || []),
+                ...(location.residents || []).map(r => r.character_id).filter(Boolean),
+              ]).size + (location.resident_family_members || []).length;
+
+              if (totalCount === 0) return null;
+
+              const shown = resolvedNames.slice(0, 2);
+              const remaining = totalCount - shown.length;
+              return (
                 <span className="text-xs text-blue-400/80 font-medium truncate">
-                  {shown.join(', ')}{remaining > 0 ? ` +${remaining}` : ''}
+                  {shown.length > 0 ? shown.join(', ') : `${totalCount} resident${totalCount !== 1 ? 's' : ''}`}
+                  {shown.length > 0 && remaining > 0 ? ` +${remaining}` : ''}
                 </span>
-              ) : null;
+              );
             })()}
             {location.category !== 'home' && location.category !== 'generic' && location.resident_character_ids?.length > 0 && (
               <span className="text-xs text-blue-400/80 font-medium">
