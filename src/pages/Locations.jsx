@@ -409,42 +409,41 @@ function getWorkerAvailabilityV2(character, allLocations, currentLocationId = nu
 }
 
 function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplicate, isWorkerTooYoung, getNPCAge, allLocations = [], currentUser = {}, userSettings = null }) {
-  // Fetch all characters (active + NPC)
-  const { data: allCharacters = [] } = useQuery({
-    queryKey: ['allCharactersForLocation', currentUser?.email],
-    queryFn: async () => {
-      if (!currentUser?.email) return [];
-      const [activeChars, npcsByCreatedBy, npcsByOwnerEmail] = await Promise.all([
-        base44.entities.Character.filter({
-          created_by: currentUser.email,
-          status: "active",
-          character_type: "active_created_character"
-        }),
-        base44.entities.Character.filter({
-          created_by: currentUser.email,
-          character_type: { $in: ['npc_fictitious', 'npc_family_member'] },
-        }),
-        base44.entities.Character.filter({
-          owner_email: currentUser.email,
-          character_type: { $in: ['npc_fictitious', 'npc_family_member'] },
-        }),
-      ]);
-      const seen = new Set();
-      const npcChars = [...npcsByCreatedBy, ...npcsByOwnerEmail].filter(c => {
-        if (seen.has(c.id)) return false;
-        seen.add(c.id);
-        return c.status !== 'deleted' && c.status !== 'moved_away';
-      });
-      return [...activeChars, ...npcChars];
-    },
+  // Active characters via RLS
+  const { data: rlsActiveChars = [] } = useQuery({
+    queryKey: ['locationFormActive', currentUser?.email],
+    queryFn: () => currentUser?.email
+      ? base44.entities.Character.filter({ created_by: currentUser.email, status: "active", character_type: "active_created_character" })
+      : [],
     enabled: !!currentUser?.email,
   });
 
-  // Build lists directly from allCharacters (already scoped by query via created_by + owner_email)
-  const activeChars = allCharacters
-    .filter(c => c.character_type === 'active_created_character' && c.status !== 'deleted' && c.status !== 'moved_away')
+  // ALL NPCs via service-role backend (same source as Settings — catches service-created records RLS can't see)
+  const { data: allNpcsRaw = [] } = useQuery({
+    queryKey: ['locationFormNpcs', currentUser?.id],
+    queryFn: async () => {
+      if (!currentUser?.id) return [];
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      return res?.data?.npcs || [];
+    },
+    enabled: !!currentUser?.id,
+  });
+
+  // Merge and deduplicate into allCharacters (used by workers, owner picker, etc.)
+  const allCharacters = React.useMemo(() => {
+    const seen = new Set();
+    return [...rlsActiveChars, ...allNpcsRaw].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return c.status !== 'deleted' && c.status !== 'moved_away' && c.status !== 'merged';
+    });
+  }, [rlsActiveChars, allNpcsRaw]);
+
+  // Build lists — all scoped correctly by fetchNPCsForUser (service role)
+  const activeChars = rlsActiveChars
+    .filter(c => c.status !== 'deleted' && c.status !== 'moved_away')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
-  const npcFictitious = allCharacters
+  const npcFictitious = allNpcsRaw
     .filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted' && c.status !== 'moved_away')
     .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
@@ -819,11 +818,9 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
           {(() => {
             const q = residentSearch.toLowerCase();
 
-            const npcFamilyChars = allCharacters.filter(c =>
-              c.character_type === 'npc_family_member' &&
-              c.status !== 'deleted' && c.status !== 'moved_away' &&
-              (c.owner_email === currentUser?.email || c.created_by === currentUser?.email)
-            ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+            const npcFamilyChars = allNpcsRaw
+              .filter(c => c.character_type === 'npc_family_member' && c.status !== 'deleted' && c.status !== 'moved_away')
+              .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
             const userId = currentUser?.id;
             const playerMatchesSearch = !q || worldName.toLowerCase().includes(q);
