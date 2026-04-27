@@ -870,10 +870,19 @@ Deno.serve(async (req) => {
         .replace(/\braw\s+(photo|photograph|image|pic)\b/gi, 'candid $1')
         // "sitting alone" → "sitting by himself" / "seated"
         .replace(/\bsitting alone\b/gi, 'seated by himself')
-        // "somber" → "serious"
+        // "somber" / "somber mood" / "somber expression" → "serious"
         .replace(/\bsomber\b/gi, 'serious')
+        // "peaceful" mood / expression → "calm"
+        .replace(/\bpeaceful\s+(mood|expression|face|look|state)\b/gi, 'calm $1')
+        .replace(/\bpeaceful\b/gi, 'calm')
+        // "reflective" mood / expression → "thoughtful"
+        .replace(/\breflective\s+(mood|expression|face|look|state)\b/gi, 'thoughtful $1')
         // "dim and natural" lighting → just "natural"
         .replace(/\bdim and natural\b/gi, 'natural low-light')
+        // "twilight" → "dusk" (neutral term)
+        .replace(/\btwilight\b/gi, 'dusk')
+        // "golden hour" → "golden sunset light"
+        .replace(/\bgolden hour\b/gi, 'golden sunset light')
         // Remove "[CHARACTER]" prefix tag — it's for routing, not for the model
         .replace(/^\[CHARACTER\]\s*/i, '')
         .trim();
@@ -938,6 +947,7 @@ Deno.serve(async (req) => {
     await base44.asServiceRole.entities.Message.update(messageId, {
       image_url: genRes.url,
       generation_context: generationContext,
+      content: "",  // Clear any [IMAGE_FAILED] placeholder
     });
 
     console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} → ${genRes.url.substring(0, 60)}`);
