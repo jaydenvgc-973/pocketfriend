@@ -813,7 +813,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
               <p className="text-xs text-muted-foreground italic">No residents added yet.</p>
             )}
           </div>
-          <div className="space-y-1 max-h-56 overflow-y-auto rounded-xl border border-border bg-card p-1">
+          <div className="space-y-1 max-h-96 overflow-y-auto rounded-xl border border-border bg-card p-1">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-1 pb-0.5">The Player</p>
             {(() => {
               const userId = currentUser?.id;
