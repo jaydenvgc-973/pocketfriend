@@ -310,8 +310,12 @@ If no actions occur, return empty action_effects array.`;
 
       // Save character updates if any changes were made
       if (Object.keys(characterUpdatePayload).length > 0) {
-        await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
-        console.log(`[generateAutomaticNarrative] ✓ Character needs updated.`);
+        try {
+          await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
+          console.log(`[generateAutomaticNarrative] ✓ Character needs updated.`);
+        } catch (updateErr) {
+          console.warn(`[generateAutomaticNarrative] Character needs update skipped (non-blocking):`, updateErr.message);
+        }
       }
     }
 
