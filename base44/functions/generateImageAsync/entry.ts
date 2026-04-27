@@ -718,6 +718,8 @@ Deno.serve(async (req) => {
       if (requestingUser) {
         const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: requestingUser }, null, 1).catch(() => []);
         const sett = settingsList?.[0] || {};
+        // CRITICAL: Prefer real uploaded reference_image_urls over generated_avatar_urls.
+        // Generated avatars may be lower quality or inconsistent. Real photos ensure authentic likeness.
         const dbUserRefs = [
           ...(sett.reference_image_urls || []),
           ...(sett.generated_avatar_urls || []),
