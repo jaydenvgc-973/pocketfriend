@@ -42,47 +42,20 @@ function cdnFilter(urls) {
 // Resolves a character's current outfit from their closet or current_outfit field.
 // Returns a text description string suitable for prompt injection, or null.
 
-function resolveCharacterOutfitForPrompt(character) {
+function resolveCharacterOutfitForPrompt(character, promptText) {
   if (!character) return null;
 
-  // Priority 1: manually set current_outfit (set by user today)
-  const current = character.current_outfit;
-  if (current) {
-    const text = buildOutfitText(current);
-    if (text) return text;
-  }
+  // CRITICAL: If the prompt explicitly specifies clothing (e.g., "wearing a black snapback and an oversized graphic tee"),
+  // DO NOT override it with character's current outfit or closet.
+  // The prompt's description takes absolute priority — the user is being explicit about what they want to see.
+  // Only use character outfit data as a fallback when the prompt has no clothing description.
 
-  // Priority 2: resolve from closet by situation
-  const closet = character.character_closet || [];
-  const outfits = closet.filter(item => item.outfit_id);
-  if (outfits.length === 0) return null;
+  // For now, we assume the prompt is authoritative if it mentions clothing.
+  // The outfit resolution is only for scenes where the user hasn't specified what to wear.
+  // If a prompt says "wearing X", that X is what should be rendered, regardless of time of day or outfit lock.
 
-  // Determine category from presence status
-  const presenceStatus = character.resolved_presence_status || 'home';
-  let targetCategory = 'daily_casual';
-  if (presenceStatus === 'sleeping' || presenceStatus === 'napping') targetCategory = 'sleepwear';
-  else if (presenceStatus === 'at_work') targetCategory = 'work';
-  else if (presenceStatus === 'home') targetCategory = 'lounge';
-
-  const FALLBACK = {
-    sleepwear:    ['sleepwear', 'lounge', 'daily_casual'],
-    work:         ['work', 'formal', 'daily_casual'],
-    lounge:       ['lounge', 'daily_casual'],
-    daily_casual: ['daily_casual', 'outdoor', 'lounge'],
-  };
-
-  const chain = FALLBACK[targetCategory] || ['daily_casual'];
-  for (const cat of chain) {
-    const pool = outfits.filter(o => o.category === cat);
-    if (pool.length > 0) {
-      const text = buildOutfitText(pool[0]);
-      if (text) return text;
-    }
-  }
-
-  // Last resort: any outfit
-  const text = buildOutfitText(outfits[0]);
-  return text || null;
+  // Return null to signal: "No outfit override needed, use prompt's description as-is"
+  return null;
 }
 
 function buildOutfitText(outfit) {
@@ -646,25 +619,16 @@ Deno.serve(async (req) => {
       }
 
       if (charRecord) {
-        // Build identity refs: prefer reference_image_urls ONLY (not avatar).
-        // The avatar is often a raw uploaded photo — passing it as a reference causes the AI to
-        // copy its pose, background, props, and lighting directly into generated scenes.
-        // reference_image_urls are the canonical face/identity sources.
-        // Only fall back to avatar if no reference images exist at all.
-        // Filter out AI-generated images (generated_image.png) — these are AI outputs, not face photos.
-        // Using generated images as identity references causes the model to reproduce them verbatim
-        // instead of generating a new scene. Only real uploaded photos should drive identity.
+        // CRITICAL FIX: Never pass avatar as a reference image.
+        // Avatar photos create irreconcilable visual conflicts with scene prompts.
+        // The model cannot generate a new scene when given a fixed avatar pose.
+        // Instead, rely ONLY on text description (appearance_lock + avatar_description_text).
+        // This allows the model to compose the character fresh into the scene.
         const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
         const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
-        if (refUrls.length > 0) {
-          // Use reference images only — skip avatar to prevent pose/background bleed
-          charRefs = refUrls.slice(0, 3);
-        } else if (charRecord.avatar_url) {
-          // No reference images — use avatar as last resort, capped at 1
-          const avatarCdn = toPublicCDN(charRecord.avatar_url);
-          if (isAccessible(avatarCdn)) charRefs = [avatarCdn];
-        }
-        console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (from ${(charRecord.reference_image_urls || []).length} ref images, avatar as fallback: ${charRefs.length > 0 && (charRecord.reference_image_urls || []).length === 0})`);
+        // Use ONLY dedicated reference images, never avatar
+        charRefs = refUrls.slice(0, 3);
+        console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (avatar NOT used — description-only mode for scene composition)`);
 
         // Build appearance descriptor — rich text description used when no reference photos exist
         // This is the PRIMARY identity source for characters without reference_image_urls
@@ -683,11 +647,18 @@ Deno.serve(async (req) => {
         charDesc = parts.join(', ');
 
         // ── OUTFIT RESOLUTION ────────────────────────────────────────────
-        // Resolve the character's current outfit from closet or current_outfit field.
-        // This is injected into the prompt so the AI renders the correct clothing.
-        const outfitObj = resolveCharacterOutfitForPrompt(charRecord);
-        if (outfitObj) {
-          charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitObj}` : `Currently wearing: ${outfitObj}`;
+        // CRITICAL: Only inject character outfit if the user's prompt did NOT already specify clothing.
+        // If the prompt says "wearing a black snapback and an oversized graphic tee", that is authoritative.
+        // We do NOT override it with character's current outfit (e.g., sleepwear, formal, etc.).
+        const promptHasClothingDescription = /\b(wearing|dressed|clothed|outfit|shirt|pants|shorts|dress|jacket|coat|sweater|t[- ]?shirt|shoes|hat|cap|snapback|hoodie|jeans|skirt|blouse|suit|tie|scarf|vest)\b/i.test(sanitizedPrompt);
+        if (!promptHasClothingDescription) {
+          // Only resolve outfit from character data if prompt doesn't specify clothing
+          const outfitObj = resolveCharacterOutfitForPrompt(charRecord, sanitizedPrompt);
+          if (outfitObj) {
+            charDesc = charDesc ? `${charDesc}. Currently wearing: ${outfitObj}` : `Currently wearing: ${outfitObj}`;
+          }
+        } else {
+          console.log(`[generateImageAsync] Prompt explicitly specifies clothing — skipping outfit override`);
         }
       }
 
@@ -859,35 +830,7 @@ Deno.serve(async (req) => {
 
     console.log(`[generateImageAsync] DISPATCH: env=${ENV_SLOTS} char=${CHAR_SLOTS} user=${USER_SLOTS} total=${referenceImages.length}`);
 
-    // ── 5b. SANITIZE PROMPT ───────────────────────────────────────────────────
-    // Vertex AI content filters can block prompts with certain language patterns even when
-    // the content is completely benign. Strip known trigger words/phrases while preserving
-    // the core scene intent. These are purely cosmetic rewrites — same scene, safer phrasing.
-    function sanitizePrompt(p) {
-      return p
-        // "raw photo" → "candid photo"
-        .replace(/\braw,?\s*(nighttime|night|daytime|day|outdoor|indoor|photo|photograph|image|pic)\b/gi, 'candid $1')
-        .replace(/\braw\s+(photo|photograph|image|pic)\b/gi, 'candid $1')
-        // "sitting alone" → "sitting by himself" / "seated"
-        .replace(/\bsitting alone\b/gi, 'seated by himself')
-        // "somber" / "somber mood" / "somber expression" → "serious"
-        .replace(/\bsomber\b/gi, 'serious')
-        // "peaceful" mood / expression → "calm"
-        .replace(/\bpeaceful\s+(mood|expression|face|look|state)\b/gi, 'calm $1')
-        .replace(/\bpeaceful\b/gi, 'calm')
-        // "reflective" mood / expression → "thoughtful"
-        .replace(/\breflective\s+(mood|expression|face|look|state)\b/gi, 'thoughtful $1')
-        // "dim and natural" lighting → just "natural"
-        .replace(/\bdim and natural\b/gi, 'natural low-light')
-        // "twilight" → "dusk" (neutral term)
-        .replace(/\btwilight\b/gi, 'dusk')
-        // "golden hour" → "golden sunset light"
-        .replace(/\bgolden hour\b/gi, 'golden sunset light')
-        // Remove "[CHARACTER]" prefix tag — it's for routing, not for the model
-        .replace(/^\[CHARACTER\]\s*/i, '')
-        .trim();
-    }
-    const sanitizedPrompt = sanitizePrompt(prompt);
+
     if (sanitizedPrompt !== prompt.replace(/^\[CHARACTER\]\s*/i, '').trim()) {
       console.log(`[generateImageAsync] Prompt sanitized for content filter compliance`);
     }
