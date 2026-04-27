@@ -340,9 +340,9 @@ Deno.serve(async (req) => {
             resolved_current_location_id:   finalLocation.id,
             resolved_current_location_name: finalLocation.name,
             resolved_presence_status:       newStatus,
-            resolved_location_type:         finalLocation.category,
+            resolved_location_type:         finalLocation.category === 'home' ? 'home' : 'visit',
             resolved_source_reason:         'autonomous_needs_driven',
-            resolved_last_updated_at:       new Date().toISOString(),
+            last_arrived_time:              new Date().toISOString(),
           };
           try {
             await base44.entities.Character.update(char.id, updatePayload);
