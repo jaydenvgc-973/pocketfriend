@@ -63,7 +63,7 @@ function isWorkScheduleActive(char, nowET) {
 }
 
 function getCharacterWorkLocation(char, locationsByUser) {
-  const email = char.owner_email || char.created_by;
+  const email = char.owner_email;
   const locations = locationsByUser[email] || [];
   
   // Check primary work location
@@ -145,13 +145,13 @@ Deno.serve(async (req) => {
 
     // Filter to user scope if authenticated
     if (user) {
-      characters = characters.filter(c => c.owner_email === user.email || c.created_by === user.email);
+      characters = characters.filter(c => c.owner_email === user.email);
     }
 
     // Load locations (user-scoped)
     const locationsByUser = {};
     for (const char of characters) {
-      const email = char.owner_email || char.created_by;
+      const email = char.owner_email;
       if (!email) continue;
       if (!locationsByUser[email]) {
         try {
@@ -173,14 +173,14 @@ Deno.serve(async (req) => {
       if (!char.current_home_location_id) continue;
       // Skip if in valid travel
       if (char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id) {
-        const destLoc = locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === char.travel_destination_location_id);
+        const destLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.travel_destination_location_id);
         if (destLoc) continue; // Valid travel — skip
       }
       // Skip hard blocks
       if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) continue;
       if (char.is_jailed) continue;
 
-      const currentLoc = locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === char.resolved_current_location_id);
+      const currentLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.resolved_current_location_id);
       const isClosed = currentLoc && !isLocationOpen(currentLoc, nowET);
       const isWorkActive = isWorkScheduleActive(char, nowET);
       const isWorkSoon = isWorkScheduleSoon(char, nowET, 120);
@@ -213,7 +213,7 @@ Deno.serve(async (req) => {
       // DISPATCH TO SCHOOL (priority equal to work)
       const isSchoolActive = isSchoolScheduleActive(char, nowET);
       if (isSchoolActive && !isAtHome && char.education_location_id) {
-         const schoolLoc = locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === char.education_location_id);
+         const schoolLoc = locationsByUser[char.owner_email]?.find(l => l.id === char.education_location_id);
          if (schoolLoc && char.resolved_current_location_id !== schoolLoc.id && isLocationOpen(schoolLoc, nowET) !== false) {
            candidates.push({
              id: char.id,
@@ -239,7 +239,7 @@ Deno.serve(async (req) => {
           currentLocId: char.resolved_current_location_id,
           currentLocName: char.resolved_current_location_name,
           destLocId: char.current_home_location_id,
-          destLocName: locationsByUser[char.owner_email || char.created_by]?.find(l => l.id === char.current_home_location_id)?.name || 'Home',
+          destLocName: locationsByUser[char.owner_email]?.find(l => l.id === char.current_home_location_id)?.name || 'Home',
           category: isClosed ? 'closed_location' : pastLimit ? 'time_limit' : 'work_soon',
           isWorkActive: false,
           isClosed,

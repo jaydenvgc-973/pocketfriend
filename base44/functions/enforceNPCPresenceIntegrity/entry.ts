@@ -19,14 +19,14 @@ Deno.serve(async (req) => {
 
     // ── FETCH CORE DATA ──────────────────────────────────────────────────────
     const characters = await base44.asServiceRole.entities.Character.filter(
-      { created_by: user.email },
+      { owner_email: user.email },
       '-created_date',
       200
     );
     
     const npcs = characters.filter(c => c.character_type === 'npc' || c.character_type === 'promoted_npc');
     const locations = await base44.asServiceRole.entities.LocationReference.filter(
-      { created_by: user.email },
+      { owner_email: user.email },
       '-created_date',
       100
     );
