@@ -856,6 +856,31 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 </button>
               );
             })}
+            {(() => {
+              const npcFamilyChars = allCharacters.filter(c =>
+                c.character_type === 'npc_family_member' &&
+                c.status !== 'deleted' && c.status !== 'moved_away' &&
+                (c.owner_email === currentUser?.email || c.created_by === currentUser?.email)
+              ).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+              if (npcFamilyChars.length === 0) return null;
+              return (
+                <>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-0.5">NPC Family Members</p>
+                  {npcFamilyChars.map(npc => {
+                    const alreadyResident = form.resident_character_ids?.includes(npc.id);
+                    return (
+                      <button key={npc.id} onClick={() => { if (!alreadyResident) update("resident_character_ids", [...(form.resident_character_ids || []), npc.id]); }} disabled={alreadyResident}
+                        className={`w-full flex items-center gap-3 p-2.5 text-left transition-colors rounded-lg ${alreadyResident ? "bg-primary/10 border-l-2 border-primary opacity-50 cursor-default" : "hover:bg-secondary"}`}>
+                        <CharacterAvatar character={npc} size="sm" />
+                        <span className="text-sm text-foreground font-medium flex-1">{npc.name}</span>
+                        <span className="text-[10px] text-muted-foreground/60">Family</span>
+                        {alreadyResident && <span className="text-xs text-primary font-medium">✓ Resident</span>}
+                      </button>
+                    );
+                  })}
+                </>
+              );
+            })()}
 
                        </div>
         </div>

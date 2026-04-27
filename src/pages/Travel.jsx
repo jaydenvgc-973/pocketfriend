@@ -618,8 +618,19 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                     const name = entity.display_name;
                     if (seenNames.has(name?.toLowerCase())) return;
                     seenNames.add(name?.toLowerCase());
+
+                    // RESIDENT CHECK: if this entity is a permanent resident of this location,
+                    // never label them as "visiting" — they are home (or away if physically elsewhere)
+                    const isResidentHere = entity.residence_location_id === selectedLocation.id ||
+                      (selectedLocation.resident_character_ids || []).includes(entity.id) ||
+                      (selectedLocation.residents || []).some(r => r.character_id === entity.id);
+
                     let status = entity.resolved_presence_status || (isHome ? 'home' : 'here');
-                    let color = isHome ? 'text-green-400' : 'text-blue-400';
+                    // Override: resident at their own home must never show as "visiting"
+                    if (isResidentHere && status === 'visiting') {
+                      status = 'home';
+                    }
+                    let color = (isHome || isResidentHere) ? 'text-green-400' : 'text-blue-400';
                     if (status === 'visiting') { color = 'text-amber-400'; }
                     if (status === 'home' || status === 'sleeping' || status === 'napping') {
                       color = status === 'home' ? 'text-green-400' : 'text-blue-400';
