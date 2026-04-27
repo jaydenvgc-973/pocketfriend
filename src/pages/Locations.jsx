@@ -440,12 +440,13 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     enabled: !!currentUser?.email,
   });
 
-  // Use shared resolver for strict user scope + character type filtering
-  const editableChars = getEditableCharactersForModule(allCharacters, currentUser?.id, currentUser?.email, 'locations');
-  
-  // Build correctly ordered list: Active Characters → NPC Fictitious
-  const activeChars = editableChars.filter(c => c.character_type === 'active_created_character').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
-  const npcFictitious = editableChars.filter(c => c.character_type === 'npc_fictitious').sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+  // Build lists directly from allCharacters (already scoped by query via created_by + owner_email)
+  const activeChars = allCharacters
+    .filter(c => c.character_type === 'active_created_character' && c.status !== 'deleted' && c.status !== 'moved_away')
+    .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
+  const npcFictitious = allCharacters
+    .filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted' && c.status !== 'moved_away')
+    .sort((a, b) => (a.display_name || a.name || '').localeCompare(b.display_name || b.name || ''));
 
   // Compute initialWorkerIds: merge location's explicit worker_character_ids with characters whose employment fields point to this location
   const computeInitialWorkerIds = () => {
