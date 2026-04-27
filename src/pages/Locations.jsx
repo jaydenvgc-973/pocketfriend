@@ -738,7 +738,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
                 <div className="space-y-2 max-h-56 overflow-y-auto">
                   {form.resident_character_ids.map((resId, idx) => {
                     const isUser = resId === currentUser?.id;
-                    const resChar = isUser ? null : allCharacters.find(c => c.id === resId);
+                    const resChar = isUser ? null : (allCharacters.find(c => c.id === resId) || characters.find(c => c.id === resId));
                     const displayName = isUser ? (currentUser?.full_name || "You") : (resChar?.name || resId);
                     const housingContext = (form.resident_housing_context || {})[resId];
                     return (
