@@ -99,10 +99,24 @@ function isWorkScheduleSoon(char, nowET, minutesWindow = 120) {
 }
 
 function isSchoolScheduleActive(char, nowET) {
-   if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
-   // If school schedule details not available, assume standard 8 AM - 3 PM
-   const now = nowET.getHours() * 60 + nowET.getMinutes();
-   return now >= 480 && now < 900; // 8:00 AM - 3:00 PM
+    if (char.student_status !== 'enrolled' || !char.education_location_id) return false;
+    // If school schedule details not available, assume standard 8 AM - 3 PM
+    const now = nowET.getHours() * 60 + nowET.getMinutes();
+    return now >= 480 && now < 900; // 8:00 AM - 3:00 PM
+}
+
+function hasValidActiveTravel(char) {
+  return char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id;
+}
+
+function shouldProtectFromHomeReturn(char) {
+  // MANDATORY GUARD: protect all active obligations before forcing home
+  if (isWorkScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
+  if (isSchoolScheduleActive(char, new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })))) return true;
+  if (hasValidActiveTravel(char)) return true;
+  if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
+  if (['user_confirmed_overnight', 'overnight_stay_approved', 'overnight_travel_approved'].includes(char.resolved_source_reason)) return true;
+  return false;
 }
 
 Deno.serve(async (req) => {
@@ -232,8 +246,8 @@ Deno.serve(async (req) => {
       }
 
       // RETURN HOME (for closed locations or expired leisure time)
-      // GUARD: DO NOT force home if work schedule is CURRENTLY ACTIVE
-      if ((isClosed || pastLimit || isWorkSoon) && !isWorkActive) {
+      // GUARD: DO NOT force home if character has active obligations
+      if ((isClosed || pastLimit || isWorkSoon) && !shouldProtectFromHomeReturn(char)) {
         candidates.push({
           id: char.id,
           name: char.name,
