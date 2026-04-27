@@ -138,11 +138,14 @@ Deno.serve(async (req) => {
       }
 
       // Rule 3: General day boundary — no infinite outings
-      // Only return characters without explicit travel approval (marked by presence_state or special reason)
+      // Only return characters without explicit overnight approval
       const hasOvernightApproval = 
-        char.presence_state === 'authorized_overnight' ||
-        char.resolved_source_reason === 'user_approved_overnight' ||
-        char.resolved_source_reason === 'authorized_travel';
+        char.overnight_travel_approved === true ||
+        char.overnight_stay_approved === true ||
+        char.user_confirmed_overnight === true ||
+        char.resolved_source_reason === 'overnight_travel_approved' ||
+        char.resolved_source_reason === 'overnight_stay_approved' ||
+        char.resolved_source_reason === 'user_confirmed_overnight';
       if (hasOvernightApproval) {
         continue;
       }
@@ -164,21 +167,32 @@ Deno.serve(async (req) => {
       const homeLocName = homeLoc?.name || 'Home';
 
       try {
-        const payload = {
-          resolved_current_location_id: homeLocId,
-          resolved_current_location_name: homeLocName,
-          resolved_presence_status: 'home',
-          resolved_location_type: 'home',
-          resolved_source_reason: `day_boundary_${item.reason}`,
-          travel_status: 'not_traveling',
-          travel_destination_location_id: null,
-        };
+         // Only clear travel fields if returning from stale travel destination
+         const travelClears = item.reason === 'stale_travel_destination'
+           ? { travel_status: 'not_traveling', travel_destination_location_id: null }
+           : {};
 
-        try {
-          await base44.entities.Character.update(item.id, payload);
-        } catch {
-          await base44.asServiceRole.entities.Character.update(item.id, payload);
-        }
+         // Check if current_activity references the old location
+         const currentLoc = locationMap[char.resolved_current_location_id];
+         const activityConflict = currentLoc && char.current_activity &&
+           char.current_activity.toLowerCase().includes(currentLoc.name.toLowerCase());
+         const activityClear = activityConflict ? { current_activity: null } : {};
+
+         const payload = {
+           resolved_current_location_id: homeLocId,
+           resolved_current_location_name: homeLocName,
+           resolved_presence_status: 'home',
+           resolved_location_type: 'home',
+           resolved_source_reason: `day_boundary_${item.reason}`,
+           ...travelClears,
+           ...activityClear,
+         };
+
+         try {
+           await base44.entities.Character.update(item.id, payload);
+         } catch {
+           await base44.asServiceRole.entities.Character.update(item.id, payload);
+         }
 
         log.push(`${item.name}: ${item.from} → Home (${item.reason})`);
         returnedCount++;
