@@ -398,8 +398,10 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const confirmWrite = body?.confirm === true;
+    const page = body?.page || 1;
+    const pageSize = body?.pageSize || 5;
 
-    console.log(`[FIX_LOCATIONS] Starting | user=${user.email} | confirmWrite=${confirmWrite}`);
+    console.log(`[FIX_LOCATIONS] Starting | user=${user.email} | confirmWrite=${confirmWrite} | page=${page} | pageSize=${pageSize}`);
 
     // Load all LocationReference records
     const [allLocationsOwned, allLocationsCreated, allLocationsShared] = await Promise.all([
@@ -484,19 +486,33 @@ Deno.serve(async (req) => {
     const noChange  = results.filter(r => r.action === 'NO_CHANGE');
     const flagged   = results.filter(r => r.action === 'FLAG_TRAVEL_DESTINATION');
 
-    // DRY RUN: return preview only
+    // DRY RUN: return preview only (paginated)
     if (!confirmWrite) {
       console.log(`[FIX_LOCATIONS] DRY RUN | to_write=${toWrite.length} | no_change=${noChange.length} | travel_protected=${travel_protected_count} | travel_flagged=${travel_flagged_count}`);
+      
+      const totalPages = Math.ceil(toWrite.length / pageSize);
+      const startIdx = (page - 1) * pageSize;
+      const endIdx = Math.min(startIdx + pageSize, toWrite.length);
+      const pageCorrections = toWrite.slice(startIdx, endIdx);
+      
       return Response.json({
         dry_run: true,
-        to_write_count: toWrite.length,
-        no_change_count: noChange.length,
-        flagged_count: flagged.length,
-        travel_protected_count,
-        travel_flagged_count,
-        internal_family_count: internalFamilyFiles.length,
+        pagination: {
+          page,
+          page_size: pageSize,
+          total_pages: totalPages,
+          total_corrections: toWrite.length,
+        },
+        summary: {
+          to_write_count: toWrite.length,
+          no_change_count: noChange.length,
+          flagged_count: flagged.length,
+          travel_protected_count,
+          travel_flagged_count,
+          internal_family_count: internalFamilyFiles.length,
+        },
         flagged_items: flagged,
-        corrections_preview: toWrite,
+        corrections_preview: pageCorrections,
       });
     }
 
