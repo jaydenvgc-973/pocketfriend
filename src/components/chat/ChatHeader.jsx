@@ -23,12 +23,30 @@ export default function ChatHeader({
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
 
-  // Right Now — uses existing generateAutomaticNarrative with full state accuracy.
-  // Immediate display via optimistic setMessages after narrative returns.
+  // Right Now — instant user-controlled narrative based on current state.
+  // Creates placeholder immediately, then generates real narrative in background.
   const handleRightNow = async () => {
     console.log('[RightNow] Clicked | char:', character?.name, '| convoId:', conversationId);
     if (!character || !conversationId || isGeneratingRightNow) return;
     setIsGeneratingRightNow(true);
+    
+    // 1. Create placeholder message immediately for instant feedback
+    const placeholderMsg = await base44.entities.Message.create({
+      conversation_id: conversationId,
+      sender_type: 'character',
+      character_id: characterId,
+      character_name: character.name,
+      content: '...',
+      is_narrative: true,
+      is_read: true,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (setMessages && placeholderMsg?.id) {
+      setMessages(prev => [...prev, placeholderMsg]);
+    }
+
+    // 2. Generate real narrative in background
     try {
       const res = await base44.functions.invoke('generateAutomaticNarrative', {
         characterId,
@@ -36,30 +54,15 @@ export default function ChatHeader({
         forceGenerate: true,
       });
       const narrativeText = res?.data?.narrativeText;
-      if (!narrativeText) {
-        console.warn('[RightNow] No narrativeText in response');
-        return;
+      
+      if (narrativeText && placeholderMsg?.id) {
+        // Update placeholder with real narrative
+        await base44.entities.Message.update(placeholderMsg.id, { content: narrativeText });
+        setMessages(prev => prev.map(m => m.id === placeholderMsg.id ? { ...m, content: narrativeText } : m));
       }
-
-      const msg = await base44.entities.Message.create({
-        conversation_id: conversationId,
-        sender_type: 'character',
-        character_id: characterId,
-        character_name: character.name,
-        content: narrativeText,
-        is_narrative: true,
-        is_read: true,
-        timestamp: new Date().toISOString(),
-      });
-
-      // Optimistic display: add to local state immediately after backend returns
-      if (setMessages && msg?.id) {
-        setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [...prev, msg]);
-      }
-
-      console.log('[RightNow] ✓ Message created:', msg.id);
     } catch (err) {
-      console.error('[RightNow] ERROR:', err.message);
+      console.error('[RightNow] Background generation failed:', err.message);
+      // Placeholder stays visible even if generation fails
     } finally {
       setIsGeneratingRightNow(false);
     }
