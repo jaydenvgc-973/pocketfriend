@@ -114,6 +114,12 @@ const ZONE_KEYWORD_MAP = [
   { keywords: ['hallway', 'corridor', 'entryway', 'front door', 'foyer'], zone: 'hallway' },
   { keywords: ['balcony', 'on the balcony', 'balcony view'], zone: 'balcony' },
   { keywords: ['laundry', 'laundry room', 'washer', 'dryer'], zone: 'laundry' },
+  // Outdoor zones — water features and natural settings
+  { keywords: ['lake', 'by the lake', 'on the lake', 'water', 'shoreline', 'reflecting off the water', 'city lights reflecting'], zone: 'main area' },
+  { keywords: ['trail', 'hiking', 'path', 'forest', 'woods', 'trees', 'outdoors', 'outside', 'park'], zone: 'trail' },
+  { keywords: ['picnic', 'picnic area', 'picnic table', 'relaxing outdoors'], zone: 'picnic area' },
+  { keywords: ['shelter', 'pavilion', 'under shelter', 'covered area'], zone: 'shelter / pavilion' },
+  { keywords: ['entrance', 'at the entrance', 'front entrance', 'entry'], zone: 'entrance' },
 ];
 
 function cdnFilterNoGenerated(urls) {
