@@ -243,6 +243,11 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const charEnd   = charRefStart + charRefCount - 1;
   const userEnd   = userRefStart + userRefCount - 1;
 
+  // ── PROMPT TIME AUTHORITY CHECK ──
+  // If the prompt explicitly names a time of day, it is the authority — NOT the server clock.
+  // Rule: prompt controls time of day, pose, action, mood, and framing.
+  const promptHasExplicitTime = /nighttime|night time|middle of the night|midnight|late night|daytime|broad daylight|morning|afternoon|evening|golden hour|sunset|sunrise|dusk|dawn/i.test(prompt);
+
   // ── GENERATION ORDER: TIME FIRST ──
   const resolvedTime = serverHour;
   const timeLighting = getTimeLighting(resolvedTime);
@@ -406,50 +411,67 @@ REJECTION CRITERIA — IMAGE IS INVALID IF:
 RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
 
   let lightingBlock = '';
-  if (serverHour >= 21 || serverHour < 5) {
+  if (promptHasExplicitTime) {
+    // Prompt specifies time of day — trust it completely. Do NOT inject server-based lighting.
     lightingBlock = `
 
-════════════════════════════════════════════════════════════
-⛔⛔⛔ ABSOLUTE NIGHT MODE ENFORCEMENT — ${serverHour}:00 (${serverTime.split(' ')[0]}) ⛔⛔⛔
-════════════════════════════════════════════════════════════
-IT IS NIGHT. THERE IS NO SUN. THERE IS NO DAYLIGHT.
+  ════════════════════════════════════════════════════════════
+  PROMPT TIME AUTHORITY — EXPLICIT TIME SPECIFIED
+  ════════════════════════════════════════════════════════════
+  The prompt specifies an explicit time of day. This is the AUTHORITY.
 
-MANDATORY RULES — THESE ARE NOT OPTIONAL:
-⛔ NO SUNLIGHT — ANYWHERE
-⛔ NO BRIGHT WINDOWS — ABSOLUTELY FORBIDDEN
-⛔ NO DAYLIGHT TONES — NOWHERE
-⛔ NO BLUE SKY — WINDOWS SHOW ONLY DARKNESS OR NIGHT
-⛔ NO GOLDEN HOUR LIGHT — DOES NOT EXIST AT ${serverHour}:00
-⛔ NO EXTERNAL LIGHT SOURCE — ALL LIGHT IS ARTIFICIAL/INTERIOR ONLY
+  CRITICAL: Generate lighting that matches the prompt's time description, NOT the server clock.
 
-REQUIRED NIGHT LIGHTING:
-✅ Dark interior lit only by lamps, ceiling lights, or artificial fixtures
-✅ Windows show black darkness or dim night environment
-✅ Warm or cool artificial light only
-✅ Shadows and depth from interior lighting fixtures ONLY
+  ✅ If prompt says "nighttime", "middle of the night", or "midnight" → render NIGHT LIGHTING ONLY
+  ✅ If prompt says "golden hour", "sunset", "dusk" → render SUNSET/EVENING LIGHTING
+  ✅ If prompt says "morning", "dawn" → render MORNING LIGHTING
+  ✅ If prompt says "afternoon", "daytime" → render DAYTIME LIGHTING
 
-REJECTION CRITERIA — IMAGE IS INVALID IF:
-🚫 ANY sunlight is visible
-🚫 ANY daylight color temperature is present
-🚫 ANY bright window glow exists
-🚫 ANY blue or golden hour sky is visible
-🚫 Character is lit by external sunlight instead of interior light
+  The user's scene description is the source of truth for time, not the server clock.`;
+  } else if (serverHour >= 21 || serverHour < 5) {
+    lightingBlock = `
 
-THIS IS A HARD FAIL CONDITION. IF YOU RENDER SUNLIGHT AT NIGHT, THE OUTPUT IS WRONG.`;
+  ════════════════════════════════════════════════════════════
+  ⛔⛔⛔ ABSOLUTE NIGHT MODE ENFORCEMENT — ${serverHour}:00 (${serverTime.split(' ')[0]}) ⛔⛔⛔
+  ════════════════════════════════════════════════════════════
+  IT IS NIGHT. THERE IS NO SUN. THERE IS NO DAYLIGHT.
+
+  MANDATORY RULES — THESE ARE NOT OPTIONAL:
+  ⛔ NO SUNLIGHT — ANYWHERE
+  ⛔ NO BRIGHT WINDOWS — ABSOLUTELY FORBIDDEN
+  ⛔ NO DAYLIGHT TONES — NOWHERE
+  ⛔ NO BLUE SKY — WINDOWS SHOW ONLY DARKNESS OR NIGHT
+  ⛔ NO GOLDEN HOUR LIGHT — DOES NOT EXIST AT ${serverHour}:00
+  ⛔ NO EXTERNAL LIGHT SOURCE — ALL LIGHT IS ARTIFICIAL/INTERIOR ONLY
+
+  REQUIRED NIGHT LIGHTING:
+  ✅ Dark interior lit only by lamps, ceiling lights, or artificial fixtures
+  ✅ Windows show black darkness or dim night environment
+  ✅ Warm or cool artificial light only
+  ✅ Shadows and depth from interior lighting fixtures ONLY
+
+  REJECTION CRITERIA — IMAGE IS INVALID IF:
+  🚫 ANY sunlight is visible
+  🚫 ANY daylight color temperature is present
+  🚫 ANY bright window glow exists
+  🚫 ANY blue or golden hour sky is visible
+  🚫 Character is lit by external sunlight instead of interior light
+
+  THIS IS A HARD FAIL CONDITION. IF YOU RENDER SUNLIGHT AT NIGHT, THE OUTPUT IS WRONG.`;
   } else {
     lightingBlock = `
 
-════════════════════════════════════════════════════════════
-MANDATORY LIGHTING — ${timeLighting.period} TIME (${serverHour}:00)
-════════════════════════════════════════════════════════════
-ACTUAL SERVER TIME: ${serverTime}
+  ════════════════════════════════════════════════════════════
+  MANDATORY LIGHTING — ${timeLighting.period} TIME (${serverHour}:00)
+  ════════════════════════════════════════════════════════════
+  ACTUAL SERVER TIME: ${serverTime}
 
-Current time OVERRIDES all other visual inputs.
+  Current time OVERRIDES all other visual inputs.
 
-Lighting MUST be: ${timeLighting.desc}
+  Lighting MUST be: ${timeLighting.desc}
 
-✅ Character MUST be lit consistently with ${timeLighting.period} lighting.
-⛔ Do NOT copy lighting from reference images.`;
+  ✅ Character MUST be lit consistently with ${timeLighting.period} lighting.
+  ⛔ Do NOT copy lighting from reference images.`;
   }
 
   let envLock = '';
