@@ -8,6 +8,7 @@
  */
 import { base44 } from "@/api/base44Client";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
+import { enforceValidation } from "@/lib/appearanceLockValidator";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -57,6 +58,24 @@ export async function dispatchImageGeneration({
   queryClient,
 }) {
   try {
+    // CRITICAL: Validate appearance_lock and outfit separation before sending
+    // Only block if the character HAS an appearance_lock defined — warn otherwise
+    if (character?.appearance_lock && Object.keys(character.appearance_lock).length > 0) {
+      try {
+        enforceValidation(character, imageGenPrompt);
+      } catch (validationErr) {
+        console.error(`[ChatImageDispatch] Prompt validation failed for ${character.name}:`, validationErr.message);
+        // Hard block — do not send invalid prompt
+        if (isMountedRef.current) {
+          base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
+        }
+        return;
+      }
+    } else {
+      console.warn(`[ChatImageDispatch] Character ${character?.name} has no appearance_lock — skipping validation`);
+    }
+
     // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
     const publicCharRefs = (charRefs || []).map(toPublicCDN).filter(isProviderAccessible);
     const publicUserRefs = (userRefImages || []).map(toPublicCDN).filter(isProviderAccessible);

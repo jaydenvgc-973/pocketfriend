@@ -6,27 +6,44 @@
  */
 
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
+import { buildAppearanceLockBlock, enforceValidation } from './appearanceLockValidator.js';
 
 /**
  * Build outfit enforcement text for a list of characters and optionally the user.
+ * Uses appearance_lock for identity, closet/current_outfit for clothing ONLY.
  */
 function buildPhotoOutfitBlock(selectedChars, user = null, locationCategory = null) {
-  const lines = [];
+  let appearanceBlocks = '';
+  let outfitLines = [];
+  
+  // Build appearance locks for each character
+  for (const c of selectedChars) {
+    appearanceBlocks += buildAppearanceLockBlock(c);
+  }
+  
+  // Build outfit descriptions for each character
   for (const c of selectedChars) {
     const outfit = resolveCurrentOutfit(c, '', locationCategory);
     const text = buildOutfitPromptText(outfit);
-    if (text) lines.push(`${c.name}: wearing ${text}`);
+    if (text && outfit) {
+      outfitLines.push(`${c.name}: ${text}`);
+    }
   }
+  
+  // Build outfit descriptions for user
   if (user) {
     const userOutfit = user.current_outfit || user.selected_outfit || null;
     if (userOutfit) {
       const text = buildOutfitPromptText(userOutfit);
       const name = user.fictional_world_name || user.full_name || 'User';
-      if (text) lines.push(`${name}: wearing ${text}`);
+      if (text) outfitLines.push(`${name}: ${text}`);
     }
   }
-  if (lines.length === 0) return '';
-  return `\n\nOUTFIT LOCK — MANDATORY:\nEach person MUST appear in exactly the outfit listed. Do NOT invent or substitute clothing.\n${lines.join('\n')}`;
+  
+  if (outfitLines.length === 0) return appearanceBlocks;
+  
+  const outfitBlock = `\n\nOUTFIT LOCK — MANDATORY:\nEach person MUST appear in exactly the outfit listed. Do NOT invent or substitute clothing.\n${outfitLines.join('\n')}`;
+  return appearanceBlocks + outfitBlock;
 }
 
 export function buildPhotoIdentityLockPrompt(selectedChars, displayName) {
@@ -75,7 +92,7 @@ export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, 
 
   const allNames = displayName + (charSummary ? `, ${charSummary}` : '');
 
-  return `${basePrompt}
+  const fullPrompt = `${basePrompt}
 
 Location: ${location.name}
 People in the photo: ${allNames}
@@ -83,6 +100,21 @@ People in the photo: ${allNames}
 ${identityLock}${outfitBlock}
 
 Additional context: Photorealistic, candid, authentic moment. Include ALL listed people in the photo.`;
+
+  // CRITICAL: Validate each character's appearance_lock and outfit before returning prompt
+  // Only validate characters that have appearance_lock defined
+  for (const char of selectedChars) {
+    if (char?.appearance_lock && Object.keys(char.appearance_lock).length > 0) {
+      try {
+        enforceValidation(char, fullPrompt);
+      } catch (err) {
+        console.error(`[Photo] Validation failed for ${char.name}:`, err.message);
+        throw err;
+      }
+    }
+  }
+
+  return fullPrompt;
 }
 
 export function extractPhotoAvatarUrls(selectedChars, userAvatar) {

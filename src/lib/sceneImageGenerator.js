@@ -5,7 +5,12 @@
  * - Avatar identity lock (characters must match avatars exactly)
  * - Zone-lock (images must belong to currently selected zone only)
  * - Residential privacy (home scenes show residents only)
+ * 
+ * CRITICAL: appearance_lock controls identity. Closet/current_outfit controls clothing.
+ * Avatar/reference images are for identity ONLY — never for clothing.
  */
+
+import { buildAppearanceLockBlock, enforceValidation } from './appearanceLockValidator.js';
 
 /**
  * Validates and filters environment references to ONLY the active zone.
@@ -34,16 +39,25 @@ export function enforceZoneLock(allEnvRefs, activeZoneImages, activeZoneName) {
 
 /**
  * Builds the identity lock enforcement block for image generation.
- * Ensures characters match their avatars exactly.
+ * CRITICAL: Uses appearance_lock, NOT avatar appearance.
+ * Avatar is identity reference only — appearance_lock defines exact traits.
+ * Clothing must NEVER come from avatar/reference images.
  */
 export function buildAvatarIdentityBlock(characters) {
   if (!characters || characters.length === 0) return '';
   
-  return `\n\nAVATAR IDENTITY REQUIREMENT (NON-NEGOTIABLE):\nThe attached reference images are the EXACT identity source for each character.\nYou MUST preserve: face shape, facial structure, skin tone, hair texture, hair length, hairstyle, body type, apparent age, gender presentation.\nDo NOT alter these features. Do NOT reinterpret, beautify, age, or generalize. Match the avatar EXACTLY or do not render that character.`;
+  // Build appearance lock block for each character from their appearance_lock fields
+  let blocks = '';
+  for (const char of characters) {
+    blocks += buildAppearanceLockBlock(char);
+  }
+  
+  return blocks;
 }
 
 /**
  * Constructs the full scene image generation prompt with all enforcement rules.
+ * CRITICAL: Validates appearance_lock and outfit separation before returning.
  */
 export function buildScenePrompt({
   envNote = '',
@@ -57,7 +71,22 @@ export function buildScenePrompt({
   avatarIdentityBlock = '',
   outfitSuffix = '',
   isResidential = false,
+  characters = [],
 }) {
   const basePrompt = `${envNote} Scene: ${locationName}${zoneSuffix}, ${timeOfDay} lighting.${atmosphere} ${peopleConstraint}${residentialConstraint}${identityLock}${avatarIdentityBlock}${outfitSuffix} Photorealistic.`;
+  
+  // CRITICAL: Validate each character's appearance_lock and outfit before returning prompt
+  // Only validate characters that have an appearance_lock defined
+  for (const char of characters) {
+    if (char?.appearance_lock && Object.keys(char.appearance_lock).length > 0) {
+      try {
+        enforceValidation(char, basePrompt);
+      } catch (err) {
+        console.error(`[Scene] Validation failed for ${char?.name || 'unknown'}:`, err.message);
+        throw err;
+      }
+    }
+  }
+  
   return basePrompt;
 }

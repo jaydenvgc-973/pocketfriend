@@ -36,18 +36,28 @@ export function buildUserReferenceImages(userChar) {
 }
 
 /**
- * Build appearance data for user identity preservation in prompts
+ * Build appearance data for user identity preservation in prompts.
+ * CRITICAL: Reads appearance_lock fields directly. These are the identity source of truth.
  * @param {Object} userChar - User character/profile entity
- * @returns {Object} Appearance data (age, gender, ethnicities, notes)
+ * @returns {Object} Appearance data (age, gender, ethnicities, notes, plus appearance_lock)
  */
 export function buildUserAppearanceData(userChar) {
   if (!userChar) return null;
+  
+  const lock = userChar.appearance_lock || {};
   
   return {
     appearance_notes: userChar.appearance_notes || '',
     age_range: userChar.age_range || '',
     gender: userChar.gender || '',
     ethnicities: userChar.ethnicities || [],
+    // Appearance lock fields — these MUST be used for identity
+    skin_tone: lock.skin_tone || null,
+    hair_type: lock.hair_type || null,
+    hairstyle: lock.hairstyle || null,
+    facial_hair: lock.facial_hair || null,
+    appearance_age: lock.appearance_age || null,
+    custom_keywords: lock.custom_keywords || [],
   };
 }
 
@@ -108,17 +118,28 @@ export async function generateImageWithUserIdentity(
 }
 
 /**
- * Build the identity lock note for strict user preservation
+ * Build the identity lock note for strict user preservation.
+ * CRITICAL: appearance_lock fields are first in prompt — they are the identity source.
  * @private
  */
 function buildUserIdentityLockNote(userAppearanceData, strictMode = false) {
   if (!userAppearanceData) return "";
   
   const parts = [];
-  if (userAppearanceData.age_range) parts.push(`Age: ${userAppearanceData.age_range}`);
+  
+  // APPEARANCE LOCK FIELDS — These must be FIRST and EXACT
+  if (userAppearanceData.skin_tone) parts.push(`Skin tone: ${userAppearanceData.skin_tone}`);
+  if (userAppearanceData.hair_type) parts.push(`Hair type: ${userAppearanceData.hair_type}`);
+  if (userAppearanceData.hairstyle) parts.push(`Hairstyle: ${userAppearanceData.hairstyle}`);
+  if (userAppearanceData.facial_hair) parts.push(`Facial hair: ${userAppearanceData.facial_hair}`);
+  if (userAppearanceData.appearance_age) parts.push(`Appearance age: ${userAppearanceData.appearance_age}`);
+  if (userAppearanceData.custom_keywords?.length > 0) parts.push(`Additional traits: ${userAppearanceData.custom_keywords.join(', ')}`);
+  
+  // Supplementary data
+  if (userAppearanceData.age_range) parts.push(`Age range: ${userAppearanceData.age_range}`);
   if (userAppearanceData.gender) parts.push(`Gender: ${userAppearanceData.gender}`);
   if (userAppearanceData.ethnicities?.length > 0) parts.push(`Ethnicity: ${userAppearanceData.ethnicities.join(', ')}`);
-  if (userAppearanceData.appearance_notes) parts.push(`Details: ${userAppearanceData.appearance_notes}`);
+  if (userAppearanceData.appearance_notes) parts.push(`Additional details: ${userAppearanceData.appearance_notes}`);
 
   const strictWarning = strictMode ? `
 ⚠️ STRICT IDENTITY LOCK FOR THIS PERSON ⚠️

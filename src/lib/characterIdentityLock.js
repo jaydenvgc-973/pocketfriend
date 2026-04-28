@@ -3,7 +3,12 @@
  * 
  * Ensures every character shown in scene images maintains 100% facial consistency
  * with their assigned avatar. Prevents identity drift, face variation, and feature swapping.
+ * 
+ * CRITICAL: appearance_lock is the identity source of truth.
+ * Avatar/reference images are visual references for identity ONLY — never for clothing.
  */
+
+import { buildAppearanceLockBlock } from './appearanceLockValidator.js';
 
 /**
  * Builds identity lock constraint for a single character
@@ -12,14 +17,22 @@
 export function buildCharacterIdentityLock(character) {
   if (!character || !character.id) return '';
 
+  // appearance_lock block is imported at file top
+  
   const avatarUrl = character.avatar_url || character.image_avatar_url || null;
-  if (!avatarUrl) return '';
-
   const charName = character.name || 'the character';
+  
+  // STEP 1: Build appearance_lock block (this is the IDENTITY source of truth)
+  const appearanceLockBlock = buildAppearanceLockBlock(character);
+  
+  // STEP 2: Avatar URL is used as a VISUAL REFERENCE for identity ONLY (not clothing)
+  const avatarRef = avatarUrl 
+    ? `Reference Image (IDENTITY ONLY — DO NOT copy clothing from this image): ${avatarUrl}`
+    : '';
 
   return `🔒 IDENTITY LOCK: ${charName} (ID: ${character.id})
-Reference Image: ${avatarUrl}
-CRITICAL RULE: ${charName}'s face MUST match the reference avatar image exactly.
+${avatarRef}
+CRITICAL RULE: ${charName}'s face and physical identity MUST match the reference avatar image exactly.
 - Same facial structure, bone structure, jawline
 - Same skin tone and complexion
 - Same eye shape, color, spacing
@@ -29,7 +42,9 @@ CRITICAL RULE: ${charName}'s face MUST match the reference avatar image exactly.
 This is NOT a style guide. This IS the exact face. Do NOT interpret loosely.
 Allowed: different expression, angle, pose, lighting, outfit
 NOT allowed: different face, altered features, identity drift
-${charName} must be instantly recognizable as the same person.`;
+⚠️ CLOTHING WARNING: DO NOT copy or replicate clothing from the avatar/reference image.
+Clothing must come ONLY from the outfit data provided separately. Avatar = identity, not outfit.
+${charName} must be instantly recognizable as the same person.${appearanceLockBlock}`;
 }
 
 /**
