@@ -260,28 +260,35 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // PHASE 3B: TEMPORARY HOUSING ASSIGNMENT (RUNTIME ONLY)
+  // PHASE 3B: TEMPORARY HOUSING ASSIGNMENT (RUNTIME ONLY, READ-ONLY)
   // Trigger: no home found + assignment eligible + no lookup failure
-  // (Phase 3A helpers must pre-create locations; this resolver only queries them)
+  // Queries pre-created system locations — does NOT create, does NOT persist
   if (
     housing.housing_location_id === null &&
     housing.may_assign_temporary_housing === true &&
     housing.home_resolution_failed === false &&
     character.owner_email
   ) {
-    // Determine which temporary location to use based on balance
     const balance = character.current_balance ?? 6000;
-    const targetRole = balance >= 150 ? 'temporary_hotel' : 'emergency_shelter';
 
-    // Query locationMap for pre-created temporary location
-    const tempLocation = Object.values(locationMap).find(
+    // Find pre-created hotel location
+    const hotelLocation = Object.values(locationMap).find(
       loc => loc.owner_email === character.owner_email &&
              loc.is_system_managed === true &&
-             loc.system_location_role === targetRole
+             loc.system_location_role === 'temporary_hotel'
     );
 
+    // Find pre-created shelter location
+    const shelterLocation = Object.values(locationMap).find(
+      loc => loc.owner_email === character.owner_email &&
+             loc.is_system_managed === true &&
+             loc.system_location_role === 'emergency_shelter'
+    );
+
+    // Use hotel if balance >= 150 AND hotel exists
+    const tempLocation = (balance >= 150 && hotelLocation) ? hotelLocation : shelterLocation;
+
     if (tempLocation) {
-      // Return temporary housing assignment (runtime-only, no persistence)
       return {
         resolved_current_location_id: tempLocation.id,
         resolved_current_location_name: tempLocation.name || 'Temporary Housing',
