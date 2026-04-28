@@ -323,13 +323,16 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
  */
 function isOnShiftNow(shift, currentTime = new Date()) {
   if (!shift?.start || !shift?.end) return false;
+  // CRITICAL: Convert to Eastern Time
+  const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  
   // Check day of week if days array is specified
   if (shift.days && shift.days.length > 0) {
-    const dayOfWeek = currentTime.getDay();
+    const dayOfWeek = etTime.getDay();
     if (!shift.days.includes(dayOfWeek)) return false;
   }
 
-  const now = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
   const [startH, startM] = shift.start.split(':').map(Number);
   const [endH, endM] = shift.end.split(':').map(Number);
   const startMin = startH * 60 + startM;
@@ -351,8 +354,10 @@ function getWorkScheduleStatus(character, currentTime) {
     return { onSchedule: false, inPrepWindow: false, minutesUntilWork: null };
   }
 
-  const now = currentTime.getTime();
-  const dayOfWeek = currentTime.getDay();
+  // CRITICAL: Convert to Eastern Time
+  const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const now = etTime.getTime();
+  const dayOfWeek = etTime.getDay();
   const isWorkDay = character.work_days.includes(dayOfWeek);
   
   if (!isWorkDay) {
@@ -362,8 +367,8 @@ function getWorkScheduleStatus(character, currentTime) {
   const [workStartHour, workStartMin] = character.work_start_time.split(':').map(Number);
   const [workEndHour, workEndMin] = character.work_end_time.split(':').map(Number);
   
-  const workStartMs = new Date(currentTime).setHours(workStartHour, workStartMin, 0, 0);
-  const workEndMs = new Date(currentTime).setHours(workEndHour, workEndMin, 0, 0);
+  const workStartMs = new Date(etTime).setHours(workStartHour, workStartMin, 0, 0);
+  const workEndMs = new Date(etTime).setHours(workEndHour, workEndMin, 0, 0);
 
   const onSchedule = now >= workStartMs && now < workEndMs;
   
@@ -417,7 +422,9 @@ function hasUnpaidSleepDebt(character) {
  * Check if it's nap time (1-3pm typically)
  */
 function isNapTime(character, currentTime) {
-  const hour = currentTime.getHours();
+  // CRITICAL: Convert to Eastern Time
+  const etTime = new Date(currentTime.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hour = etTime.getHours();
   return hour >= 13 && hour < 16; // 1pm - 4pm
 }
 
