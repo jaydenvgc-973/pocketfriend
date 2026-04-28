@@ -191,8 +191,8 @@ export default function CreateCharacter() {
   const isAdmin = currentUser?.email === 'murqart@gmail.com';
 
   const { data: existingCharacters = [] } = useQuery({
-    queryKey: ["characters"],
-    queryFn: () => currentUser?.email ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date") : [],
+    queryKey: ["characters", currentUser?.email],
+    queryFn: () => currentUser?.email ? base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date") : [],
     enabled: !!currentUser?.email,
   });
 
