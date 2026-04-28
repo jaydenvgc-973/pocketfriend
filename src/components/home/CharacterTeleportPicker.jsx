@@ -69,10 +69,9 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
         setDone(null);
         setOpen(false);
         setSearch("");
-        // Invalidate all relevant queries so Travel, Home, Scene all refresh
+        // Only invalidate the single character — do NOT invalidate the broad
+        // "characters" list key or the Home page will refetch and blank out.
         queryClient.invalidateQueries({ queryKey: ["character", character.id] });
-        queryClient.invalidateQueries({ queryKey: ["characters"] });
-        queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
         onTeleported?.();
       }, 800);
     } catch (err) {

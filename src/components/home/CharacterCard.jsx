@@ -295,7 +295,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                     currentLabel={label}
                     currentColor={color}
                     IconComponent={IconComponent}
-                    onTeleported={() => queryClient.invalidateQueries({ queryKey: ["characters"] })}
+                    onTeleported={() => queryClient.invalidateQueries({ queryKey: ["character", character.id] })}
                   />
                 );
               })()}
