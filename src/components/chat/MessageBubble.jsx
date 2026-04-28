@@ -311,8 +311,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               {hasReactions && (
                 <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
               )}
-              {onLocationSignal && message.content && (
-                <LocationSignalButton message={message} onLocationSignal={onLocationSignal} />
+              {onLocationSignal && (message.content || localImageUrl) && (
+                <LocationSignalButton message={message} onLocationSignal={onLocationSignal} isImageOnly={!message.content && localImageUrl} />
               )}
               {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
             </div>
@@ -406,14 +406,17 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
   );
 }
 
-function LocationSignalButton({ message, onLocationSignal }) {
+function LocationSignalButton({ message, onLocationSignal, isImageOnly = false }) {
   const [open, setOpen] = useState(false);
   const [signaling, setSignaling] = useState(false);
   const [done, setDone] = useState(false);
 
   const handleSignal = async () => {
     setSignaling(true);
-    await onLocationSignal(message.content, message.character_id);
+    const locationName = isImageOnly && message.generation_context?.location_name 
+      ? message.generation_context.location_name 
+      : message.content;
+    await onLocationSignal(locationName, message.character_id);
     setSignaling(false);
     setDone(true);
     setOpen(false);
@@ -440,7 +443,7 @@ function LocationSignalButton({ message, onLocationSignal }) {
           >
             <p className="text-xs font-semibold text-foreground mb-1">📍 Signal Location</p>
             <p className="text-[10px] text-muted-foreground mb-2 leading-relaxed">
-              Update where this character is based on what they said in this message.
+              {isImageOnly ? `Update where this character is based on the photo location (${message.generation_context?.location_name || 'detected location'}).` : 'Update where this character is based on what they said in this message.'}
             </p>
             <div className="flex gap-2">
               <button
