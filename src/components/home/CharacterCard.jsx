@@ -9,6 +9,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import EditCharacterNameDialog from "@/components/home/EditCharacterNameDialog";
 import CharacterStatusPopup from "@/components/character/CharacterStatusPopup";
 import CharacterMovementStatus from "@/components/home/CharacterMovementStatus";
+import CharacterTeleportPicker from "@/components/home/CharacterTeleportPicker";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -243,11 +244,9 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 )}
               </div>
               {!isMovedAway && (() => {
-                // SINGLE SOURCE OF TRUTH: read resolved_* DB fields via getCharacterLivePresence.
-                // NO home fallback recompute — if DB says visiting, we show visiting.
                 const presence = getCharacterLivePresence(character, locationMap);
 
-                // Rabbit hole
+                // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
                   return (
                     <div className="flex items-center gap-1.5">
@@ -257,7 +256,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   );
                 }
 
-                // Map presence status to icon + color
                 let IconComponent = null;
                 let color = 'text-muted-foreground';
                 let label = presence.label;
@@ -282,7 +280,6 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                   IconComponent = AlertTriangle;
                   color = 'text-red-400';
                 } else if (presence.status === 'visiting' || presence.status === 'at_location') {
-                  // Derive icon from location category if available
                   const loc = locationMap[character.resolved_current_location_id];
                   const category = loc?.category;
                   if (category === 'gym') { IconComponent = Dumbbell; color = 'text-cyan-400'; }
@@ -293,14 +290,13 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 }
 
                 return (
-                  <div className="flex items-center gap-1.5">
-                    {IconComponent ? (
-                      <IconComponent className={`w-3 h-3 ${color}`} />
-                    ) : (
-                      <div className={`w-1.5 h-1.5 rounded-full ${stateDots[state] || "bg-zinc-500"}`} />
-                    )}
-                    <span className={`text-xs ${color}`}>{label}</span>
-                  </div>
+                  <CharacterTeleportPicker
+                    character={character}
+                    currentLabel={label}
+                    currentColor={color}
+                    IconComponent={IconComponent}
+                    onTeleported={() => queryClient.invalidateQueries({ queryKey: ["characters"] })}
+                  />
                 );
               })()}
             </div>
