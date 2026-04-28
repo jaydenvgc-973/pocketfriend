@@ -50,22 +50,12 @@ Deno.serve(async (req) => {
     const isLockdown = hour >= 1 && hour < 10;
 
     // Load this user's characters + ALL locations (user-owned + shared)
-    // CRITICAL: Fetch by BOTH created_by AND owner_email — some NPCs are created by service
-    // accounts but owned by this user. Use asServiceRole for owner_email query to bypass RLS.
-    const [byCreatedBy, byOwnerEmail, userLocations, sharedLocations] = await Promise.all([
-      base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
+    // CRITICAL: Use owner_email ONLY for ownership scoping
+    const [allCharacters, userLocations, sharedLocations] = await Promise.all([
       base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
-      base44.entities.LocationReference.filter({ created_by: user.email }),
+      base44.entities.LocationReference.filter({ owner_email: user.email }),
       base44.entities.LocationReference.filter({ scope: 'shared' }),
     ]);
-
-    // Deduplicate characters — merge both sets by id
-    const charSeen = new Set();
-    const allCharacters = [...byCreatedBy, ...byOwnerEmail].filter(c => {
-      if (charSeen.has(c.id)) return false;
-      charSeen.add(c.id);
-      return true;
-    });
 
     // Merge and deduplicate locations — user-owned takes precedence
     const seenIds = new Set();
@@ -89,11 +79,13 @@ Deno.serve(async (req) => {
     const NPC_ELIGIBLE_TYPES = ['npc', 'background', 'npc_fictitious_person', 'npc_fictitious', 'npc_regular', 'npc_family_member'];
     // NOTE: 'promoted_npc' and 'family_npc' are excluded — promoted means transitioning to active
     
+    const log = [];
+
     // PRE-FLIGHT: Fix NPCs with missing locations — assign to VGC Towers home
     const npcsMissingLocation = allCharacters.filter(c =>
       NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
       !c.protected_active &&
-      (c.owner_email === user.email || c.created_by === user.email) &&
+      c.owner_email === user.email &&
       (!c.resolved_current_location_id || c.resolved_current_location_id.length === 0) &&
       (!c.current_home_location_id || c.current_home_location_id !== VGC_ID)
     );
@@ -121,11 +113,8 @@ Deno.serve(async (req) => {
       c.current_home_location_id === VGC_ID &&
       NPC_ELIGIBLE_TYPES.includes(c.character_type) &&
       !c.protected_active &&
-      // Must be owned by this user (strict ownership check)
-      (c.owner_email === user.email || c.created_by === user.email)
+      c.owner_email === user.email
     );
-
-    const log = [];
     log.push(`[BLOCK: ${currentBlock}] Time: ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')} ET`);
 
     // ── LOCKDOWN: Skip movement during 1-10 AM (return-home automation handles 1 AM return)
@@ -154,7 +143,7 @@ Deno.serve(async (req) => {
       if (loc.location_type === 'character_specific') return false;
       if (loc.scope === 'character_specific') return false;
       // Only allow user-owned or shared — never another user's private location
-      const isUserOwned = loc.created_by === user.email;
+      const isUserOwned = loc.owner_email === user.email;
       const isShared = loc.scope === 'shared';
       if (!isUserOwned && !isShared) return false;
       if (isLocationClosed(loc, nowET)) return false;
@@ -266,16 +255,7 @@ Deno.serve(async (req) => {
     await Promise.all(updates.map(u => base44.entities.Character.update(u.id, u.data)));
 
     // FINAL STATE VERIFICATION + SELF-HEAL
-    const [freshByCreated, freshByOwner] = await Promise.all([
-      base44.entities.Character.filter({ created_by: user.email, status: 'active' }),
-      base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' }),
-    ]);
-    const freshSeen = new Set();
-    const allFreshChars = [...freshByCreated, ...freshByOwner].filter(c => {
-      if (freshSeen.has(c.id)) return false;
-      freshSeen.add(c.id);
-      return true;
-    });
+    const allFreshChars = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email, status: 'active' });
     
     const finalNPCStates = [];
     const selfHealUpdates = [];
