@@ -76,6 +76,13 @@ Deno.serve(async (req) => {
         return Response.json({ updated: false, reason: 'Character blocked from work (sleeping/sick/emergency)' });
       }
 
+      // CALLOUT GUARD: valid callout for today = full work schedule bypass
+      const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+        .toISOString().slice(0, 10);
+      if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
+        return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
+      }
+
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
@@ -181,6 +188,13 @@ Deno.serve(async (req) => {
         const endMins = endH * 60 + endM;
         const isWorkDay = char.work_days.includes(dayOfWeek);
         const onShift = isWorkDay && nowMins >= startMins && nowMins < endMins;
+
+        // CALLOUT GUARD: skip work enforcement for characters with valid callout today
+        const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+          .toISOString().slice(0, 10);
+        if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
+          continue; // Called out — do not force to work
+        }
 
         if (onShift && workLocId) {
           // OWNERSHIP CHECK: work location must be in same owner scope

@@ -204,8 +204,13 @@ Deno.serve(async (req) => {
       const pastLimit = nonHomeDurationMin && nonHomeDurationMin > 150; // 2.5 hours (non-home leisure only)
       const isAtHome = char.resolved_current_location_id === char.current_home_location_id;
 
+      // CALLOUT GUARD: skip work dispatch if character has a valid callout for today
+      const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+        .toISOString().slice(0, 10);
+      const hasValidCallout = char.work_exception_status === 'called_out' && char.work_exception_date === todayET;
+
       // DISPATCH TO WORK (priority over home)
-      if (isWorkActive && !isAtHome) {
+      if (isWorkActive && !isAtHome && !hasValidCallout) {
          const workLoc = getCharacterWorkLocation(char, locationsByUser);
          if (workLoc && char.resolved_current_location_id !== workLoc.id) {
            candidates.push({
@@ -247,7 +252,9 @@ Deno.serve(async (req) => {
 
       // RETURN HOME (for closed locations or expired leisure time)
       // GUARD: DO NOT force home if character has active obligations
-      if ((isClosed || pastLimit || isWorkSoon) && !shouldProtectFromHomeReturn(char)) {
+      // Also: if called out, 'work_soon' no longer applies
+      const effectiveWorkSoon = isWorkSoon && !hasValidCallout;
+      if ((isClosed || pastLimit || effectiveWorkSoon) && !shouldProtectFromHomeReturn(char)) {
         candidates.push({
           id: char.id,
           name: char.name,
