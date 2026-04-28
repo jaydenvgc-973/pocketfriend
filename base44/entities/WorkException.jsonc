@@ -1,0 +1,71 @@
+{
+  "name": "WorkException",
+  "type": "object",
+  "properties": {
+    "character_id": {
+      "type": "string",
+      "description": "ID of the character calling out"
+    },
+    "work_location_id": {
+      "type": "string",
+      "description": "ID of the workplace location they are calling out from"
+    },
+    "exception_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date (YYYY-MM-DD) this exception applies to"
+    },
+    "scheduled_start_time": {
+      "type": "string",
+      "description": "HH:MM scheduled shift start time"
+    },
+    "scheduled_end_time": {
+      "type": "string",
+      "description": "HH:MM scheduled shift end time"
+    },
+    "callout_created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the callout was created (used to enforce notice window)"
+    },
+    "callout_reason": {
+      "type": "string",
+      "description": "Reason for the callout (sick, personal, emergency, etc.)"
+    },
+    "callout_status": {
+      "type": "string",
+      "enum": [
+        "called_out",
+        "late_callout",
+        "missed_shift",
+        "no_call_no_show"
+      ],
+      "default": "called_out",
+      "description": "Validity status of this callout"
+    },
+    "callout_notice_minutes": {
+      "type": "number",
+      "description": "How many minutes before the shift start the callout was submitted"
+    },
+    "approved_by_system": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the system accepted this as a valid callout"
+    },
+    "source_context": {
+      "type": "string",
+      "description": "Where this callout originated (chat, travel, manual, etc.)"
+    },
+    "owner_email": {
+      "type": "string",
+      "description": "Owner email for RLS scoping"
+    }
+  },
+  "required": [
+    "character_id",
+    "work_location_id",
+    "exception_date",
+    "callout_created_at",
+    "callout_status"
+  ]
+}

@@ -66,6 +66,16 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     // Clear the stale resolved fields from local view so layers don't read them.
   }
 
+  // CALLOUT GUARD: If character has a valid work exception for TODAY, skip ALL work schedule logic.
+  // work_exception_status = 'called_out' AND work_exception_date = today (ET) = full bypass.
+  // This is the ONLY gate between Presence Truth and Schedule Truth.
+  const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+    .toISOString().slice(0, 10);
+  const hasValidCallout =
+    character.work_exception_status === 'called_out' &&
+    character.work_exception_date === todayET;
+
+  if (!hasValidCallout) {
   // LAYER 1: Check ALL work locations (primary + additional) as strict schedule authority
   // Collect every location this character is linked to as a worker
   const allWorkLocIds = [];
@@ -115,6 +125,8 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
       };
     }
   }
+
+  } // end if (!hasValidCallout) — work schedule block
 
   // LAYER 2: Check school schedule
   if (character.student_status === 'enrolled' && character.education_location_id) {
@@ -508,6 +520,14 @@ export function verifyNoFalseHomeFallback(character, locationMap = {}) {
 export function checkScheduleViolation(character, locationMap = {}, currentTime = new Date()) {
   const resolved = resolveCharacterLocation(character, locationMap, currentTime);
   const workStatus = getWorkScheduleStatus(character, currentTime);
+
+  // CALLOUT GUARD: If a valid callout exists for today, no work violation can exist.
+  const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
+    .toISOString().slice(0, 10);
+  const hasValidCallout =
+    character.work_exception_status === 'called_out' &&
+    character.work_exception_date === todayET;
+  if (hasValidCallout) return { isViolating: false };
 
   // WORK VIOLATION: Character should be at work
   if (workStatus.onSchedule && character.occupation_location_id) {

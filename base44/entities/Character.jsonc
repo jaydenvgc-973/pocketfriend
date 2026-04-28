@@ -685,6 +685,25 @@
       "type": "string",
       "format": "date-time"
     },
+    "work_exception_status": {
+      "type": "string",
+      "enum": [
+        "called_out",
+        "late_callout",
+        "missed_shift",
+        "no_call_no_show"
+      ],
+      "description": "Active work exception status for today. Set by callout system. Cleared at day boundary."
+    },
+    "work_exception_date": {
+      "type": "string",
+      "format": "date",
+      "description": "The date (YYYY-MM-DD ET) this exception applies to. Must match today for it to be valid."
+    },
+    "work_exception_id": {
+      "type": "string",
+      "description": "ID of the WorkException record that produced this status."
+    },
     "traveling_to_location_id": {
       "type": "string"
     },
