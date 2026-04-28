@@ -636,8 +636,8 @@ function buildFamilyAvatarMap(allCharacters) {
   const map = {};
   for (const char of allCharacters) {
     for (const fm of (char.family_members || [])) {
-      if (fm.name && fm.photo_url) {
-        map[fm.name.toLowerCase()] = fm.photo_url;
+      if (fm.name && (fm.photo_url || fm.avatar_url)) {
+        map[fm.name.toLowerCase()] = fm.photo_url || fm.avatar_url;
       }
     }
   }

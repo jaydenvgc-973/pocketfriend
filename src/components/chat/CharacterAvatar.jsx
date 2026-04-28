@@ -92,8 +92,8 @@ export default function CharacterAvatar({ character, size = "md" }) {
 
   return (
     <div className={`relative ${sizeClasses[size]} rounded-full bg-primary/20 ring-2 ${ringClass} flex items-center justify-center flex-shrink-0 overflow-hidden`}>
-      {character?.avatar_url ? (
-        <img src={character.avatar_url} alt={character.name} className={`w-full h-full object-cover ${asleep ? "brightness-50" : ""}`} />
+      {(character?.avatar_url || character?.image_avatar_url) ? (
+        <img src={character.avatar_url || character.image_avatar_url} alt={character.name} className={`w-full h-full object-cover ${asleep ? "brightness-50" : ""}`} />
       ) : (
         <span className={`font-semibold text-primary ${asleep ? "opacity-40" : ""}`}>
           {character?.name?.[0]?.toUpperCase() || "?"}
