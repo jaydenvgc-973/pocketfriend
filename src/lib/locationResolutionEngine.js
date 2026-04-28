@@ -310,27 +310,32 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     }
   }
 
-  // No home found from resolver — use safe rabbit-hole (never disappear)
-  if (character.resolved_current_location_id) {
-    const lastLoc = locationMap[character.resolved_current_location_id];
-    if (lastLoc) {
-      return {
-        resolved_current_location_id: character.resolved_current_location_id,
-        resolved_current_location_name: lastLoc.name || character.resolved_current_location_name || 'Unknown',
-        resolved_location_type: character.resolved_location_type || 'visit',
-        resolved_presence_status: character.resolved_presence_status || 'visiting',
-        resolved_source_reason: 'last_known_no_home',
-        resolved_zone: null,
-      };
-    }
+  // No schedule/travel/visit matched — fall back to home base
+  // CRITICAL: Do NOT use resolved_current_location_id (stale location). 
+  // Compute home base fresh via housing resolver.
+  const housingFallback = resolveHousingLocationForCharacter(character, locationMap);
+  
+  if (housingFallback.housing_location_id) {
+    // Home base found (temporary or permanent)
+    return {
+      resolved_current_location_id: housingFallback.housing_location_id,
+      resolved_current_location_name: housingFallback.housing_location_name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'home',
+      resolved_source_reason: 'fallback_to_home_base',
+      resolved_zone: null,
+      home_resolution_failed: housingFallback.home_resolution_failed,
+    };
   }
 
+  // No home base found — character is truly homeless with no temp housing
+  // Return safe away state (never trap at stale location)
   return {
     resolved_current_location_id: null,
     resolved_current_location_name: 'Away',
     resolved_location_type: 'rabbit_hole',
     resolved_presence_status: 'rabbit_hole',
-    resolved_source_reason: 'no_home_safe_away',
+    resolved_source_reason: 'no_home_no_temp_housing',
     resolved_zone: null,
   };
 }
