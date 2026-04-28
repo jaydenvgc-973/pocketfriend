@@ -260,6 +260,40 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
+  // PHASE 3B: TEMPORARY HOUSING ASSIGNMENT (RUNTIME ONLY)
+  // Trigger: no home found + assignment eligible + no lookup failure
+  // (Phase 3A helpers must pre-create locations; this resolver only queries them)
+  if (
+    housing.housing_location_id === null &&
+    housing.may_assign_temporary_housing === true &&
+    housing.home_resolution_failed === false &&
+    character.owner_email
+  ) {
+    // Determine which temporary location to use based on balance
+    const balance = character.current_balance ?? 6000;
+    const targetRole = balance >= 150 ? 'temporary_hotel' : 'emergency_shelter';
+
+    // Query locationMap for pre-created temporary location
+    const tempLocation = Object.values(locationMap).find(
+      loc => loc.owner_email === character.owner_email &&
+             loc.is_system_managed === true &&
+             loc.system_location_role === targetRole
+    );
+
+    if (tempLocation) {
+      // Return temporary housing assignment (runtime-only, no persistence)
+      return {
+        resolved_current_location_id: tempLocation.id,
+        resolved_current_location_name: tempLocation.name || 'Temporary Housing',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'home',
+        resolved_source_reason: 'temporary_housing_assignment',
+        resolved_zone: null,
+        is_temporary_housing: true,
+      };
+    }
+  }
+
   // No home found from resolver — use safe rabbit-hole (never disappear)
   if (character.resolved_current_location_id) {
     const lastLoc = locationMap[character.resolved_current_location_id];
