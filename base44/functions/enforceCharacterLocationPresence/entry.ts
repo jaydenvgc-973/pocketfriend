@@ -29,13 +29,22 @@ function isCharacterOnWorkSchedule(character, etTime) {
 function isCharacterSleeping(character, etTime) {
   if (!character.sleep_start_time || !character.wake_up_time) return false;
   const hour = etTime.getHours();
+  const minute = etTime.getMinutes();
   const sleepStart = parseInt(character.sleep_start_time.split(':')[0]);
+  const sleepStartMin = parseInt(character.sleep_start_time.split(':')[1] || 0);
   const wakeUp = parseInt(character.wake_up_time.split(':')[0]);
+  const wakeUpMin = parseInt(character.wake_up_time.split(':')[1] || 0);
 
-  if (sleepStart > wakeUp) {
-    return hour >= sleepStart || hour < wakeUp;
+  const currentTotalMins = hour * 60 + minute;
+  const sleepStartTotalMins = sleepStart * 60 + sleepStartMin;
+  const wakeUpTotalMins = wakeUp * 60 + wakeUpMin;
+
+  // Overnight sleep (e.g., 23:00 to 07:00)
+  if (sleepStartTotalMins > wakeUpTotalMins) {
+    return currentTotalMins >= sleepStartTotalMins || currentTotalMins < wakeUpTotalMins;
   }
-  return hour >= sleepStart && hour < wakeUp;
+  // Same-day sleep (e.g., 14:00 to 16:00)
+  return currentTotalMins >= sleepStartTotalMins && currentTotalMins < wakeUpTotalMins;
 }
 
 // HELPER: Check if nap time (1-3pm)
