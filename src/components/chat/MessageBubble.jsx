@@ -413,10 +413,11 @@ function LocationSignalButton({ message, onLocationSignal, isImageOnly = false }
 
   const handleSignal = async () => {
     setSignaling(true);
-    const locationName = isImageOnly && message.generation_context?.location_name 
-      ? message.generation_context.location_name 
+    // For image-only messages, use the location ID from generation context; otherwise use the text content
+    const signalData = isImageOnly && message.generation_context?.location_id
+      ? message.generation_context.location_id
       : message.content;
-    await onLocationSignal(locationName, message.character_id);
+    await onLocationSignal(signalData, message.character_id);
     setSignaling(false);
     setDone(true);
     setOpen(false);

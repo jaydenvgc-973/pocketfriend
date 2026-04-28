@@ -429,22 +429,41 @@ export default function Chat() {
     }
   };
 
-  const handleLocationSignal = async (messageContent, charId) => {
+  const handleLocationSignal = async (locationIdOrContent, charId) => {
     if (!charId && !characterId) return;
+    const targetCharId = charId || characterId;
+    
     try {
+      // If it looks like a location ID (UUID), use direct update
+      if (locationIdOrContent?.length > 20 && locationIdOrContent.includes('-')) {
+        const res = await base44.functions.invoke('updateCharacterLocation', {
+          characterId: targetCharId,
+          locationId: locationIdOrContent,
+          presenceStatus: 'visiting',
+          locationType: 'visit',
+          sourceReason: 'chat_signal',
+        });
+        if (res?.data?.success) {
+          queryClient.invalidateQueries({ queryKey: ["character", targetCharId] });
+          queryClient.invalidateQueries({ queryKey: ["characters"] });
+        }
+        return;
+      }
+      
+      // Otherwise, parse the content for location names
       const res = await base44.functions.invoke('updateCharacterLocationFromMessage', {
-        characterId: charId || characterId,
-        messageContent,
+        characterId: targetCharId,
+        messageContent: locationIdOrContent,
       });
       if (res?.data?.updated || res?.data?.unresolved) {
-        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        queryClient.invalidateQueries({ queryKey: ["character", targetCharId] });
         queryClient.invalidateQueries({ queryKey: ["characters"] });
         queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
       }
       if (res?.data?.unresolved && res.data.phrase) {
         setPendingAliasResolution({
           phrase: res.data.phrase,
-          characterId: charId || characterId,
+          characterId: targetCharId,
           characterName: character?.name,
         });
       }
