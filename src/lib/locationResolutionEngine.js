@@ -210,32 +210,38 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
 
   // LAYER 5: Check sleep/nap state (valid resting location)
   if (isCharacterSleeping(character)) {
-    const homeLocation = resolvedHomeId ? locationMap[resolvedHomeId] : null;
-    if (homeLocation) {
+    if (resolvedHomeId) {
+      const homeLocation = locationMap[resolvedHomeId];
+      // Return sleeping state even if location lookup fails — preserve home ID, flag the failure
       return {
         resolved_current_location_id: resolvedHomeId,
-        resolved_current_location_name: homeLocation.name || 'Home',
+        resolved_current_location_name: homeLocation?.name || 'Home',
         resolved_location_type: 'home',
         resolved_presence_status: 'sleeping',
         resolved_source_reason: 'home_sleeping',
         resolved_zone: null,
+        home_resolution_failed: !homeLocation,
       };
     }
+    // No home ID at all — fall through to housing resolver
   }
 
   // LAYER 6: Check if in recovery nap
   if (hasUnpaidSleepDebt(character) && isNapTime(character, currentTime)) {
-    const homeLocation = resolvedHomeId ? locationMap[resolvedHomeId] : null;
-    if (homeLocation) {
+    if (resolvedHomeId) {
+      const homeLocation = locationMap[resolvedHomeId];
+      // Return napping state even if location lookup fails — preserve home ID, flag the failure
       return {
         resolved_current_location_id: resolvedHomeId,
-        resolved_current_location_name: homeLocation.name || 'Home',
+        resolved_current_location_name: homeLocation?.name || 'Home',
         resolved_location_type: 'recovery_nap',
         resolved_presence_status: 'napping',
         resolved_source_reason: 'recovery_nap',
         resolved_zone: null,
+        home_resolution_failed: !homeLocation,
       };
     }
+    // No home ID at all — fall through to housing resolver
   }
 
   // LAYER 7+: Use housing resolver as ONLY source of truth for all home logic
