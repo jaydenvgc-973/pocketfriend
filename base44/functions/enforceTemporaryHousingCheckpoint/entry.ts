@@ -120,7 +120,7 @@ Deno.serve(async (req) => {
       // ─────────────────────────────────────────────────────────────
 
       try {
-        const result = await base44.asServiceRole.functions.invoke('assignTemporaryHousing', {
+        const result = await base44.functions.invoke('assignTemporaryHousing', {
           character_id: character.id,
           owner_email,
         });
