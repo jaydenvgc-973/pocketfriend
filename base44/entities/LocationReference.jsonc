@@ -159,6 +159,20 @@
       "type": "boolean",
       "default": false
     },
+    "is_system_managed": {
+      "type": "boolean",
+      "default": false,
+      "description": "True if location is system-created (e.g., temporary housing)"
+    },
+    "system_location_role": {
+      "type": "string",
+      "enum": [
+        "temporary_hotel",
+        "emergency_shelter"
+      ],
+      "nullable": true,
+      "description": "Stable system identifier for predefined locations. Names can change; this field defines identity."
+    },
     "school_type": {
       "type": "string",
       "enum": [
