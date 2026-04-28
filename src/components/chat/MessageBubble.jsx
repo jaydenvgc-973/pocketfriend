@@ -229,11 +229,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 className="relative group/image"
                 onMouseEnter={() => setShowImageDelete(true)}
                 onMouseLeave={() => setShowImageDelete(false)}
+                onClick={() => !isUser && message.generation_context?.location_id && onLocationSignal?.(message.generation_context.location_id, message.character_id)}
               >
                 <img
                   src={localImageUrl}
                   alt="shared photo"
-                  className="w-full max-w-xs rounded-t-2xl object-cover"
+                  className={`w-full max-w-xs rounded-t-2xl object-cover ${!isUser && message.generation_context?.location_id ? "cursor-pointer hover:brightness-90 transition-all" : ""}`}
                 />
                 {showImageDelete && (
                   <div className="absolute inset-0 bg-black/40 rounded-t-2xl flex items-center justify-center gap-2">
@@ -255,6 +256,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                         <X className="w-4 h-4" />
                       </button>
                     )}
+                  </div>
+                )}
+                {!isUser && message.generation_context?.location_id && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 rounded-b-2xl opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center gap-1">
+                    <MapPin className="w-3 h-3 text-white flex-shrink-0" />
+                    <span className="text-xs text-white truncate">{message.generation_context?.location_name || 'Click to signal location'}</span>
                   </div>
                 )}
               </div>
