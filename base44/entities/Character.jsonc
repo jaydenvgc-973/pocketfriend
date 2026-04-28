@@ -4,34 +4,13 @@
   "rls": {
     "create": true,
     "read": {
-      "$or": [
-        {
-          "owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
+      "owner_email": "{{user.email}}"
     },
     "update": {
-      "$or": [
-        {
-          "owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
+      "owner_email": "{{user.email}}"
     },
     "delete": {
-      "$or": [
-        {
-          "owner_email": "{{user.email}}"
-        },
-        {
-          "created_by": "{{user.email}}"
-        }
-      ]
+      "owner_email": "{{user.email}}"
     }
   },
   "properties": {
