@@ -32,6 +32,7 @@ export default function ChatMessageList({
   onImageLoaded,
   onDismissError,
   setSendError,
+  onLocationSignal,
 }) {
   // Inject date separators — one per calendar day, based on message timestamps
   const itemsWithSeparators = injectDateSeparators(messages);
@@ -68,6 +69,7 @@ export default function ChatMessageList({
               voiceError={voiceErrors[msg.id]}
               onForward={!msg.is_narrative ? (m) => onForward(m) : null}
               onImageLoaded={onImageLoaded}
+              onLocationSignal={msg.sender_type === "character" && !msg.is_narrative && onLocationSignal ? onLocationSignal : null}
             />
           );
         })}

@@ -401,7 +401,54 @@ export default function Chat() {
         if (res?.data?.reason) setLastChangeReason(res.data.reason);
         queryClient.invalidateQueries({ queryKey: ["character", characterId] });
       }).catch(() => {});
+
+      // Character sometimes responds to the user reacting to their message
+      if (["❤️", "👍", "😂", "😢"].includes(emoji) && Math.random() < 0.45 && conversationId) {
+        setTimeout(async () => {
+          try {
+            const emojiMeanings = { "❤️": "loved your message", "👍": "thumbs-upped your message", "😂": "laughed at your message", "😢": "reacted with sadness to your message" };
+            const replyRes = await base44.integrations.Core.InvokeLLM({
+              prompt: `You are ${character.name}. ${character.personality_summary || ""} The person you're talking to just ${emojiMeanings[emoji] || "reacted to your message"}: "${msg.content?.substring(0, 150) || "(image)"}". Write a SHORT, natural, casual reaction — 1 sentence max, like a real text. Don't over-explain. Be yourself. No quotes, no labels.`,
+            });
+            const replyText = typeof replyRes === "string" ? replyRes.trim() : "";
+            if (replyText && replyText.length > 2 && replyText.length < 200) {
+              await base44.entities.Message.create({
+                conversation_id: conversationId,
+                sender_type: "character",
+                character_id: characterId,
+                character_name: character.name,
+                content: replyText,
+                emotional_state: character.emotional_state || "calm",
+                timestamp: new Date().toISOString(),
+                is_read: true,
+              });
+            }
+          } catch { /* silent */ }
+        }, 1500 + Math.random() * 2000);
+      }
     }
+  };
+
+  const handleLocationSignal = async (messageContent, charId) => {
+    if (!charId && !characterId) return;
+    try {
+      const res = await base44.functions.invoke('updateCharacterLocationFromMessage', {
+        characterId: charId || characterId,
+        messageContent,
+      });
+      if (res?.data?.updated || res?.data?.unresolved) {
+        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
+        queryClient.invalidateQueries({ queryKey: ["characters"] });
+        queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
+      }
+      if (res?.data?.unresolved && res.data.phrase) {
+        setPendingAliasResolution({
+          phrase: res.data.phrase,
+          characterId: charId || characterId,
+          characterName: character?.name,
+        });
+      }
+    } catch { /* silent */ }
   };
 
   const handleShareSong = async (mediaLink, isVideo = false) => {
@@ -1500,6 +1547,7 @@ Reply with ONLY the single emoji or the word "none".`,
         onPlayVoice={playCharacterVoice}
         onForward={(msg) => setForwardTarget(msg)}
         onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))}
+        onLocationSignal={handleLocationSignal}
       />
       {activeCharacter && character ? (
         <DialogueSelector

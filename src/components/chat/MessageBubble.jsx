@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward } from "lucide-react";
+import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -16,7 +16,7 @@ const emotionalColors = {
   "closed-off": "bg-zinc-900"
 };
 
-export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded }) {
+export default function MessageBubble({ message, showName = false, onReact, onDelete, onDeleteImage, onPlayVoice, isPlayingVoice, voiceError, onForward, onImageLoaded, onLocationSignal }) {
   const isUser = message.sender_type === "user";
   const isNarrative = message.is_narrative;
   const playingAsLabel = isUser && message.played_as_character_name ? message.played_as_character_name : null;
@@ -298,11 +298,14 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
             )}
           </div>
 
-          {/* Reactions + voice + add button — all anchored to same bottom corner spot */}
+          {/* Reactions + location signal + add button — anchored to bottom corner */}
           {!isNarrative && !isUser && (
             <div className={`absolute -bottom-2.5 right-1 z-20 flex gap-0.5 items-center`}>
               {hasReactions && (
                 <ReactionBadges reactions={message.reactions} onReact={onReact} messageId={message.id} />
+              )}
+              {onLocationSignal && message.content && (
+                <LocationSignalButton message={message} onLocationSignal={onLocationSignal} />
               )}
               {onReact && <ReactionAddButton messageId={message.id} isUser={isUser} onReact={onReact} />}
             </div>
@@ -392,6 +395,64 @@ function ReactionAddButton({ messageId, isUser, onReact }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function LocationSignalButton({ message, onLocationSignal }) {
+  const [open, setOpen] = useState(false);
+  const [signaling, setSignaling] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleSignal = async () => {
+    setSignaling(true);
+    await onLocationSignal(message.content, message.character_id);
+    setSignaling(false);
+    setDone(true);
+    setOpen(false);
+    setTimeout(() => setDone(false), 3000);
+  };
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={`opacity-0 group-hover:opacity-100 transition-opacity bg-card border rounded-full w-5 h-5 flex items-center justify-center shadow-md ${done ? "border-primary text-primary opacity-100" : "border-border text-muted-foreground hover:text-primary hover:border-primary"}`}
+        title="Signal location from this message"
+      >
+        <MapPin className="w-2.5 h-2.5" />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ scale: 0.85, opacity: 0, y: 4 }}
+            animate={{ scale: 1, opacity: 1, y: 0 }}
+            exit={{ scale: 0.85, opacity: 0, y: 4 }}
+            className="absolute bottom-6 right-0 z-50 bg-card border border-border rounded-2xl px-3 py-2.5 shadow-xl w-52"
+          >
+            <p className="text-xs font-semibold text-foreground mb-1">📍 Signal Location</p>
+            <p className="text-[10px] text-muted-foreground mb-2 leading-relaxed">
+              Update where this character is based on what they said in this message.
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setOpen(false)}
+                className="flex-1 py-1.5 rounded-lg bg-secondary text-muted-foreground text-xs hover:bg-secondary/80 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSignal}
+                disabled={signaling}
+                className="flex-1 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+              >
+                {signaling ? "Updating..." : "Apply"}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
