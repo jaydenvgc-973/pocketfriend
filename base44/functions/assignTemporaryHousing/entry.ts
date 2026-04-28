@@ -33,14 +33,54 @@ Deno.serve(async (req) => {
     });
 
     // ─────────────────────────────────────────────────────────────
-    // STEP 2: RESOLVE HOUSING (READ-ONLY) — INLINED LOGIC
+    // STEP 2: RESOLVE HOUSING (READ-ONLY) — INLINED FROM RESOLVER
     // ─────────────────────────────────────────────────────────────
 
-    // Check if character has stable home from any source
-    const resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
-    const hasStableHome = resolvedHomeId && locationMap[resolvedHomeId];
+    // Check SCENARIO 1: Valid permanent home ID
+    const homeId = character.current_home_location_id || character.home_location_id;
+    let housing_location_id = null;
+    let home_resolution_failed = false;
+    let may_assign_temporary_housing = false;
 
-    // Compute runtime placement (Phase 3B logic) — use financial balance, not character
+    if (homeId) {
+      const homeLocation = locationMap[homeId];
+      if (homeLocation) {
+        // SCENARIO 1: Valid permanent home found
+        housing_location_id = homeId;
+      } else {
+        // SCENARIO 2: Home ID exists but lookup failed
+        home_resolution_failed = true;
+        housing_location_id = null;
+      }
+    } else {
+      // Check SCENARIO 3: Last-known home
+      const lastLocationId = character.resolved_current_location_id;
+      const lastLocationType = character.resolved_location_type;
+      if (lastLocationId && lastLocationType === 'home' && locationMap[lastLocationId]) {
+        housing_location_id = lastLocationId;
+      } else {
+        // Check SCENARIO 4: Resident scan for home associations
+        const homeLocs = Object.values(locationMap).filter(
+          loc => (loc.category === 'home' || loc.category === 'generic') &&
+                 ((loc.resident_character_ids || []).includes(character.id) ||
+                  (loc.residents || []).some(r => r.character_id === character.id))
+        );
+
+        if (homeLocs.length > 0) {
+          // SCENARIO 4: Found home via resident scan
+          housing_location_id = homeLocs[0].id;
+        } else {
+          // SCENARIOS 5-7: True null home — check temporary housing eligibility
+          const balance = financial.current_balance ?? 0;
+          if (balance >= 150 || balance < 150) {
+            // Truly homeless — eligible for temporary housing
+            may_assign_temporary_housing = true;
+          }
+        }
+      }
+    }
+
+    // Compute runtime placement (Phase 3B logic)
     const balance = financial.current_balance ?? 0;
     const hotelLocation = Object.values(locationMap).find(
       loc => loc.owner_email === owner_email &&
@@ -57,11 +97,20 @@ Deno.serve(async (req) => {
     // STEP 3: HARD BLOCK CONDITIONS
     // ─────────────────────────────────────────────────────────────
 
-    if (hasStableHome) {
+    if (housing_location_id !== null) {
       return Response.json({ skipped: true, reason: 'already_has_home' }, { status: 200 });
     }
+
+    if (home_resolution_failed === true) {
+      return Response.json({ skipped: true, reason: 'home_lookup_failed' }, { status: 200 });
+    }
+
     if (character.is_temporarily_housed === true && character.temporary_housing_location_id) {
       return Response.json({ skipped: true, reason: 'already_assigned_temporary' }, { status: 200 });
+    }
+
+    if (may_assign_temporary_housing !== true) {
+      return Response.json({ skipped: true, reason: 'not_eligible_for_temporary' }, { status: 200 });
     }
 
     // ─────────────────────────────────────────────────────────────
