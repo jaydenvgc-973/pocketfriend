@@ -9,6 +9,7 @@
 import { base44 } from "@/api/base44Client";
 import { buildLiveLocationContext } from "@/lib/locationResolutionEngine";
 import { enforceValidation } from "@/lib/appearanceLockValidator";
+import { resolveHousingLocationForCharacter } from "@/lib/resolveHousingLocationForCharacter";
 
 function toPublicCDN(url) {
   if (!url || typeof url !== 'string') return url;
@@ -56,8 +57,14 @@ export async function dispatchImageGeneration({
   setMessages,
   convoId,
   queryClient,
+  locationMap = {},
 }) {
   try {
+    // CRITICAL: Resolve housing FIRST — route flag downstream
+    const housing = resolveHousingLocationForCharacter(character, locationMap);
+    const homeResolutionFailed = housing.home_resolution_failed || false;
+    const mayAssignTemporaryHousing = housing.may_assign_temporary_housing || false;
+
     // CRITICAL: Validate appearance_lock and outfit separation before sending
     // Only block if the character HAS an appearance_lock defined — warn otherwise
     if (character?.appearance_lock && Object.keys(character.appearance_lock).length > 0) {
@@ -92,6 +99,8 @@ export async function dispatchImageGeneration({
       characterEmotionalState: character.emotional_state || 'calm',
       // NO manualLocationId — backend resolves from character file + LocationReference records
       liveLocationContext: buildLiveLocationContext(character, {}, true),
+      homeResolutionFailed,
+      mayAssignTemporaryHousing,
     });
 
     const returnedMsgId = res?.data?.messageId;

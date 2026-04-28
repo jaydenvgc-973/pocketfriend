@@ -7,6 +7,7 @@
 
 import { resolveCurrentOutfit, buildOutfitPromptText } from './outfitRotationEngine.js';
 import { buildAppearanceLockBlock, enforceValidation } from './appearanceLockValidator.js';
+import { resolveHousingLocationForCharacter } from './resolveHousingLocationForCharacter.js';
 
 /**
  * Build outfit enforcement text for a list of characters and optionally the user.
@@ -82,9 +83,21 @@ VALIDATION:
 ════════════════════════════════════════════════════════════════`;
 }
 
-export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, displayName, user = null) {
+export function buildPhotoGenerationPrompt(basePrompt, selectedChars, location, displayName, user = null, locationMap = {}) {
+  // CRITICAL: Resolve housing context for each character FIRST
+  // If home_resolution_failed, do NOT trust location for outfit/environment
+  const housingDecisions = selectedChars.map(char => ({
+    character_id: char.id,
+    housing: resolveHousingLocationForCharacter(char, locationMap),
+  }));
+  
+  // Only use location category if NO character has home_resolution_failed
+  const locationCategoryToUse = housingDecisions.some(d => d.housing.home_resolution_failed)
+    ? null
+    : (location?.category || null);
+
   const identityLock = buildPhotoIdentityLockPrompt(selectedChars, displayName);
-  const outfitBlock = buildPhotoOutfitBlock(selectedChars, user, location?.category || null);
+  const outfitBlock = buildPhotoOutfitBlock(selectedChars, user, locationCategoryToUse);
   
   const charSummary = selectedChars.length > 0
     ? selectedChars.map(c => `${c.name}${c.age ? ` (${c.age})` : ''}`).join(', ')
