@@ -33,18 +33,15 @@ Deno.serve(async (req) => {
     });
 
     // ─────────────────────────────────────────────────────────────
-    // STEP 2: RESOLVE HOUSING (READ-ONLY)
+    // STEP 2: RESOLVE HOUSING (READ-ONLY) — INLINED LOGIC
     // ─────────────────────────────────────────────────────────────
 
-    // Call housing resolver via backend function
-    const housingRes = await base44.asServiceRole.functions.invoke('resolveHousingLocationForCharacter', {
-      character,
-      locationMap,
-    });
-    const housing = housingRes?.data || {};
+    // Check if character has stable home from any source
+    const resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
+    const hasStableHome = resolvedHomeId && locationMap[resolvedHomeId];
 
-    // Also compute runtime placement (Phase 3B logic)
-    const balance = character.current_balance ?? 6000;
+    // Compute runtime placement (Phase 3B logic) — use financial balance, not character
+    const balance = financial.current_balance ?? 0;
     const hotelLocation = Object.values(locationMap).find(
       loc => loc.owner_email === owner_email &&
              loc.is_system_managed === true &&
@@ -60,53 +57,34 @@ Deno.serve(async (req) => {
     // STEP 3: HARD BLOCK CONDITIONS
     // ─────────────────────────────────────────────────────────────
 
-    if (housing.housing_location_id !== null) {
+    if (hasStableHome) {
       return Response.json({ skipped: true, reason: 'already_has_home' }, { status: 200 });
     }
-    if (housing.home_resolution_failed === true) {
-      return Response.json({ skipped: true, reason: 'home_lookup_failed' }, { status: 200 });
-    }
-    if (character.current_home_location_id) {
-      return Response.json({ skipped: true, reason: 'has_home_field' }, { status: 200 });
-    }
-    if (character.is_temporarily_housed === true) {
+    if (character.is_temporarily_housed === true && character.temporary_housing_location_id) {
       return Response.json({ skipped: true, reason: 'already_assigned_temporary' }, { status: 200 });
     }
 
     // ─────────────────────────────────────────────────────────────
-    // STEP 4: DETERMINE TYPE
+    // STEP 4: DETERMINE TYPE (MATCH PHASE 3B EXACTLY)
     // ─────────────────────────────────────────────────────────────
 
-    let type, cost;
-    if (balance >= 150) {
+    let type = null;
+    if (balance >= 150 && hotelLocation) {
       type = 'hotel';
-      cost = 150;
-    } else {
+    } else if (shelterLocation) {
       type = 'shelter';
-      cost = 0;
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // STEP 5: GET LOCATION (SAFE — backend context allows creation)
-    // ─────────────────────────────────────────────────────────────
-
-    let tempLocation;
-    if (type === 'hotel') {
-      const hotelRes = await base44.asServiceRole.functions.invoke('getOrCreateTemporaryHotelLocation', {
-        owner_email,
-      });
-      const hotelLocationId = hotelRes?.data?.location_id;
-      tempLocation = locationMap[hotelLocationId] || { id: hotelLocationId, name: 'Temporary Hotel' };
     } else {
-      const shelterRes = await base44.asServiceRole.functions.invoke('getOrCreateEmergencyShelterLocation', {
-        owner_email,
-      });
-      const shelterLocationId = shelterRes?.data?.location_id;
-      tempLocation = locationMap[shelterLocationId] || { id: shelterLocationId, name: 'Emergency Shelter' };
+      return Response.json({ success: false, reason: 'no_temp_locations_available' }, { status: 200 });
     }
+
+    // ─────────────────────────────────────────────────────────────
+    // STEP 5: USE EXISTING LOCATION (ALREADY SELECTED IN STEP 2)
+    // ─────────────────────────────────────────────────────────────
+
+    const tempLocation = type === 'hotel' ? hotelLocation : shelterLocation;
 
     if (!tempLocation?.id) {
-      return Response.json({ success: false, reason: 'location_not_available' }, { status: 500 });
+      return Response.json({ success: false, reason: 'temp_location_not_found' }, { status: 500 });
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -129,13 +107,15 @@ Deno.serve(async (req) => {
 
     if (type === 'hotel') {
       // 7A: Check for recent charge (prevent double-charge)
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const recentCharges = await base44.entities.FinancialTransaction.filter({
         character_id,
         reason_code: 'temp_housing_hotel',
       });
       
-      const hasRecentCharge = recentCharges.some(tx => tx.created_date >= oneDayAgo);
+      const hasRecentCharge = recentCharges.some(tx => {
+        if (!tx.timestamp) return false;
+        return new Date(tx.timestamp).getTime() >= Date.now() - 86400000;
+      });
 
       if (!hasRecentCharge) {
         // 7B: Apply charge
