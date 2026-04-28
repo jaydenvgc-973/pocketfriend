@@ -205,8 +205,17 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   // (Placeholder for future visit/event system)
   // For now, skip
 
-  // Resolve the authoritative home ID — check both field names
-  const resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
+  // PHASE 4: RESOLVE HOME BASE (TEMPORARY HOUSING PRIORITY)
+  // Temporary housing OVERRIDES permanent home if assigned
+  let resolvedHomeId = null;
+
+  if (character.is_temporarily_housed === true && character.temporary_housing_location_id) {
+    // Temporary housing takes absolute priority over permanent home
+    resolvedHomeId = character.temporary_housing_location_id;
+  } else {
+    // Fall back to permanent home
+    resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
+  }
 
   // LAYER 5: Check sleep/nap state (valid resting location)
   if (isCharacterSleeping(character)) {
