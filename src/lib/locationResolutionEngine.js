@@ -666,34 +666,17 @@ export function getCharacterLivePresence(character, locationMap = {}) {
 
   // ── PRIORITY 3: CONFIRMED PRESENCE ────────────────────────────────────────
   if (presenceStatus === 'at_work') {
-    // CRITICAL: Verify the character is actually on shift RIGHT NOW before trusting stored at_work status.
-    // Fix Locations scan or stale DB writes can leave resolved_presence_status='at_work'
-    // even after a shift has ended. Do NOT display "At work" if schedule says otherwise.
-    const nowForCheck = new Date();
-    const allWorkLocIds = [];
-    if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
-    if (character.current_work_location_id) allWorkLocIds.push(character.current_work_location_id);
-    (character.additional_occupation_locations || []).forEach(loc => {
-      if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) allWorkLocIds.push(loc.location_id);
-    });
-
-    let actuallyOnShift = false;
-    for (const workLocId of allWorkLocIds) {
-      const workLocation = locationMap[workLocId];
-      if (!workLocation) continue;
-      const locationShift = workLocation.worker_shifts?.[character.id];
-      if (locationShift) {
-        if (isOnShiftNow(locationShift, nowForCheck)) { actuallyOnShift = true; break; }
-      } else if (isCharacterOnWorkSchedule(character, nowForCheck)) {
-        actuallyOnShift = true; break;
-      }
+    // STALE STATUS PROTECTION: only trust at_work when the resolved record was written by
+    // the work schedule enforcer (source_reason = "work_schedule") AND a resolved location exists.
+    // Any other source means the status is stale or was written by a scan/repair — do NOT display it.
+    const sourceReason = character.resolved_source_reason;
+    const hasResolvedLocation = !!character.resolved_current_location_id;
+    const isScheduleSource = sourceReason === 'work_schedule' || sourceReason === 'work_schedule_enforced';
+    if (isScheduleSource && hasResolvedLocation) {
+      const locName = loc?.name || character.resolved_current_location_name || 'Work';
+      return { status: 'at_work', label: 'At work', sublabel: locName, isTransit: false, isSleeping: false };
     }
-
-    if (actuallyOnShift) {
-      const workLoc = locationMap[character.occupation_location_id];
-      return { status: 'at_work', label: `At work`, sublabel: workLoc?.name || 'Work', isTransit: false, isSleeping: false };
-    }
-    // Not actually on shift — fall through to location name fallback below
+    // Stale or repair-written at_work — fall through to location name fallback below
   }
   if (presenceStatus === 'at_school') {
     const schoolLoc = locationMap[character.education_location_id];

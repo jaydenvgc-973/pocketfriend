@@ -664,17 +664,11 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
                       color = status === 'home' ? 'text-green-400' : 'text-blue-400';
                       status = status === 'sleeping' || status === 'napping' ? 'sleeping' : 'home';
                     }
-                    // Annotate workers on shift
-                    if (!isHome && entity.resolved_current_location_id === selectedLocation.id) {
-                      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-                      const dayOfWeek = nowET.getDay();
-                      const currentTime = `${String(nowET.getHours()).padStart(2, '0')}:${String(nowET.getMinutes()).padStart(2, '0')}`;
-                      const workerShifts = selectedLocation.worker_shifts || {};
-                      const shift = workerShifts[entity.id];
-                      if (shift && shift.days?.includes(dayOfWeek) && currentTime >= shift.start && currentTime <= shift.end) {
-                        status = 'working';
-                        color = 'text-purple-400';
-                      }
+                    // Show "working" if resolved_presence_status is at_work from schedule source
+                    if (!isHome && status === 'at_work' &&
+                        (entity.resolved_source_reason === 'work_schedule' || entity.resolved_source_reason === 'work_schedule_enforced')) {
+                      status = 'working';
+                      color = 'text-purple-400';
                     }
                     lines.push({ name, status, color });
                   });
