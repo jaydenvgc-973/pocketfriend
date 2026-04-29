@@ -47,6 +47,7 @@ export default function EditCharacterProfile() {
   const [expandedRelId, setExpandedRelId] = useState(null);
   // For occupation/education location links
   const [occupationLink, setOccupationLink] = useState({ locationId: null, locationName: null, title: '' });
+  const [occupationLink2, setOccupationLink2] = useState({ locationId: null, locationName: null, title: '' });
   const [educationLink, setEducationLink] = useState({ locationId: null, locationName: null, title: '' });
 
   const { data: currentUser = null } = useQuery({
@@ -67,12 +68,17 @@ export default function EditCharacterProfile() {
     setSelectedChar(char);
     setActiveTab("Occupation");
     setOccupationLink({ locationId: char.occupation_location_id || null, locationName: char.occupation_location_name || null, title: char.work_details?.job_title || '' });
+    const secondJob = char.additional_occupation_locations?.[0] || {};
+    setOccupationLink2({ locationId: secondJob.location_id || null, locationName: secondJob.location_name || null, title: secondJob.job_title || '' });
     setEducationLink({ locationId: char.education_location_id || null, locationName: char.education_location_name || null, title: char.education_details?.course_name || '' });
     setForm({
       // Occupation
       job_title: char.work_details?.job_title || "",
       workplace_type: char.work_details?.workplace_type || "",
       work_environment: char.work_details?.work_environment || "",
+      // Second job
+      job2_title: secondJob.job_title || "",
+      job2_work_environment: secondJob.work_environment || "",
       criminal_record: char.criminal_record || "",
       // Education
       current_education_activity: char.current_education_activity || "none",
@@ -163,12 +169,22 @@ export default function EditCharacterProfile() {
     if (!selectedChar) return;
     setIsSaving(true);
 
+    // Build second job entry if any data is present
+    const hasSecondJob = form.job2_title || form.job2_work_environment || occupationLink2.locationId;
+    const secondJobEntry = hasSecondJob ? [{
+      location_id: occupationLink2.locationId || null,
+      location_name: occupationLink2.locationName || null,
+      job_title: form.job2_title || "",
+      work_environment: form.job2_work_environment || "",
+    }] : [];
+
     const updatedData = {
       work_details: {
         job_title: form.job_title,
         workplace_type: form.workplace_type,
         work_environment: form.work_environment,
       },
+      additional_occupation_locations: secondJobEntry,
       criminal_record: form.criminal_record,
       current_education_activity: form.current_education_activity,
       education_details: {
@@ -210,6 +226,17 @@ export default function EditCharacterProfile() {
         linkType: 'occupation',
         title: occupationLink.title || form.job_title,
         removeLocationId: selectedChar.occupation_location_id !== occupationLink.locationId ? selectedChar.occupation_location_id : null,
+      }).catch(() => {});
+    }
+
+    // If second occupation location was linked, sync it too
+    if (occupationLink2.locationId) {
+      base44.functions.invoke('linkOccupationToLocation', {
+        characterId: selectedChar.id,
+        locationId: occupationLink2.locationId,
+        linkType: 'occupation',
+        title: occupationLink2.title || form.job2_title,
+        removeLocationId: null,
       }).catch(() => {});
     }
 
@@ -336,6 +363,10 @@ export default function EditCharacterProfile() {
                   </Select>
                 </div>
                 <div className="space-y-2">
+                  <label className="text-xs text-muted-foreground">Job Title</label>
+                  <Input value={form.job_title} onChange={e => setForm(p => ({ ...p, job_title: e.target.value }))} placeholder="e.g. Nurse, Barista, Software Engineer" className="rounded-xl text-sm" />
+                </div>
+                <div className="space-y-2">
                   <label className="text-xs text-muted-foreground">Work Environment Description</label>
                   <Textarea value={form.work_environment} onChange={e => setForm(p => ({ ...p, work_environment: e.target.value }))} placeholder="Describe their day-to-day work environment..." className="rounded-xl min-h-[80px] text-sm resize-none" />
                 </div>
@@ -348,6 +379,27 @@ export default function EditCharacterProfile() {
                     currentTitle={occupationLink.title}
                     onLinkChange={setOccupationLink}
                     placeholder="e.g. Barista, Nurse, Designer"
+                  />
+                </div>
+
+                {/* SECOND JOB */}
+                <div className="pt-2 border-t border-border space-y-3">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Second Job (optional)</label>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Job Title</label>
+                    <Input value={form.job2_title} onChange={e => setForm(p => ({ ...p, job2_title: e.target.value }))} placeholder="e.g. Freelance Photographer" className="rounded-xl text-sm" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Work Environment Description</label>
+                    <Textarea value={form.job2_work_environment} onChange={e => setForm(p => ({ ...p, job2_work_environment: e.target.value }))} placeholder="Describe their second job environment..." className="rounded-xl min-h-[80px] text-sm resize-none" />
+                  </div>
+                  <OccupationLocationPicker
+                    characterId={selectedChar?.id}
+                    linkType="occupation"
+                    currentLocationId={occupationLink2.locationId}
+                    currentTitle={occupationLink2.title}
+                    onLinkChange={setOccupationLink2}
+                    placeholder="e.g. Studio, Store name"
                   />
                 </div>
 
