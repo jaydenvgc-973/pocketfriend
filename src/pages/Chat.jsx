@@ -1387,9 +1387,8 @@ Reply with ONLY the single emoji or the word "none".`,
     }).catch(() => {});
 
     if (responseText) {
-      base44.entities.Character.filter({ created_by: currentUser.email }).then(allCharsForApproval => {
-        checkForApprovalEvents(responseText, character, allCharsForApproval || [], text);
-      }).catch(() => {});
+      // Call immediately — no dependency on a separate async query
+      checkForApprovalEvents(responseText, character, [], text);
     }
 
     base44.functions.invoke("classifyConversationEvent", {
