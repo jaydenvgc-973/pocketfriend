@@ -695,7 +695,12 @@ export function getCharacterLivePresence(character, locationMap = {}) {
   }
 
   // ── PRIORITY 4: FALLBACK — last confirmed location ─────────────────────────
-  return { status: 'at_location', label: locName ? `At ${locName}` : 'Nearby', sublabel: null, isTransit: false, isSleeping: false };
+  // RULE: Only display a location name if resolved_current_location_id exists AND a name is available.
+  // If neither exists, show Away — never Nearby, never stale location, never Home.
+  const hasValidLocation = !!character.resolved_current_location_id && !!locName;
+  return hasValidLocation
+    ? { status: 'at_location', label: `At ${locName}`, sublabel: null, isTransit: false, isSleeping: false }
+    : { status: 'away', label: 'Away', sublabel: 'No valid location assigned', isTransit: false, isSleeping: false };
 }
 
 /**
