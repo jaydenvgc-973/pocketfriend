@@ -49,13 +49,15 @@ export default function Travel() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: settingsList = [] } = useQuery({
+  const { data: settingsList } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.UserSettings.filter({ owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
+    placeholderData: [],
   });
+  const safeSettingsList = Array.isArray(settingsList) ? settingsList : [];
 
   // Active playable characters only
   const { data: activeCharacters = [] } = useQuery({
@@ -154,7 +156,7 @@ export default function Travel() {
   });
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
-  const settings = settingsList[0] || {};
+  const settings = safeSettingsList[0] || {};
 
   // ALL character records for internal family scanning (parent character lookup)
   const allCharactersForFamilyScan = [...activeCharacters, ...npcCharacters, ...npcFamilyMembers];
