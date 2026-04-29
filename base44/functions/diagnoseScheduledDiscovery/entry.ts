@@ -69,6 +69,18 @@ Deno.serve(async (req) => {
     // QUERY 5: Name search — "Melody Jackson Perry" (no owner/type filter)
     const melodyByFullName = await base44.asServiceRole.entities.Character.filter({ name: 'Melody Jackson Perry' });
 
+    // QUERY 6: All characters with missing owner_email (no filter — service role sees all)
+    const allCharsNoFilter = await base44.asServiceRole.entities.Character.filter({});
+    const missingOwnerEmail = allCharsNoFilter.filter(c =>
+      !c.owner_email || c.owner_email.trim() === ''
+    ).map(c => ({
+      id: c.id,
+      name: c.name,
+      owner_email: c.owner_email ?? null,
+      character_type: c.character_type || null,
+      status: c.status || null,
+    }));
+
     return Response.json({
       query1_active_created_character: {
         count: activeChars.length,
@@ -89,6 +101,11 @@ Deno.serve(async (req) => {
       query5_name_melody_jackson_perry: {
         count: melodyByFullName.length,
         results: melodyByFullName.map(mapChar),
+      },
+      query6_missing_owner_email: {
+        total_scanned: allCharsNoFilter.length,
+        missing_count: missingOwnerEmail.length,
+        records: missingOwnerEmail,
       },
     });
 
