@@ -1,0 +1,401 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+// ── INLINE RESOLVER (identical logic to Phase 4A enforceCharacterLocationPresence) ──
+
+function isOnWorkSchedule(character, etTime) {
+  if (!character.work_start_time || !character.work_end_time || !character.work_days) return false;
+  const dayOfWeek = etTime.getDay();
+  if (!character.work_days.includes(dayOfWeek)) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = character.work_start_time.split(':').map(Number);
+  const [eh, em] = character.work_end_time.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  return now >= startMin && now < endMin;
+}
+
+function isSleeping(character, etTime) {
+  if (!character.sleep_start_time || !character.wake_up_time) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
+  const [wh, wm] = character.wake_up_time.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const wakeMin = wh * 60 + wm;
+  if (startMin > wakeMin) return now >= startMin || now < wakeMin;
+  return now >= startMin && now < wakeMin;
+}
+
+function isNapTime(etTime) {
+  const h = etTime.getHours();
+  return h >= 13 && h < 16;
+}
+
+function hasSleepDebt(character) {
+  return character.sleep_debt_hours && character.sleep_debt_hours > 0;
+}
+
+function computeResolved(character, locationMap, etTime) {
+  const todayET = etTime.toISOString().slice(0, 10);
+  const hasValidCallout =
+    character.work_exception_status === 'called_out' &&
+    character.work_exception_date === todayET;
+
+  // LAYER 1: Work schedule
+  if (!hasValidCallout && character.occupation_location_id) {
+    const workLoc = locationMap[character.occupation_location_id];
+    if (workLoc && isOnWorkSchedule(character, etTime)) {
+      return {
+        resolved_current_location_id: character.occupation_location_id,
+        resolved_current_location_name: workLoc.name || 'Work',
+        resolved_location_type: 'work',
+        resolved_presence_status: 'at_work',
+        resolved_source_reason: 'work_schedule',
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
+    }
+  }
+
+  // LAYER 2: School schedule
+  if (character.student_status === 'enrolled' && character.education_location_id) {
+    const schoolLoc = locationMap[character.education_location_id];
+    if (schoolLoc) {
+      return {
+        resolved_current_location_id: character.education_location_id,
+        resolved_current_location_name: schoolLoc.name || 'School',
+        resolved_location_type: 'school',
+        resolved_presence_status: 'at_school',
+        resolved_source_reason: 'school_schedule',
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
+    }
+  }
+
+  // LAYER 3: Active travel
+  if (character.travel_status && character.travel_status !== 'not_traveling' && character.travel_destination_location_id) {
+    const destLoc = locationMap[character.travel_destination_location_id];
+    if (destLoc) {
+      return {
+        resolved_current_location_id: character.travel_destination_location_id,
+        resolved_current_location_name: destLoc.name || 'Traveling',
+        resolved_location_type: 'traveling',
+        resolved_presence_status: 'traveling',
+        resolved_source_reason: character.travel_status,
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
+    }
+  }
+
+  // LAYER 4: Active system-placed visit
+  const homeId = character.current_home_location_id || character.home_location_id;
+  const resolvedLocId = character.resolved_current_location_id;
+  const isAwayFromHome = resolvedLocId && resolvedLocId !== homeId;
+  const isSystemVisit =
+    character.presence_state === 'social_visit' ||
+    character.resolved_presence_status === 'visiting' ||
+    character.resolved_source_reason === 'autonomous_needs_driven' ||
+    character.resolved_source_reason === 'autonomous_movement' ||
+    character.resolved_source_reason === 'user_travel';
+
+  if (isAwayFromHome && isSystemVisit) {
+    const visitLoc = locationMap[resolvedLocId];
+    if (visitLoc) {
+      return {
+        resolved_current_location_id: resolvedLocId,
+        resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
+    }
+  }
+
+  // Resolve home base
+  let resolvedHomeId = null;
+  if (character.is_temporarily_housed === true && character.temporary_housing_location_id) {
+    resolvedHomeId = character.temporary_housing_location_id;
+  } else {
+    resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
+  }
+
+  // LAYER 5: Sleeping
+  if (isSleeping(character, etTime) && resolvedHomeId) {
+    const homeLoc = locationMap[resolvedHomeId];
+    return {
+      resolved_current_location_id: resolvedHomeId,
+      resolved_current_location_name: homeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'sleeping',
+      resolved_source_reason: 'home_sleeping',
+      resolved_zone: null,
+      home_resolution_failed: !homeLoc,
+    };
+  }
+
+  // LAYER 6: Recovery nap
+  if (hasSleepDebt(character) && isNapTime(etTime) && resolvedHomeId) {
+    const homeLoc = locationMap[resolvedHomeId];
+    return {
+      resolved_current_location_id: resolvedHomeId,
+      resolved_current_location_name: homeLoc?.name || 'Home',
+      resolved_location_type: 'recovery_nap',
+      resolved_presence_status: 'napping',
+      resolved_source_reason: 'recovery_nap',
+      resolved_zone: null,
+      home_resolution_failed: !homeLoc,
+    };
+  }
+
+  // LAYER 7: Home base fallback
+  if (resolvedHomeId) {
+    const homeLoc = locationMap[resolvedHomeId];
+    return {
+      resolved_current_location_id: resolvedHomeId,
+      resolved_current_location_name: homeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'home',
+      resolved_source_reason: 'fallback_to_home_base',
+      resolved_zone: null,
+      home_resolution_failed: !homeLoc,
+    };
+  }
+
+  // LAYER 8: No home
+  return {
+    resolved_current_location_id: null,
+    resolved_current_location_name: 'Away',
+    resolved_location_type: 'rabbit_hole',
+    resolved_presence_status: 'rabbit_hole',
+    resolved_source_reason: 'no_home_no_temp_housing',
+    resolved_zone: null,
+    home_resolution_failed: false,
+  };
+}
+
+function buildStored(character) {
+  return {
+    resolved_current_location_id: character.resolved_current_location_id || null,
+    resolved_current_location_name: character.resolved_current_location_name || null,
+    resolved_location_type: character.resolved_location_type || null,
+    resolved_presence_status: character.resolved_presence_status || null,
+    resolved_source_reason: character.resolved_source_reason || null,
+    resolved_zone: character.resolved_zone || null,
+    home_resolution_failed: character.home_resolution_failed || false,
+  };
+}
+
+function hasChanged(resolved, stored) {
+  return (
+    resolved.resolved_current_location_id !== stored.resolved_current_location_id ||
+    resolved.resolved_current_location_name !== stored.resolved_current_location_name ||
+    resolved.resolved_location_type !== stored.resolved_location_type ||
+    resolved.resolved_presence_status !== stored.resolved_presence_status ||
+    resolved.resolved_source_reason !== stored.resolved_source_reason ||
+    (resolved.resolved_zone || null) !== stored.resolved_zone ||
+    (resolved.home_resolution_failed || false) !== stored.home_resolution_failed
+  );
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ── MAIN HANDLER ──────────────────────────────────────────────────────────────
+
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    // NO base44.auth.me() — this function is service-role only, no user session assumed
+
+    const body = await req.json().catch(() => ({}));
+    const dry_run = body.dry_run === true;
+    const max_owners = typeof body.max_owners === 'number' ? body.max_owners : null;
+    const max_chars = typeof body.max_characters_per_owner === 'number' ? body.max_characters_per_owner : null;
+
+    // STEP 1: Discover all active_created_character records (service role — sees all accounts)
+    let allCharacters = [];
+    try {
+      allCharacters = await base44.asServiceRole.entities.Character.filter({
+        character_type: 'active_created_character'
+      });
+    } catch (err) {
+      if (err?.status === 429) {
+        return Response.json({ error: 'Rate limit hit during character discovery', status: 429 }, { status: 429 });
+      }
+      throw err;
+    }
+
+    // STEP 2: Extract distinct owner_email values — skip records missing owner_email
+    const ownerEmailSet = new Set();
+    const skippedNoOwner = [];
+    for (const c of allCharacters) {
+      if (!c.owner_email) {
+        skippedNoOwner.push({ character_id: c.id, name: c.name, reason: 'missing_owner_email' });
+      } else {
+        ownerEmailSet.add(c.owner_email);
+      }
+    }
+
+    let ownerEmails = Array.from(ownerEmailSet);
+    if (max_owners !== null) {
+      ownerEmails = ownerEmails.slice(0, max_owners);
+    }
+
+    // STEP 3: Process each owner in isolation
+    const results = [];
+    let owners_checked = 0;
+    let characters_checked = 0;
+    let would_update = 0;
+    let updated = 0;
+    let no_change = 0;
+    let errors = 0;
+    const skipped = [...skippedNoOwner];
+
+    const etTime = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+    for (const owner_email of ownerEmails) {
+      owners_checked++;
+
+      // Load characters scoped to this owner only
+      let ownerChars = [];
+      try {
+        ownerChars = await base44.asServiceRole.entities.Character.filter({
+          owner_email,
+          character_type: 'active_created_character'
+        });
+      } catch (err) {
+        if (err?.status === 429) {
+          return Response.json({
+            dry_run, owners_checked, characters_checked,
+            would_update, updated, no_change,
+            skipped: skipped.length, errors,
+            results,
+            aborted: true,
+            abort_reason: 'rate_limit_429_on_character_fetch',
+            abort_at_owner: owner_email,
+          });
+        }
+        errors++;
+        results.push({ owner_email, error: err.message });
+        continue;
+      }
+
+      if (max_chars !== null) {
+        ownerChars = ownerChars.slice(0, max_chars);
+      }
+
+      // Load locations scoped to this owner only
+      let locations = [];
+      try {
+        locations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email });
+      } catch (err) {
+        if (err?.status === 429) {
+          return Response.json({
+            dry_run, owners_checked, characters_checked,
+            would_update, updated, no_change,
+            skipped: skipped.length, errors,
+            results,
+            aborted: true,
+            abort_reason: 'rate_limit_429_on_location_fetch',
+            abort_at_owner: owner_email,
+          });
+        }
+        errors++;
+        results.push({ owner_email, error: `Location fetch failed: ${err.message}` });
+        continue;
+      }
+
+      const locationMap = {};
+      for (const loc of locations) {
+        locationMap[loc.id] = loc;
+      }
+
+      // Process each character serially
+      for (const character of ownerChars) {
+        characters_checked++;
+
+        try {
+          const resolved = computeResolved(character, locationMap, etTime);
+          const stored = buildStored(character);
+          const changed = hasChanged(resolved, stored);
+
+          const entry = {
+            character_id: character.id,
+            name: character.name,
+            owner_email,
+            changed,
+            resolved_presence_status: resolved.resolved_presence_status,
+            resolved_source_reason: resolved.resolved_source_reason,
+            resolved_current_location_id: resolved.resolved_current_location_id,
+            stored_presence_status: stored.resolved_presence_status,
+            stored_location_id: stored.resolved_current_location_id,
+          };
+
+          if (!changed) {
+            no_change++;
+            entry.action = 'no_change';
+          } else if (dry_run) {
+            would_update++;
+            entry.action = 'would_update';
+          } else {
+            // WRITE: only changed fields, only if not dry_run
+            const timestamp = etTime.toISOString();
+            await base44.asServiceRole.entities.Character.update(character.id, {
+              resolved_current_location_id: resolved.resolved_current_location_id,
+              resolved_current_location_name: resolved.resolved_current_location_name,
+              resolved_location_type: resolved.resolved_location_type,
+              resolved_presence_status: resolved.resolved_presence_status,
+              resolved_source_reason: resolved.resolved_source_reason,
+              resolved_zone: resolved.resolved_zone,
+              resolved_last_updated_at: timestamp,
+              home_resolution_failed: resolved.home_resolution_failed,
+            });
+            updated++;
+            entry.action = 'updated';
+          }
+
+          results.push(entry);
+        } catch (err) {
+          if (err?.status === 429) {
+            return Response.json({
+              dry_run, owners_checked, characters_checked,
+              would_update, updated, no_change,
+              skipped: skipped.length, errors,
+              results,
+              aborted: true,
+              abort_reason: 'rate_limit_429_on_character_write',
+              abort_at_character: character.id,
+              abort_at_owner: owner_email,
+            });
+          }
+          errors++;
+          results.push({ character_id: character.id, name: character.name, owner_email, error: err.message, action: 'error' });
+        }
+
+        // 300ms delay between characters — serial only
+        await sleep(300);
+      }
+    }
+
+    return Response.json({
+      dry_run,
+      owners_checked,
+      characters_checked,
+      would_update,
+      updated,
+      no_change,
+      skipped: skipped.length,
+      skipped_details: skippedNoOwner,
+      errors,
+      results,
+      aborted: false,
+    });
+
+  } catch (error) {
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+});
