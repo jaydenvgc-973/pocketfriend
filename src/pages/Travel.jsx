@@ -485,7 +485,6 @@ Respond naturally in 1-2 sentences. Either agree reluctantly ("okay fine, let me
   };
 
   const sortedLocations = [...locationsData]
-    .filter(loc => isLocationOpen(loc) !== false) // Remove permanently closed
     .sort((a, b) => {
       const aHasImages = (a.zones || []).some(z => z.image_urls?.length > 0);
       const bHasImages = (b.zones || []).some(z => z.image_urls?.length > 0);
