@@ -288,7 +288,7 @@ export default function EditCharacterProfile() {
         ? existingRels.map(r => r.related_character_id === selectedChar.id ? myEntry : r)
         : [...existingRels, myEntry];
 
-      await base44.entities.Character.update(rel.related_character_id, { fictional_relationships: updatedRels });
+      await base44.asServiceRole.entities.Character.update(rel.related_character_id, { fictional_relationships: updatedRels });
     }));
 
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
