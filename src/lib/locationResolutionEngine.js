@@ -677,7 +677,12 @@ export function getCharacterLivePresence(character, locationMap = {}) {
     return { status: 'visiting', label: `At ${locName}`, sublabel: null, isTransit: false, isSleeping: false };
   }
   if (presenceStatus === 'home') {
-    return { status: 'home', label: 'At home', sublabel: locName, isTransit: false, isSleeping: false };
+    // Only trust the stored 'home' status if the character actually has a home location assigned.
+    // If no home location exists, the stored field is stale — fall through to the location fallback.
+    const hasHome = !!(character.current_home_location_id || character.home_location_id);
+    if (hasHome) {
+      return { status: 'home', label: 'At home', sublabel: locName, isTransit: false, isSleeping: false };
+    }
   }
 
   // ── PRIORITY 4: FALLBACK — last confirmed location ─────────────────────────
