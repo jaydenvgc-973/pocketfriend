@@ -34,6 +34,24 @@ const RABBIT_HOLE_TERMS = new Set([
 
 const VAGUE = ['out', 'busy', 'gone', 'away', 'around', 'somewhere', 'good', 'here'];
 
+// ── VAGUE LOCATION PHRASE GUARD ───────────────────────────────────────────────
+// Phrases that sound location-like but carry no real destination meaning.
+// If detected, do NOT write as a real location name — write "Away" + rabbit_hole instead.
+const VAGUE_LOCATION_PHRASES = new Set([
+  'nearby', 'near', 'around', 'around here', 'around town', 'around the area',
+  'out', 'outside', 'out there', 'out here', 'out and about',
+  'somewhere', 'somewhere nearby', 'somewhere around here', 'somewhere close',
+  'here', 'there', 'over there', 'right here', 'right there',
+  'close by', 'close', 'not far', 'not far from here',
+  'by', 'nearby somewhere', 'around somewhere',
+]);
+
+function isVagueLocationPhrase(phrase) {
+  if (!phrase) return true;
+  const normalized = phrase.toLowerCase().trim().replace(/\s+/g, ' ');
+  return VAGUE_LOCATION_PHRASES.has(normalized);
+}
+
 // Detect "going out" / "heading out" / "stepping out" statements — sets traveling state without specific destination
 const GOING_OUT_PATTERNS = [
   /\b(?:i'm|i am|i'll be|gonna be|going to be)\s+(?:going|heading|stepping|getting|going\s+out|heading\s+out|stepping\s+out|out\s+for\s+a\s+bit|out\s+for\s+a\s+while|out\s+tonight|out\s+today|out\s+right\s+now)\b/i,
@@ -100,23 +118,40 @@ Deno.serve(async (req) => {
     if (!detected) {
       const isGoingOut = detectGoingOut(messageContent);
       if (isGoingOut) {
-        // Set character to a traveling/out state without a specific destination
+        // Vague going-out statement — write Away/rabbit_hole, not a made-up location name
         await base44.entities.Character.update(characterId, {
-          resolved_current_location_name: 'Out',
-          resolved_location_type: 'visit',
-          resolved_presence_status: 'visiting',
-          resolved_source_reason: 'chat_going_out',
+          resolved_current_location_id: null,
+          resolved_current_location_name: 'Away',
+          resolved_location_type: 'rabbit_hole',
+          resolved_presence_status: 'rabbit_hole',
+          resolved_source_reason: 'vague_location_phrase_blocked',
           location_status: 'traveling',
           travel_status: 'traveling_to_destination',
           last_location_update_time: new Date().toISOString(),
         });
-        console.log(`[updateCharacterLocationFromMessage] ✓ "${character.name}" marked as out/traveling (vague going-out statement)`);
-        return Response.json({ success: true, updated: true, method: 'going_out', reason: 'vague_travel_detected' });
+        console.log(`[updateCharacterLocationFromMessage] ✓ "${character.name}" marked Away (vague going-out — blocked from writing vague name)`);
+        return Response.json({ success: true, updated: true, method: 'going_out_blocked', reason: 'vague_travel_detected' });
       }
       return Response.json({ success: true, updated: false, reason: 'no_place_detected' });
     }
 
     const { raw, normalized } = detected;
+
+    // ── VAGUE PHRASE GUARD — applied before any location write ────────────────
+    // If the extracted phrase is a vague positional word, do not attempt to match or
+    // write it as a real location name. Return unresolved so the frontend can handle it.
+    if (isVagueLocationPhrase(raw) || isVagueLocationPhrase(normalized)) {
+      console.log(`[updateCharacterLocationFromMessage] BLOCKED vague phrase: "${raw}" — writing Away`);
+      await base44.entities.Character.update(characterId, {
+        resolved_current_location_id: null,
+        resolved_current_location_name: 'Away',
+        resolved_location_type: 'rabbit_hole',
+        resolved_presence_status: 'rabbit_hole',
+        resolved_source_reason: 'vague_location_phrase_blocked',
+        last_location_update_time: new Date().toISOString(),
+      });
+      return Response.json({ success: true, updated: true, method: 'vague_blocked', phrase: raw });
+    }
 
     // STEP 1: Exact saved-location match
     let exactMatch = null;

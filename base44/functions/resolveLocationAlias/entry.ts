@@ -36,6 +36,23 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'phrase and resolutionType required' }, { status: 400 });
     }
 
+    // ── VAGUE LOCATION PHRASE GUARD ───────────────────────────────────────────
+    // If the phrase is a known vague word (not a real destination), block any
+    // rabbit_hole write that would store it as a real location name.
+    // This applies even if the user manually confirmed a vague alias.
+    const VAGUE_LOCATION_PHRASES = new Set([
+      'nearby', 'near', 'around', 'around here', 'around town', 'around the area',
+      'out', 'outside', 'out there', 'out here', 'out and about',
+      'somewhere', 'somewhere nearby', 'somewhere around here', 'somewhere close',
+      'here', 'there', 'over there', 'right here', 'right there',
+      'close by', 'close', 'not far', 'not far from here',
+      'by', 'nearby somewhere', 'around somewhere',
+    ]);
+    function isVagueLocationPhrase(p) {
+      if (!p) return true;
+      return VAGUE_LOCATION_PHRASES.has(p.toLowerCase().trim().replace(/\s+/g, ' '));
+    }
+
     // Normalize the phrase
     const normalizedPhrase = phrase.toLowerCase().trim()
       .replace(/['".,!?]/g, '')
@@ -98,20 +115,29 @@ Deno.serve(async (req) => {
           rabbit_hole_subtype: null,
         };
       } else if (resolutionType === 'rabbit_hole') {
-        const label = rabbitHoleLabel || phrase.replace(/\b\w/g, c => c.toUpperCase());
+        // ── VAGUE GUARD: if the phrase or label is a vague positional word,
+        // do NOT store it as a real location name — use "Away" instead.
+        const rawLabel = rabbitHoleLabel || phrase.replace(/\b\w/g, c => c.toUpperCase());
+        const effectiveLabel = isVagueLocationPhrase(rabbitHoleLabel || phrase) ? 'Away' : rawLabel;
+        const effectiveSourceReason = isVagueLocationPhrase(rabbitHoleLabel || phrase)
+          ? 'vague_location_phrase_blocked'
+          : 'chat_rabbit_hole';
         presenceUpdate = {
           resolved_current_location_id: null,
-          resolved_current_location_name: label,
+          resolved_current_location_name: effectiveLabel,
           resolved_location_type: 'rabbit_hole',
           resolved_presence_status: 'rabbit_hole',
-          resolved_source_reason: 'chat_rabbit_hole',
+          resolved_source_reason: effectiveSourceReason,
           location_status: 'at_location',
           is_rabbit_hole: true,
-          rabbit_hole_label: label,
+          rabbit_hole_label: effectiveLabel,
           rabbit_hole_subtype: rabbitHoleSubtype || null,
           rabbit_hole_started_at: new Date().toISOString(),
           last_location_update_time: new Date().toISOString(),
         };
+        if (effectiveSourceReason === 'vague_location_phrase_blocked') {
+          console.log(`[resolveLocationAlias] BLOCKED vague rabbit hole phrase: "${phrase}" → writing "Away"`);
+        }
       }
 
       if (Object.keys(presenceUpdate).length > 0) {
