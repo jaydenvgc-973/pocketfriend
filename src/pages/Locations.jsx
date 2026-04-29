@@ -426,7 +426,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
   const { data: rlsActiveChars = [] } = useQuery({
     queryKey: ['locationFormActive', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email, status: "active", character_type: "active_created_character" })
+      ? base44.entities.Character.filter({ owner_email: currentUser.email, status: "active", character_type: "active_created_character" })
       : [],
     enabled: !!currentUser?.email,
   });
@@ -472,7 +472,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     // Add characters whose occupation_location_id or additional_occupation_locations point to this location
     allCharacters.forEach(char => {
       if (!char || !char.id || char.status === 'deleted' || char.status === 'moved_away') return;
-      if (char.owner_email !== currentUser?.email && char.created_by !== currentUser?.email) return;
+      if (char.owner_email !== currentUser?.email) return;
       
       // Check primary occupation location
       if (char.occupation_location_id === editingLocation?.id) {
@@ -1273,15 +1273,11 @@ export default function Locations() {
     queryKey: ["characters", currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const [activeChars, npcsByCreatedBy, npcsByOwnerEmail] = await Promise.all([
+      const [activeChars, npcCharsRaw] = await Promise.all([
         base44.entities.Character.filter({
-          created_by: currentUser.email,
+          owner_email: currentUser.email,
           status: "active",
           character_type: "active_created_character"
-        }),
-        base44.entities.Character.filter({
-          created_by: currentUser.email,
-          character_type: { $in: ['npc_fictitious', 'npc_family_member'] },
         }),
         base44.entities.Character.filter({
           owner_email: currentUser.email,
@@ -1289,7 +1285,7 @@ export default function Locations() {
         }),
       ]);
       const seen = new Set();
-      const npcChars = [...npcsByCreatedBy, ...npcsByOwnerEmail].filter(c => {
+      const npcChars = npcCharsRaw.filter(c => {
         if (seen.has(c.id)) return false;
         seen.add(c.id);
         return c.status !== 'deleted' && c.status !== 'moved_away';
@@ -1303,7 +1299,7 @@ export default function Locations() {
     queryKey: ["userSettings", currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return null;
-      const s = await base44.entities.UserSettings.filter({ created_by: currentUser.email });
+      const s = await base44.entities.UserSettings.filter({ owner_email: currentUser.email });
       return s[0] || null;
     },
     enabled: !!currentUser?.email,
@@ -1428,7 +1424,7 @@ export default function Locations() {
     if (!loc) return;
     const isShared = loc.scope === 'shared' || loc.location_type === 'shared';
     if (isShared && currentUser?.role !== 'admin') { alert('Shared locations can only be deleted by admins.'); return; }
-    const isOwner = loc.owner_email === currentUser?.email || loc.created_by === currentUser?.email;
+    const isOwner = loc.owner_email === currentUser?.email;
     const canDelete = isOwner || loc.location_type === 'global';
     if (!canDelete) { alert(`You can only delete locations you created.`); return; }
     if (!confirm(`Delete "${loc.name}"? This cannot be undone.`)) return;
@@ -1439,7 +1435,7 @@ export default function Locations() {
   const handleEdit = (location) => { setInlineEditId(location.id); setShowAddForm(false); };
 
   const handleDuplicate = async (location) => {
-    const { id, created_date, updated_date, created_by, ...rest } = location;
+    const { id, created_date, updated_date, ...rest } = location;
     const duplicate = { ...rest, name: `${rest.name} (Copy)` };
     const created = await base44.entities.LocationReference.create(duplicate);
     setNewlyCreatedLocation({ id: created.id, name: duplicate.name, category: duplicate.category });

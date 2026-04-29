@@ -30,7 +30,7 @@ export default function Moments() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ status: "active", created_by: currentUser.email })
+      ? base44.entities.Character.filter({ status: "active", owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
   });
@@ -39,6 +39,7 @@ export default function Moments() {
     queryKey: ["userAchievements", currentUser?.email],
     queryFn: () => currentUser?.email
       ? base44.entities.UserAchievement.filter({ created_by: currentUser.email }, "-unlocked_at")
+      // NOTE: UserAchievement uses created_by for RLS — this is a platform entity filter, not ownership logic
       : [],
     enabled: !!currentUser?.email,
   });
@@ -46,7 +47,7 @@ export default function Moments() {
   const { data: messages = [] } = useQuery({
     queryKey: ["allMessages", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Message.filter({ created_by: currentUser.email }, "-created_date", 500)
+      ? base44.entities.Message.filter({}, "-created_date", 500)
       : [],
     enabled: !!currentUser?.email,
   });
@@ -54,7 +55,7 @@ export default function Moments() {
   const { data: userChallenges = [] } = useQuery({
     queryKey: ["userChallenges", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.UserChallenge.filter({ created_by: currentUser.email })
+      ? base44.entities.UserChallenge.filter({})
       : [],
     enabled: !!currentUser?.email,
   });

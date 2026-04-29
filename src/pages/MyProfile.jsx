@@ -36,7 +36,7 @@ export default function MyProfile() {
   const { data: characters = [] } = useQuery({
     queryKey: ["characters", user?.email],
     queryFn: () => user?.email
-      ? base44.entities.Character.filter({ created_by: user.email, status: "active" }, "-created_date", 100)
+      ? base44.entities.Character.filter({ owner_email: user.email, status: "active" }, "-created_date", 100)
       : [],
     enabled: !!user?.email,
   });
