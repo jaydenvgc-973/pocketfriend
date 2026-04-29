@@ -88,7 +88,7 @@ export default function Scene() {
   const { data: currentUser = {} } = useQuery({ queryKey: ["user"], queryFn: () => base44.auth.me() });
   const { data: settingsList = [] } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => base44.entities.UserSettings.filter({ created_by: currentUser.email }),
+    queryFn: () => base44.entities.UserSettings.filter({ owner_email: currentUser.email }),
     enabled: !!currentUser?.email,
   });
   const settings = settingsList[0] || {};

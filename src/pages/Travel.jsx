@@ -52,7 +52,7 @@ export default function Travel() {
   const { data: settingsList = [] } = useQuery({
     queryKey: ["userSettings", currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.UserSettings.filter({ created_by: currentUser.email })
+      ? base44.entities.UserSettings.filter({ owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
   });
@@ -87,7 +87,7 @@ export default function Travel() {
   const { data: rlsNpcFictitious = [] } = useQuery({
     queryKey: ["npcFictitiousRls", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
-      { created_by: currentUser.email, character_type: 'npc_fictitious' },
+      { owner_email: currentUser.email, character_type: 'npc_fictitious' },
       '-created_date',
       300
     ),
@@ -96,11 +96,11 @@ export default function Travel() {
     gcTime: 0,
   });
 
-  // npc_family_member — via created_by (user-created family records)
+  // npc_family_member — via owner_email (primary ownership field)
   const { data: rlsFamilyByCreatedBy = [] } = useQuery({
     queryKey: ["npcFamilyMembers", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
-      { created_by: currentUser.email, character_type: 'npc_family_member' },
+      { owner_email: currentUser.email, character_type: 'npc_family_member' },
       '-created_date',
       300
     ),

@@ -17,7 +17,7 @@ export function useSceneCharacters(currentUser) {
   const { data: activeChars = [] } = useQuery({
     queryKey: ["activeCharacters", currentUser?.email],
     queryFn: () => base44.entities.Character.filter({
-      created_by: currentUser.email,
+      owner_email: currentUser.email,
       status: "active",
       character_type: "active_created_character"
     }),
@@ -38,7 +38,7 @@ export function useSceneCharacters(currentUser) {
   const { data: rlsNpcFictitious = [] } = useQuery({
     queryKey: ["npcFictitiousRls", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
-      { created_by: currentUser.email, character_type: 'npc_fictitious' },
+      { owner_email: currentUser.email, character_type: 'npc_fictitious' },
       '-created_date', 300
     ),
     enabled,
@@ -48,7 +48,7 @@ export function useSceneCharacters(currentUser) {
   const { data: familyByCreatedBy = [] } = useQuery({
     queryKey: ["npcFamilyMembers", currentUser?.email],
     queryFn: () => base44.entities.Character.filter(
-      { created_by: currentUser.email, character_type: 'npc_family_member' },
+      { owner_email: currentUser.email, character_type: 'npc_family_member' },
       '-created_date', 300
     ),
     enabled,

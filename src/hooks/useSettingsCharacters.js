@@ -17,7 +17,7 @@ export function useSettingsCharacters(currentUser, moduleType) {
     queryKey: ["characters", currentUser?.email],
     queryFn: () =>
       currentUser?.email
-        ? base44.entities.Character.filter({ created_by: currentUser.email }, "-created_date", 300)
+        ? base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 300)
         : [],
     enabled: !!currentUser?.email,
   });
