@@ -463,6 +463,7 @@ export default function Chat() {
       if (res?.data?.unresolved && res.data.phrase) {
         setPendingAliasResolution({
           phrase: res.data.phrase,
+          sourceSentence: res.data.source_sentence || null,
           characterId: targetCharId,
           characterName: character?.name,
         });
@@ -1432,6 +1433,7 @@ Reply with ONLY the single emoji or the word "none".`,
         if (res?.data?.unresolved && res.data.phrase) {
           setPendingAliasResolution({
             phrase: res.data.phrase,
+            sourceSentence: res.data.source_sentence || null,
             characterId: res.data.characterId || characterId,
             characterName: res.data.characterName || character?.name,
           });
@@ -1649,11 +1651,44 @@ Reply with ONLY the single emoji or the word "none".`,
       {pendingAliasResolution && (
         <LocationAliasResolutionPopup
           phrase={pendingAliasResolution.phrase}
+          sourceSentence={pendingAliasResolution.sourceSentence}
           characterId={pendingAliasResolution.characterId}
           characterName={pendingAliasResolution.characterName}
           onResolved={() => { setPendingAliasResolution(null); queryClient.invalidateQueries({ queryKey: ["character", characterId] }); }}
           onDismiss={() => setPendingAliasResolution(null)}
         />
+      )}
+
+      {pendingApproval?.type === 'education' && (
+        <ApprovalPopup
+          type="education"
+          title="Education Detail Detected"
+          description={`${pendingApproval.data.character?.name} mentioned an education detail. Add this to their profile?`}
+          details={pendingApproval.data}
+          detectedItem={pendingApproval.data.detail}
+          sourceSentence={pendingApproval.data.sentence}
+          onApprove={approveEvent}
+          onDeny={dismissApproval}
+          onIgnoreType={() => dismissApproval()}
+        >
+          <p><span className="text-muted-foreground">Status:</span> {pendingApproval.data.status === 'completed' ? 'Past / Completed' : pendingApproval.data.status === 'ongoing' ? 'Current / Ongoing' : 'Future / Planned'}</p>
+        </ApprovalPopup>
+      )}
+
+      {pendingApproval?.type === 'background_detail' && (
+        <ApprovalPopup
+          type="background_detail"
+          title="Background Detail Detected"
+          description={`${pendingApproval.data.character?.name} revealed a background detail. Add this to their profile?`}
+          details={pendingApproval.data}
+          detectedItem={pendingApproval.data.detail}
+          sourceSentence={pendingApproval.data.sentence}
+          onApprove={approveEvent}
+          onDeny={dismissApproval}
+          onIgnoreType={() => dismissApproval()}
+        >
+          <p><span className="text-muted-foreground">Category:</span> {pendingApproval.data.label}</p>
+        </ApprovalPopup>
       )}
       {newPeopleDetected && character && (
         <NewPersonDetectedModal

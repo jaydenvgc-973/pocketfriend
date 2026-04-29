@@ -3,15 +3,87 @@ import { base44 } from "@/api/base44Client";
 
 /**
  * useApprovalEvents
- * 
+ *
  * Hook that manages approval pop-up state for life events detected in chat:
  * - Move-in together
  * - Marriage
  * - Birth / child NPC
- * 
- * Usage: call checkForApprovalEvents(characterReply, character, allCharacters) after each chat turn.
- * Renders the appropriate pop-up component if needed.
+ * - Education details (past/present/future)
+ * - General background details (hometown, job history, skills, etc.)
+ *
+ * Usage: call checkForApprovalEvents(characterReply, character, allCharacters, userMessage) after each chat turn.
  */
+
+// ── EDUCATION PATTERNS ───────────────────────────────────────────────────────
+const EDUCATION_PAST_PATTERNS = [
+  { pattern: /graduated\s+from\s+([\w\s']+(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
+  { pattern: /went\s+to\s+([\w\s']+(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
+  { pattern: /attended\s+([\w\s']+(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
+  { pattern: /degree\s+(?:from|in|at)\s+([\w\s']+)/i, group: 1 },
+  { pattern: /studied\s+(?:at\s+)?([\w\s']+(?:college|university|school|academy|institute))/i, group: 1 },
+  { pattern: /got\s+(?:my\s+)?(?:diploma|degree|certificate|GED)/i, group: 0 },
+  { pattern: /finished\s+(?:my\s+)?(?:degree|studies|school|college)/i, group: 0 },
+];
+
+const EDUCATION_ONGOING_PATTERNS = [
+  { pattern: /(?:i'm|i am|i'm)\s+(?:currently\s+)?(?:taking|enrolled|studying)\s+(?:classes\s+)?(?:at\s+)?([\w\s']+(?:college|university|school|academy|institute))/i, group: 1 },
+  { pattern: /(?:i'm|i am)\s+(?:in|at)\s+([\w\s']+(?:college|university|school|academy|institute|high school))/i, group: 1 },
+  { pattern: /(?:i'm|i am)\s+working\s+on\s+(?:my\s+)?(?:degree|certification|diploma|GED)/i, group: 0 },
+  { pattern: /(?:taking|have)\s+classes?\s+(?:at\s+)?([\w\s']+)/i, group: 1 },
+];
+
+const EDUCATION_FUTURE_PATTERNS = [
+  { pattern: /(?:want|plan|hoping|going)\s+to\s+(?:go\s+to|attend|enroll\s+at)\s+([\w\s']+(?:college|university|school|academy|institute))/i, group: 1 },
+  { pattern: /(?:applying|applied)\s+to\s+([\w\s']+(?:college|university|school|academy|institute))/i, group: 1 },
+  { pattern: /(?:next|after)\s+(?:year|semester|fall|spring)\s+(?:i'll|i will|i'm going to)\s+(?:go|attend|start)/i, group: 0 },
+  { pattern: /thinking\s+about\s+going\s+(?:back\s+to\s+)?(?:school|college|university)/i, group: 0 },
+];
+
+// ── BACKGROUND DETAIL PATTERNS ───────────────────────────────────────────────
+const BACKGROUND_PATTERNS = [
+  { category: 'hometown', pattern: /(?:grew up|from|born|raised)\s+(?:in\s+)?([\w\s]+,?\s*[\w\s]*)/i, label: 'Hometown/Origin' },
+  { category: 'hobby', pattern: /(?:love|enjoy|passionate about|really into|hobby is)\s+([\w\s]+)/i, label: 'Hobby/Interest' },
+  { category: 'skill', pattern: /(?:know how to|can|trained in|skilled in|certified in)\s+([\w\s]+)/i, label: 'Skill/Certification' },
+  { category: 'past_job', pattern: /(?:used to work|worked at|previous job|former(?:ly)?)\s+(?:as\s+|at\s+)?([\w\s']+)/i, label: 'Past Job/Work History' },
+  { category: 'family', pattern: /(?:my\s+(?:mom|dad|mother|father|sister|brother|parents|grandma|grandpa|grandmother|grandfather))\s+(?:is|was|lives?|works?|has)/i, label: 'Family Detail' },
+  { category: 'childhood', pattern: /(?:when i was (?:young|a kid|little|growing up)|as a child|my childhood)/i, label: 'Childhood Detail' },
+  { category: 'career_goal', pattern: /(?:want to be|dream(?:s)? of|goal is to|aspire to)\s+([\w\s]+)/i, label: 'Career Goal' },
+  { category: 'major', pattern: /(?:majored?|studied|degree)\s+in\s+([\w\s]+)/i, label: 'Academic Major/Field' },
+  { category: 'religion', pattern: /(?:christian|muslim|jewish|buddhist|catholic|protestant|atheist|agnostic|religious|faith)/i, label: 'Religious Background' },
+  { category: 'health', pattern: /(?:diagnosed with|living with|managing|recovering from)\s+([\w\s]+)/i, label: 'Health/Medical Detail' },
+];
+
+// Extract candidate text and match sentence
+function extractEducationDetail(text) {
+  for (const { pattern, group } of EDUCATION_PAST_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return { detail: group > 0 ? match[group]?.trim() : match[0]?.trim(), status: 'completed', sentence: extractSentenceContaining(text, match[0]) };
+  }
+  for (const { pattern, group } of EDUCATION_ONGOING_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return { detail: group > 0 ? match[group]?.trim() : match[0]?.trim(), status: 'ongoing', sentence: extractSentenceContaining(text, match[0]) };
+  }
+  for (const { pattern, group } of EDUCATION_FUTURE_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return { detail: group > 0 ? match[group]?.trim() : match[0]?.trim(), status: 'planned', sentence: extractSentenceContaining(text, match[0]) };
+  }
+  return null;
+}
+
+function extractBackgroundDetail(text) {
+  for (const { category, pattern, label } of BACKGROUND_PATTERNS) {
+    const match = text.match(pattern);
+    if (match) return { detail: match[0]?.trim(), category, label, sentence: extractSentenceContaining(text, match[0]) };
+  }
+  return null;
+}
+
+function extractSentenceContaining(fullText, substring) {
+  if (!substring) return fullText;
+  const sentences = fullText.split(/(?<=[.!?])\s+/);
+  const found = sentences.find(s => s.toLowerCase().includes(substring.toLowerCase()));
+  return found || fullText.substring(0, 200);
+}
 
 // Patterns for detecting events in character replies
 const MOVE_IN_PATTERNS = [
@@ -57,50 +129,88 @@ export function useApprovalEvents() {
   const checkForApprovalEvents = useCallback((characterReply, character, allCharacters = [], userMessage = '') => {
     if (!characterReply || !character) return;
 
-    const combined = (characterReply + ' ' + userMessage).toLowerCase();
+    const combined = characterReply + ' ' + userMessage;
+    const combinedLower = combined.toLowerCase();
     const eventKey_moveIn = `move_in_${character.id}`;
     const eventKey_marriage = `marriage_${character.id}`;
     const eventKey_birth = `birth_${character.id}`;
 
     // Don't re-prompt for recently dismissed events
-    if (!dismissed.has(eventKey_moveIn) && MOVE_IN_PATTERNS.some(p => p.test(combined))) {
-      // Try to detect who they're moving in with
-      const otherCharName = allCharacters.find(c => c.id !== character.id && combined.includes(c.name.toLowerCase()))?.name;
+    if (!dismissed.has(eventKey_moveIn) && MOVE_IN_PATTERNS.some(p => p.test(combinedLower))) {
+      const otherCharName = allCharacters.find(c => c.id !== character.id && combinedLower.includes(c.name.toLowerCase()))?.name;
       setPendingApproval({
         type: 'move_in',
-        data: {
-          character,
-          otherCharName: otherCharName || null,
-          eventKey: eventKey_moveIn,
-        }
+        data: { character, otherCharName: otherCharName || null, eventKey: eventKey_moveIn }
       });
       return;
     }
 
-    if (!dismissed.has(eventKey_marriage) && MARRIAGE_PATTERNS.some(p => p.test(combined))) {
-      const otherCharName = allCharacters.find(c => c.id !== character.id && combined.includes(c.name.toLowerCase()))?.name;
+    if (!dismissed.has(eventKey_marriage) && MARRIAGE_PATTERNS.some(p => p.test(combinedLower))) {
+      const otherCharName = allCharacters.find(c => c.id !== character.id && combinedLower.includes(c.name.toLowerCase()))?.name;
       setPendingApproval({
         type: 'marriage',
-        data: {
-          character,
-          otherCharName: otherCharName || null,
-          eventKey: eventKey_marriage,
-        }
+        data: { character, otherCharName: otherCharName || null, eventKey: eventKey_marriage }
       });
       return;
     }
 
-    if (!dismissed.has(eventKey_birth) && BIRTH_PATTERNS.some(p => p.test(combined))) {
-      const otherParentName = allCharacters.find(c => c.id !== character.id && combined.includes(c.name.toLowerCase()))?.name;
+    if (!dismissed.has(eventKey_birth) && BIRTH_PATTERNS.some(p => p.test(combinedLower))) {
+      const otherParentName = allCharacters.find(c => c.id !== character.id && combinedLower.includes(c.name.toLowerCase()))?.name;
       setPendingApproval({
         type: 'birth',
-        data: {
-          character,
-          otherParentName: otherParentName || null,
-          eventKey: eventKey_birth,
-        }
+        data: { character, otherParentName: otherParentName || null, eventKey: eventKey_birth }
       });
       return;
+    }
+
+    // ── EDUCATION DETECTION ─────────────────────────────────────────────────
+    const eventKey_edu = `education_${character.id}_${combinedLower.substring(0, 30)}`;
+    if (!dismissed.has(eventKey_edu)) {
+      const eduResult = extractEducationDetail(combined);
+      if (eduResult && eduResult.detail && eduResult.detail.length > 3 && eduResult.detail.length < 100) {
+        // Check if this is already saved
+        const existingEdu = [
+          character.education_details?.course_name,
+          character.education_location_name,
+          character.current_education_activity !== 'none' ? character.current_education_activity : null,
+          ...(character.completed_education || []).map(e => e.course_name),
+          ...(character.additional_education_locations || []).map(l => l.program_name || l.location_name),
+        ].filter(Boolean).map(v => v.toLowerCase());
+        const alreadySaved = existingEdu.some(e => e.includes(eduResult.detail.toLowerCase()) || eduResult.detail.toLowerCase().includes(e));
+        if (!alreadySaved) {
+          setPendingApproval({
+            type: 'education',
+            data: {
+              character,
+              detail: eduResult.detail,
+              status: eduResult.status, // 'completed' | 'ongoing' | 'planned'
+              sentence: eduResult.sentence,
+              eventKey: eventKey_edu,
+            }
+          });
+          return;
+        }
+      }
+    }
+
+    // ── BACKGROUND DETAIL DETECTION ─────────────────────────────────────────
+    const eventKey_bg = `background_${character.id}_${combinedLower.substring(0, 30)}`;
+    if (!dismissed.has(eventKey_bg)) {
+      const bgResult = extractBackgroundDetail(combined);
+      if (bgResult && bgResult.detail && bgResult.detail.length > 3 && bgResult.detail.length < 150) {
+        setPendingApproval({
+          type: 'background_detail',
+          data: {
+            character,
+            detail: bgResult.detail,
+            category: bgResult.category,
+            label: bgResult.label,
+            sentence: bgResult.sentence,
+            eventKey: eventKey_bg,
+          }
+        });
+        return;
+      }
     }
   }, [dismissed]);
 
@@ -146,6 +256,50 @@ export function useApprovalEvents() {
         timestamp: new Date().toISOString(),
         systems_updated: ['memory'],
       }).catch(() => {});
+    }
+
+    if (type === 'education' && data.character) {
+      const { detail, status, character: char } = data;
+      const statusLabel = status === 'completed' ? 'Completed' : status === 'ongoing' ? 'Ongoing' : 'Planned';
+      if (status === 'completed') {
+        const existing = char.completed_education || [];
+        await base44.entities.Character.update(char.id, {
+          completed_education: [...existing, { course_name: detail, completion_date: new Date().toISOString() }],
+        }).catch(() => {});
+      } else if (status === 'ongoing') {
+        await base44.entities.Character.update(char.id, {
+          current_education_activity: detail,
+        }).catch(() => {});
+      } else if (status === 'planned') {
+        // Store as a memory / life goal note — no direct field for planned education
+        await base44.entities.Memory.create({
+          character_id: char.id,
+          memory_type: 'fact',
+          memory_text: `${char.name} plans to attend or study: ${detail}`,
+          memory_summary: `Education plan: ${detail}`,
+          importance_score: 5,
+          permanence: 'long_term',
+        }).catch(() => {});
+      }
+    }
+
+    if (type === 'background_detail' && data.character) {
+      const { detail, category, character: char } = data;
+      const updatePayload = {};
+      if (category === 'hometown') updatePayload.city = detail.trim();
+      // For other categories, store as a memory
+      if (!updatePayload.city) {
+        await base44.entities.Memory.create({
+          character_id: char.id,
+          memory_type: category === 'family' ? 'relationship' : 'fact',
+          memory_text: detail,
+          memory_summary: detail.substring(0, 80),
+          importance_score: 5,
+          permanence: 'long_term',
+        }).catch(() => {});
+      } else {
+        await base44.entities.Character.update(char.id, updatePayload).catch(() => {});
+      }
     }
 
     if (type === 'birth' && data.character) {

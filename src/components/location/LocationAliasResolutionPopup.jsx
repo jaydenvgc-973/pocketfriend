@@ -11,7 +11,7 @@ const CATEGORY_EMOJIS = {
   business: "💼", school: "🎓", community: "🤝", generic: "📍",
 };
 
-export default function LocationAliasResolutionPopup({ phrase, characterId, characterName, onResolved, onDismiss }) {
+export default function LocationAliasResolutionPopup({ phrase, sourceSentence, characterId, characterName, onResolved, onDismiss }) {
   const [search, setSearch] = useState("");
   const [step, setStep] = useState("choose"); // "choose" | "select_location"
   const [selectedLocation, setSelectedLocation] = useState(null);
@@ -99,14 +99,34 @@ export default function LocationAliasResolutionPopup({ phrase, characterId, char
         >
           {/* Header */}
           <div className="flex items-center justify-between px-5 pt-5 pb-3">
-            <div>
+            <div className="flex-1 min-w-0">
               <h3 className="text-sm font-semibold text-foreground">Resolve location reference</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {characterName ? `${characterName} mentioned ` : ""}
-                <span className="text-primary font-medium">"{phrase}"</span>
-              </p>
+              <div className="mt-2 rounded-lg bg-secondary/60 border border-border p-2.5 space-y-1.5">
+                <div>
+                  <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Detected location word</p>
+                  <p className="text-xs font-semibold text-primary mt-0.5">"{phrase}"</p>
+                </div>
+                {sourceSentence && (
+                  <div>
+                    <p className="text-[10px] text-muted-foreground uppercase tracking-wider">Found in</p>
+                    <p className="text-xs text-muted-foreground italic leading-relaxed mt-0.5">
+                      {(() => {
+                        const idx = sourceSentence.toLowerCase().indexOf(phrase.toLowerCase());
+                        if (idx === -1) return `"${sourceSentence}"`;
+                        return (
+                          <>
+                            "{sourceSentence.substring(0, idx)}
+                            <span className="text-primary font-semibold not-italic">'{sourceSentence.substring(idx, idx + phrase.length)}'</span>
+                            {sourceSentence.substring(idx + phrase.length)}"
+                          </>
+                        );
+                      })()}
+                    </p>
+                  </div>
+                )}
+              </div>
             </div>
-            <button onClick={onDismiss} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={onDismiss} className="p-1.5 rounded-lg text-muted-foreground hover:text-foreground transition-colors ml-3 flex-shrink-0">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -114,7 +134,7 @@ export default function LocationAliasResolutionPopup({ phrase, characterId, char
           {step === "choose" && (
             <div className="px-5 pb-5 space-y-3">
               <p className="text-xs text-muted-foreground">
-                "<span className="text-foreground">{phrase}</span>" doesn't match a saved location on your account. Is this an existing place, or an off-screen destination?
+                This doesn't match a saved location on your account. Is this an existing place, or an off-screen destination?
               </p>
               <button
                 onClick={handleSelectExisting}
