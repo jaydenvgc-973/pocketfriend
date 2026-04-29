@@ -183,53 +183,38 @@ export function useApprovalEvents() {
     }
 
     // ── EDUCATION DETECTION ─────────────────────────────────────────────────
-    const eventKey_edu = `education_${character.id}_${combinedLower.substring(0, 30)}`;
-    if (!dismissed.has(eventKey_edu)) {
-      const eduResult = extractEducationDetail(combined);
-      if (eduResult && eduResult.detail && eduResult.detail.length > 3 && eduResult.detail.length < 100) {
-        // Check if this is already saved
-        const existingEdu = [
-          character.education_details?.course_name,
-          character.education_location_name,
-          character.current_education_activity !== 'none' ? character.current_education_activity : null,
-          ...(character.completed_education || []).map(e => e.course_name),
-          ...(character.additional_education_locations || []).map(l => l.program_name || l.location_name),
-        ].filter(Boolean).map(v => v.toLowerCase());
-        const alreadySaved = existingEdu.some(e => e.includes(eduResult.detail.toLowerCase()) || eduResult.detail.toLowerCase().includes(e));
-        if (!alreadySaved) {
-          setPendingApproval({
-            type: 'education',
-            data: {
-              character,
-              detail: eduResult.detail,
-              status: eduResult.status, // 'completed' | 'ongoing' | 'planned'
-              sentence: eduResult.sentence,
-              eventKey: eventKey_edu,
-            }
-          });
-          return;
+    const eventKey_edu = `education_${character.id}_${Date.now()}`;
+    const eduResult = extractEducationDetail(combined);
+    if (eduResult && eduResult.detail && eduResult.detail.length > 3 && eduResult.detail.length < 100) {
+      setPendingApproval({
+        type: 'education',
+        data: {
+          character,
+          detail: eduResult.detail,
+          status: eduResult.status, // 'completed' | 'ongoing' | 'planned'
+          sentence: eduResult.sentence,
+          eventKey: eventKey_edu,
         }
-      }
+      });
+      return;
     }
 
     // ── BACKGROUND DETAIL DETECTION ─────────────────────────────────────────
-    const eventKey_bg = `background_${character.id}_${combinedLower.substring(0, 30)}`;
-    if (!dismissed.has(eventKey_bg)) {
-      const bgResult = extractBackgroundDetail(combined);
-      if (bgResult && bgResult.detail && bgResult.detail.length > 3 && bgResult.detail.length < 150) {
-        setPendingApproval({
-          type: 'background_detail',
-          data: {
-            character,
-            detail: bgResult.detail,
-            category: bgResult.category,
-            label: bgResult.label,
-            sentence: bgResult.sentence,
-            eventKey: eventKey_bg,
-          }
-        });
-        return;
-      }
+    const eventKey_bg = `background_${character.id}_${Date.now()}`;
+    const bgResult = extractBackgroundDetail(combined);
+    if (bgResult && bgResult.detail && bgResult.detail.length > 3 && bgResult.detail.length < 150) {
+      setPendingApproval({
+        type: 'background_detail',
+        data: {
+          character,
+          detail: bgResult.detail,
+          category: bgResult.category,
+          label: bgResult.label,
+          sentence: bgResult.sentence,
+          eventKey: eventKey_bg,
+        }
+      });
+      return;
     }
   }, [dismissed]);
 
