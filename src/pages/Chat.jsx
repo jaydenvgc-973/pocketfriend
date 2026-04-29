@@ -406,9 +406,9 @@ export default function Chat() {
       if (["❤️", "👍", "😂", "😢"].includes(emoji) && Math.random() < 0.45 && conversationId) {
         setTimeout(async () => {
           try {
-            const emojiMeanings = { "❤️": "loved your message", "👍": "thumbs-upped your message", "😂": "laughed at your message", "😢": "reacted with sadness to your message" };
+            const emojiMeanings = { "❤️": "a ❤️ (love/appreciation)", "👍": "a 👍 (thumbs up/approval)", "😂": "a 😂 (laughing reaction)", "😢": "a 😢 (sad/touched reaction)" };
             const replyRes = await base44.integrations.Core.InvokeLLM({
-              prompt: `You are ${character.name}. ${character.personality_summary || ""} The person you're talking to just ${emojiMeanings[emoji] || "reacted to your message"}: "${msg.content?.substring(0, 150) || "(image)"}". Write a SHORT, natural, casual reaction — 1 sentence max, like a real text. Don't over-explain. Be yourself. No quotes, no labels.`,
+              prompt: `You are ${character.name}. ${character.personality_summary || ""} You just sent this message: "${msg.content?.substring(0, 150) || "(image)"}". The person you're talking to reacted to YOUR message with ${emojiMeanings[emoji] || "an emoji reaction"}. Write a SHORT, natural, casual response — as yourself, reacting to RECEIVING that reaction from them. 1 sentence max, like a real text. Express how you feel about their reaction to what YOU said. Do NOT speak as the user or assume what they meant. Be yourself. No quotes, no labels.`,
             });
             const replyText = typeof replyRes === "string" ? replyRes.trim() : "";
             if (replyText && replyText.length > 2 && replyText.length < 200) {
