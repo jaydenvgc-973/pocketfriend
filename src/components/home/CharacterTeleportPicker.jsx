@@ -28,12 +28,21 @@ function getCategoryIcon(category) {
  * writes ONLY resolved_* fields — home/work/school are untouched).
  */
 export default function CharacterTeleportPicker({ character, currentLabel, currentColor, IconComponent, onTeleported }) {
-  const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [sending, setSending] = useState(null); // locationId being sent to
-  const [done, setDone] = useState(null);       // locationId just sent
-  const triggerRef = useRef(null);
-  const queryClient = useQueryClient();
+   const [open, setOpen] = useState(false);
+   const [search, setSearch] = useState("");
+   const [sending, setSending] = useState(null); // locationId being sent to
+   const [done, setDone] = useState(null);       // locationId just sent
+   const triggerRef = useRef(null);
+   const queryClient = useQueryClient();
+
+   // VALIDATION: Character must have a valid location to teleport
+   const hasValidLocation = !!(
+     character.resolved_current_location_id || 
+     character.current_home_location_id || 
+     character.home_location_id ||
+     character.temporary_housing_location_id
+   );
+   const isDisabled = !hasValidLocation || currentLabel === 'Away';
 
   const { data: locations = [], isLoading } = useQuery({
     queryKey: ["allLocationsForTeleport"],
@@ -44,14 +53,6 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
     staleTime: 60000,
     enabled: open,
   });
-
-  // Verify character has a valid current location before allowing teleport
-  const hasValidLocation = !!(
-    character.current_home_location_id ||
-    character.home_location_id ||
-    character.temporary_housing_location_id ||
-    character.resolved_current_location_id
-  );
 
   // Filter out locations that ARE the character's current resolved location
   const filtered = locations.filter(loc => {
@@ -120,10 +121,10 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
         title={!hasValidLocation ? "No valid location assigned" : "Teleport character to another location"}
       >
         <Icon className={`w-3 h-3 ${currentColor || "text-muted-foreground"}`} />
-        <span className={`text-xs ${currentColor || "text-muted-foreground"} group-hover:underline underline-offset-2`}>
+        <span className={`text-xs ${currentColor || "text-muted-foreground"} ${!hasValidLocation ? '' : 'group-hover:underline'} underline-offset-2`}>
           {currentLabel}
         </span>
-        <MapPin className="w-2.5 h-2.5 text-primary/50 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5" />
+        {hasValidLocation && <MapPin className="w-2.5 h-2.5 text-primary/50 opacity-0 group-hover:opacity-100 transition-opacity ml-0.5" />}
       </button>
 
       {/* Dropdown — rendered as portal to avoid clipping inside card */}
