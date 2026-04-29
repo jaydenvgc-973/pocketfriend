@@ -22,7 +22,7 @@ export default function ManageCharacterList({ characters: propCharacters, curren
   const { data: fetchedSettings = {} } = useQuery({
     queryKey: ['userSettings', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.UserSettings.filter({ created_by: currentUser.email }).then(list => list[0] || {})
+      ? base44.entities.UserSettings.filter({ owner_email: currentUser.email }).then(list => list[0] || {})
       : {},
     enabled: !!currentUser?.email && !propSettings,
   });
@@ -34,7 +34,7 @@ export default function ManageCharacterList({ characters: propCharacters, curren
     queryKey: ['all-characters', currentUser?.email],
     queryFn: () => {
       if (!currentUser?.email) return [];
-      return base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date', 200);
+      return base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 200);
     },
     enabled: !!currentUser?.email && !propCharacters,
   });
@@ -128,8 +128,8 @@ export default function ManageCharacterList({ characters: propCharacters, curren
                           {item.type === 'character' && itemData.character_type && (
                             <p className="text-xs text-muted-foreground">{itemData.character_type}</p>
                           )}
-                          {item.type === 'character' && isAdmin && itemData.created_by && (
-                            <p className="text-xs text-muted-foreground/70">{itemData.created_by}</p>
+                          {item.type === 'character' && isAdmin && itemData.owner_email && (
+                            <p className="text-xs text-muted-foreground/70">{itemData.owner_email}</p>
                           )}
                         </div>
                       </div>

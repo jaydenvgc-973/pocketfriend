@@ -53,7 +53,7 @@ export default function Settings() {
     queryKey: ["characters", user?.email],
     queryFn: async () => {
       if (!user?.email) return [];
-      return base44.entities.Character.filter({ created_by: user.email }, "-created_date", 300);
+      return base44.entities.Character.filter({ owner_email: user.email }, "-created_date", 300);
     },
     enabled: !!user?.email,
   });
