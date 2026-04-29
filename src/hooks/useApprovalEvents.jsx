@@ -16,13 +16,18 @@ import { base44 } from "@/api/base44Client";
 
 // ── EDUCATION PATTERNS ───────────────────────────────────────────────────────
 const EDUCATION_PAST_PATTERNS = [
+  // "graduated from Rutgers University"
   { pattern: /graduated\s+from\s+([\w\s']+(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
-  { pattern: /went\s+to\s+([\w\s']+(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
-  { pattern: /attended\s+([\w\s']+(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
+  // "I graduated in 2014" — capture the whole match, then scan for institution in same text
+  { pattern: /graduated\s+(?:back\s+)?in\s+\d{4}/i, group: 0 },
+  // "It is Rutgers University" / "went to Rutgers University"
+  { pattern: /(?:went\s+to|attended|it\s+(?:is|was)|from|at)\s+([\w\s']{2,40}(?:college|university|school|academy|institute|high school|community college))/i, group: 1 },
+  // bare institution name: "Rutgers University", "NYU", "Howard University"
+  { pattern: /\b([\w\s']{2,30}(?:college|university|institute|academy))\b/i, group: 1 },
   { pattern: /degree\s+(?:from|in|at)\s+([\w\s']+)/i, group: 1 },
   { pattern: /studied\s+(?:at\s+)?([\w\s']+(?:college|university|school|academy|institute))/i, group: 1 },
   { pattern: /got\s+(?:my\s+)?(?:diploma|degree|certificate|GED)/i, group: 0 },
-  { pattern: /finished\s+(?:my\s+)?(?:degree|studies|school|college)/i, group: 0 },
+  { pattern: /finished\s+(?:my\s+|up\s+)?(?:back\s+in\s+\d{4}|degree|studies|school|college)/i, group: 0 },
 ];
 
 const EDUCATION_ONGOING_PATTERNS = [
@@ -54,10 +59,24 @@ const BACKGROUND_PATTERNS = [
 ];
 
 // Extract candidate text and match sentence
+// Try to extract an institution name from the full text block
+function extractInstitutionFromText(text) {
+  const instMatch = text.match(/\b([\w\s']{2,40}(?:college|university|institute|academy|high school|community college))\b/i);
+  return instMatch ? instMatch[1]?.trim() : null;
+}
+
 function extractEducationDetail(text) {
   for (const { pattern, group } of EDUCATION_PAST_PATTERNS) {
     const match = text.match(pattern);
-    if (match) return { detail: group > 0 ? match[group]?.trim() : match[0]?.trim(), status: 'completed', sentence: extractSentenceContaining(text, match[0]) };
+    if (match) {
+      let detail = group > 0 ? match[group]?.trim() : match[0]?.trim();
+      // If the matched detail is just a year or "graduated in 2014", try to find an institution name in the full text
+      if (/^\d{4}$/.test(detail) || /^graduated/i.test(detail)) {
+        const institution = extractInstitutionFromText(text);
+        if (institution) detail = institution;
+      }
+      return { detail, status: 'completed', sentence: extractSentenceContaining(text, match[0]) };
+    }
   }
   for (const { pattern, group } of EDUCATION_ONGOING_PATTERNS) {
     const match = text.match(pattern);
