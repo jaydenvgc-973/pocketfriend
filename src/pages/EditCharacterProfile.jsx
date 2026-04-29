@@ -169,14 +169,21 @@ export default function EditCharacterProfile() {
     if (!selectedChar) return;
     setIsSaving(true);
 
-    // Build second job entry if any data is present
-    const hasSecondJob = form.job2_title || form.job2_work_environment || occupationLink2.locationId;
-    const secondJobEntry = hasSecondJob ? [{
+    // Build second job entry — update index 0, preserve all entries beyond index 0 untouched
+    const existingAdditional = selectedChar.additional_occupation_locations || [];
+    const updatedSecondJob = {
+      ...(existingAdditional[0] || {}), // preserve any existing fields not shown in UI
       location_id: occupationLink2.locationId || null,
       location_name: occupationLink2.locationName || null,
       job_title: form.job2_title || "",
       work_environment: form.job2_work_environment || "",
-    }] : [];
+    };
+    const hasSecondJobData = form.job2_title || form.job2_work_environment || occupationLink2.locationId;
+    // If user cleared all second job fields, remove index 0; otherwise update it. Always keep entries beyond index 0.
+    const secondJobEntry = [
+      ...(hasSecondJobData ? [updatedSecondJob] : existingAdditional[0] ? [] : []),
+      ...existingAdditional.slice(1), // preserve any entries at index 1+ unchanged
+    ];
 
     const updatedData = {
       work_details: {
