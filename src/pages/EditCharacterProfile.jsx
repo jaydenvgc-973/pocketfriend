@@ -259,18 +259,23 @@ export default function EditCharacterProfile() {
     }
 
     // Bi-directional sync with auto-pairing logic
+    // OWNERSHIP GUARD: only write to characters that belong to the current user (owner_email match).
+    // Never use asServiceRole here — user-scoped write only.
     await Promise.all((form.char_relationships || []).map(async (rel) => {
       const otherChar = characters.find(c => c.id === rel.related_character_id);
       if (!otherChar) return;
 
+      // Hard ownership check — skip bi-directional write if the related character
+      // does not belong to the current user. This prevents any cross-account write.
+      if (otherChar.owner_email !== currentUser?.email) {
+        console.warn(`[EditCharacterProfile] Skipping bi-directional sync for ${otherChar.name} — owner_email mismatch (${otherChar.owner_email} !== ${currentUser?.email})`);
+        return;
+      }
+
       const existingRels = otherChar.fictional_relationships || [];
       const alreadyLinked = existingRels.find(r => r.related_character_id === selectedChar.id);
 
-      // Determine inverse relationship type based on relationship type rules
       const relTypeKey = Object.keys(RELATIONSHIP_TYPES).find(k => RELATIONSHIP_TYPES[k].label === rel.relationship_type) || rel.relationship_type;
-      const inverseType = getInverseRelationType(relTypeKey);
-      const isBilateral = isBilateralRelationship(relTypeKey);
-      const isPaired = isPairedRelationship(relTypeKey);
 
       const myEntry = {
         related_character_id: selectedChar.id,
@@ -288,7 +293,7 @@ export default function EditCharacterProfile() {
         ? existingRels.map(r => r.related_character_id === selectedChar.id ? myEntry : r)
         : [...existingRels, myEntry];
 
-      await base44.asServiceRole.entities.Character.update(rel.related_character_id, { fictional_relationships: updatedRels });
+      await base44.entities.Character.update(rel.related_character_id, { fictional_relationships: updatedRels });
     }));
 
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
