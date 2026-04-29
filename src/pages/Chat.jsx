@@ -138,7 +138,7 @@ export default function Chat() {
     const loadConvo = async () => {
       try {
         const allConvos = await base44.entities.Conversation.filter(
-          { type: chatType, character_ids: [characterId], created_by: currentUser.email },
+          { type: chatType, character_ids: [characterId] },
           "-updated_date",
           20
         );
@@ -869,7 +869,7 @@ export default function Chat() {
         (character.occupation_location_id || character.current_activity)
           ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
               const allLocs = allLocRes?.data?.locations || [];
-              const allActiveChars = await base44.entities.Character.filter({ created_by: currentUser.email, status: 'active' });
+              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
               const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
               const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
               return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
