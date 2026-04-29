@@ -69,17 +69,50 @@ Deno.serve(async (req) => {
     // QUERY 5: Name search — "Melody Jackson Perry" (no owner/type filter)
     const melodyByFullName = await base44.asServiceRole.entities.Character.filter({ name: 'Melody Jackson Perry' });
 
-    // QUERY 6: All characters with missing owner_email (no filter — service role sees all)
-    const allCharsNoFilter = await base44.asServiceRole.entities.Character.filter({});
-    const missingOwnerEmail = allCharsNoFilter.filter(c =>
-      !c.owner_email || c.owner_email.trim() === ''
-    ).map(c => ({
+    const TARGET_EMAIL = 'murqart@gmail.com';
+
+    // QUERY 6A: owner_email + exact name "Melody Jackson Perry"
+    const q6a = await base44.asServiceRole.entities.Character.filter({
+      owner_email: TARGET_EMAIL,
+      name: 'Melody Jackson Perry'
+    });
+
+    // QUERY 6B: owner_email + primary_name "Melody Jackson Perry"
+    const q6b = await base44.asServiceRole.entities.Character.filter({
+      owner_email: TARGET_EMAIL,
+      primary_name: 'Melody Jackson Perry'
+    });
+
+    // QUERY 6C: owner_email only — with explicit high limit to test pagination cap
+    // Base44 .filter() accepts (filter, sort, limit) — try limit 500
+    const q6c = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: TARGET_EMAIL },
+      '-created_date',
+      500
+    );
+
+    // QUERY 6D: no filter, high limit — see total visible to service role
+    const q6d = await base44.asServiceRole.entities.Character.filter(
+      {},
+      '-created_date',
+      500
+    );
+
+    const mapChar2 = (c) => ({
       id: c.id,
       name: c.name,
-      owner_email: c.owner_email ?? null,
+      primary_name: c.primary_name || null,
+      owner_email: c.owner_email || null,
       character_type: c.character_type || null,
       status: c.status || null,
-    }));
+    });
+
+    // Type breakdown for high-limit owner query
+    const typeBreakdown6c = {};
+    for (const c of q6c) {
+      const t = c.character_type || 'MISSING_TYPE';
+      typeBreakdown6c[t] = (typeBreakdown6c[t] || 0) + 1;
+    }
 
     return Response.json({
       query1_active_created_character: {
@@ -102,10 +135,23 @@ Deno.serve(async (req) => {
         count: melodyByFullName.length,
         results: melodyByFullName.map(mapChar),
       },
-      query6_missing_owner_email: {
-        total_scanned: allCharsNoFilter.length,
-        missing_count: missingOwnerEmail.length,
-        records: missingOwnerEmail,
+      query6a_owner_email_plus_name: {
+        count: q6a.length,
+        results: q6a.map(mapChar2),
+      },
+      query6b_owner_email_plus_primary_name: {
+        count: q6b.length,
+        results: q6b.map(mapChar2),
+      },
+      query6c_owner_email_limit500: {
+        count: q6c.length,
+        type_breakdown: typeBreakdown6c,
+        note: 'If count > query2 total, default filter was paginated/capped',
+        all_names: q6c.map(c => ({ id: c.id, name: c.name, character_type: c.character_type })),
+      },
+      query6d_no_filter_limit500: {
+        count: q6d.length,
+        note: 'Total records visible to service role with limit=500',
       },
     });
 
