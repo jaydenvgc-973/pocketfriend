@@ -246,6 +246,10 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
               {!isMovedAway && (() => {
                 const presence = getCharacterLivePresence(character, locationMap);
 
+                // STRICT HOME VALIDATION: Character can only show "home" if they have a valid home location
+                const hasValidHome = !!(character.current_home_location_id || character.home_location_id || character.temporary_housing_location_id);
+                const shouldShowHome = presence.status === 'home' && hasValidHome;
+
                 // Rabbit hole — not teleportable, show static
                 if (presence.status === 'rabbit_hole') {
                   return (
@@ -273,9 +277,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
                 } else if (presence.status === 'in_transit' || presence.isTransit) {
                   IconComponent = MapPin;
                   color = 'text-orange-400';
-                } else if (presence.status === 'home') {
+                } else if (shouldShowHome) {
                   IconComponent = Home;
                   color = 'text-pink-400';
+                } else if (presence.status === 'home' && !hasValidHome) {
+                  // No valid home — show Away
+                  IconComponent = MapPin;
+                  color = 'text-muted-foreground';
+                  label = 'Away';
                 } else if (presence.status === 'health_critical') {
                   IconComponent = AlertTriangle;
                   color = 'text-red-400';

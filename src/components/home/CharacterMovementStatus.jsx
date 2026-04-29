@@ -17,13 +17,16 @@ function getPlainStatus(character) {
   const status = character.resolved_presence_status || '';
   const reason = character.resolved_source_reason || '';
   const name = character.name?.split(' ')[0] || 'This character';
-  const loc = character.resolved_current_location_name || 'home';
+  const loc = character.resolved_current_location_name || 'somewhere';
   const lastUpdated = character.resolved_last_updated_at
     ? new Date(character.resolved_last_updated_at)
     : null;
   const hoursSinceUpdate = lastUpdated
     ? (Date.now() - lastUpdated.getTime()) / 3600000
     : 999;
+
+  // RULE: Only claim "at home" if character has a valid home location assigned
+  const hasValidHome = !!(character.current_home_location_id || character.home_location_id);
 
   // Sleeping
   if (status === 'sleeping' || status === 'napping') {
@@ -70,11 +73,20 @@ function getPlainStatus(character) {
     };
   }
 
-  // Home (any recency) — just show as home, no alarm
-  if (status === 'home' || !status) {
+  // Home (only if valid home location exists)
+  if (status === 'home' && hasValidHome) {
     return {
       text: `${name} is at home.`,
       color: 'text-pink-400',
+      needsRepair: false,
+    };
+  }
+
+  // No valid location or status → Away
+  if (!status || (status === 'home' && !hasValidHome)) {
+    return {
+      text: `${name} is away.`,
+      color: 'text-muted-foreground',
       needsRepair: false,
     };
   }

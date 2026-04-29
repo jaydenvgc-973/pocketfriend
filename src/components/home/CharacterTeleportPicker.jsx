@@ -45,6 +45,14 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
     enabled: open,
   });
 
+  // Verify character has a valid current location before allowing teleport
+  const hasValidLocation = !!(
+    character.current_home_location_id ||
+    character.home_location_id ||
+    character.temporary_housing_location_id ||
+    character.resolved_current_location_id
+  );
+
   // Filter out locations that ARE the character's current resolved location
   const filtered = locations.filter(loc => {
     if (loc.id === character.resolved_current_location_id) return false;
@@ -102,9 +110,14 @@ export default function CharacterTeleportPicker({ character, currentLabel, curre
     <div className="relative inline-flex items-center" ref={triggerRef}>
       {/* Clickable location label */}
       <button
-        onClick={(e) => { e.stopPropagation(); setOpen(v => !v); }}
-        className={`flex items-center gap-1 hover:opacity-70 transition-opacity group`}
-        title="Teleport character to another location"
+        onClick={(e) => { 
+          if (!hasValidLocation) return;
+          e.stopPropagation(); 
+          setOpen(v => !v); 
+        }}
+        disabled={!hasValidLocation}
+        className={`flex items-center gap-1 transition-opacity group ${!hasValidLocation ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-70'}`}
+        title={!hasValidLocation ? "No valid location assigned" : "Teleport character to another location"}
       >
         <Icon className={`w-3 h-3 ${currentColor || "text-muted-foreground"}`} />
         <span className={`text-xs ${currentColor || "text-muted-foreground"} group-hover:underline underline-offset-2`}>
