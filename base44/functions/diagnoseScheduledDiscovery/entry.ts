@@ -34,6 +34,24 @@ Deno.serve(async (req) => {
       typeBreakdown[t] = (typeBreakdown[t] || 0) + 1;
     }
 
+    // QUERY 3: Fetch Melody by specific ID
+    const melodyId = '69cef8406d65304465075d79';
+    const allForMelody = await base44.asServiceRole.entities.Character.filter({ id: melodyId });
+    const melodyRaw = allForMelody[0] || null;
+    const melody = melodyRaw ? {
+      id: melodyRaw.id,
+      name: melodyRaw.name,
+      owner_email: melodyRaw.owner_email,
+      character_type: melodyRaw.character_type,
+      status: melodyRaw.status,
+      resolved_presence_status: melodyRaw.resolved_presence_status,
+      current_home_location_id: melodyRaw.current_home_location_id,
+      occupation_location_id: melodyRaw.occupation_location_id,
+      work_start_time: melodyRaw.work_start_time,
+      work_end_time: melodyRaw.work_end_time,
+      work_days: melodyRaw.work_days,
+    } : null;
+
     return Response.json({
       query1_active_created_character: {
         count: activeChars.length,
@@ -42,6 +60,10 @@ Deno.serve(async (req) => {
       query2_all_by_owner_email: {
         total_count: allChars.length,
         type_breakdown: typeBreakdown,
+      },
+      query3_melody_by_id: {
+        found: !!melody,
+        data: melody,
       },
     });
 
