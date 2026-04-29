@@ -198,8 +198,9 @@ export default function Home() {
   const { activeCharacters } = getCharactersForHomepage(customChars, currentUser?.id, currentUser?.email);
   
   // Sort remaining active created characters alphabetically
+  // STRICT TYPE GUARD: only active_created_character may appear as character cards on the homepage
   const activeCustomChars = activeCharacters
-    .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker")
+    .filter(c => (c.status === "active" || !c.status) && c.name !== "Leo Parker" && c.character_type === "active_created_character")
     .sort((a, b) => {
       const nameA = (a.display_name || a.name || '').toLowerCase();
       const nameB = (b.display_name || b.name || '').toLowerCase();
