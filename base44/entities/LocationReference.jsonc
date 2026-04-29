@@ -124,6 +124,8 @@
       "type": "string",
       "enum": [
         "home",
+        "hotel",
+        "shelter",
         "workplace",
         "gym",
         "social",
@@ -500,6 +502,10 @@
     },
     "rent_or_housing_cost": {
       "type": "number"
+    },
+    "nightly_rate": {
+      "type": "number",
+      "description": "Nightly rate for temporary lodging (hotel/shelter). Hotel: $150+ per night. Shelter: $0-$10 per night."
     },
     "monthly_childcare_cost": {
       "type": "number"

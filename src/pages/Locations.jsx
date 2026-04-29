@@ -27,6 +27,8 @@ import { calculateCharacterAvailability, getAvailabilityLabel, formatShiftDispla
 
 const ZONE_PRESETS = {
   home: ["Living Room", "Kitchen", "Bedroom 1", "Bedroom 2", "Bedroom 3", "Bedroom 4", "Bathroom", "Dining Room", "Hallway", "Backyard", "Basement", "Office"],
+  hotel: ["Lobby", "Standard Room", "Suite", "Deluxe Room", "Hallway", "Elevator", "Fitness Center", "Pool Area", "Restaurant", "Parking", "Rooftop"],
+  shelter: ["Dormitory", "Common Area", "Intake Desk", "Bathroom", "Dining Hall", "Counseling Room", "Storage", "Entrance"],
   gym: ["Workout Floor", "Front Desk", "Locker Room", "Bathroom", "Stretching Area", "Cardio Zone", "Weight Room", "Pool", "Sauna"],
   workplace: ["Office", "Office 1", "Office 2", "Admin Office", "Manager Office", "Staff Office", "Break Room", "Conference Room", "Reception", "Hallway", "Parking"],
   social: ["Main Floor", "Bar Area", "VIP Section", "Outdoor Patio", "Entrance", "Bathroom"],
@@ -47,6 +49,8 @@ const ZONE_PRESETS = {
 
 const CATEGORIES = [
   { value: "home", label: "Home", icon: Home, emoji: "🏠" },
+  { value: "hotel", label: "Hotel (Temp)", icon: Home, emoji: "🏨" },
+  { value: "shelter", label: "Shelter (Temp)", icon: Home, emoji: "🛖" },
   { value: "workplace", label: "Workplace", icon: Briefcase, emoji: "💼" },
   { value: "school", label: "School / Education", icon: GraduationCap, emoji: "🏫" },
   { value: "gym", label: "Gym", icon: Dumbbell, emoji: "🏋️" },
@@ -163,6 +167,12 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
             {(location.category === 'home' || location.category === 'generic') && location.rent_or_housing_cost && (
               <span className="text-xs text-green-400/80 font-medium">${location.rent_or_housing_cost}/mo rent</span>
             )}
+            {location.category === 'hotel' && (
+              <span className="text-xs text-amber-400/80 font-medium">🏨 ${location.nightly_rate ?? 150}/night · Temp</span>
+            )}
+            {location.category === 'shelter' && (
+              <span className="text-xs text-blue-400/80 font-medium">🛖 ${location.nightly_rate ?? 0}/night · Temp</span>
+            )}
             {location.category === 'gym' && location.gym_membership_fee && (
               <span className="text-xs text-blue-400/80 font-medium">${location.gym_membership_fee}/mo membership</span>
             )}
@@ -255,6 +265,8 @@ function LocationCard({ location, onDelete, onEdit, characters = [], currentUser
 
 const SUBTYPE_OPTIONS = {
   home: ["apartment", "house", "condo", "studio"],
+  hotel: ["budget_motel", "standard_hotel", "boutique_hotel", "extended_stay", "hostel"],
+  shelter: ["emergency_shelter", "transitional_shelter", "womens_shelter", "family_shelter", "overflow_shelter"],
   food_drink: ["coffee_shop", "cafe", "diner", "lunch_spot", "breakfast_spot", "fine_dining_restaurant", "casual_restaurant", "fast_casual", "pizza_place", "sushi_restaurant", "steakhouse", "taco_stand", "burger_joint", "bbq_place", "ramen_shop", "thai_restaurant", "mexican_restaurant", "italian_restaurant", "asian_fusion", "vegan_restaurant", "gastropub"],
   social: ["cocktail_bar", "dive_bar", "sports_bar", "beer_hall", "gay_bar", "lesbian_bar", "queer_bar", "upscale_lounge", "neighborhood_bar", "wine_bar", "tiki_bar", "house_music_club", "hip_hop_club", "electronic_club", "punk_venue", "rock_venue", "latin_dance_club", "country_bar", "jazz_club", "karaoke_bar", "nightclub", "dance_club", "rave_venue", "rooftop_bar", "lounge_club"],
   gym: ["gym", "yoga_studio", "pilates_studio", "crossfit_box", "swimming_pool"],
@@ -517,6 +529,7 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
     is_default_generic: editingLocation?.is_default_generic || false,
     religion_denomination: editingLocation?.religion_denomination || "",
     rent_or_housing_cost: editingLocation?.rent_or_housing_cost || 1200,
+    nightly_rate: editingLocation?.nightly_rate ?? (editingLocation?.category === 'shelter' ? 0 : 150),
     bedroom_count: editingLocation?.bedroom_count || 1,
     gym_membership_fee: editingLocation?.gym_membership_fee || 50,
     utility_costs: editingLocation?.utility_costs || { electricity: 80, water: 40, gas: 50, internet: 60, other: 0 },
@@ -739,11 +752,18 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
       </div>
 
       {/* ── RESIDENTS ── */}
-      {(form.category === 'home' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && form.location_type !== 'shared' && (
+      {(form.category === 'home' || form.category === 'hotel' || form.category === 'shelter' || form.category === 'generic' || form.category === 'outdoor' || form.category === 'community' || form.category === 'public') && form.location_type !== 'shared' && (
         <div className="space-y-3">
           <div>
             <label className="text-xs font-semibold text-foreground uppercase tracking-wider block">Who lives/stays here?</label>
-            <p className="text-xs text-muted-foreground mt-0.5 mb-2">{form.category === 'home' || form.category === 'generic' ? 'Add resident characters. Rent and utilities will be split among them.' : 'Add characters using this location for shelter or as a home base.'}</p>
+            <p className="text-xs text-muted-foreground mt-0.5 mb-2">
+              {form.category === 'hotel' ? 'Add characters staying in this hotel temporarily. Not a permanent home.' : form.category === 'shelter' ? 'Add characters using this shelter. Not a permanent home.' : form.category === 'home' || form.category === 'generic' ? 'Add resident characters. Rent and utilities will be split among them.' : 'Add characters using this location for shelter or as a home base.'}
+            </p>
+            {(form.category === 'hotel' || form.category === 'shelter') && (
+              <p className="text-xs text-amber-400 bg-amber-400/10 border border-amber-400/20 rounded-lg px-3 py-2 mb-2">
+                ⚠️ {form.category === 'hotel' ? 'Hotel is temporary paid lodging. Min $150/night. Characters assigned here will NOT be treated as permanently housed.' : 'Shelter is temporary low-cost or free lodging ($0–$10/night). Characters assigned here will NOT be treated as permanently housed.'}
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             {form.resident_character_ids?.length > 0 || form.resident_family_members?.length > 0 ? (
@@ -1216,6 +1236,40 @@ function LocationForm({ editingLocation, characters, onSave, onCancel, onDuplica
         </div>
       )}
 
+      {form.category === 'hotel' && (
+        <div className="space-y-3 bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+          <div>
+            <label className="text-xs font-semibold text-foreground uppercase mb-1 block">🏨 Nightly Rate</label>
+            <p className="text-xs text-muted-foreground mb-2">Minimum $150/night. If set below $150, it will be enforced to $150 at charge time.</p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">$</span>
+              <Input type="number" min="150" value={form.nightly_rate ?? 150} onChange={e => update("nightly_rate", Math.max(150, parseFloat(e.target.value) || 150))} placeholder="150" className="h-10 rounded-xl flex-1" />
+              <span className="text-xs text-muted-foreground">/night</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {form.category === 'shelter' && (
+        <div className="space-y-3 bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
+          <div>
+            <label className="text-xs font-semibold text-foreground uppercase mb-1 block">🛖 Nightly Rate</label>
+            <p className="text-xs text-muted-foreground mb-2">$0 (free) to $10/night maximum. Leave at $0 for free shelters.</p>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">$</span>
+              <Input type="number" min="0" max="10" value={form.nightly_rate ?? 0} onChange={e => {
+                const val = parseFloat(e.target.value) || 0;
+                if (val > 10) { update("nightly_rate", 10); } else { update("nightly_rate", val); }
+              }} placeholder="0" className="h-10 rounded-xl flex-1" />
+              <span className="text-xs text-muted-foreground">/night</span>
+            </div>
+            {(form.nightly_rate ?? 0) > 10 && (
+              <p className="text-xs text-destructive mt-1">⚠️ Shelter nightly rate cannot exceed $10. Value capped at $10.</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {form.category === 'gym' && (
         <div className="bg-primary/5 border border-primary/20 rounded-xl p-4">
           <label className="text-xs font-semibold text-foreground uppercase mb-2 block">Monthly Membership Fee</label>
@@ -1404,6 +1458,25 @@ export default function Locations() {
         base44.entities.Character.update(charId, {
           current_home_location_id: locationId,
         }).catch(() => {});
+      }
+    }
+
+    // ── HOTEL/SHELTER ASSIGNMENT: set temporary_housing_location_id, NOT permanent home ──
+    if (formData.category === 'hotel' || formData.category === 'shelter') {
+      const residentIds = formData.resident_character_ids || [];
+      for (const charId of residentIds) {
+        if (!charId || charId === currentUser?.id) continue;
+        const isHotel = formData.category === 'hotel';
+        base44.entities.Character.update(charId, {
+          temporary_housing_location_id: locationId,
+          is_homeless: false,
+          housing_context: 'temporary_shelter',
+          resolved_current_location_id: locationId,
+          resolved_current_location_name: formData.name,
+          resolved_location_type: 'temporary_housing',
+          resolved_presence_status: 'temporary_housing',
+          resolved_source_reason: isHotel ? 'hotel_temporary_lodging' : 'shelter_temporary_lodging',
+        }).catch(err => console.error(`[HOUSING] Failed to update temp housing for ${charId}:`, err.message));
       }
     }
 

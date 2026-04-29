@@ -4,13 +4,34 @@
   "rls": {
     "create": true,
     "read": {
-      "owner_email": "{{user.email}}"
+      "$or": [
+        {
+          "owner_email": "{{user.email}}"
+        },
+        {
+          "created_by": "{{user.email}}"
+        }
+      ]
     },
     "update": {
-      "owner_email": "{{user.email}}"
+      "$or": [
+        {
+          "owner_email": "{{user.email}}"
+        },
+        {
+          "created_by": "{{user.email}}"
+        }
+      ]
     },
     "delete": {
-      "owner_email": "{{user.email}}"
+      "$or": [
+        {
+          "owner_email": "{{user.email}}"
+        },
+        {
+          "created_by": "{{user.email}}"
+        }
+      ]
     }
   },
   "properties": {
@@ -620,6 +641,10 @@
     "current_home_location_id": {
       "type": "string"
     },
+    "temporary_housing_location_id": {
+      "type": "string",
+      "description": "ID of temporary lodging (hotel or shelter). Not a permanent home. Set when character is placed in hotel or shelter."
+    },
     "current_work_location_id": {
       "type": "string"
     },
@@ -641,7 +666,8 @@
         "visit",
         "traveling",
         "supervision_home",
-        "recovery_nap"
+        "recovery_nap",
+        "temporary_housing"
       ]
     },
     "resolved_presence_status": {
@@ -654,7 +680,8 @@
         "traveling",
         "under_supervision",
         "sleeping",
-        "napping"
+        "napping",
+        "temporary_housing"
       ]
     },
     "resolved_source_reason": {
