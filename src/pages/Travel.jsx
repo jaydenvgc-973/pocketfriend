@@ -61,7 +61,7 @@ export default function Travel() {
   const { data: activeCharacters = [] } = useQuery({
     queryKey: ["activeCharacters", currentUser?.email],
     queryFn: () => base44.entities.Character.filter({
-      created_by: currentUser.email,
+      owner_email: currentUser.email,
       status: "active",
       character_type: "active_created_character"
     }),
