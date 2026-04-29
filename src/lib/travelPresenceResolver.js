@@ -103,21 +103,30 @@ export function resolveTravelPresenceEntities({
  * - No home fallback. No schedule inference. No resident-list scanning.
  */
 function normalizeCharacterToPresenceEntity(char, locationMap) {
+  // Resolve home location ID — source of truth for fallback presence
   const homeLocId = char.current_home_location_id || char.home_location_id || null;
 
   const currentLocId = char.resolved_current_location_id;
   let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
 
+  // Fallback chain: resolved → home → away
   if (currentLocId && locationMap[currentLocId]) {
+    // Tier 1: Active resolved location (highest priority)
     resolvedLocId = currentLocId;
     resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
     resolvedStatus = char.resolved_presence_status || 'home';
     isCurrentlyPresent = true;
+  } else if (homeLocId && locationMap[homeLocId]) {
+    // Tier 2: Fallback to home location (when resolved is stale/missing)
+    resolvedLocId = homeLocId;
+    resolvedLocName = locationMap[homeLocId]?.name;
+    resolvedStatus = 'home';
+    isCurrentlyPresent = true;
   } else {
-    // No valid resolved location — do not infer home, do not place on map
+    // Tier 3: No valid location — show as Away
     resolvedLocId = null;
     resolvedLocName = null;
-    resolvedStatus = char.resolved_presence_status || null;
+    resolvedStatus = 'away';
     isCurrentlyPresent = false;
   }
 
