@@ -52,6 +52,23 @@ Deno.serve(async (req) => {
       work_days: melodyRaw.work_days,
     } : null;
 
+    const mapChar = (c) => ({
+      id: c.id,
+      name: c.name,
+      owner_email: c.owner_email,
+      character_type: c.character_type,
+      status: c.status,
+      current_home_location_id: c.current_home_location_id || null,
+      occupation_location_id: c.occupation_location_id || null,
+      resolved_presence_status: c.resolved_presence_status || null,
+    });
+
+    // QUERY 4: Name search — "Melody" (no owner/type filter)
+    const melodyByShortName = await base44.asServiceRole.entities.Character.filter({ name: 'Melody' });
+
+    // QUERY 5: Name search — "Melody Jackson Perry" (no owner/type filter)
+    const melodyByFullName = await base44.asServiceRole.entities.Character.filter({ name: 'Melody Jackson Perry' });
+
     return Response.json({
       query1_active_created_character: {
         count: activeChars.length,
@@ -64,6 +81,14 @@ Deno.serve(async (req) => {
       query3_melody_by_id: {
         found: !!melody,
         data: melody,
+      },
+      query4_name_melody: {
+        count: melodyByShortName.length,
+        results: melodyByShortName.map(mapChar),
+      },
+      query5_name_melody_jackson_perry: {
+        count: melodyByFullName.length,
+        results: melodyByFullName.map(mapChar),
       },
     });
 
