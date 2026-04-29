@@ -2,6 +2,24 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 // ── INLINE RESOLVER (identical logic to Phase 4A enforceCharacterLocationPresence) ──
 
+// Check if character is on a location-specific shift right now
+// Supports shift.days, shift.start, shift.end, and overnight shifts
+function isOnShiftNow(shift, etTime) {
+  if (!shift?.start || !shift?.end) return false;
+  if (shift.days && shift.days.length > 0) {
+    if (!shift.days.includes(etTime.getDay())) return false;
+  }
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const [eh, em] = shift.end.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  // Overnight shift (e.g. 22:00 -> 06:00)
+  if (endMin < startMin) return now >= startMin || now < endMin;
+  return now >= startMin && now < endMin;
+}
+
+// Check if character is on their own work schedule right now (character-level fields)
 function isOnWorkSchedule(character, etTime) {
   if (!character.work_start_time || !character.work_end_time || !character.work_days) return false;
   const dayOfWeek = etTime.getDay();
@@ -41,18 +59,56 @@ function computeResolved(character, locationMap, etTime) {
     character.work_exception_date === todayET;
 
   // LAYER 1: Work schedule
-  if (!hasValidCallout && character.occupation_location_id) {
-    const workLoc = locationMap[character.occupation_location_id];
-    if (workLoc && isOnWorkSchedule(character, etTime)) {
-      return {
-        resolved_current_location_id: character.occupation_location_id,
-        resolved_current_location_name: workLoc.name || 'Work',
-        resolved_location_type: 'work',
-        resolved_presence_status: 'at_work',
-        resolved_source_reason: 'work_schedule',
-        resolved_zone: null,
-        home_resolution_failed: false,
-      };
+  // Checks ALL work locations: primary + current + additional jobs.
+  // Per location: uses location.worker_shifts[character.id] first; falls back to character's own schedule.
+  if (!hasValidCallout) {
+    const allWorkLocIds = [];
+    if (character.occupation_location_id) allWorkLocIds.push(character.occupation_location_id);
+    if (character.current_work_location_id && !allWorkLocIds.includes(character.current_work_location_id)) {
+      allWorkLocIds.push(character.current_work_location_id);
+    }
+    if (Array.isArray(character.additional_occupation_locations)) {
+      for (const loc of character.additional_occupation_locations) {
+        if (loc.location_id && !allWorkLocIds.includes(loc.location_id)) {
+          allWorkLocIds.push(loc.location_id);
+        }
+      }
+    }
+
+    for (const workLocId of allWorkLocIds) {
+      const workLoc = locationMap[workLocId];
+      if (!workLoc) continue;
+
+      // Check location-specific shift for this character first
+      const locationShift = workLoc.worker_shifts?.[character.id];
+      if (locationShift) {
+        if (isOnShiftNow(locationShift, etTime)) {
+          return {
+            resolved_current_location_id: workLocId,
+            resolved_current_location_name: workLoc.name || 'Work',
+            resolved_location_type: 'work',
+            resolved_presence_status: 'at_work',
+            resolved_source_reason: 'work_schedule',
+            resolved_zone: null,
+            home_resolution_failed: false,
+          };
+        }
+        // Shift defined but not active — skip character's own schedule for this location
+        continue;
+      }
+
+      // No location-specific shift — fall back to character's own work_days/start/end
+      if (isOnWorkSchedule(character, etTime)) {
+        return {
+          resolved_current_location_id: workLocId,
+          resolved_current_location_name: workLoc.name || 'Work',
+          resolved_location_type: 'work',
+          resolved_presence_status: 'at_work',
+          resolved_source_reason: 'work_schedule',
+          resolved_zone: null,
+          home_resolution_failed: false,
+        };
+      }
     }
   }
 
