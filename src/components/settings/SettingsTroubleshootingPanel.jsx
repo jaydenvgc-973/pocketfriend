@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap } from 'lucide-react';
+import { X, Wrench, CheckCircle2, AlertCircle, Loader2, MapPin, Star, Database, Zap, RefreshCw } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -270,12 +270,162 @@ function TabPanel({ title, icon: Icon, issues, functionName, onClose, user }) {
   );
 }
 
+// ── SYNC ALL CHARACTER LOCATIONS PANEL ───────────────────────────────────────
+
+function SyncLocationsPanel({ user }) {
+  const [status, setStatus] = useState('idle'); // idle | running | done | error
+  const [results, setResults] = useState([]);
+  const [errorMsg, setErrorMsg] = useState(null);
+  const queryClient = useQueryClient();
+
+  const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const runSync = async () => {
+    if (!user?.email) {
+      setErrorMsg('No authenticated user found.');
+      return;
+    }
+    setStatus('running');
+    setResults([]);
+    setErrorMsg(null);
+
+    // Step 1: Discovery — get all active_created_character IDs for this owner
+    let characterIds = [];
+    try {
+      const discoveryRes = await base44.functions.invoke('enforceLocationPresenceForOwner', {
+        owner_email: user.email
+      });
+      characterIds = discoveryRes?.data?.character_ids || [];
+      if (characterIds.length === 0) {
+        setStatus('done');
+        setResults([{ name: '—', status: 'no_change', message: 'No active characters found for this account.' }]);
+        return;
+      }
+    } catch (err) {
+      setStatus('error');
+      setErrorMsg(`Discovery failed: ${err.message}`);
+      return;
+    }
+
+    // Step 2: Sequential loop — one call per character, 300ms apart
+    const collected = [];
+    for (const { character_id, name } of characterIds) {
+      try {
+        const res = await base44.functions.invoke('enforceCharacterLocationPresence', {
+          character_id,
+          owner_email: user.email
+        });
+        const d = res?.data;
+        collected.push({
+          name: name || character_id,
+          character_id,
+          status: d?.status || 'no_change',
+          message: d?.message || null,
+        });
+      } catch (err) {
+        collected.push({
+          name: name || character_id,
+          character_id,
+          status: 'error',
+          message: err.message,
+        });
+      }
+      setResults([...collected]); // update progressively
+      await sleep(300);
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['characters'] });
+    setStatus('done');
+  };
+
+  const reset = () => {
+    setStatus('idle');
+    setResults([]);
+    setErrorMsg(null);
+  };
+
+  const statusColor = (s) => {
+    if (s === 'updated') return 'text-emerald-400';
+    if (s === 'no_change') return 'text-muted-foreground';
+    if (s === 'error') return 'text-destructive';
+    return 'text-muted-foreground';
+  };
+
+  const statusIcon = (s) => {
+    if (s === 'updated') return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />;
+    if (s === 'error') return <AlertCircle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />;
+    return <div className="w-3.5 h-3.5 rounded-full border border-muted-foreground/40 flex-shrink-0" />;
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-secondary/50 border border-border rounded-lg p-3">
+        <p className="text-xs text-muted-foreground">
+          Discovers all your active characters, then calls the location enforcement function for each one sequentially.
+          This syncs each character's <code className="text-primary">resolved_presence_status</code> to the current schedule truth.
+        </p>
+      </div>
+
+      <button
+        onClick={runSync}
+        disabled={status === 'running'}
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+      >
+        {status === 'running' ? (
+          <><Loader2 className="w-4 h-4 animate-spin" /> Syncing locations...</>
+        ) : (
+          <><RefreshCw className="w-4 h-4" /> Sync All Character Locations</>
+        )}
+      </button>
+
+      {errorMsg && (
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3">
+          <p className="text-sm text-destructive">{errorMsg}</p>
+        </div>
+      )}
+
+      {results.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Results ({results.length} character{results.length !== 1 ? 's' : ''})
+          </p>
+          <div className="space-y-1.5">
+            {results.map((r, i) => (
+              <div key={i} className="flex items-start gap-2 p-2.5 rounded-lg bg-secondary/40 border border-border text-xs">
+                {statusIcon(r.status)}
+                <div className="flex-1 min-w-0">
+                  <span className="font-medium text-foreground">{r.name}</span>
+                  <span className={`ml-2 ${statusColor(r.status)}`}>
+                    {r.status === 'updated' ? 'updated' : r.status === 'error' ? 'error' : 'no change'}
+                  </span>
+                  {r.message && r.status === 'error' && (
+                    <p className="text-destructive mt-0.5 truncate">{r.message}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          {status === 'done' && (
+            <button
+              onClick={reset}
+              className="w-full px-4 py-2 rounded-xl bg-secondary text-foreground font-medium hover:bg-secondary/80 transition-colors text-sm mt-2"
+            >
+              Clear Results
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── MAIN PANEL ───────────────────────────────────────────────────────────────
 
 const TABS = [
   { id: 'location', label: 'Location', icon: MapPin, issues: LOCATION_ISSUES, fn: 'troubleshootLocations' },
   { id: 'moments', label: 'Moments', icon: Star, issues: MOMENTS_ISSUES, fn: 'troubleshootMoments' },
   { id: 'system', label: 'System & Data', icon: Database, issues: SYSTEM_ISSUES, fn: 'troubleshootSystemData' },
+  { id: 'sync', label: 'Sync', icon: RefreshCw, issues: null, fn: null },
 ];
 
 export default function SettingsTroubleshootingPanel({ isOpen, onClose, user }) {
@@ -332,19 +482,23 @@ export default function SettingsTroubleshootingPanel({ isOpen, onClose, user }) 
 
             {/* Content */}
             <div className="flex-1 overflow-y-auto p-4">
-              {TABS.map(tab => (
-                activeTab === tab.id && (
-                  <TabPanel
-                    key={tab.id}
-                    title={tab.label}
-                    icon={tab.icon}
-                    issues={tab.issues}
-                    functionName={tab.fn}
-                    onClose={onClose}
-                    user={user}
-                  />
-                )
-              ))}
+              {activeTab === 'sync' ? (
+                <SyncLocationsPanel user={user} />
+              ) : (
+                TABS.filter(t => t.id !== 'sync').map(tab => (
+                  activeTab === tab.id && (
+                    <TabPanel
+                      key={tab.id}
+                      title={tab.label}
+                      icon={tab.icon}
+                      issues={tab.issues}
+                      functionName={tab.fn}
+                      onClose={onClose}
+                      user={user}
+                    />
+                  )
+                ))
+              )}
             </div>
           </motion.div>
         </motion.div>
