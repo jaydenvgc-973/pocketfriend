@@ -258,26 +258,15 @@ export default function EditCharacterProfile() {
       }).catch(() => {});
     }
 
-    // Bi-directional sync with auto-pairing logic
-    // OWNERSHIP GUARD: only write to characters that belong to the current user (owner_email match).
-    // Never use asServiceRole here — user-scoped write only.
+    // Bi-directional sync — routed through backend function.
+    // Backend owns all ownership validation (owner_email only, no created_by).
+    // asServiceRole is used server-side only, never here.
     await Promise.all((form.char_relationships || []).map(async (rel) => {
-      const otherChar = characters.find(c => c.id === rel.related_character_id);
-      if (!otherChar) return;
-
-      // Hard ownership check — skip bi-directional write if the related character
-      // does not belong to the current user. This prevents any cross-account write.
-      if (otherChar.owner_email !== currentUser?.email) {
-        console.warn(`[EditCharacterProfile] Skipping bi-directional sync for ${otherChar.name} — owner_email mismatch (${otherChar.owner_email} !== ${currentUser?.email})`);
-        return;
-      }
-
-      const existingRels = otherChar.fictional_relationships || [];
-      const alreadyLinked = existingRels.find(r => r.related_character_id === selectedChar.id);
+      if (!rel.related_character_id) return;
 
       const relTypeKey = Object.keys(RELATIONSHIP_TYPES).find(k => RELATIONSHIP_TYPES[k].label === rel.relationship_type) || rel.relationship_type;
 
-      const myEntry = {
+      const relationshipEntry = {
         related_character_id: selectedChar.id,
         person_name: selectedChar.name,
         relationship_type: relTypeKey,
@@ -289,11 +278,11 @@ export default function EditCharacterProfile() {
         chosen_family_level: rel.chosen_family_level ?? 0,
       };
 
-      const updatedRels = alreadyLinked
-        ? existingRels.map(r => r.related_character_id === selectedChar.id ? myEntry : r)
-        : [...existingRels, myEntry];
-
-      await base44.entities.Character.update(rel.related_character_id, { fictional_relationships: updatedRels });
+      await base44.functions.invoke("syncRelatedCharacterRelationship", {
+        characterId: selectedChar.id,
+        relatedCharacterId: rel.related_character_id,
+        relationshipEntry,
+      });
     }));
 
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
