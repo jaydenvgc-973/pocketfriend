@@ -7,7 +7,6 @@
  * Ensures map pins, location popups, side-panel counts, and vacancy labels all use identical presence data.
  */
 
-import { resolveCharacterLocation } from '@/lib/locationResolutionEngine';
 
 /**
  * Resolve all user-scoped presence entities for the Travel page.
@@ -92,50 +91,34 @@ export function resolveTravelPresenceEntities({
 /**
  * Normalize a Character record into a presence entity shape.
  *
- * active_created_character: uses resolveCharacterLocation() for LIVE work/school/schedule logic —
- *   this ensures work schedules are applied even when the DB field is stale.
- *   No home fallback — active characters must have a confirmed location to appear.
+ * ALL character types: read resolved_current_location_id directly from the DB record.
+ * This is the SINGLE SOURCE OF TRUTH for presence on Travel, Map, and popups.
+ * Schedules, work logic, and home inference are NOT applied here.
+ * The backend enforcer (enforceCharacterLocationPresence / scheduledLocationEnforcement)
+ * is responsible for keeping resolved fields accurate.
  *
- * npc_fictitious / npc_family_member: reads saved DB fields with home fallback.
- *   These characters are not travel-capable, so home is the correct default.
+ * Rules:
+ * - resolved_current_location_id present AND in locationMap → character is present there
+ * - resolved_current_location_id missing or not in locationMap → not placed on map (is_currently_present = false)
+ * - No home fallback. No schedule inference. No resident-list scanning.
  */
 function normalizeCharacterToPresenceEntity(char, locationMap) {
-  // Resolve home ID from all possible field paths
-  const homeLocId = char.current_home_location_id || char.home_location_id || char.residence_id || char.assigned_residence || null;
+  const homeLocId = char.current_home_location_id || char.home_location_id || null;
 
-  // Also scan locationMap for resident-list-based home assignment
-  const scannedHomeLocId = homeLocId || resolveHomeFromLocationMap(char.id, locationMap);
-  const effectiveHomeLocId = scannedHomeLocId;
-  const isHomeResident = !!effectiveHomeLocId;
-
+  const currentLocId = char.resolved_current_location_id;
   let resolvedLocId, resolvedLocName, resolvedStatus, isCurrentlyPresent;
 
-  if (char.character_type === 'active_created_character') {
-    // LIVE RESOLUTION: applies work schedule, school schedule, sleep, and home logic
-    // resolveCharacterLocation now also handles no-home safe states, so it never returns null
-    const live = resolveCharacterLocation(char, locationMap);
-    resolvedLocId = live.resolved_current_location_id;
-    resolvedLocName = live.resolved_current_location_name;
-    resolvedStatus = live.resolved_presence_status || 'home';
-    // Always mark as present if we have a location ID OR if they have a named away state
-    isCurrentlyPresent = !!resolvedLocId || live.resolved_source_reason === 'no_home_safe_away';
-  } else {
-    // NPCs + family: use saved DB field; check location page resident list as fallback
-    const currentLocId = char.resolved_current_location_id;
-    isCurrentlyPresent = false;
+  if (currentLocId && locationMap[currentLocId]) {
+    resolvedLocId = currentLocId;
+    resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
     resolvedStatus = char.resolved_presence_status || 'home';
-
-    if (currentLocId && locationMap[currentLocId]) {
-      resolvedLocId = currentLocId;
-      resolvedLocName = locationMap[currentLocId]?.name || char.resolved_current_location_name;
-      isCurrentlyPresent = true;
-    } else if (effectiveHomeLocId && locationMap[effectiveHomeLocId]) {
-      // FALLBACK: If character field is empty, check if they're listed on a location's resident roster
-      resolvedLocId = effectiveHomeLocId;
-      resolvedLocName = locationMap[effectiveHomeLocId]?.name;
-      resolvedStatus = 'home';
-      isCurrentlyPresent = true;
-    }
+    isCurrentlyPresent = true;
+  } else {
+    // No valid resolved location — do not infer home, do not place on map
+    resolvedLocId = null;
+    resolvedLocName = null;
+    resolvedStatus = char.resolved_presence_status || null;
+    isCurrentlyPresent = false;
   }
 
   return {
@@ -151,30 +134,15 @@ function normalizeCharacterToPresenceEntity(char, locationMap) {
     resolved_current_location_id: resolvedLocId,
     resolved_current_location_name: resolvedLocName,
     resolved_presence_status: resolvedStatus,
-    residence_location_id: effectiveHomeLocId,
+    residence_location_id: homeLocId,
 
-    is_home_resident: isHomeResident,
+    is_home_resident: !!homeLocId,
     is_currently_present: isCurrentlyPresent,
-    is_home: isCurrentlyPresent && !!effectiveHomeLocId && resolvedLocId === effectiveHomeLocId,
-    is_away: isCurrentlyPresent && !!effectiveHomeLocId && !!resolvedLocId && resolvedLocId !== effectiveHomeLocId,
+    is_home: isCurrentlyPresent && !!homeLocId && resolvedLocId === homeLocId,
+    is_away: isCurrentlyPresent && !!homeLocId && !!resolvedLocId && resolvedLocId !== homeLocId,
   };
 }
 
-/**
- * Scan locationMap to find a home/generic location that lists this character as a resident.
- * Used as a fallback when character.current_home_location_id is empty but Locations page shows them assigned.
- */
-function resolveHomeFromLocationMap(characterId, locationMap) {
-  if (!characterId) return null;
-  for (const [locId, loc] of Object.entries(locationMap)) {
-    if (loc.category !== 'home' && loc.category !== 'generic') continue;
-    // Check resident_character_ids (legacy flat list)
-    if ((loc.resident_character_ids || []).includes(characterId)) return locId;
-    // Check residents[] array (newer format)
-    if ((loc.residents || []).some(r => r.character_id === characterId)) return locId;
-  }
-  return null;
-}
 
 /**
  * Resolve initials for display when avatar is missing.
