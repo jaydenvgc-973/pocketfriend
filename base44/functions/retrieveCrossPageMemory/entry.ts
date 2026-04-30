@@ -17,7 +17,7 @@ Deno.serve(async (req) => {
 
   // 1. Fetch all conversations involving this character (owned by this user)
   const allConversations = await base44.entities.Conversation.filter({
-    created_by: user.email,
+    owner_email: user.email,
   }).catch(() => []);
 
   const charConvos = allConversations.filter(c => {

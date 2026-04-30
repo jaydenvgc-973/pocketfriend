@@ -72,7 +72,11 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'Invalid conversation' }, { status: 400 });
     }
 
-    const characters = await base44.entities.Character.list();
+    // Ownership-scoped character load — use conversation's owner context
+    // Fall back to asServiceRole only to match by character_ids (already scoped by IDs from this convo)
+    const characters = await base44.asServiceRole.entities.Character.filter({
+      id: { $in: conversation.character_ids || [] }
+    }).catch(() => base44.entities.Character.list());
     const convoCharacters = characters.filter(c => conversation.character_ids?.includes(c.id));
 
     const messages = await base44.entities.Message.filter(
@@ -196,6 +200,13 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
     await base44.entities.Conversation.update(conversation.id, {
       last_message_date: new Date().toISOString(),
     });
+
+    // ── MEMORY SYNC: fire-and-forget after cycle completes ────────────────────
+    // Writes meaningful exchanges into each character's Life Journal (CharacterMemory).
+    base44.functions.invoke('syncGroupChatMemories', {
+      conversationId: conversation.id,
+      source: 'group_chat',
+    }).catch(err => console.error('[GROUP-CHAT] Memory sync failed:', err.message));
 
     console.log(`[GROUP-CHAT] Cycle complete. Debug log:`, JSON.stringify(debugLog));
     return Response.json({ success: true, debug: debugLog });

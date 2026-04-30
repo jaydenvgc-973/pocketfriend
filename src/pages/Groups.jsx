@@ -23,7 +23,7 @@ export default function Groups() {
   const { data: groupConversations = [], isLoading } = useQuery({
     queryKey: ['groupConversations', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Conversation.filter({ type: 'group', created_by: currentUser.email }, '-last_message_date')
+      ? base44.entities.Conversation.filter({ type: 'group', owner_email: currentUser.email }, '-last_message_date')
       : [],
     enabled: !!currentUser?.email,
   });
@@ -31,7 +31,7 @@ export default function Groups() {
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email })
+      ? base44.entities.Character.filter({ owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
   });

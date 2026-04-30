@@ -32,7 +32,7 @@ export default function GroupChat() {
   const { data: conversationsData = [], isLoading: conversationsLoading } = useQuery({
     queryKey: ['conversations', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Conversation.filter({ type: 'group', created_by: currentUser.email })
+      ? base44.entities.Conversation.filter({ type: 'group', owner_email: currentUser.email })
       : [],
     enabled: !!currentUser?.email,
   });
@@ -40,7 +40,7 @@ export default function GroupChat() {
   const { data: characters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
     queryFn: () => currentUser?.email
-      ? base44.entities.Character.filter({ created_by: currentUser.email }, '-created_date')
+      ? base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date')
       : [],
     enabled: !!currentUser?.email,
   });

@@ -164,32 +164,11 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // Save a memory on the HOST character so they remember this NPC interaction
-    // even if the NPC later disappears — fire-and-forget
-    if (allMsgs.length >= 2 && allMsgs.length % 3 === 0) {
-      const recentExchange = allMsgs.slice(-6)
-        .map(m => `${m.role === "user" ? "User" : selectedContact.person_name}: ${m.content}`)
-        .join("\n");
-
-      base44.integrations.Core.InvokeLLM({
-        prompt: `${character.name} recently had this conversation with ${selectedContact.person_name} (${selectedContact.relationship_type || "known person"}):
-
-${recentExchange}
-
-Write a single short memory sentence (1-2 sentences) from ${character.name}'s perspective summarizing what happened or was shared. Be specific. Write in third person about ${character.name}.`,
-      }).then(async (memoryText) => {
-        if (memoryText?.trim()) {
-          await base44.entities.Memory.create({
-            character_id: character.id,
-            title: `Conversation with ${selectedContact.person_name}`,
-            description: memoryText.trim(),
-            emotional_impact: "neutral",
-            timestamp: new Date().toISOString(),
-            source_context: `npc_chat__${selectedContact.person_name}`,
-          });
-        }
-      }).catch(() => {});
-    }
+    // Sync to Life Journal — fire-and-forget after every exchange
+    base44.functions.invoke('syncGroupChatMemories', {
+      conversationId: convoId,
+      source: 'world_phone',
+    }).catch(() => {});
   };
 
   const handleKeyDown = (e) => {
