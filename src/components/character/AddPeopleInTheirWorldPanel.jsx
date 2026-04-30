@@ -23,7 +23,7 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     queryFn: async () => {
       if (!currentUser?.email) return [];
       const chars = await base44.entities.Character.filter({
-        created_by: currentUser.email
+        owner_email: currentUser.email
       });
       // Filter out the current character itself and return all others
       return chars.filter(c => c.id !== character.id);
@@ -31,12 +31,10 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     enabled: !!currentUser?.email
   });
 
-  // Get all account NPCs (any character that's not the primary 'active' type and not the current character)
-  const accountNPCs = allAccountCharacters.filter(c => {
-    // Show all characters except active characters (includes npc, family_npc, promoted_npc, npc_fictitious_person)
-    const isNPC = ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(c.character_type);
-    return isNPC && c.id !== character.id;
-  });
+  // Only show canonical npc_fictitious characters (the valid type for People in Their World)
+  const accountNPCs = allAccountCharacters.filter(c =>
+    c.character_type === 'npc_fictitious' && c.id !== character.id
+  );
 
   // Get NPCs already linked to this character
   const existingNPCIds = new Set(
@@ -56,15 +54,15 @@ export default function AddPeopleInTheirWorldPanel({ character, onSuccess }) {
     }
     setIsLoading(true);
     try {
-      // Create new npc_fictitious_person with owner_email enforcement
+      // Create new NPC with canonical type npc_fictitious
       const newNPC = await base44.entities.Character.create({
         name: newName.trim(),
-        character_type: 'npc_fictitious_person',
+        character_type: 'npc_fictitious',
         owner_email: currentUser.email,
-        created_by: currentUser.email,
         created_by_role: currentUser.role || 'user',
         owner_user_id: currentUser.id,
-        status: 'active'
+        status: 'active',
+        exclude_from_homepage: true,
       });
 
       // Add to fictional_relationships
