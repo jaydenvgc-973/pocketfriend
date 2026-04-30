@@ -72,9 +72,23 @@ export async function dispatchImageGeneration({
         enforceValidation(character, imageGenPrompt);
       } catch (validationErr) {
         console.error(`[ChatImageDispatch] Prompt validation failed for ${character.name}:`, validationErr.message);
-        // Hard block — do not send invalid prompt
+        // Hard block — do not send invalid prompt. Merge failure into existing generation_context.
         if (isMountedRef.current) {
-          base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          base44.entities.Message.filter({ id: targetMsgId }).then(msgs => {
+            const existingCtx = msgs?.[0]?.generation_context || {};
+            base44.entities.Message.update(targetMsgId, {
+              content: '[IMAGE_FAILED]',
+              generation_context: {
+                ...existingCtx,
+                prompt: existingCtx.prompt || imageGenPrompt || "",
+                status: "failed",
+                error_message: `Appearance lock validation failed: ${validationErr.message}`,
+                failed_at: new Date().toISOString(),
+              },
+            }).catch(() => {});
+          }).catch(() => {
+            base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          });
           setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
         }
         return;
@@ -118,16 +132,30 @@ export async function dispatchImageGeneration({
       }).catch(() => {});
       queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
     } else if (res?.data?.success === false && isMountedRef.current) {
-      // Generation failed — mark message so frontend shows the retry UI instead of hanging placeholder
+      // Generation failed — backend already merged generation_context (generateImageAsync handles it).
+      // Just update local state for the UI.
       console.error(`[ChatImageDispatch] Generation returned success=false for ${targetMsgId}: ${res?.data?.error}`);
-      base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
       setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
     }
   } catch (err) {
     console.error(`[ChatImageDispatch] Image generation failed for ${targetMsgId}:`, err.message);
-    // Mark as failed so user sees retry UI rather than a permanently spinning placeholder
+    // Merge failure into generation_context so prompt is preserved for Retry/Edit Prompt UI
     if (isMountedRef.current) {
-      base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      base44.entities.Message.filter({ id: targetMsgId }).then(msgs => {
+        const existingCtx = msgs?.[0]?.generation_context || {};
+        base44.entities.Message.update(targetMsgId, {
+          content: '[IMAGE_FAILED]',
+          generation_context: {
+            ...existingCtx,
+            prompt: existingCtx.prompt || imageGenPrompt || "",
+            status: "failed",
+            error_message: err.message,
+            failed_at: new Date().toISOString(),
+          },
+        }).catch(() => {});
+      }).catch(() => {
+        base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+      });
       setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
     }
   }

@@ -1219,6 +1219,15 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           emotional_state: emotionalState,
           is_read: navigatedAway ? false : true,
           timestamp: new Date().toISOString(),
+          // Store generation_context.prompt BEFORE generation starts so it survives failure
+          generation_context: {
+            prompt: imageGenPrompt,
+            source: "chat_image",
+            character_id: characterId || null,
+            character_name: character?.name || null,
+            subject_type: subjectType || "character",
+            created_prompt_at: new Date().toISOString(),
+          },
         });
       } catch (err) {
         console.error('[createImageMessage] Network error saving image message:', err.message);
