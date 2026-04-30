@@ -42,36 +42,84 @@ function isCharacterOnWorkSchedule(character, etTime) {
   return now >= workStartMs && now < workEndMs;
 }
 
-// HELPER: Check if character is sleeping
-function isCharacterSleeping(character, etTime) {
-  if (!character.sleep_start_time || !character.wake_up_time) return false;
-  const hour = etTime.getHours();
-  const minute = etTime.getMinutes();
-  const sleepStart = parseInt(character.sleep_start_time.split(':')[0]);
-  const sleepStartMin = parseInt(character.sleep_start_time.split(':')[1] || 0);
-  const wakeUp = parseInt(character.wake_up_time.split(':')[0]);
-  const wakeUpMin = parseInt(character.wake_up_time.split(':')[1] || 0);
+/**
+ * ADAPTIVE SLEEP WINDOW — active_created_character only.
+ * Derives sleep start/wake times from next work/school obligation and character energy.
+ * Overnight workers sleep BEFORE their shift, not during it.
+ * Falls back to stored sleep_start_time / wake_up_time when no obligation exists.
+ */
+function computeAdaptiveSleepWindow(character, etTime) {
+  const SLEEP_DURATION_MIN = 7 * 60;
+  const PRE_SHIFT_BUFFER   = 60;
 
-  const currentTotalMins = hour * 60 + minute;
-  const sleepStartTotalMins = sleepStart * 60 + sleepStartMin;
-  const wakeUpTotalMins = wakeUp * 60 + wakeUpMin;
+  const toMin = (t) => {
+    if (!t) return null;
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + (m || 0);
+  };
 
-  if (sleepStartTotalMins > wakeUpTotalMins) {
-    return currentTotalMins >= sleepStartTotalMins || currentTotalMins < wakeUpTotalMins;
+  const dayOfWeek = etTime.getDay();
+  let nextShiftStartMin = null;
+  let nextShiftEndMin   = null;
+
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    const isWorkDayToday    = character.work_days.includes(dayOfWeek);
+    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
+    if (isWorkDayToday || isWorkDayTomorrow) {
+      nextShiftStartMin = toMin(character.work_start_time);
+      nextShiftEndMin   = toMin(character.work_end_time);
+    }
   }
-  return currentTotalMins >= sleepStartTotalMins && currentTotalMins < wakeUpTotalMins;
+
+  if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
+    nextShiftStartMin = 8 * 60;
+    nextShiftEndMin   = 15 * 60;
+  }
+
+  const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null &&
+    nextShiftEndMin < nextShiftStartMin;
+
+  if (nextShiftStartMin !== null) {
+    if (isOvernightShift) {
+      const sleepStart = (nextShiftEndMin + 60) % 1440;
+      const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+      return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: true };
+    } else {
+      const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+      const sleepStart = (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440;
+      return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: false };
+    }
+  }
+
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
+  }
+
+  return null;
 }
 
-// Returns true if within 60 minutes before scheduled sleep start
+// Returns true if within 60 minutes before adaptive sleep start
 const PRE_SLEEP_WINDOW_MINUTES = 60;
-function isInPreSleepWindow(character, etTime) {
-  if (!character.sleep_start_time) return false;
+
+function isCharacterSleeping(character, etTime) {
+  const window = computeAdaptiveSleepWindow(character, etTime);
+  if (!window) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
-  const sleepStart = sh * 60 + sm;
-  const windowStart = (sleepStart - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
-  if (windowStart > sleepStart) return now >= windowStart || now < sleepStart;
-  return now >= windowStart && now < sleepStart;
+  const { sleepStartMin, wakeMin } = window;
+  if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
+  return now >= sleepStartMin && now < wakeMin;
+}
+
+function isInPreSleepWindow(character, etTime) {
+  const window = computeAdaptiveSleepWindow(character, etTime);
+  if (!window) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const { sleepStartMin } = window;
+  const windowStart = (sleepStartMin - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
+  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
+  return now >= windowStart && now < sleepStartMin;
 }
 
 const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);

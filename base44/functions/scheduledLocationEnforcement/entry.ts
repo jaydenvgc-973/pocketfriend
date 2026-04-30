@@ -32,29 +32,118 @@ function isOnWorkSchedule(character, etTime) {
   return now >= startMin && now < endMin;
 }
 
-function isSleeping(character, etTime) {
-  if (!character.sleep_start_time || !character.wake_up_time) return false;
-  const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
-  const [wh, wm] = character.wake_up_time.split(':').map(Number);
-  const startMin = sh * 60 + sm;
-  const wakeMin = wh * 60 + wm;
-  if (startMin > wakeMin) return now >= startMin || now < wakeMin;
-  return now >= startMin && now < wakeMin;
+/**
+ * ADAPTIVE SLEEP WINDOW — active_created_character only.
+ *
+ * Returns { sleepStartMin, wakeMin } in minutes-since-midnight (ET),
+ * computed from the character's NEXT major obligation (work or school),
+ * energy level, and stored schedule as a baseline.
+ *
+ * Rules:
+ * - If the character has an upcoming work shift, sleep is planned so they
+ *   wake up ~60 min before that shift starts.
+ * - If the character works overnight (shift spans midnight), sleep is placed
+ *   BEFORE the shift (daytime), not during or after it.
+ * - If no work/school obligation exists, fall back to stored schedule.
+ * - Minimum sleep duration: 6 hours. Maximum: 10 hours.
+ *
+ * Returns null if no sleep window can be determined.
+ */
+function computeAdaptiveSleepWindow(character, etTime) {
+  const SLEEP_DURATION_MIN = 7 * 60;   // 7 hours default
+  const PRE_SHIFT_BUFFER   = 60;       // wake up 60 min before shift
+
+  // Collect the character's next shift start/end in minutes-since-midnight
+  let nextShiftStartMin = null;
+  let nextShiftEndMin   = null;
+
+  // Helper: parse "HH:MM" to minutes
+  const toMin = (t) => {
+    if (!t) return null;
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + (m || 0);
+  };
+
+  const dayOfWeek = etTime.getDay();
+
+  // Check location-specific shift first, then character-level fields
+  // We only need the start/end times — day matching is handled by the work layer
+  const workLocId = character.occupation_location_id || character.current_work_location_id;
+  // NOTE: locationMap is NOT available here (helper is called before locationMap lookup)
+  // So we rely on character-level work_start_time / work_end_time / work_days
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    // Check if any of the next 2 days is a work day to determine "upcoming" shift
+    const isWorkDayToday = character.work_days.includes(dayOfWeek);
+    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
+
+    if (isWorkDayToday || isWorkDayTomorrow) {
+      nextShiftStartMin = toMin(character.work_start_time);
+      nextShiftEndMin   = toMin(character.work_end_time);
+    }
+  }
+
+  // School obligation
+  if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
+    // Default school hours if no explicit time stored
+    nextShiftStartMin = 8 * 60;   // 8:00 AM
+    nextShiftEndMin   = 15 * 60;  // 3:00 PM
+  }
+
+  // ── OVERNIGHT WORKER DETECTION ─────────────────────────────────────────────
+  // An overnight shift is one where the shift END crosses midnight relative to start.
+  // e.g. start=22:00 (1320), end=06:00 (360) → endMin < startMin
+  const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null &&
+    nextShiftEndMin < nextShiftStartMin;
+
+  const nowMin = etTime.getHours() * 60 + etTime.getMinutes();
+
+  if (nextShiftStartMin !== null) {
+    if (isOvernightShift) {
+      // Overnight worker: sleep window goes from after shift end → before shift start
+      // e.g. shift 22:00–06:00 → sleep 07:00–15:00 (daytime sleep)
+      const sleepStart = (nextShiftEndMin + 60) % 1440;  // 1hr after shift ends
+      const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+      return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: true };
+    } else {
+      // Daytime/standard worker: sleep at night, wake before shift
+      const wakeTime   = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+      const sleepStart = (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440;
+      return { sleepStartMin: sleepStart, wakeMin: wakeTime, isOvernightWorker: false };
+    }
+  }
+
+  // ── NO OBLIGATION — fall back to stored schedule ───────────────────────────
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) {
+      return { sleepStartMin: s, wakeMin: w, isOvernightWorker: false };
+    }
+  }
+
+  return null; // No sleep schedule determinable
 }
 
-// Returns true if within PRE_SLEEP_WINDOW_MINUTES before scheduled sleep start
+function isSleeping(character, etTime) {
+  const window = computeAdaptiveSleepWindow(character, etTime);
+  if (!window) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const { sleepStartMin, wakeMin } = window;
+  // Window crosses midnight
+  if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
+  return now >= sleepStartMin && now < wakeMin;
+}
+
+// Returns true if within PRE_SLEEP_WINDOW_MINUTES before adaptive sleep start
 const PRE_SLEEP_WINDOW_MINUTES = 60;
 function isInPreSleepWindow(character, etTime) {
-  if (!character.sleep_start_time) return false;
+  const window = computeAdaptiveSleepWindow(character, etTime);
+  if (!window) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
-  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
-  const sleepStart = sh * 60 + sm;
-  // Handle midnight rollover: e.g. sleep at 23:00, window starts at 22:00
-  const windowStart = (sleepStart - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
-  // If window straddles midnight
-  if (windowStart > sleepStart) return now >= windowStart || now < sleepStart;
-  return now >= windowStart && now < sleepStart;
+  const { sleepStartMin } = window;
+  const windowStart = (sleepStartMin - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
+  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
+  return now >= windowStart && now < sleepStartMin;
 }
 
 // Valid sleep locations — categories that are acceptable for sleeping
