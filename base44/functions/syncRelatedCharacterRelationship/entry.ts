@@ -120,22 +120,29 @@ Deno.serve(async (req) => {
   console.log(`[syncRelatedCharacterRelationship] ${primary.name} → ${related.name}: ${sourceType} | inverse: ${inverseType}`);
 
   // STEP 7: BUILD UPDATED RELATIONSHIPS FOR PERSON B (server-side, do not trust frontend array)
+  // IMPORTANT: Only the relationship_type (inverse), person_name, and avatar_url are written from A's data.
+  // Emotional bars (friendship, trust, romantic, etc.) are PRESERVED from B's existing record if it exists,
+  // or initialized to neutral defaults if this is a new reciprocal entry.
+  // This keeps bars asymmetric — B's feelings toward A are independent from A's feelings toward B.
+  const existing = related.fictional_relationships || [];
+  const alreadyLinked = existing.find(r => r.related_character_id === characterId);
+
   const safeEntry = {
     related_character_id: characterId,
     person_name: primary.name || '',
     relationship_type: inverseType, // CRITICAL: use the derived inverse, not what the frontend sent
-    description: relationshipEntry.description || '',
+    description: alreadyLinked?.description || relationshipEntry.description || '',
     avatar_url: primary.avatar_url || null,
-    user_respect_level: typeof relationshipEntry.respect_level === 'number' ? relationshipEntry.respect_level : 50,
-    friendship_level: typeof relationshipEntry.friendship_level === 'number' ? relationshipEntry.friendship_level : 50,
-    romantic_level: typeof relationshipEntry.romantic_level === 'number' ? relationshipEntry.romantic_level : 0,
-    attraction_level: typeof relationshipEntry.attraction_level === 'number' ? relationshipEntry.attraction_level : 0,
-    chosen_family_level: typeof relationshipEntry.chosen_family_level === 'number' ? relationshipEntry.chosen_family_level : 0,
-    trust_level: typeof relationshipEntry.trust_level === 'number' ? relationshipEntry.trust_level : 50,
+    // Preserve B's existing emotional bars — never overwrite with A's values
+    user_respect_level: alreadyLinked?.user_respect_level ?? 50,
+    friendship_level: alreadyLinked?.friendship_level ?? 50,
+    romantic_level: alreadyLinked?.romantic_level ?? 0,
+    attraction_level: alreadyLinked?.attraction_level ?? 0,
+    chosen_family_level: alreadyLinked?.chosen_family_level ?? 0,
+    trust_level: alreadyLinked?.trust_level ?? 50,
+    relational_jealousy: alreadyLinked?.relational_jealousy ?? 0,
+    envy_jealousy: alreadyLinked?.envy_jealousy ?? 0,
   };
-
-  const existing = related.fictional_relationships || [];
-  const alreadyLinked = existing.find(r => r.related_character_id === characterId);
 
   const updatedRels = alreadyLinked
     ? existing.map(r => r.related_character_id === characterId ? { ...r, ...safeEntry } : r)
