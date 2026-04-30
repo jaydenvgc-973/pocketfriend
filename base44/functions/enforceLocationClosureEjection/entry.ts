@@ -48,18 +48,62 @@ function isLocationOpen(location) {
   return true;
 }
 
-function isWorkScheduleActive(char) {
-  if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
-  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const dayOfWeek = nowET.getDay();
-  if (!char.work_days.includes(dayOfWeek)) return false;
-  const [sh, sm] = char.work_start_time.split(':').map(Number);
-  const [eh, em] = char.work_end_time.split(':').map(Number);
+// Check if a location-specific shift for this character is active right now (ET)
+function isLocationShiftActiveNow(shift, nowET) {
+  if (!shift?.start || !shift?.end) return false;
+  if (shift.days && shift.days.length > 0) {
+    if (!shift.days.includes(nowET.getDay())) return false;
+  }
   const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const [eh, em] = shift.end.split(':').map(Number);
   const startMin = sh * 60 + sm;
   const endMin = eh * 60 + em;
   if (endMin < startMin) return now >= startMin || now < endMin;
   return now >= startMin && now < endMin;
+}
+
+// Returns true only if the character has an ACTIVE shift at one of their work locations RIGHT NOW.
+// worker_shifts[char.id] is authoritative per location.
+// Falls back to character-level schedule only when no location-specific shift exists for that location.
+function isWorkScheduleActive(char, locationMap) {
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+
+  const allWorkLocIds = [];
+  if (char.occupation_location_id) allWorkLocIds.push(char.occupation_location_id);
+  if (char.current_work_location_id && !allWorkLocIds.includes(char.current_work_location_id)) {
+    allWorkLocIds.push(char.current_work_location_id);
+  }
+  if (Array.isArray(char.additional_occupation_locations)) {
+    for (const entry of char.additional_occupation_locations) {
+      if (entry.location_id && !allWorkLocIds.includes(entry.location_id)) {
+        allWorkLocIds.push(entry.location_id);
+      }
+    }
+  }
+
+  for (const locId of allWorkLocIds) {
+    const loc = locationMap?.[locId];
+    if (!loc) continue;
+    const locationShift = loc.worker_shifts?.[char.id];
+    if (locationShift) {
+      if (isLocationShiftActiveNow(locationShift, nowET)) return true;
+      // Shift defined but not active — do NOT fall back to character schedule for this location
+      continue;
+    }
+    // No location-specific shift — fall back to character-level schedule
+    if (!char.work_start_time || !char.work_end_time || !char.work_days) continue;
+    const dayOfWeek = nowET.getDay();
+    if (!char.work_days.includes(dayOfWeek)) continue;
+    const [sh, sm] = char.work_start_time.split(':').map(Number);
+    const [eh, em] = char.work_end_time.split(':').map(Number);
+    const now = nowET.getHours() * 60 + nowET.getMinutes();
+    const startMin = sh * 60 + sm;
+    const endMin = eh * 60 + em;
+    const active = endMin < startMin ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin);
+    if (active) return true;
+  }
+  return false;
 }
 
 function isSchoolScheduleActive(char) {
@@ -73,9 +117,10 @@ function hasValidActiveTravel(char) {
   return char.travel_status && char.travel_status !== 'not_traveling' && char.travel_destination_location_id;
 }
 
-function shouldProtectFromHomeReturn(char) {
+function shouldProtectFromHomeReturn(char, locationMap) {
   // MANDATORY GUARD: protect all active obligations before forcing home
-  if (isWorkScheduleActive(char)) return true;
+  // isWorkScheduleActive now checks worker_shifts per location before falling back to character schedule
+  if (isWorkScheduleActive(char, locationMap)) return true;
   if (isSchoolScheduleActive(char)) return true;
   if (hasValidActiveTravel(char)) return true;
   if (['sleeping', 'napping', 'hospitalized'].includes(char.resolved_presence_status)) return true;
@@ -126,7 +171,7 @@ Deno.serve(async (req) => {
 
       if (char.character_type === 'active_created_character') {
         // GUARD: Do NOT force home if character has active obligations
-        if (shouldProtectFromHomeReturn(char)) {
+        if (shouldProtectFromHomeReturn(char, locationMap)) {
           console.log(`[ejection] ${char.name} protected by active obligation — skipping home return`);
           continue;
         }

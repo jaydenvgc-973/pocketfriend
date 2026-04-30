@@ -1,5 +1,20 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+// Check if a location-specific shift for this character is active right now (ET)
+function isLocationShiftActiveNow(shift, nowET) {
+  if (!shift?.start || !shift?.end) return false;
+  if (shift.days && shift.days.length > 0) {
+    if (!shift.days.includes(nowET.getDay())) return false;
+  }
+  const now = nowET.getHours() * 60 + nowET.getMinutes();
+  const [sh, sm] = shift.start.split(':').map(Number);
+  const [eh, em] = shift.end.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const endMin = eh * 60 + em;
+  if (endMin < startMin) return now >= startMin || now < endMin;
+  return now >= startMin && now < endMin;
+}
+
 /**
  * OWNERSHIP-ISOLATED SCHEDULER
  * 
@@ -39,18 +54,9 @@ Deno.serve(async (req) => {
         return Response.json({ error: 'Access denied — ownership mismatch' }, { status: 403 });
       }
 
-      const workLocId = character.current_work_location_id || character.occupation_location_id;
       const resolvedLocId = character.resolved_current_location_id;
       const isSleeping = character.resolved_presence_status === 'sleeping' || character.resolved_presence_status === 'napping';
       const activity = (character.current_activity || '').toLowerCase();
-
-      // LOCATION BOUNDARY: work location must match character's owner_email
-      if (workLocId) {
-        const workLoc = await base44.asServiceRole.entities.LocationReference.filter({ id: workLocId });
-        if (workLoc && workLoc.length > 0 && workLoc[0].owner_email !== character.owner_email) {
-          return Response.json({ error: 'Location access denied — ownership mismatch' }, { status: 403 });
-        }
-      }
 
       // Helper: Check if character is blocked from work
       const isBlockedFromWork = (char) => {
@@ -60,55 +66,95 @@ Deno.serve(async (req) => {
         return isSleeping || isCriticallyIll || isInEmergency;
       };
 
-      // Helper: Check if on shift
-      const isOnShift = (char) => {
-        if (!char.work_start_time || !char.work_end_time || !char.work_days) return false;
-        const [startH, startM = 0] = char.work_start_time.split(':').map(Number);
-        const [endH, endM = 0] = char.work_end_time.split(':').map(Number);
-        const nowMins = currentHour * 60 + currentMinute;
-        const startMins = startH * 60 + startM;
-        const endMins = endH * 60 + endM;
-        const isWorkDay = char.work_days.includes(dayOfWeek);
-        return isWorkDay && nowMins >= startMins && nowMins < endMins;
-      };
-
       if (isBlockedFromWork(character)) {
         return Response.json({ updated: false, reason: 'Character blocked from work (sleeping/sick/emergency)' });
       }
 
       // CALLOUT GUARD: valid callout for today = full work schedule bypass
-      const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
-        .toISOString().slice(0, 10);
+      const singleNowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+      const todayET = singleNowET.toISOString().slice(0, 10);
       if (character.work_exception_status === 'called_out' && character.work_exception_date === todayET) {
         return Response.json({ updated: false, reason: 'Character has a valid callout for today — work schedule bypassed' });
       }
 
+      // Load all work locations for this character (ownership-scoped)
+      const singleAllWorkLocIds = [];
+      if (character.occupation_location_id) singleAllWorkLocIds.push(character.occupation_location_id);
+      if (character.current_work_location_id && !singleAllWorkLocIds.includes(character.current_work_location_id)) {
+        singleAllWorkLocIds.push(character.current_work_location_id);
+      }
+      if (Array.isArray(character.additional_occupation_locations)) {
+        for (const entry of character.additional_occupation_locations) {
+          if (entry.location_id && !singleAllWorkLocIds.includes(entry.location_id)) {
+            singleAllWorkLocIds.push(entry.location_id);
+          }
+        }
+      }
+
+      // Build location map for this character's work locations (ownership-scoped)
+      const singleLocMap = {};
+      for (const locId of singleAllWorkLocIds) {
+        const locs = await base44.asServiceRole.entities.LocationReference.filter({ id: locId });
+        if (locs?.[0]) singleLocMap[locId] = locs[0];
+      }
+
+      // Find which work location has an active shift right now (worker_shifts authoritative)
+      let singleActiveWorkLocId = null;
+      for (const locId of singleAllWorkLocIds) {
+        const loc = singleLocMap[locId];
+        if (!loc) continue;
+        const locationShift = loc.worker_shifts?.[characterId];
+        if (locationShift) {
+          if (isLocationShiftActiveNow(locationShift, singleNowET)) {
+            singleActiveWorkLocId = locId;
+            break;
+          }
+          continue; // Shift defined but not active — do not fall back to character schedule
+        }
+        // No location-specific shift — use character-level schedule
+        if (character.work_start_time && character.work_end_time && character.work_days) {
+          const now = singleNowET.getHours() * 60 + singleNowET.getMinutes();
+          const [sh, sm] = character.work_start_time.split(':').map(Number);
+          const [eh, em] = character.work_end_time.split(':').map(Number);
+          const startMin = sh * 60 + sm;
+          const endMin = eh * 60 + em;
+          const isWorkDay = character.work_days.includes(singleNowET.getDay());
+          const active = isWorkDay && (endMin < startMin ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin));
+          if (active) { singleActiveWorkLocId = locId; break; }
+        }
+      }
+
+      const primaryWorkLocId = singleAllWorkLocIds.find(id => singleLocMap[id]) || null;
       const validSleepReasons = ['overnight_shift', 'on_call', 'emergency', 'user_directed'];
       const hasValidSleepReason = validSleepReasons.some(r => activity.includes(r));
 
-      if (isOnShift(character) && workLocId) {
+      if (singleActiveWorkLocId) {
         await base44.asServiceRole.entities.Character.update(characterId, {
-          resolved_current_location_id: workLocId,
+          resolved_current_location_id: singleActiveWorkLocId,
           resolved_presence_status: 'at_work',
           resolved_location_type: 'work',
-          resolved_last_updated_at: new Date().toISOString(),
+          resolved_source_reason: 'work_schedule',
+          resolved_last_updated_at: singleNowET.toISOString(),
         });
-        return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: workLocId, reason: 'On shift — moved to work' });
+        return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: singleActiveWorkLocId, reason: 'On shift — moved to work' });
       }
 
-      if (!isOnShift(character)) {
-        if (isSleeping && resolvedLocId === workLocId && !hasValidSleepReason) {
+      // Not on any active shift — if still showing at a work location, send home
+      const effectiveWorkLocId = primaryWorkLocId;
+      if (effectiveWorkLocId && resolvedLocId === effectiveWorkLocId) {
+        if (isSleeping && !hasValidSleepReason) {
           const homeLocId = character.current_home_location_id;
           if (homeLocId) {
             await base44.asServiceRole.entities.Character.update(characterId, {
               resolved_current_location_id: homeLocId,
               resolved_presence_status: 'sleeping',
               resolved_location_type: 'home',
-              resolved_last_updated_at: new Date().toISOString(),
+              resolved_source_reason: 'fallback_to_home_base',
+              resolved_last_updated_at: singleNowET.toISOString(),
             });
             return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: homeLocId, reason: 'Sleeping at work — moved home' });
           }
-        } else if (resolvedLocId === workLocId && !isSleeping && character.current_home_location_id) {
+        } else if (!isSleeping && character.current_home_location_id) {
           const homeLocId = character.current_home_location_id;
           const energy = character.energy_value ?? 75;
           const newStatus = energy < 40 ? 'sleeping' : 'home';
@@ -116,7 +162,8 @@ Deno.serve(async (req) => {
             resolved_current_location_id: homeLocId,
             resolved_presence_status: newStatus,
             resolved_location_type: 'home',
-            resolved_last_updated_at: new Date().toISOString(),
+            resolved_source_reason: 'fallback_to_home_base',
+            resolved_last_updated_at: singleNowET.toISOString(),
           });
           return Response.json({ updated: true, oldLocation: resolvedLocId, newLocation: homeLocId, reason: `Shift ended — going home (${newStatus})` });
         }
@@ -172,48 +219,90 @@ Deno.serve(async (req) => {
       const locMap = Object.fromEntries(ownerLocations.map(l => [l.id, l]));
 
       for (const char of groupChars) {
-        const workLocId = char.current_work_location_id || char.occupation_location_id;
         const resolvedLocId = char.resolved_current_location_id;
         const isSleeping = char.resolved_presence_status === 'sleeping' || char.resolved_presence_status === 'napping';
 
-        // Check if on shift
-        if (!char.work_start_time || !char.work_end_time || !char.work_days) {
-          continue;
-        }
-
-        const [startH, startM = 0] = char.work_start_time.split(':').map(Number);
-        const [endH, endM = 0] = char.work_end_time.split(':').map(Number);
-        const nowMins = currentHour * 60 + currentMinute;
-        const startMins = startH * 60 + startM;
-        const endMins = endH * 60 + endM;
-        const isWorkDay = char.work_days.includes(dayOfWeek);
-        const onShift = isWorkDay && nowMins >= startMins && nowMins < endMins;
-
         // CALLOUT GUARD: skip work enforcement for characters with valid callout today
-        const todayET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }))
-          .toISOString().slice(0, 10);
+        const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+        const todayET = nowET.toISOString().slice(0, 10);
         if (char.work_exception_status === 'called_out' && char.work_exception_date === todayET) {
           continue; // Called out — do not force to work
         }
 
-        if (onShift && workLocId) {
+        // Collect ALL work location IDs for this character
+        const allWorkLocIds = [];
+        if (char.occupation_location_id) allWorkLocIds.push(char.occupation_location_id);
+        if (char.current_work_location_id && !allWorkLocIds.includes(char.current_work_location_id)) {
+          allWorkLocIds.push(char.current_work_location_id);
+        }
+        if (Array.isArray(char.additional_occupation_locations)) {
+          for (const entry of char.additional_occupation_locations) {
+            if (entry.location_id && !allWorkLocIds.includes(entry.location_id)) {
+              allWorkLocIds.push(entry.location_id);
+            }
+          }
+        }
+
+        if (allWorkLocIds.length === 0) continue;
+
+        // Determine which work location (if any) has an active shift right now.
+        // worker_shifts[char.id] is authoritative for that location.
+        // If no location-specific shift exists, fall back to character-level schedule.
+        let activeWorkLocId = null;
+        for (const locId of allWorkLocIds) {
+          const loc = locMap[locId];
+          if (!loc) continue;
+          const locationShift = loc.worker_shifts?.[char.id];
+          if (locationShift) {
+            if (isLocationShiftActiveNow(locationShift, nowET)) {
+              activeWorkLocId = locId;
+              break;
+            }
+            // Shift defined but not active for this location — do NOT fall back to character schedule
+            continue;
+          }
+          // No location-specific shift — use character-level schedule
+          if (char.work_start_time && char.work_end_time && char.work_days) {
+            const now = nowET.getHours() * 60 + nowET.getMinutes();
+            const [sh, sm] = char.work_start_time.split(':').map(Number);
+            const [eh, em] = char.work_end_time.split(':').map(Number);
+            const startMin = sh * 60 + sm;
+            const endMin = eh * 60 + em;
+            const isWorkDay = char.work_days.includes(nowET.getDay());
+            const onCharSchedule = isWorkDay && (endMin < startMin ? (now >= startMin || now < endMin) : (now >= startMin && now < endMin));
+            if (onCharSchedule) {
+              activeWorkLocId = locId;
+              break;
+            }
+          }
+        }
+
+        // Also determine what the "primary" work location is for post-shift return logic
+        // (the first location in allWorkLocIds that is in scope)
+        const primaryWorkLocId = allWorkLocIds.find(id => locMap[id]) || null;
+
+        const onShift = !!activeWorkLocId;
+        const workLocId = activeWorkLocId || primaryWorkLocId;
+
+        if (onShift && activeWorkLocId) {
           // OWNERSHIP CHECK: work location must be in same owner scope
-          if (!locMap[workLocId]) {
+          if (!locMap[activeWorkLocId]) {
             issues_found.push(`${char.name}: LOCATION_OUT_OF_SCOPE — work location not in owner scope`);
             continue;
           }
-          if (resolvedLocId !== workLocId) {
+          if (resolvedLocId !== activeWorkLocId) {
             issues_found.push(`${char.name}: should be at work but location stale`);
             await base44.asServiceRole.entities.Character.update(char.id, {
-              resolved_current_location_id: workLocId,
+              resolved_current_location_id: activeWorkLocId,
               resolved_presence_status: 'at_work',
               resolved_location_type: 'work',
-              resolved_last_updated_at: new Date().toISOString(),
+              resolved_source_reason: 'work_schedule',
+              resolved_last_updated_at: nowET.toISOString(),
             });
             fixes_applied.push(`${char.name}: synced to work location`);
             fixCount++;
           }
-        } else if (!onShift && resolvedLocId === workLocId) {
+        } else if (!onShift && workLocId && resolvedLocId === workLocId) {
           // Character is at work but shift ended
           const homeLocId = char.current_home_location_id;
           if (!homeLocId) {
@@ -236,7 +325,8 @@ Deno.serve(async (req) => {
             resolved_current_location_id: homeLocId,
             resolved_presence_status: newStatus,
             resolved_location_type: 'home',
-            resolved_last_updated_at: new Date().toISOString(),
+            resolved_source_reason: 'fallback_to_home_base',
+            resolved_last_updated_at: nowET.toISOString(),
           });
           fixes_applied.push(`${char.name}: relocated home (${newStatus})`);
           fixCount++;
