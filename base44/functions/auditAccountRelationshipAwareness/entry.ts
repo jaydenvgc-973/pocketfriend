@@ -1,17 +1,15 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 /**
- * COMPREHENSIVE ACCOUNT RELATIONSHIP AWARENESS AUDIT
+ * ACCOUNT RELATIONSHIP AWARENESS AUDIT (SCOPED)
  * 
- * Scans ALL character pairs under current owner_email to identify one-way relationships.
- * For each gap (A knows B but B doesn't know A), repairs the missing reciprocal entry.
+ * Scans explicit relationships only: fictional_relationships and family_members.
+ * Routes reciprocals to correct section based on character_type:
+ * - active_created_character ↔ active_created_character → Characters They Know
+ * - NPC_fictitious → People in Their World
+ * - family_member → Family section
  * 
- * Checks 5 evidence sources:
- * 1. Explicit fictional_relationships entries
- * 2. CharacterMemory mentions
- * 3. Message history mentions
- * 4. CharacterAutomaticNarrative mentions
- * 5. Family members / People in Their World entries
+ * NO memory/chat/narrative scans. No creation of new characters.
  */
 
 Deno.serve(async (req) => {
@@ -42,35 +40,64 @@ Deno.serve(async (req) => {
 
     console.log(`[auditAccountRelationshipAwareness] Found ${allCharacters.length} characters for ${user.email}`);
 
-    // Build character name map for fast lookups
+    // Build character maps for fast lookups
     const charById = new Map(allCharacters.map(c => [c.id, c]));
     const charByName = new Map(allCharacters.map(c => [c.name?.toLowerCase(), c]));
 
-    // STEP 2: Scan for evidence sources and identify gaps
+    // Determine destination section based on character_type pair
+    function getDestinationSection(sourceChar, targetChar, relationshipSource) {
+      if (relationshipSource === 'family') {
+        return 'family_members';
+      }
+      if (targetChar.character_type === 'NPC_fictitious') {
+        return 'people_in_their_world';
+      }
+      if (sourceChar.character_type === 'active_created_character' && targetChar.character_type === 'active_created_character') {
+        return 'fictional_relationships';
+      }
+      // All other cases → People in Their World (NPC territory)
+      return 'people_in_their_world';
+    }
+
+    // STEP 2: Scan explicit relationships and family only (NO memory/chat/narrative)
     for (const charA of allCharacters) {
-      // Evidence 1: Explicit fictional_relationships only (avoid extra queries)
-      const explicitTargets = new Map();
+      const targets = []; // Array of {targetCharId, relationshipSource, destinationSection}
+
+      // Source 1: Explicit fictional_relationships
       (charA.fictional_relationships || []).forEach(rel => {
         if (rel.related_character_id) {
-          explicitTargets.set(rel.related_character_id, `explicit_${rel.relationship_type}`);
-        }
-      });
-
-      // Evidence 2: Family members (from profile only, no query)
-      (charA.family_members || []).forEach(fam => {
-        const targetChar = charByName.get(fam.name?.toLowerCase());
-        if (targetChar && targetChar.id !== charA.id) {
-          if (!explicitTargets.has(targetChar.id)) {
-            explicitTargets.set(targetChar.id, 'family_member');
+          const targetChar = charById.get(rel.related_character_id);
+          if (targetChar && targetChar.owner_email === user.email) {
+            const destSection = getDestinationSection(charA, targetChar, 'explicit_relationship');
+            targets.push({
+              targetCharId: rel.related_character_id,
+              relationshipSource: 'explicit_relationship',
+              relationshipType: rel.relationship_type,
+              destinationSection: destSection,
+            });
           }
         }
       });
 
-      // STEP 3: Check for reciprocals among explicit/family targets only
-      for (const [targetCharId, evidenceType] of explicitTargets) {
-        const charB = charById.get(targetCharId);
-        if (!charB || charB.owner_email !== user.email) continue;
+      // Source 2: Family members
+      (charA.family_members || []).forEach(fam => {
+        const targetChar = charByName.get(fam.name?.toLowerCase());
+        if (targetChar && targetChar.owner_email === user.email && targetChar.id !== charA.id) {
+          targets.push({
+            targetCharId: targetChar.id,
+            relationshipSource: 'family',
+            relationshipType: fam.relationship_type || 'family',
+            destinationSection: 'family_members',
+          });
+        }
+      });
 
+      // STEP 3: Check for reciprocals and repair in correct section
+      for (const target of targets) {
+        const charB = charById.get(target.targetCharId);
+        if (!charB) continue;
+
+        // Check if reciprocal already exists in fictional_relationships
         const hasReciprocal = (charB.fictional_relationships || []).some(
           r => r.related_character_id === charA.id
         );
@@ -80,42 +107,49 @@ Deno.serve(async (req) => {
 
           const detailEntry = {
             source_character: charA.name,
-            source_character_id: charA.id,
+            source_character_type: charA.character_type,
             target_character: charB.name,
-            target_character_id: charB.id,
-            evidence_source: evidenceType,
+            target_character_type: charB.character_type,
+            relationship_source: target.relationshipSource,
+            destination_section: target.destinationSection,
+            missing_reciprocal: true,
             status: 'repaired',
-            repair_details: null,
+            skip_reason: null,
           };
 
           try {
-            const safeEntry = {
-              related_character_id: charA.id,
-              person_name: charA.name || '',
-              relationship_type: 'known_contact',
-              description: `Known through ${evidenceType}. ${charA.name} has documented relationship with ${charB.name}.`,
-              user_respect_level: 50,
-              friendship_level: 50,
-              romantic_level: 0,
-              attraction_level: 0,
-              chosen_family_level: 0,
-              trust_level: 50,
-              relational_jealousy: 0,
-              envy_jealousy: 0,
-            };
+            // Only repair if destination is fictional_relationships (not family or people)
+            // Family and People entries are managed separately; we only repair mutual awareness
+            if (target.destinationSection === 'fictional_relationships') {
+              const safeEntry = {
+                related_character_id: charA.id,
+                person_name: charA.name || '',
+                relationship_type: 'known_contact',
+                description: `Reciprocal awareness: ${charA.name} and ${charB.name} know each other.`,
+                user_respect_level: 50,
+                friendship_level: 50,
+                romantic_level: 0,
+                attraction_level: 0,
+                chosen_family_level: 0,
+                trust_level: 50,
+                relational_jealousy: 0,
+                envy_jealousy: 0,
+              };
 
-            const existingRels = charB.fictional_relationships || [];
-            const updatedRels = [...existingRels, safeEntry];
+              const existingRels = charB.fictional_relationships || [];
+              const updatedRels = [...existingRels, safeEntry];
 
-            await base44.entities.Character.update(charB.id, {
-              fictional_relationships: updatedRels,
-            });
+              await base44.entities.Character.update(charB.id, {
+                fictional_relationships: updatedRels,
+              });
 
-            detailEntry.repair_details = {
-              relationship_type: 'known_contact',
-              entry_added: true,
-            };
-            report.gaps_repaired++;
+              report.gaps_repaired++;
+            } else {
+              // Skip family and people_in_their_world — these are managed by separate UI/logic
+              detailEntry.status = 'skipped';
+              detailEntry.skip_reason = `destination_section_managed_separately (${target.destinationSection})`;
+              report.gaps_skipped++;
+            }
           } catch (err) {
             detailEntry.status = 'skipped';
             detailEntry.skip_reason = `repair_failed: ${err.message}`;
