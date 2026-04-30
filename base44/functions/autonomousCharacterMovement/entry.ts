@@ -134,8 +134,11 @@ function isScheduledSleeping(character, etTime) {
 
 function isInPreSleepWindow(character, etTime) {
   const window = computeAdaptiveSleepWindow(character, etTime);
-  if (!window) return false;
   const now = etTime.getHours() * 60 + etTime.getMinutes();
+  if (!window) {
+    // Default: pre-sleep window is 23:00 to midnight (60 min before 00:00 sleep default)
+    return now >= 23 * 60;
+  }
   const { sleepStartMin } = window;
   const windowStart = (sleepStartMin - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
   if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;

@@ -63,9 +63,68 @@ export function buildSleepInterruptionUpdate(character) {
 }
 
 /**
- * Determines if a character is currently asleep based on their personal sleep schedule.
+ * Computes the adaptive sleep window for a character.
+ * For active_created_character: built around next work/school obligation.
+ * For all others: uses stored schedule or defaults.
+ * Returns { sleepStartMin, wakeMin } in minutes-since-midnight (ET), or null.
+ */
+function computeAdaptiveSleepWindow(character) {
+  const SLEEP_DURATION_MIN = 7 * 60;
+  const PRE_SHIFT_BUFFER = 60;
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+
+  const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const dayOfWeek = nowET.getDay();
+
+  let nextShiftStartMin = null;
+  let nextShiftEndMin = null;
+
+  if (character.work_start_time && character.work_end_time && Array.isArray(character.work_days)) {
+    const isWorkDayToday = character.work_days.includes(dayOfWeek);
+    const isWorkDayTomorrow = character.work_days.includes((dayOfWeek + 1) % 7);
+    if (isWorkDayToday || isWorkDayTomorrow) {
+      nextShiftStartMin = toMin(character.work_start_time);
+      nextShiftEndMin = toMin(character.work_end_time);
+    }
+  }
+
+  if (!nextShiftStartMin && character.student_status === 'enrolled' && character.education_location_id) {
+    nextShiftStartMin = 8 * 60;
+    nextShiftEndMin = 15 * 60;
+  }
+
+  const isOvernightShift = nextShiftStartMin !== null && nextShiftEndMin !== null && nextShiftEndMin < nextShiftStartMin;
+
+  if (nextShiftStartMin !== null) {
+    if (isOvernightShift) {
+      return {
+        sleepStartMin: (nextShiftEndMin + 60) % 1440,
+        wakeMin: (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440,
+      };
+    } else {
+      const wakeTime = (nextShiftStartMin - PRE_SHIFT_BUFFER + 1440) % 1440;
+      return {
+        sleepStartMin: (wakeTime - SLEEP_DURATION_MIN + 1440) % 1440,
+        wakeMin: wakeTime,
+      };
+    }
+  }
+
+  // No obligation — use stored schedule
+  if (character.sleep_start_time && character.wake_up_time) {
+    const s = toMin(character.sleep_start_time);
+    const w = toMin(character.wake_up_time);
+    if (s !== null && w !== null) return { sleepStartMin: s, wakeMin: w };
+  }
+
+  return null;
+}
+
+/**
+ * Determines if a character is currently asleep based on their adaptive sleep schedule.
+ * For active_created_character: sleep is planned around work/school obligations.
  * If character decided to stay up, they are NOT asleep even during sleep hours.
- * Falls back to a default schedule (23:00 - 07:00) if none is set.
+ * Falls back to default window (23:00–10:00) if no schedule is determinable.
  */
 export function isCharacterAsleep(character) {
   // If character decided to stay up, check if that decision is still valid
@@ -76,24 +135,18 @@ export function isCharacterAsleep(character) {
     }
   }
 
-  const sleepStart = character?.sleep_start_time || "23:00";
-  const wakeUp = character?.wake_up_time || "07:00";
-
-  // CRITICAL: Use Eastern Time for sleep schedule checks — sleep times are ET-based
   const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
 
-  const [sleepH, sleepM] = sleepStart.split(":").map(Number);
-  const [wakeH, wakeM] = wakeUp.split(":").map(Number);
-
-  const sleepMinutes = sleepH * 60 + sleepM;
-  const wakeMinutes = wakeH * 60 + wakeM;
-
-  // Sleep window crosses midnight (e.g. 23:00 - 07:00)
-  if (sleepMinutes > wakeMinutes) {
-    return currentMinutes >= sleepMinutes || currentMinutes < wakeMinutes;
+  const window = computeAdaptiveSleepWindow(character);
+  if (!window) {
+    // No schedule determinable — default: midnight to 10 AM is sleep
+    return currentMinutes < 10 * 60;
   }
 
-  // Sleep window within same day (e.g. 14:00 - 22:00 for a very early sleeper)
-  return currentMinutes >= sleepMinutes && currentMinutes < wakeMinutes;
+  const { sleepStartMin, wakeMin } = window;
+  if (sleepStartMin > wakeMin) {
+    return currentMinutes >= sleepStartMin || currentMinutes < wakeMin;
+  }
+  return currentMinutes >= sleepStartMin && currentMinutes < wakeMin;
 }
