@@ -103,6 +103,8 @@ export default function EditCharacterProfile() {
       voice_name: char.voice_name || "",
       voice_style_note: char.voice_style_note || "",
     });
+    setEducationEntries(char.completed_education || []);
+    setJobTrainingEntries(char.completed_job_training || []);
     setSaved(false);
   };
 
@@ -228,6 +230,9 @@ export default function EditCharacterProfile() {
       voice_enabled: form.voice_enabled,
       voice_name: form.voice_name,
       voice_style_note: form.voice_style_note,
+      // Education and job training history
+      completed_education: educationEntries,
+      completed_job_training: jobTrainingEntries,
     };
 
     // Save the main character
@@ -502,6 +507,29 @@ export default function EditCharacterProfile() {
                   />
                 </div>
 
+                {/* Completed Education History */}
+                <div className="pt-2 border-t border-border space-y-3">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Completed Education</label>
+                    <button onClick={() => setEducationEntries([...educationEntries, { course_name: "", institution: "", start_date: "", completion_date: "" }])} className="text-xs text-primary hover:text-primary/80">+ Add</button>
+                  </div>
+                  {educationEntries.map((entry, idx) => (
+                    <div key={idx} className="space-y-2 p-3 rounded-lg bg-secondary/30 border border-border">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1 space-y-2">
+                          <Input value={entry.course_name || ""} onChange={e => { const newEntries = [...educationEntries]; newEntries[idx].course_name = e.target.value; setEducationEntries(newEntries); }} placeholder="Course name" className="rounded-xl text-sm" />
+                          <Input value={entry.institution || ""} onChange={e => { const newEntries = [...educationEntries]; newEntries[idx].institution = e.target.value; setEducationEntries(newEntries); }} placeholder="Institution" className="rounded-xl text-sm" />
+                          <div className="flex gap-2">
+                            <Input type="date" value={entry.start_date || ""} onChange={e => { const newEntries = [...educationEntries]; newEntries[idx].start_date = e.target.value; setEducationEntries(newEntries); }} className="rounded-xl text-sm flex-1" />
+                            <Input type="date" value={entry.completion_date || ""} onChange={e => { const newEntries = [...educationEntries]; newEntries[idx].completion_date = e.target.value; setEducationEntries(newEntries); }} className="rounded-xl text-sm flex-1" />
+                          </div>
+                        </div>
+                        <button onClick={() => setEducationEntries(educationEntries.filter((_, i) => i !== idx))} className="text-muted-foreground hover:text-destructive ml-2"><X className="w-4 h-4" /></button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
                 <div className="pt-2 border-t border-border space-y-2">
                   <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Job Training</label>
                   <Select value={form.current_job_training_activity} onValueChange={v => setForm(p => ({ ...p, current_job_training_activity: v }))}>
@@ -526,6 +554,27 @@ export default function EditCharacterProfile() {
                       <label className="text-xs text-muted-foreground">Expected Completion</label>
                       <Input type="date" value={form.job_training_expected_completion_date} onChange={e => setForm(p => ({ ...p, job_training_expected_completion_date: e.target.value }))} className="rounded-xl text-sm" />
                     </div>
+                  </div>
+
+                  {/* Completed Job Training History */}
+                  <div className="pt-2 border-t border-border space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Completed Training</label>
+                      <button onClick={() => setJobTrainingEntries([...jobTrainingEntries, { training_name: "", company: "", position_title: "", completion_date: "" }])} className="text-xs text-primary hover:text-primary/80">+ Add</button>
+                    </div>
+                    {jobTrainingEntries.map((entry, idx) => (
+                      <div key={idx} className="space-y-2 p-3 rounded-lg bg-secondary/30 border border-border">
+                        <div className="flex justify-between items-start">
+                          <div className="flex-1 space-y-2">
+                            <Input value={entry.training_name || ""} onChange={e => { const newEntries = [...jobTrainingEntries]; newEntries[idx].training_name = e.target.value; setJobTrainingEntries(newEntries); }} placeholder="Training name" className="rounded-xl text-sm" />
+                            <Input value={entry.company || ""} onChange={e => { const newEntries = [...jobTrainingEntries]; newEntries[idx].company = e.target.value; setJobTrainingEntries(newEntries); }} placeholder="Company" className="rounded-xl text-sm" />
+                            <Input value={entry.position_title || ""} onChange={e => { const newEntries = [...jobTrainingEntries]; newEntries[idx].position_title = e.target.value; setJobTrainingEntries(newEntries); }} placeholder="Position title" className="rounded-xl text-sm" />
+                            <Input type="date" value={entry.completion_date || ""} onChange={e => { const newEntries = [...jobTrainingEntries]; newEntries[idx].completion_date = e.target.value; setJobTrainingEntries(newEntries); }} className="rounded-xl text-sm" />
+                          </div>
+                          <button onClick={() => setJobTrainingEntries(jobTrainingEntries.filter((_, i) => i !== idx))} className="text-muted-foreground hover:text-destructive ml-2"><X className="w-4 h-4" /></button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
