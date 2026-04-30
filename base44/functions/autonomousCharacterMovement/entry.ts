@@ -448,25 +448,47 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── HOME WRITE PROTECTION ────────────────────────────────────────────
-        // If the best location is home-category but NOT this character's authoritative home,
-        // that write is invalid. Re-select from non-home locations only.
+        // ── DECLARE finalLocation EARLY so correction lock and home protection can both assign it ──
         let finalLocation = bestLocation;
-        if (bestLocation.category === 'home' && bestLocation.id !== char.current_home_location_id) {
-          console.warn(`[autonomousMovement] BLOCKED_INVALID_HOME_WRITE: ${char.name} → ${bestLocation.name} (not their home). Re-selecting.`);
-          blockedLog.push(`${char.name}: BLOCKED_INVALID_HOME_WRITE — ${bestLocation.name} is not their authoritative home`);
+
+        // ── CORRECTION LOCK: Do not move character back to a recently-corrected-FROM location ──
+        // If the character has a correction lock active and the destination matches the
+        // location they were just corrected away from, block the move.
+        if (char.location_correction_locked_until && char.location_correction_previous_id) {
+          const lockUntil = new Date(char.location_correction_locked_until);
+          if (nowET < lockUntil && finalLocation.id === char.location_correction_previous_id) {
+            const msg = `${char.name}: CORRECTION_LOCK blocked return to "${finalLocation.name}" — lock expires ${lockUntil.toISOString()}`;
+            blockedLog.push(msg);
+            console.warn(`[autonomousMovement] CORRECTION_LOCK: ${msg}`);
+            // Re-select excluding the locked location
+            const nonLockedOpen = openLocations.filter(loc => loc.id !== char.location_correction_previous_id);
+            const lockFallback = selectBestLocation(nonLockedOpen, char, vals);
+            if (!lockFallback || lockFallback.score <= 0) {
+              skippedLog.push(`${char.name}: correction lock active, no valid fallback`);
+              continue;
+            }
+            finalLocation = lockFallback;
+          }
+        }
+
+        // ── HOME WRITE PROTECTION ────────────────────────────────────────────
+        // If the selected location is home-category but NOT this character's authoritative home,
+        // that write is invalid. Re-select from non-home locations only.
+        if (finalLocation.category === 'home' && finalLocation.id !== char.current_home_location_id) {
+          console.warn(`[autonomousMovement] BLOCKED_INVALID_HOME_WRITE: ${char.name} → ${finalLocation.name} (not their home). Re-selecting.`);
+          blockedLog.push(`${char.name}: BLOCKED_INVALID_HOME_WRITE — ${finalLocation.name} is not their authoritative home`);
           const nonHomeLocations = openLocations.filter(loc => loc.category !== 'home' && loc.category !== 'generic');
-          const fallback = selectBestLocation(nonHomeLocations, char, vals);
-          if (!fallback) {
+          const homeFallback = selectBestLocation(nonHomeLocations, char, vals);
+          if (!homeFallback) {
             console.log(`[autonomousMovement] ${char.name}: no non-home fallback, skipping`);
             skippedLog.push(`${char.name}: blocked wrong home write, no non-home fallback`);
             continue;
           }
-          if (fallback.score <= 0) {
+          if (homeFallback.score <= 0) {
             skippedLog.push(`${char.name}: no positive-scoring non-home location`);
             continue;
           }
-          finalLocation = fallback;
+          finalLocation = homeFallback;
         }
 
         // ── MOVE ────────────────────────────────────────────────────────────

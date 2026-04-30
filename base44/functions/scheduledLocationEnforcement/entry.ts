@@ -166,6 +166,28 @@ function isValidSleepLocation(location) {
   return VALID_SLEEP_CATEGORIES.has(location.category || '');
 }
 
+// Check if a location is currently open based on its operating_hours and ET time.
+// No hours defined = always open.
+function isLocationCurrentlyOpen(location, etTime) {
+  if (!location?.operating_hours || location.operating_hours.length === 0) return true;
+  const dayOfWeek = etTime.getDay();
+  const currentMinutes = etTime.getHours() * 60 + etTime.getMinutes();
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const inWindow = (openStr, closeStr) => {
+    const open = toMin(openStr); const close = toMin(closeStr);
+    if (open == null || close == null) return false;
+    if (open <= close) return currentMinutes >= open && currentMinutes <= close;
+    return currentMinutes >= open || currentMinutes <= close;
+  };
+  const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+  const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
+  if (todayEntries.length > 0) return todayEntries.some(h => inWindow(h.open_time, h.close_time));
+  if (daySpecific.length > 0) return false; // Has day-specific hours but none for today = closed
+  if (dayAgnostic.length > 0) return dayAgnostic.some(h => inWindow(h.open_time, h.close_time));
+  return true;
+}
+
 function resolveValidSleepLocationId(character, locationMap) {
   if (character.temporary_housing_location_id && locationMap[character.temporary_housing_location_id]) {
     return character.temporary_housing_location_id;
@@ -340,6 +362,7 @@ function computeResolved(character, locationMap, etTime) {
   // autonomous_needs_driven and autonomous_movement visits at non-sleep locations
   // are NEVER preserved — they are stale and must always fall through to home.
   // Only user-initiated visits at non-sleep locations are preserved (and only outside pre-sleep window).
+  // CLOSED LOCATION RULE: Any visit to a currently-closed location is NEVER preserved, regardless of source.
   const homeId = character.current_home_location_id || character.home_location_id;
   const resolvedLocId = character.resolved_current_location_id;
   const isAwayFromHome = resolvedLocId && resolvedLocId !== homeId;
@@ -355,8 +378,14 @@ function computeResolved(character, locationMap, etTime) {
   if (isAwayFromHome) {
     const visitLoc = locationMap[resolvedLocId];
 
+    // CLOSED LOCATION BLOCK: If the location is closed right now, never preserve it — fall through to home
+    if (visitLoc && !isValidSleepLocation(visitLoc) && !isLocationCurrentlyOpen(visitLoc, etTime)) {
+      // Location is closed — do not preserve regardless of visit source
+      console.log && console.log(`[scheduledEnforcement] ${character.name}: closed location block — ${visitLoc.name} is closed, routing home`);
+      // Fall through to home fallback below
+    }
     // Autonomous visits at non-sleep locations are never preserved — fall through to home
-    if (isAutonomousVisit && visitLoc && !isValidSleepLocation(visitLoc)) {
+    else if (isAutonomousVisit && visitLoc && !isValidSleepLocation(visitLoc)) {
       // Do not preserve — fall through to home fallback below
     } else if (visitLoc && isValidSleepLocation(visitLoc)) {
       // Valid sleep location (hotel/shelter/home) — preserve regardless of visit type
@@ -370,7 +399,7 @@ function computeResolved(character, locationMap, etTime) {
         home_resolution_failed: false,
       };
     } else if (isUserInitiatedVisit && visitLoc && !isNearSleepWindow(character, etTime, 120)) {
-      // User-initiated visit at non-sleep location, far from sleep — allow
+      // User-initiated visit at non-sleep location, far from sleep, and location is open — allow
       return {
         resolved_current_location_id: resolvedLocId,
         resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',
@@ -586,6 +615,25 @@ Deno.serve(async (req) => {
           } else {
             // WRITE: only changed fields, only if not dry_run
             const timestamp = etTime.toISOString();
+
+            // CORRECTION LOCK: if the character is being moved away from a non-home, non-sleep location
+            // (e.g. closed social/religion/workplace), write a 30-minute lock so autonomous movement
+            // cannot immediately undo the correction.
+            const wasAtNonHome = stored.resolved_current_location_id &&
+              stored.resolved_current_location_id !== (character.current_home_location_id || character.home_location_id);
+            const isBeingSentHome = resolved.resolved_location_type === 'home' || resolved.resolved_location_type === 'sleep_unresolved';
+            const wasInvalidReason = [
+              'autonomous_needs_driven', 'autonomous_movement', 'closed_location_blocked',
+              'fallback_to_home_base', 'rabbit_hole'
+            ].includes(stored.resolved_source_reason || '');
+
+            const lockFields = (wasAtNonHome && isBeingSentHome) ? {
+              location_correction_locked_until: new Date(etTime.getTime() + 30 * 60 * 1000).toISOString(),
+              location_correction_previous_id: stored.resolved_current_location_id,
+              location_correction_reason: 'scheduled_enforcement_correction',
+              location_correction_corrected_at: timestamp,
+            } : {};
+
             await base44.asServiceRole.entities.Character.update(character.id, {
               resolved_current_location_id: resolved.resolved_current_location_id,
               resolved_current_location_name: resolved.resolved_current_location_name,
@@ -595,9 +643,14 @@ Deno.serve(async (req) => {
               resolved_zone: resolved.resolved_zone,
               resolved_last_updated_at: timestamp,
               home_resolution_failed: resolved.home_resolution_failed,
+              ...lockFields,
             });
             updated++;
             entry.action = 'updated';
+            if (Object.keys(lockFields).length > 0) {
+              entry.correction_lock_written = true;
+              entry.lock_until = lockFields.location_correction_locked_until;
+            }
           }
 
           results.push(entry);

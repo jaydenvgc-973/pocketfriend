@@ -142,6 +142,27 @@ function isValidSleepLocation(location) {
   return VALID_SLEEP_CATEGORIES.has(location.category || '');
 }
 
+// Check if a location is currently open based on its operating_hours and ET time.
+function isLocationCurrentlyOpen(location, etTime) {
+  if (!location?.operating_hours || location.operating_hours.length === 0) return true;
+  const dayOfWeek = etTime.getDay();
+  const currentMinutes = etTime.getHours() * 60 + etTime.getMinutes();
+  const toMin = (t) => { if (!t) return null; const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const inWindow = (openStr, closeStr) => {
+    const open = toMin(openStr); const close = toMin(closeStr);
+    if (open == null || close == null) return false;
+    if (open <= close) return currentMinutes >= open && currentMinutes <= close;
+    return currentMinutes >= open || currentMinutes <= close;
+  };
+  const daySpecific = location.operating_hours.filter(h => h.day_of_week != null);
+  const dayAgnostic = location.operating_hours.filter(h => h.day_of_week == null);
+  const todayEntries = daySpecific.filter(h => h.day_of_week === dayOfWeek);
+  if (todayEntries.length > 0) return todayEntries.some(h => inWindow(h.open_time, h.close_time));
+  if (daySpecific.length > 0) return false;
+  if (dayAgnostic.length > 0) return dayAgnostic.some(h => inWindow(h.open_time, h.close_time));
+  return true;
+}
+
 function resolveValidSleepLocationId(character, locationMap) {
   if (character.temporary_housing_location_id && locationMap[character.temporary_housing_location_id]) {
     return character.temporary_housing_location_id;
@@ -336,8 +357,12 @@ function computeResolvedLocation(character, locationMap, etTime) {
   if (isAwayFromHome) {
     const visitLoc = locationMap[resolvedLocIdForVisit];
 
+    // CLOSED LOCATION BLOCK: never preserve a visit at a currently-closed location
+    if (visitLoc && !isValidSleepLocation(visitLoc) && !isLocationCurrentlyOpen(visitLoc, etTime)) {
+      // Fall through to home fallback below
+    }
     // Autonomous visits at non-sleep locations are never preserved — fall through to home
-    if (isAutonomousVisit && visitLoc && !isValidSleepLocation(visitLoc)) {
+    else if (isAutonomousVisit && visitLoc && !isValidSleepLocation(visitLoc)) {
       // Do not preserve — fall through to home fallback below
     } else if (visitLoc && isValidSleepLocation(visitLoc)) {
       // At a valid sleep location (hotel/shelter/home) — preserve regardless of visit type
