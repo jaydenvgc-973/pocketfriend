@@ -174,7 +174,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
   }
 
   // LAYER 3.5: Social visit — NPC/character has been explicitly moved away from home by system
-  // This MUST come before sleep/home fallback to prevent home override
+  // SLEEP GUARD: if character is in their sleep window, visits must NOT override sleep — skip this layer entirely
   const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
   const resolvedLocIdForVisit = character.resolved_current_location_id;
   const isAwayFromHome = resolvedLocIdForVisit && resolvedLocIdForVisit !== homeIdForVisitCheck;
@@ -187,7 +187,7 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     character.resolved_source_reason === 'autonomous_movement' ||
     character.resolved_source_reason === 'user_travel';
 
-  if (isAwayFromHome && isSystemPlacedVisit) {
+  if (isAwayFromHome && isSystemPlacedVisit && !isCharacterSleeping(character)) {
     const socialLocation = locationMap[resolvedLocIdForVisit];
     if (socialLocation) {
       return {

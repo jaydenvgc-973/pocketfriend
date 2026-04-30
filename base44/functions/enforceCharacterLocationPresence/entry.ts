@@ -169,6 +169,7 @@ function computeResolvedLocation(character, locationMap, etTime) {
   }
 
   // LAYER 4: Active explicit visit (system-placed away from home)
+  // SLEEP GUARD: if character is in their sleep window, visits must NOT override sleep — skip this layer entirely
   const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
   const resolvedLocIdForVisit = character.resolved_current_location_id;
   const isAwayFromHome = resolvedLocIdForVisit && resolvedLocIdForVisit !== homeIdForVisitCheck;
@@ -180,7 +181,7 @@ function computeResolvedLocation(character, locationMap, etTime) {
     character.resolved_source_reason === 'autonomous_movement' ||
     character.resolved_source_reason === 'user_travel';
 
-  if (isAwayFromHome && isSystemPlacedVisit) {
+  if (isAwayFromHome && isSystemPlacedVisit && !isCharacterSleeping(character, etTime)) {
     const socialLocation = locationMap[resolvedLocIdForVisit];
     if (socialLocation) {
       return {
