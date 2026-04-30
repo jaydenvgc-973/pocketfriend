@@ -49,6 +49,8 @@ export default function EditCharacterProfile() {
   const [occupationLink, setOccupationLink] = useState({ locationId: null, locationName: null, title: '' });
   const [occupationLink2, setOccupationLink2] = useState({ locationId: null, locationName: null, title: '' });
   const [educationLink, setEducationLink] = useState({ locationId: null, locationName: null, title: '' });
+  const [educationEntries, setEducationEntries] = useState([]);
+  const [jobTrainingEntries, setJobTrainingEntries] = useState([]);
 
   const { data: currentUser = null } = useQuery({
     queryKey: ["user"],
