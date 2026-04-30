@@ -435,15 +435,15 @@ function computeResolved(character, locationMap, etTime) {
     };
   }
 
-  // LAYER 8: No home
+  // LAYER 8: No home — active_created_character must never use rabbit_hole
   return {
     resolved_current_location_id: null,
-    resolved_current_location_name: 'Away',
-    resolved_location_type: 'rabbit_hole',
-    resolved_presence_status: 'rabbit_hole',
-    resolved_source_reason: 'no_home_no_temp_housing',
+    resolved_current_location_name: 'Unresolved',
+    resolved_location_type: 'location_unresolved',
+    resolved_presence_status: 'location_unresolved',
+    resolved_source_reason: 'no_valid_home_or_temporary_location',
     resolved_zone: null,
-    home_resolution_failed: false,
+    home_resolution_failed: true,
   };
 }
 

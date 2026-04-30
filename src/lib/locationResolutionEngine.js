@@ -194,12 +194,13 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
         home_resolution_failed: !sleepHomeLoc,
       };
     }
+    // Sleeping but no valid home — use sleep_unresolved, never rabbit_hole
     return {
       resolved_current_location_id: null,
-      resolved_current_location_name: 'Away',
-      resolved_location_type: 'rabbit_hole',
+      resolved_current_location_name: 'Unresolved',
+      resolved_location_type: 'sleep_unresolved',
       resolved_presence_status: 'sleeping',
-      resolved_source_reason: 'sleep_no_valid_home',
+      resolved_source_reason: 'no_valid_sleep_location',
       resolved_zone: null,
       home_resolution_failed: true,
     };
@@ -341,14 +342,13 @@ export function resolveCharacterLocation(character, locationMap = {}, currentTim
     };
   }
 
-  // No home base found — character is truly homeless with no temp housing
-  // Return safe away state (never trap at stale location)
+  // No home base found — active_created_character must never use rabbit_hole
   return {
     resolved_current_location_id: null,
-    resolved_current_location_name: 'Away',
-    resolved_location_type: 'rabbit_hole',
-    resolved_presence_status: 'rabbit_hole',
-    resolved_source_reason: 'no_home_no_temp_housing',
+    resolved_current_location_name: 'Unresolved',
+    resolved_location_type: 'location_unresolved',
+    resolved_presence_status: 'location_unresolved',
+    resolved_source_reason: 'no_valid_home_or_temporary_location',
     resolved_zone: null,
   };
 }
