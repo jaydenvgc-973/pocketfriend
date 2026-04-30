@@ -85,9 +85,13 @@ export default function EditCharacterProfile() {
       criminal_record: char.criminal_record || "",
       // Education
       current_education_activity: char.current_education_activity || "none",
+      education_start_date: char.education_start_date || "",
+      education_expected_completion_date: char.education_expected_completion_date || "",
       education_course_name: char.education_details?.course_name || "",
       education_institution: char.education_details?.institution || "",
       education_location: char.education_details?.location || "",
+      job_training_start_date: char.job_training_start_date || "",
+      job_training_expected_completion_date: char.job_training_expected_completion_date || "",
       current_job_training_activity: char.current_job_training_activity || "none",
       job_training_name: char.job_training_details?.training_name || "",
       job_training_company: char.job_training_details?.company || "",
@@ -200,12 +204,16 @@ export default function EditCharacterProfile() {
       additional_occupation_locations: secondJobEntry,
       criminal_record: form.criminal_record,
       current_education_activity: form.current_education_activity,
+      education_start_date: form.education_start_date || null,
+      education_expected_completion_date: form.education_expected_completion_date || null,
       education_details: {
         course_name: form.education_course_name,
         institution: form.education_institution,
         location: form.education_location,
       },
       current_job_training_activity: form.current_job_training_activity,
+      job_training_start_date: form.job_training_start_date || null,
+      job_training_expected_completion_date: form.job_training_expected_completion_date || null,
       job_training_details: {
         training_name: form.job_training_name,
         company: form.job_training_company,
@@ -472,6 +480,16 @@ export default function EditCharacterProfile() {
                 <Input value={form.education_course_name} onChange={e => setForm(p => ({ ...p, education_course_name: e.target.value }))} placeholder="Course / Program name" className="rounded-xl text-sm" />
                 <Input value={form.education_institution} onChange={e => setForm(p => ({ ...p, education_institution: e.target.value }))} placeholder="Institution" className="rounded-xl text-sm" />
                 <Input value={form.education_location} onChange={e => setForm(p => ({ ...p, education_location: e.target.value }))} placeholder="Location (city, online...)" className="rounded-xl text-sm" />
+                <div className="flex gap-3">
+                  <div className="flex-1 space-y-1">
+                    <label className="text-xs text-muted-foreground">Start Date</label>
+                    <Input type="date" value={form.education_start_date} onChange={e => setForm(p => ({ ...p, education_start_date: e.target.value }))} className="rounded-xl text-sm" />
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <label className="text-xs text-muted-foreground">Expected Completion</label>
+                    <Input type="date" value={form.education_expected_completion_date} onChange={e => setForm(p => ({ ...p, education_expected_completion_date: e.target.value }))} className="rounded-xl text-sm" />
+                  </div>
+                </div>
                 {/* Location link for education */}
                 <div className="pt-2 border-t border-border">
                   <OccupationLocationPicker
@@ -499,6 +517,16 @@ export default function EditCharacterProfile() {
                   <Input value={form.job_training_name} onChange={e => setForm(p => ({ ...p, job_training_name: e.target.value }))} placeholder="Training / Program name" className="rounded-xl text-sm" />
                   <Input value={form.job_training_company} onChange={e => setForm(p => ({ ...p, job_training_company: e.target.value }))} placeholder="Company" className="rounded-xl text-sm" />
                   <Input value={form.job_training_position} onChange={e => setForm(p => ({ ...p, job_training_position: e.target.value }))} placeholder="Position title" className="rounded-xl text-sm" />
+                  <div className="flex gap-3">
+                    <div className="flex-1 space-y-1">
+                      <label className="text-xs text-muted-foreground">Start Date</label>
+                      <Input type="date" value={form.job_training_start_date} onChange={e => setForm(p => ({ ...p, job_training_start_date: e.target.value }))} className="rounded-xl text-sm" />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <label className="text-xs text-muted-foreground">Expected Completion</label>
+                      <Input type="date" value={form.job_training_expected_completion_date} onChange={e => setForm(p => ({ ...p, job_training_expected_completion_date: e.target.value }))} className="rounded-xl text-sm" />
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
