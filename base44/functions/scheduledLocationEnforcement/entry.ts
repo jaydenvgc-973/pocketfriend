@@ -207,12 +207,13 @@ function computeResolved(character, locationMap, etTime) {
         home_resolution_failed: !sleepHomeLoc,
       };
     }
+    // No valid home — unresolved sleep state. Never rabbit_hole while sleeping.
     return {
       resolved_current_location_id: null,
-      resolved_current_location_name: 'Away',
-      resolved_location_type: 'rabbit_hole',
+      resolved_current_location_name: 'Unresolved',
+      resolved_location_type: 'sleep_unresolved',
       resolved_presence_status: 'sleeping',
-      resolved_source_reason: 'sleep_no_valid_home',
+      resolved_source_reason: 'no_valid_sleep_location',
       resolved_zone: null,
       home_resolution_failed: true,
     };

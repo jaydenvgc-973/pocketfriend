@@ -328,17 +328,22 @@ Deno.serve(async (req) => {
         const reason = char.resolved_source_reason || '';
 
         // ── SLEEP HARD BLOCKS ────────────────────────────────────────────────
-        // Block if currently sleeping, napping, or in the 60-min pre-sleep return window
+        // Block if currently sleeping, napping, pre-sleep return, or returning home for sleep
         const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
         if (
-          status === 'sleeping'   ||
-          status === 'napping'    ||
-          status === 'passed_out' ||
-          status === 'hospitalized' ||
-          reason === 'sleep_return_home' ||
+          status === 'sleeping'              ||
+          status === 'napping'               ||
+          status === 'returning_home_for_sleep' ||
+          status === 'passed_out'            ||
+          status === 'hospitalized'          ||
+          reason === 'sleep_return_home'     ||
           reason === 'sleep_location_correction' ||
-          isInPreSleepWindow(char, nowET) ||
-          isScheduledSleeping(char, nowET) ||
+          reason === 'adaptive_sleep_location_lock' ||
+          reason === 'adaptive_sleep_location_correction' ||
+          reason === 'adaptive_pre_sleep_return' ||
+          reason === 'no_valid_sleep_location' ||
+          isInPreSleepWindow(char, nowET)    ||
+          isScheduledSleeping(char, nowET)   ||
           char.is_jailed
         ) {
           console.log(`[autonomousMovement] ${char.name}: SLEEP/HARD BLOCK (${reason || status})`);
@@ -398,6 +403,43 @@ Deno.serve(async (req) => {
           blockedLog.push(msg);
           console.warn(`[autonomousMovement] BLOCK: ${msg}`);
           continue;
+        }
+
+        // ── ENERGY URGENCY → ROUTE HOME FIRST ───────────────────────────────
+        // If energy is urgent (< 50), the character needs rest. Send them to their own home
+        // before trying social/recreational locations. This prevents tired characters from
+        // being moved to bars or gyms when they should be resting.
+        if (urgencyLevel(vals.energy) >= 2 && char.current_home_location_id) {
+          const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
+          if (ownHome && char.resolved_current_location_id !== ownHome.id) {
+            try {
+              await base44.entities.Character.update(char.id, {
+                resolved_current_location_id:   ownHome.id,
+                resolved_current_location_name: ownHome.name,
+                resolved_presence_status:       'home',
+                resolved_location_type:         'home',
+                resolved_source_reason:         'energy_low_return_home',
+                last_arrived_time:              new Date().toISOString(),
+              }).catch(() => base44.asServiceRole.entities.Character.update(char.id, {
+                resolved_current_location_id:   ownHome.id,
+                resolved_current_location_name: ownHome.name,
+                resolved_presence_status:       'home',
+                resolved_location_type:         'home',
+                resolved_source_reason:         'energy_low_return_home',
+                last_arrived_time:              new Date().toISOString(),
+              }));
+              totalMoved++;
+              moveLog.push(`${char.name} → ${ownHome.name} [ENERGY_LOW_HOME] energy(${Math.round(vals.energy)})`);
+              console.log(`[autonomousMovement] ✓ ${char.name} → ${ownHome.name} [ENERGY_LOW_HOME]`);
+            } catch (e) {
+              blockedLog.push(`${char.name}: energy home write failed — ${e.message}`);
+            }
+            continue;
+          }
+          if (ownHome && char.resolved_current_location_id === ownHome.id) {
+            console.log(`[autonomousMovement] ${char.name}: low energy, already home`);
+            continue;
+          }
         }
 
         // ── ALREADY THERE — no-op ───────────────────────────────────────────
