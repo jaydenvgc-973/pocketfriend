@@ -463,7 +463,7 @@ Deno.serve(async (req) => {
             // Re-select excluding the locked location
             const nonLockedOpen = openLocations.filter(loc => loc.id !== char.location_correction_previous_id);
             const lockFallback = selectBestLocation(nonLockedOpen, char, vals);
-            if (!lockFallback || lockFallback.score <= 0) {
+            if (!lockFallback) {
               skippedLog.push(`${char.name}: correction lock active, no valid fallback`);
               continue;
             }
@@ -484,10 +484,6 @@ Deno.serve(async (req) => {
             skippedLog.push(`${char.name}: blocked wrong home write, no non-home fallback`);
             continue;
           }
-          if (homeFallback.score <= 0) {
-            skippedLog.push(`${char.name}: no positive-scoring non-home location`);
-            continue;
-          }
           finalLocation = homeFallback;
         }
 
@@ -501,6 +497,11 @@ Deno.serve(async (req) => {
             resolved_location_type:         finalLocation.category === 'home' ? 'home' : 'visit',
             resolved_source_reason:         'autonomous_needs_driven',
             last_arrived_time:              new Date().toISOString(),
+            // Clear stale travel fields so nothing can override this move
+            travel_destination_location_id: null,
+            travel_status:                  'not_traveling',
+            autonomous_destination_id:      null,
+            autonomous_movement_status:     null,
           };
           try {
             await base44.entities.Character.update(char.id, updatePayload);
