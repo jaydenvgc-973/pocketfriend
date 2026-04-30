@@ -33,6 +33,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [regenError, setRegenError] = useState(null);
   const [showPromptEditor, setShowPromptEditor] = useState(false);
   const [editedPrompt, setEditedPrompt] = useState('');
+  const [imgLoadError, setImgLoadError] = useState(false);
   // Local image URL — updated immediately from retry response, no subscription wait needed
   const [localImageUrl, setLocalImageUrl] = useState(message.image_url || null);
 
@@ -40,11 +41,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const prevImageUrl = message.image_url;
   if (prevImageUrl && prevImageUrl !== localImageUrl) {
     setLocalImageUrl(prevImageUrl);
+    setImgLoadError(false);
   }
 
   // Placeholder: no image yet (content is empty = still generating, or [IMAGE_FAILED] = generation failed)
-  const isImageFailed = !isUser && !isNarrative && !localImageUrl && message.content === '[IMAGE_FAILED]';
-  const isImagePlaceholder = !isUser && !isNarrative && !localImageUrl && (message.content === "" || isImageFailed);
+  // Also covers imgLoadError: URL exists but the image itself failed to render in the browser
+  const isImageFailed = !isUser && !isNarrative && ((!localImageUrl && message.content === '[IMAGE_FAILED]') || imgLoadError);
+  const isImagePlaceholder = !isUser && !isNarrative && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
 
   const handleImageRetry = async (forceRegenerate = false) => {
     setImageRetrying(true);
@@ -57,6 +60,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       if (url && url.startsWith('http')) {
         console.log(`[MessageBubble] ✓ Image URL received from retry: ${url.substring(0, 60)}...`);
         setLocalImageUrl(url);
+        setImgLoadError(false);
         // Also notify parent so its messages array stays in sync
         onImageLoaded?.(message.id, url);
       } else {
@@ -92,6 +96,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       const url = res?.data?.image_url;
       if (url && url.startsWith('http')) {
         setLocalImageUrl(url);
+        setImgLoadError(false);
         onImageLoaded?.(message.id, url);
         setShowPromptEditor(false);
         setImageRetryFailed(false);
@@ -333,6 +338,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                 <img
                   src={localImageUrl}
                   alt="shared photo"
+                  onError={() => setImgLoadError(true)}
                   className={`w-full max-w-xs rounded-t-2xl object-cover ${!isUser && message.generation_context?.location_id ? "cursor-pointer hover:brightness-90 transition-all" : ""}`}
                 />
                 {showImageDelete && (
