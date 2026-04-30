@@ -567,6 +567,13 @@ function buildLocationCoordinateMap(locations) {
     catGroups[cat].push(loc);
   }
   const coordMap = {};
+
+  // Seeded pseudo-random so positions are stable across re-renders
+  function seededRand(seed) {
+    const x = Math.sin(seed + 1) * 10000;
+    return x - Math.floor(x);
+  }
+
   for (const [cat, locs] of Object.entries(catGroups)) {
     const zone = CATEGORY_ZONES[cat] || CATEGORY_ZONES.generic;
     const { xMin, xMax } = zone;
@@ -574,16 +581,35 @@ function buildLocationCoordinateMap(locations) {
     const total = sorted.length;
     const zoneWidth = xMax - xMin;
     const zoneHeight = Y_MAX - Y_MIN;
-    const cols = Math.max(1, Math.round(Math.sqrt(total * (zoneWidth / zoneHeight))));
+
+    // Use enough cols/rows to give each location generous space
+    const cols = Math.max(1, Math.ceil(Math.sqrt(total * (zoneWidth / zoneHeight))));
     const rows = Math.ceil(total / cols);
-    const cellW = zoneWidth / cols;
-    const cellH = zoneHeight / rows;
+
+    // Cell dimensions — each location gets its own cell
+    const cellW = zoneWidth / Math.max(cols, 1);
+    const cellH = zoneHeight / Math.max(rows, 1);
+
+    // Max jitter = 30% of cell size so locations never leave their cell
+    const jitterX = cellW * 0.28;
+    const jitterY = cellH * 0.28;
+
     sorted.forEach((loc, i) => {
       const col = i % cols;
       const row = Math.floor(i / cols);
+
+      // Stable per-location seed derived from id characters
+      const seed = loc.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + i;
+
+      const rx = seededRand(seed) * 2 - 1;      // -1 to 1
+      const ry = seededRand(seed + 99) * 2 - 1; // -1 to 1
+
+      const cx = xMin + col * cellW + cellW / 2 + rx * jitterX;
+      const cy = Y_MIN + row * cellH + cellH / 2 + ry * jitterY;
+
       coordMap[loc.id] = {
-        x: Math.round(xMin + col * cellW + cellW / 2),
-        y: Math.round(Y_MIN + row * cellH + cellH / 2),
+        x: Math.round(Math.min(xMax - 1, Math.max(xMin + 1, cx))),
+        y: Math.round(Math.min(Y_MAX - 1, Math.max(Y_MIN + 1, cy))),
       };
     });
   }
