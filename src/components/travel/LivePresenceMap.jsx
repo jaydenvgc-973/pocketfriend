@@ -538,10 +538,71 @@ function CharacterPin({ marker, onClick, offset }) {
 }
 
 // ─── Coordinate / logic (unchanged) ──────────────────────────────────────────
-// Zones are tuned to land dots on building blocks, avoiding the diagonal road corridors.
-// The map image has diagonal roads — building blocks sit in the spaces between them.
-// Each zone defines building-block anchor points (x, y) in percentage of map area.
-// We use a list of "safe building spots" per category zone rather than a continuous range.
+// Safe building-block anchor points manually mapped from the city map image.
+// Each category has a pool of (x%, y%) spots that sit on actual buildings/structures.
+// Locations are assigned to these spots in order (by sorted id), cycling if needed.
+const BUILDING_ANCHORS = {
+  home: [
+    {x:7,  y:24}, {x:14, y:20}, {x:20, y:26}, {x:6,  y:35},
+    {x:13, y:38}, {x:21, y:32}, {x:7,  y:50}, {x:15, y:46},
+    {x:22, y:52}, {x:6,  y:63}, {x:14, y:60}, {x:21, y:66},
+    {x:8,  y:75}, {x:16, y:72}, {x:23, y:76},
+  ],
+  workplace: [
+    {x:36, y:22}, {x:44, y:26}, {x:52, y:20}, {x:37, y:36},
+    {x:45, y:40}, {x:53, y:34}, {x:36, y:52}, {x:44, y:56},
+    {x:52, y:48}, {x:37, y:66}, {x:45, y:70}, {x:53, y:62},
+  ],
+  school: [
+    {x:38, y:28}, {x:47, y:24}, {x:55, y:30}, {x:39, y:44},
+    {x:48, y:50}, {x:56, y:42}, {x:38, y:62}, {x:47, y:68},
+  ],
+  gym: [
+    {x:63, y:22}, {x:70, y:26}, {x:77, y:20}, {x:64, y:38},
+    {x:71, y:42}, {x:63, y:56}, {x:70, y:60}, {x:77, y:52},
+  ],
+  hospital: [
+    {x:65, y:30}, {x:73, y:24}, {x:65, y:48}, {x:73, y:54},
+  ],
+  medical: [
+    {x:66, y:34}, {x:74, y:28}, {x:66, y:52}, {x:74, y:58},
+  ],
+  clinic: [
+    {x:67, y:36}, {x:75, y:30}, {x:67, y:54},
+  ],
+  grocery: [
+    {x:64, y:40}, {x:72, y:44}, {x:64, y:62}, {x:72, y:66},
+  ],
+  park: [
+    {x:68, y:46}, {x:76, y:50}, {x:68, y:64}, {x:76, y:68},
+  ],
+  church: [
+    {x:65, y:70}, {x:73, y:74}, {x:65, y:28},
+  ],
+  food_drink: [
+    {x:84, y:22}, {x:91, y:26}, {x:97, y:20}, {x:84, y:38},
+    {x:91, y:42}, {x:97, y:36}, {x:84, y:56}, {x:91, y:60},
+    {x:97, y:52}, {x:84, y:70}, {x:91, y:74}, {x:97, y:66},
+  ],
+  bar: [
+    {x:86, y:28}, {x:93, y:32}, {x:86, y:48}, {x:93, y:52},
+  ],
+  restaurant: [
+    {x:85, y:24}, {x:92, y:28}, {x:85, y:44}, {x:92, y:48},
+  ],
+  social: [
+    {x:87, y:34}, {x:94, y:38}, {x:87, y:58}, {x:94, y:62},
+  ],
+  community: [
+    {x:88, y:40}, {x:95, y:44}, {x:88, y:64},
+  ],
+  generic: [
+    {x:40, y:30}, {x:50, y:24}, {x:60, y:32}, {x:40, y:50},
+    {x:50, y:56}, {x:60, y:48}, {x:40, y:68}, {x:50, y:72},
+  ],
+};
+
+// Fallback zone boundaries (used only if a category has no anchor list)
 const CATEGORY_ZONES = {
   home:       { xMin: 3,  xMax: 28 },
   workplace:  { xMin: 35, xMax: 58 },
@@ -553,41 +614,16 @@ const CATEGORY_ZONES = {
   grocery:    { xMin: 62, xMax: 78 },
   park:       { xMin: 62, xMax: 78 },
   church:     { xMin: 62, xMax: 78 },
-  food_drink: { xMin: 82, xMax: 97 },
-  bar:        { xMin: 82, xMax: 97 },
-  restaurant: { xMin: 82, xMax: 97 },
-  social:     { xMin: 82, xMax: 97 },
-  community:  { xMin: 82, xMax: 97 },
+  food_drink: { xMin: 82, xMax: 98 },
+  bar:        { xMin: 82, xMax: 98 },
+  restaurant: { xMin: 82, xMax: 98 },
+  social:     { xMin: 82, xMax: 98 },
+  community:  { xMin: 82, xMax: 98 },
   generic:    { xMin: 35, xMax: 78 },
 };
 
-// Keep dots off the very top (tab bar) and very bottom of visible area
-// and away from the diagonal road bands which appear roughly every 25% of height
 const Y_MIN = 18;
 const Y_MAX = 82;
-
-// Road avoidance: snap y away from diagonal road bands.
-// Roads on this map image run at ~25% intervals. We nudge dots to the midpoint of each block.
-function snapYToBuilding(y) {
-  // Road centers approximately at y=18, 38, 58, 78 (in %)
-  // Building centers approximately at y=28, 48, 68
-  const roadBands = [18, 38, 58, 78];
-  const avoidRadius = 6; // percent — stay 6% away from road center
-  for (const road of roadBands) {
-    if (Math.abs(y - road) < avoidRadius) {
-      // Push toward the nearer building midpoint
-      y = y < road ? road - avoidRadius : road + avoidRadius;
-    }
-  }
-  return Math.min(Y_MAX, Math.max(Y_MIN, y));
-}
-
-// Road avoidance for X: diagonal roads cut across zones, snap away from them
-function snapXToBuilding(x, xMin, xMax) {
-  // Keep dots centered in their block, away from zone edges where roads often run
-  const margin = (xMax - xMin) * 0.08;
-  return Math.min(xMax - margin, Math.max(xMin + margin, x));
-}
 
 function buildLocationCoordinateMap(locations) {
   const catGroups = {};
@@ -598,52 +634,14 @@ function buildLocationCoordinateMap(locations) {
   }
   const coordMap = {};
 
-  // Seeded pseudo-random so positions are stable across re-renders
-  function seededRand(seed) {
-    const x = Math.sin(seed + 1) * 10000;
-    return x - Math.floor(x);
-  }
-
   for (const [cat, locs] of Object.entries(catGroups)) {
-    const zone = CATEGORY_ZONES[cat] || CATEGORY_ZONES.generic;
-    const { xMin, xMax } = zone;
     const sorted = [...locs].sort((a, b) => a.id.localeCompare(b.id));
-    const total = sorted.length;
-    const zoneWidth = xMax - xMin;
-    const zoneHeight = Y_MAX - Y_MIN;
-
-    // Use enough cols/rows to give each location generous space
-    const cols = Math.max(1, Math.ceil(Math.sqrt(total * (zoneWidth / zoneHeight))));
-    const rows = Math.ceil(total / cols);
-
-    // Cell dimensions — each location gets its own cell
-    const cellW = zoneWidth / Math.max(cols, 1);
-    const cellH = zoneHeight / Math.max(rows, 1);
-
-    // Max jitter = 30% of cell size so locations never leave their cell
-    const jitterX = cellW * 0.28;
-    const jitterY = cellH * 0.28;
+    const anchors = BUILDING_ANCHORS[cat] || BUILDING_ANCHORS.generic;
 
     sorted.forEach((loc, i) => {
-      const col = i % cols;
-      const row = Math.floor(i / cols);
-
-      // Stable per-location seed derived from id characters
-      const seed = loc.id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0) + i;
-
-      const rx = seededRand(seed) * 2 - 1;      // -1 to 1
-      const ry = seededRand(seed + 99) * 2 - 1; // -1 to 1
-
-      const cx = xMin + col * cellW + cellW / 2 + rx * jitterX;
-      const cy = Y_MIN + row * cellH + cellH / 2 + ry * jitterY;
-
-      const snappedX = snapXToBuilding(cx, xMin, xMax);
-      const snappedY = snapYToBuilding(cy);
-
-      coordMap[loc.id] = {
-        x: Math.round(snappedX),
-        y: Math.round(snappedY),
-      };
+      // Cycle through anchors if more locations than anchors
+      const anchor = anchors[i % anchors.length];
+      coordMap[loc.id] = { x: anchor.x, y: anchor.y };
     });
   }
   return coordMap;
