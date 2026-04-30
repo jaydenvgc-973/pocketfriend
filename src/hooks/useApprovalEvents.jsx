@@ -45,17 +45,42 @@ const EDUCATION_FUTURE_PATTERNS = [
 ];
 
 // ── BACKGROUND DETAIL PATTERNS ───────────────────────────────────────────────
+// STRICT patterns — must clearly indicate the category with explicit phrasing.
+// Each entry includes: category, pattern, capture group index, label, and the character field to check.
 const BACKGROUND_PATTERNS = [
-  { category: 'hometown', pattern: /(?:grew up|from|born|raised)\s+(?:in\s+)?([\w\s]+,?\s*[\w\s]*)/i, label: 'Hometown/Origin' },
-  { category: 'hobby', pattern: /(?:love|enjoy|passionate about|really into|hobby is)\s+([\w\s]+)/i, label: 'Hobby/Interest' },
-  { category: 'skill', pattern: /(?:know how to|can|trained in|skilled in|certified in)\s+([\w\s]+)/i, label: 'Skill/Certification' },
-  { category: 'past_job', pattern: /(?:used to work|worked at|previous job|former(?:ly)?)\s+(?:as\s+|at\s+)?([\w\s']+)/i, label: 'Past Job/Work History' },
-  { category: 'family', pattern: /(?:my\s+(?:mom|dad|mother|father|sister|brother|parents|grandma|grandpa|grandmother|grandfather))\s+(?:is|was|lives?|works?|has)/i, label: 'Family Detail' },
-  { category: 'childhood', pattern: /(?:when i was (?:young|a kid|little|growing up)|as a child|my childhood)/i, label: 'Childhood Detail' },
-  { category: 'career_goal', pattern: /(?:want to be|dream(?:s)? of|goal is to|aspire to)\s+([\w\s]+)/i, label: 'Career Goal' },
-  { category: 'major', pattern: /(?:majored?|studied|degree)\s+in\s+([\w\s]+)/i, label: 'Academic Major/Field' },
-  { category: 'religion', pattern: /(?:christian|muslim|jewish|buddhist|catholic|protestant|atheist|agnostic|religious|faith)/i, label: 'Religious Background' },
-  { category: 'health', pattern: /(?:diagnosed with|living with|managing|recovering from)\s+([\w\s]+)/i, label: 'Health/Medical Detail' },
+  {
+    category: 'hometown',
+    // Must explicitly say "grew up in X", "born in X", "raised in X", or "I'm from [City/State]"
+    // "from" alone is NOT enough — must be "I'm from" or "I am from" + a proper noun-like location
+    pattern: /(?:grew\s+up\s+in|born\s+in|raised\s+in|i'?m\s+from|i\s+am\s+from)\s+([A-Z][a-zA-Z\s]{2,30}(?:,\s*[A-Z]{2})?)/,
+    group: 1,
+    label: 'Hometown/Origin',
+    profileField: 'city', // block if character.city is already set
+  },
+  {
+    category: 'past_job',
+    // Must explicitly reference past employment
+    pattern: /(?:used\s+to\s+work\s+(?:as|at)|worked\s+(?:as|at)|my\s+(?:previous|former|last)\s+job\s+was)\s+([\w\s']{3,50})/i,
+    group: 1,
+    label: 'Past Job/Work History',
+    profileField: null, // no single field to block on — always allowed if not already in memory
+  },
+  {
+    category: 'religion',
+    // Must self-identify — "I am Christian", "I'm Muslim", etc.
+    pattern: /\bi'?m\s+(christian|muslim|jewish|buddhist|catholic|protestant|atheist|agnostic|hindu|sikh)\b/i,
+    group: 1,
+    label: 'Religious Background',
+    profileField: 'religion', // block if character.religion is already set and non-default
+  },
+  {
+    category: 'health',
+    // Must be a clear medical self-disclosure
+    pattern: /(?:i(?:'ve| have| was)\s+(?:been\s+)?(?:diagnosed\s+with|living\s+with|recovering\s+from|managing))\s+([\w\s]{3,40})/i,
+    group: 1,
+    label: 'Health/Medical Detail',
+    profileField: 'health_status', // block if already set
+  },
 ];
 
 // Extract candidate text and match sentence
@@ -89,10 +114,53 @@ function extractEducationDetail(text) {
   return null;
 }
 
-function extractBackgroundDetail(text) {
-  for (const { category, pattern, label } of BACKGROUND_PATTERNS) {
+// STRICT: extracted detail must look like a real value (not pronouns, slang, conversational filler)
+const INVALID_DETAIL_PATTERNS = [
+  /^(you|me|him|her|them|it|this|that|there|here|us|we|they|i|my|your|his|her|their|its)$/i,
+  /^(from you|for you|with you|about you|of you|by you)$/i,
+  /^[\s\W]+$/, // only whitespace or punctuation
+];
+
+function isValidDetailValue(detail, category) {
+  if (!detail || detail.trim().length < 3) return false;
+  const trimmed = detail.trim();
+  // Block pronoun-only or filler values
+  if (INVALID_DETAIL_PATTERNS.some(p => p.test(trimmed))) return false;
+  // Hometown must look like a proper noun (starts with uppercase or contains a comma for "City, ST")
+  if (category === 'hometown' && !/^[A-Z]/.test(trimmed)) return false;
+  // Block if it's just common conversational words
+  const FILLER_WORDS = ['things', 'stuff', 'something', 'anything', 'everything', 'nothing', 'someone', 'anyone', 'everyone', 'people', 'person', 'places', 'time', 'way', 'lot'];
+  if (FILLER_WORDS.includes(trimmed.toLowerCase())) return false;
+  return true;
+}
+
+function extractBackgroundDetail(text, character) {
+  for (const { category, pattern, group, label, profileField } of BACKGROUND_PATTERNS) {
+    // STEP 1: Field existence check — if character already has this field set, skip entirely
+    if (profileField && character) {
+      const existingValue = character[profileField];
+      const isDefaultReligion = profileField === 'religion' && (!existingValue || existingValue === 'None');
+      if (existingValue && !isDefaultReligion) continue; // field already populated — block detection
+    }
+
     const match = text.match(pattern);
-    if (match) return { detail: match[0]?.trim(), category, label, sentence: extractSentenceContaining(text, match[0]) };
+    if (!match) continue;
+
+    // STEP 2: Extract the captured group value
+    const rawDetail = (group > 0 ? match[group] : match[0])?.trim();
+
+    // STEP 3: Meaningful value check
+    if (!isValidDetailValue(rawDetail, category)) continue;
+
+    // STEP 4: Length sanity check
+    if (rawDetail.length < 3 || rawDetail.length > 100) continue;
+
+    return {
+      detail: rawDetail,
+      category,
+      label,
+      sentence: extractSentenceContaining(text, match[0]),
+    };
   }
   return null;
 }
@@ -183,8 +251,10 @@ export function useApprovalEvents() {
     }
 
     // ── EDUCATION DETECTION ─────────────────────────────────────────────────
+    // STEP 1: Block if ongoing education is already set on the character profile
+    const hasOngoingEdu = character.current_education_activity && character.current_education_activity !== 'none';
     const eventKey_edu = `education_${character.id}_${Date.now()}`;
-    const eduResult = extractEducationDetail(combined);
+    const eduResult = !hasOngoingEdu ? extractEducationDetail(combined) : null;
     if (eduResult && eduResult.detail && eduResult.detail.length > 3 && eduResult.detail.length < 100) {
       setPendingApproval({
         type: 'education',
@@ -201,7 +271,7 @@ export function useApprovalEvents() {
 
     // ── BACKGROUND DETAIL DETECTION ─────────────────────────────────────────
     const eventKey_bg = `background_${character.id}_${Date.now()}`;
-    const bgResult = extractBackgroundDetail(combined);
+    const bgResult = extractBackgroundDetail(combined, character);
     if (bgResult && bgResult.detail && bgResult.detail.length > 3 && bgResult.detail.length < 150) {
       setPendingApproval({
         type: 'background_detail',
