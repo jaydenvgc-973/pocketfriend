@@ -31,6 +31,8 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const [showRegenModal, setShowRegenModal] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [regenError, setRegenError] = useState(null);
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
+  const [editedPrompt, setEditedPrompt] = useState('');
   // Local image URL — updated immediately from retry response, no subscription wait needed
   const [localImageUrl, setLocalImageUrl] = useState(message.image_url || null);
 
@@ -65,6 +67,41 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
       console.error(`[MessageBubble] ✗ Retry failed:`, err.message);
       setImageRetryFailed(true);
     } finally {
+      setImageRetrying(false);
+      setImageRetryStatus('idle');
+    }
+  };
+
+  const handleEditPromptOpen = (e) => {
+    e.stopPropagation();
+    setEditedPrompt(message.generation_context?.prompt || '');
+    setShowPromptEditor(true);
+  };
+
+  const handleRegenerateWithEditedPrompt = async (e) => {
+    e.stopPropagation();
+    setIsRegenerating(true);
+    setImageRetrying(true);
+    setImageRetryStatus('regenerating');
+    try {
+      const res = await base44.functions.invoke('regenerateImageWithReason', {
+        messageId: message.id,
+        reason: 'custom',
+        customPrompt: editedPrompt,
+      });
+      const url = res?.data?.image_url;
+      if (url && url.startsWith('http')) {
+        setLocalImageUrl(url);
+        onImageLoaded?.(message.id, url);
+        setShowPromptEditor(false);
+        setImageRetryFailed(false);
+      } else {
+        setImageRetryFailed(true);
+      }
+    } catch (err) {
+      setImageRetryFailed(true);
+    } finally {
+      setIsRegenerating(false);
       setImageRetrying(false);
       setImageRetryStatus('idle');
     }
@@ -177,28 +214,61 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                     <ImageIcon className="w-7 h-7 text-muted-foreground/40" />
                     <p className="text-xs text-muted-foreground text-center font-medium">Image unavailable</p>
                     <p className="text-[10px] text-muted-foreground/60 text-center">Recovery failed — try regenerating</p>
-                    <div className="flex flex-col gap-1.5 mt-1 w-full">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
-                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Regenerate Image
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
-                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Try Recovery Again
-                      </button>
-                      {onDelete && (
+                    {showPromptEditor ? (
+                      <div className="w-full mt-1 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
+                        <textarea
+                          value={editedPrompt}
+                          onChange={e => setEditedPrompt(e.target.value)}
+                          className="w-full text-[11px] text-foreground bg-background border border-border rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:border-primary"
+                          rows={4}
+                          placeholder="Edit prompt before regenerating..."
+                        />
                         <button
-                          onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors w-full"
+                          onClick={handleRegenerateWithEditedPrompt}
+                          disabled={isRegenerating || !editedPrompt.trim()}
+                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full disabled:opacity-50"
                         >
-                          <Trash2 className="w-3 h-3" /> Delete
+                          {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Regenerate
                         </button>
-                      )}
-                    </div>
+                        <button
+                          onClick={e => { e.stopPropagation(); setShowPromptEditor(false); }}
+                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors text-center"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5 mt-1 w-full">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
+                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Regenerate Image
+                        </button>
+                        {message.generation_context?.prompt && (
+                          <button
+                            onClick={handleEditPromptOpen}
+                            className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                          >
+                            <Sparkles className="w-3 h-3" /> Edit Prompt
+                          </button>
+                        )}
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
+                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Try Recovery Again
+                        </button>
+                        {onDelete && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
+                            className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-destructive/10 text-destructive text-xs font-medium hover:bg-destructive/20 transition-colors w-full"
+                          >
+                            <Trash2 className="w-3 h-3" /> Delete
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
@@ -206,20 +276,53 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                     <p className="text-xs text-muted-foreground text-center">
                       {isImageFailed ? "Photo failed to load" : "Photo incoming"}
                     </p>
-                    <div className="flex flex-col gap-1.5 mt-1 w-full">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
-                        className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Load Photo
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
-                        className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                      >
-                        <RefreshCw className="w-3 h-3" /> Regenerate
-                      </button>
-                    </div>
+                    {showPromptEditor ? (
+                      <div className="w-full mt-1 flex flex-col gap-1.5" onClick={e => e.stopPropagation()}>
+                        <textarea
+                          value={editedPrompt}
+                          onChange={e => setEditedPrompt(e.target.value)}
+                          className="w-full text-[11px] text-foreground bg-background border border-border rounded-lg px-2 py-1.5 resize-none focus:outline-none focus:border-primary"
+                          rows={4}
+                          placeholder="Edit prompt before regenerating..."
+                        />
+                        <button
+                          onClick={handleRegenerateWithEditedPrompt}
+                          disabled={isRegenerating || !editedPrompt.trim()}
+                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full disabled:opacity-50"
+                        >
+                          {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Regenerate
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); setShowPromptEditor(false); }}
+                          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors text-center"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-1.5 mt-1 w-full">
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
+                          className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors w-full"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Load Photo
+                        </button>
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleImageRetry(true); }}
+                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                        >
+                          <RefreshCw className="w-3 h-3" /> Regenerate
+                        </button>
+                        {message.generation_context?.prompt && (
+                          <button
+                            onClick={handleEditPromptOpen}
+                            className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                          >
+                            <Sparkles className="w-3 h-3" /> Edit Prompt
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
