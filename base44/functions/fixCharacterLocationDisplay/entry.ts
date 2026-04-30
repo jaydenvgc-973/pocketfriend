@@ -244,8 +244,15 @@ function resolveCharacterLocation(char, locationMap) {
     }
   }
 
-  // No home found
-  return { resolved_current_location_id: null, resolved_current_location_name: 'Away', resolved_location_type: 'rabbit_hole', resolved_presence_status: 'rabbit_hole', resolved_source_reason: 'no_home_safe_away' };
+  // No home found — active_created_character must never use rabbit_hole
+  // Use location_unresolved to signal the character needs a home assigned
+  return {
+    resolved_current_location_id:   null,
+    resolved_current_location_name: 'Unresolved',
+    resolved_location_type:         'location_unresolved',
+    resolved_presence_status:       'location_unresolved',
+    resolved_source_reason:         'no_valid_home_or_temporary_location',
+  };
 }
 
 // ── STALE MOVEMENT FIELD CLEARER ──────────────────────────────────────────────
