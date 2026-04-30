@@ -139,10 +139,8 @@ export function isCharacterAsleep(character) {
   const currentMinutes = nowET.getHours() * 60 + nowET.getMinutes();
 
   const window = computeAdaptiveSleepWindow(character);
-  if (!window) {
-    // No schedule determinable — default: midnight to 10 AM is sleep
-    return currentMinutes < 10 * 60;
-  }
+  // No determinable sleep schedule — cannot assume sleep. Return false.
+  if (!window) return false;
 
   const { sleepStartMin, wakeMin } = window;
   if (sleepStartMin > wakeMin) {
