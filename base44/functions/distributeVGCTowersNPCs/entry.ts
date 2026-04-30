@@ -156,8 +156,33 @@ Deno.serve(async (req) => {
 
     // ── ELIGIBILITY CHECK ─────────────────────────────────────────────────────
     const BLOCKED_STATES = ['work', 'school', 'hospital', 'supervised'];
-    const SLEEP_START = 2 * 60;  // 2:00 AM
-    const SLEEP_END = 8 * 60;    // 8:00 AM
+    const PRE_SLEEP_WINDOW_MINUTES = 60;
+
+    // Per-character sleep schedule check (replaces hardcoded 2-8 AM)
+    function isNPCSleeping(npc, etNow) {
+      if (!npc.sleep_start_time || !npc.wake_up_time) {
+        // Fallback: default overnight window 23:00–07:00
+        const h = etNow.getHours();
+        return h >= 23 || h < 7;
+      }
+      const now = etNow.getHours() * 60 + etNow.getMinutes();
+      const [sh, sm] = npc.sleep_start_time.split(':').map(Number);
+      const [wh, wm] = npc.wake_up_time.split(':').map(Number);
+      const startMin = sh * 60 + sm;
+      const wakeMin = wh * 60 + wm;
+      if (startMin > wakeMin) return now >= startMin || now < wakeMin;
+      return now >= startMin && now < wakeMin;
+    }
+
+    function isNPCInPreSleepWindow(npc, etNow) {
+      if (!npc.sleep_start_time) return false;
+      const now = etNow.getHours() * 60 + etNow.getMinutes();
+      const [sh, sm] = npc.sleep_start_time.split(':').map(Number);
+      const sleepStart = sh * 60 + sm;
+      const windowStart = (sleepStart - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
+      if (windowStart > sleepStart) return now >= windowStart || now < sleepStart;
+      return now >= windowStart && now < sleepStart;
+    }
 
     const eligible = [];
     const ineligible = [];
@@ -167,8 +192,12 @@ Deno.serve(async (req) => {
         ineligible.push({ name: npc.name, reason: npc.presence_state });
         continue;
       }
-      if (currentMinutes >= SLEEP_START && currentMinutes < SLEEP_END) {
-        ineligible.push({ name: npc.name, reason: 'sleeping_hours' });
+      if (isNPCSleeping(npc, nowET)) {
+        ineligible.push({ name: npc.name, reason: 'sleeping_schedule' });
+        continue;
+      }
+      if (isNPCInPreSleepWindow(npc, nowET)) {
+        ineligible.push({ name: npc.name, reason: 'pre_sleep_return_window' });
         continue;
       }
       if (isOnWorkSchedule(npc, nowET)) {

@@ -59,6 +59,30 @@ function isLocationOpen(location) {
  *   destination.owner_email === character.owner_email
  */
 
+// ── SLEEP HELPERS ──────────────────────────────────────────────────────────────
+const PRE_SLEEP_WINDOW_MINUTES = 60;
+
+function isScheduledSleeping(character, etTime) {
+  if (!character.sleep_start_time || !character.wake_up_time) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
+  const [wh, wm] = character.wake_up_time.split(':').map(Number);
+  const startMin = sh * 60 + sm;
+  const wakeMin = wh * 60 + wm;
+  if (startMin > wakeMin) return now >= startMin || now < wakeMin;
+  return now >= startMin && now < wakeMin;
+}
+
+function isInPreSleepWindow(character, etTime) {
+  if (!character.sleep_start_time) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
+  const sleepStart = sh * 60 + sm;
+  const windowStart = (sleepStart - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
+  if (windowStart > sleepStart) return now >= windowStart || now < sleepStart;
+  return now >= windowStart && now < sleepStart;
+}
+
 // ── RAW NEED VALUES ────────────────────────────────────────────────────────────
 function needValues(char) {
   return {
@@ -246,16 +270,29 @@ Deno.serve(async (req) => {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
 
-        // ── PROVEN HARD BLOCKS ──────────────────────────────────────────────
+        // ── SLEEP HARD BLOCKS ────────────────────────────────────────────────
+        // Block if currently sleeping, napping, or in the 60-min pre-sleep return window
+        const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
         if (
           status === 'sleeping'   ||
           status === 'napping'    ||
           status === 'passed_out' ||
           status === 'hospitalized' ||
+          reason === 'sleep_return_home' ||
+          reason === 'sleep_location_correction' ||
+          isInPreSleepWindow(char, nowET) ||
+          isScheduledSleeping(char, nowET) ||
+          char.is_jailed
+        ) {
+          console.log(`[autonomousMovement] ${char.name}: SLEEP/HARD BLOCK (${reason || status})`);
+          continue;
+        }
+
+        // ── OTHER HARD BLOCKS ────────────────────────────────────────────────
+        if (
           reason === 'work_schedule'   ||
           reason === 'school_schedule' ||
-          reason === 'praying_at_home' ||
-          char.is_jailed
+          reason === 'praying_at_home'
         ) {
           console.log(`[autonomousMovement] ${char.name}: HARD BLOCK (${reason || status})`);
           continue;

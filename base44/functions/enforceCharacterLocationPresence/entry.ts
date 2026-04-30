@@ -56,12 +56,42 @@ function isCharacterSleeping(character, etTime) {
   const sleepStartTotalMins = sleepStart * 60 + sleepStartMin;
   const wakeUpTotalMins = wakeUp * 60 + wakeUpMin;
 
-  // Overnight sleep (e.g., 23:00 to 07:00)
   if (sleepStartTotalMins > wakeUpTotalMins) {
     return currentTotalMins >= sleepStartTotalMins || currentTotalMins < wakeUpTotalMins;
   }
-  // Same-day sleep (e.g., 14:00 to 16:00)
   return currentTotalMins >= sleepStartTotalMins && currentTotalMins < wakeUpTotalMins;
+}
+
+// Returns true if within 60 minutes before scheduled sleep start
+const PRE_SLEEP_WINDOW_MINUTES = 60;
+function isInPreSleepWindow(character, etTime) {
+  if (!character.sleep_start_time) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const [sh, sm] = character.sleep_start_time.split(':').map(Number);
+  const sleepStart = sh * 60 + sm;
+  const windowStart = (sleepStart - PRE_SLEEP_WINDOW_MINUTES + 1440) % 1440;
+  if (windowStart > sleepStart) return now >= windowStart || now < sleepStart;
+  return now >= windowStart && now < sleepStart;
+}
+
+const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
+
+function isValidSleepLocation(location) {
+  if (!location) return false;
+  return VALID_SLEEP_CATEGORIES.has(location.category || '');
+}
+
+function resolveValidSleepLocationId(character, locationMap) {
+  if (character.temporary_housing_location_id && locationMap[character.temporary_housing_location_id]) {
+    return character.temporary_housing_location_id;
+  }
+  if (character.current_home_location_id && locationMap[character.current_home_location_id]) {
+    return character.current_home_location_id;
+  }
+  if (character.home_location_id && locationMap[character.home_location_id]) {
+    return character.home_location_id;
+  }
+  return null;
 }
 
 // HELPER: Check if nap time (1-3pm)
@@ -168,8 +198,65 @@ function computeResolvedLocation(character, locationMap, etTime) {
     }
   }
 
-  // LAYER 4: Active explicit visit (system-placed away from home)
-  // SLEEP GUARD: if character is in their sleep window, visits must NOT override sleep — skip this layer entirely
+  // ── SLEEP ENFORCEMENT: runs before visit/autonomous layers ──────────────────
+  const sleepHomeId = resolveValidSleepLocationId(character, locationMap);
+  const sleepHomeLoc = sleepHomeId ? locationMap[sleepHomeId] : null;
+
+  // LAYER 4A: SLEEP LOCK — character is in sleep window → must be at valid sleep location
+  if (isCharacterSleeping(character, etTime)) {
+    if (sleepHomeId) {
+      const currentLocId = character.resolved_current_location_id;
+      const currentLoc = currentLocId ? locationMap[currentLocId] : null;
+      const atValidSleepLoc = currentLocId === sleepHomeId || isValidSleepLocation(currentLoc);
+      const sourceReason = atValidSleepLoc ? 'home_sleeping' : 'sleep_location_correction';
+      return {
+        resolved_current_location_id: sleepHomeId,
+        resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+        resolved_location_type: 'home',
+        resolved_presence_status: 'sleeping',
+        resolved_source_reason: sourceReason,
+        resolved_zone: null,
+        home_resolution_failed: !sleepHomeLoc
+      };
+    }
+    return {
+      resolved_current_location_id: null,
+      resolved_current_location_name: 'Away',
+      resolved_location_type: 'rabbit_hole',
+      resolved_presence_status: 'sleeping',
+      resolved_source_reason: 'sleep_no_valid_home',
+      resolved_zone: null,
+      home_resolution_failed: true
+    };
+  }
+
+  // LAYER 4B: RECOVERY NAP LOCK
+  if (hasUnpaidSleepDebt(character) && isNapTime(etTime) && sleepHomeId) {
+    return {
+      resolved_current_location_id: sleepHomeId,
+      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+      resolved_location_type: 'recovery_nap',
+      resolved_presence_status: 'napping',
+      resolved_source_reason: 'recovery_nap',
+      resolved_zone: null,
+      home_resolution_failed: !sleepHomeLoc
+    };
+  }
+
+  // LAYER 4C: PRE-SLEEP RETURN WINDOW — 60 min before sleep, stop visits and return home
+  if (isInPreSleepWindow(character, etTime) && sleepHomeId) {
+    return {
+      resolved_current_location_id: sleepHomeId,
+      resolved_current_location_name: sleepHomeLoc?.name || 'Home',
+      resolved_location_type: 'home',
+      resolved_presence_status: 'home',
+      resolved_source_reason: 'sleep_return_home',
+      resolved_zone: null,
+      home_resolution_failed: !sleepHomeLoc
+    };
+  }
+
+  // LAYER 5: Active explicit visit (only allowed outside sleep/pre-sleep windows)
   const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
   const resolvedLocIdForVisit = character.resolved_current_location_id;
   const isAwayFromHome = resolvedLocIdForVisit && resolvedLocIdForVisit !== homeIdForVisitCheck;
@@ -181,7 +268,7 @@ function computeResolvedLocation(character, locationMap, etTime) {
     character.resolved_source_reason === 'autonomous_movement' ||
     character.resolved_source_reason === 'user_travel';
 
-  if (isAwayFromHome && isSystemPlacedVisit && !isCharacterSleeping(character, etTime)) {
+  if (isAwayFromHome && isSystemPlacedVisit) {
     const socialLocation = locationMap[resolvedLocIdForVisit];
     if (socialLocation) {
       return {
@@ -203,38 +290,6 @@ function computeResolvedLocation(character, locationMap, etTime) {
     resolvedHomeId = character.temporary_housing_location_id;
   } else {
     resolvedHomeId = character.current_home_location_id || character.home_location_id || null;
-  }
-
-  // LAYER 5: Sleep state (valid resting location)
-  if (isCharacterSleeping(character, etTime)) {
-    if (resolvedHomeId) {
-      const homeLocation = locationMap[resolvedHomeId];
-      return {
-        resolved_current_location_id: resolvedHomeId,
-        resolved_current_location_name: homeLocation?.name || 'Home',
-        resolved_location_type: 'home',
-        resolved_presence_status: 'sleeping',
-        resolved_source_reason: 'home_sleeping',
-        resolved_zone: null,
-        home_resolution_failed: !homeLocation
-      };
-    }
-  }
-
-  // LAYER 6: Recovery nap
-  if (hasUnpaidSleepDebt(character) && isNapTime(etTime)) {
-    if (resolvedHomeId) {
-      const homeLocation = locationMap[resolvedHomeId];
-      return {
-        resolved_current_location_id: resolvedHomeId,
-        resolved_current_location_name: homeLocation?.name || 'Home',
-        resolved_location_type: 'recovery_nap',
-        resolved_presence_status: 'napping',
-        resolved_source_reason: 'recovery_nap',
-        resolved_zone: null,
-        home_resolution_failed: !homeLocation
-      };
-    }
   }
 
   // LAYER 7: Home base fallback
