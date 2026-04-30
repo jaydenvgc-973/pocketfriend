@@ -106,14 +106,15 @@ Deno.serve(async (req) => {
 
   // Evidence 3: Chat/text conversations mentioning B
   try {
-    const conversations = await base44.asServiceRole.entities.Conversation.filter(
+    // Use user-scoped fetch for conversations and messages
+    const conversations = await base44.entities.Conversation.filter(
       { character_ids: { $in: [characterId] } },
       null,
       50
     );
     let chatMentionCount = 0;
     for (const conv of conversations) {
-      const messages = await base44.asServiceRole.entities.Message.filter(
+      const messages = await base44.entities.Message.filter(
         { conversation_id: conv.id },
         null,
         300
@@ -142,7 +143,8 @@ Deno.serve(async (req) => {
 
   // Evidence 4: Automatic narratives (life events, daily stories)
   try {
-    const narratives = await base44.asServiceRole.entities.CharacterAutomaticNarrative.filter(
+    // Use user-scoped fetch for narratives
+    const narratives = await base44.entities.CharacterAutomaticNarrative.filter(
       { character_id: characterId },
       null,
       200
@@ -246,41 +248,52 @@ Deno.serve(async (req) => {
 
   const relationshipNote = `Known through: ${evidenceSources.join(' | ')}. ${charA.name} has documented history of interaction with ${charB.name}.`;
 
-  // Call the existing sync function to write the reciprocal with neutral defaults
-  const syncResult = await base44.functions.invoke('syncRelatedCharacterRelationship', {
-    characterId: characterId,
-    relatedCharacterId: targetCharacterId,
-    relationshipEntry: {
-      relationship_type: relationshipType,
-      description: relationshipNote,
-      // Neutral defaults — B's feelings are independent from A's
-      user_respect_level: 50,
-      friendship_level: 50,
-      romantic_level: 0,
-      attraction_level: 0,
-      chosen_family_level: 0,
-      trust_level: 50,
-      relational_jealousy: 0,
-      envy_jealousy: 0,
-    }
-  });
+  // Write the reciprocal relationship directly to B
+  // Do NOT copy A's emotional bars — keep B's defaults (neutral awareness only)
+  const safeEntry = {
+    related_character_id: characterId,
+    person_name: charA.name || '',
+    relationship_type: relationshipType,
+    description: relationshipNote,
+    // Neutral defaults — B's feelings are independent from A's
+    user_respect_level: 50,
+    friendship_level: 50,
+    romantic_level: 0,
+    attraction_level: 0,
+    chosen_family_level: 0,
+    trust_level: 50,
+    relational_jealousy: 0,
+    envy_jealousy: 0,
+  };
 
-  if (!syncResult?.success) {
+  const existingRels = charB.fictional_relationships || [];
+  const alreadyLinked = existingRels.find(r => r.related_character_id === characterId);
+
+  const updatedRels = alreadyLinked
+    ? existingRels.map(r => r.related_character_id === characterId ? { ...r, ...safeEntry } : r)
+    : [...existingRels, safeEntry];
+
+  try {
+    await base44.entities.Character.update(charB.id, {
+      fictional_relationships: updatedRels,
+    });
+  } catch (writeErr) {
+    console.error(`[auditRelationshipAwareness] Write error: ${writeErr.message}`);
     return Response.json({
       success: false,
-      error: 'Failed to write reciprocal relationship',
-      syncError: syncResult
-    });
+      error: `Failed to write reciprocal: ${writeErr.message}`
+    }, { status: 500 });
   }
 
-  console.log(`[auditRelationshipAwareness] ✓ Reciprocal created: ${charB.name} now knows ${charA.name} (known_contact)`);
+  console.log(`[auditRelationshipAwareness] ✓ Reciprocal created: ${charB.name} now knows ${charA.name} (${relationshipType})`);
 
   return Response.json({
     success: true,
     gap_found: true,
     gap_repaired: true,
     evidenceSources,
+    evidenceCount,
     relationshipNote,
-    message: `Created known_contact for ${charB.name}: ${charA.name}`
+    message: `Created ${relationshipType} for ${charB.name}: ${charA.name}`
   });
 });
