@@ -644,17 +644,7 @@ Deno.serve(async (req) => {
           const owner = candidate.owner_email || candidate.created_by;
           if (owner && owner !== requestingUser) {
             console.error(`[generateImageAsync] ⛔ Cross-account character: ${characterId} owned by ${owner}, request from ${requestingUser}`);
-            const existingCtxCrossAccount = message.generation_context || {};
-            await base44.asServiceRole.entities.Message.update(messageId, {
-              content: '[IMAGE_FAILED]',
-              generation_context: {
-                ...existingCtxCrossAccount,
-                prompt: existingCtxCrossAccount.prompt || prompt || "",
-                status: "failed",
-                error_message: "Character does not belong to your account.",
-                failed_at: new Date().toISOString(),
-              },
-            }).catch(() => {});
+            await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
             return Response.json({ error: 'Character does not belong to your account.' }, { status: 403 });
           }
           charRecord = candidate;
@@ -908,43 +898,20 @@ Deno.serve(async (req) => {
     } catch (genErr) {
       const msg = genErr?.message || '';
       if (/filter|guideline|block|violat/i.test(msg)) {
-        const existingCtxFilter = message.generation_context || {};
-        await base44.asServiceRole.entities.Message.update(messageId, {
-          content: '[IMAGE_FAILED]',
-          generation_context: {
-            ...existingCtxFilter,
-            prompt: existingCtxFilter.prompt || prompt || "",
-            status: "failed",
-            error_message: "Image blocked by content filter. Try rephrasing.",
-            failed_at: new Date().toISOString(),
-          },
-        }).catch(() => {});
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
       }
       throw genErr;
     }
 
     if (!genRes?.url) {
-      const existingCtxNoUrl = message.generation_context || {};
-      await base44.asServiceRole.entities.Message.update(messageId, {
-        content: '[IMAGE_FAILED]',
-        generation_context: {
-          ...existingCtxNoUrl,
-          prompt: existingCtxNoUrl.prompt || prompt || "",
-          status: "failed",
-          error_message: "No image URL returned from generator.",
-          failed_at: new Date().toISOString(),
-        },
-      }).catch(() => {});
+      await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
       return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
     }
 
-    // ── 8. SAVE — merge into existing generation_context to preserve frontend prompt ──
-    const existingContext = message.generation_context || {};
+    // ── 8. SAVE ───────────────────────────────────────────────────────────────
     const generationContext = {
-      ...existingContext,
-      // Always preserve the prompt — use existing (set by frontend) or fallback to request prompt
-      prompt: existingContext.prompt || prompt || "",
+      prompt,
       character_id: characterId || null,
       character_reference_images: charRefs,
       user_reference_images: userRefs,
@@ -953,7 +920,6 @@ Deno.serve(async (req) => {
       location_name: resolvedLocationName,
       location_reference_images: envRefs.slice(0, 4),
       subject_type: subjectType,
-      status: "success",
       generated_at: new Date().toISOString(),
     };
 

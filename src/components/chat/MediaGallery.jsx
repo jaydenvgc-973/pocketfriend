@@ -257,8 +257,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       }
       console.log(`[MediaGallery.handleGenerate] ═══════════════════════════════════════════════`);
 
-      // Create placeholder message — store generation_context.prompt BEFORE generation starts
-      // so it survives failure, timeout, or app refresh.
+      // Create placeholder message
       const newMsg = await base44.entities.Message.create({
         conversation_id: conversationId,
         sender_type: subjectType === 'user' ? 'user' : 'character',
@@ -267,17 +266,6 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
         content: "",
         emotional_state: character.emotional_state || "calm",
         timestamp: new Date().toISOString(),
-        generation_context: {
-          prompt: promptText,
-          source: "media_grid",
-          character_id: character?.id || null,
-          character_name: character?.name || null,
-          location_id: selectedLocation?.id || null,
-          location_name: selectedLocation?.name || null,
-          zone_name: selectedZone || null,
-          subject_type: subjectType || null,
-          created_prompt_at: new Date().toISOString(),
-        },
       });
       if (!newMsg?.id) throw new Error('Failed to create message');
 

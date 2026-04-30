@@ -87,18 +87,7 @@ Deno.serve(async (req) => {
       if (validation.missingRefs.length > 0) {
         const errorMsg = `IDENTITY LOCK FAILED: Cannot generate image. Missing visual references for: ${validation.missingRefs.join(', ')}.`;
         console.error(`[mediaGridGenerate] ⛔ ${errorMsg}`);
-        const msgListForLock = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
-        const existingCtxLock = msgListForLock?.[0]?.generation_context || {};
-        await base44.asServiceRole.entities.Message.update(messageId, {
-          content: '[IMAGE_FAILED]',
-          generation_context: {
-            ...existingCtxLock,
-            prompt: existingCtxLock.prompt || prompt || "",
-            status: "failed",
-            error_message: errorMsg,
-            failed_at: new Date().toISOString(),
-          },
-        }).catch(() => {});
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({ success: false, error: errorMsg }, { status: 400 });
       }
 
@@ -210,28 +199,13 @@ DO:
 
       console.log(`[mediaGridGenerate] Multi-person prompt built for ${people.length} people with ${identityRefs.length} identity refs + ${envRefs.length} env refs`);
 
-      // Fetch existing message to read its generation_context (set by frontend before calling us)
-      const msgListMulti = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
-      const existingCtxMulti = msgListMulti?.[0]?.generation_context || {};
-
       const allReferences = [
         ...envRefs,
         ...identityRefs,
       ];
 
       if (allReferences.length === 0) {
-        const msgListForRefs = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
-        const existingCtxRefs = msgListForRefs?.[0]?.generation_context || {};
-        await base44.asServiceRole.entities.Message.update(messageId, {
-          content: '[IMAGE_FAILED]',
-          generation_context: {
-            ...existingCtxRefs,
-            prompt: existingCtxRefs.prompt || prompt || "",
-            status: "failed",
-            error_message: "No reference images available for any selected person.",
-            failed_at: new Date().toISOString(),
-          },
-        }).catch(() => {});
+        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
         return Response.json({ success: false, error: 'No reference images available for any selected person.' }, { status: 400 });
       }
 
@@ -242,31 +216,19 @@ DO:
         });
 
         if (!genRes?.url) {
-          await base44.asServiceRole.entities.Message.update(messageId, {
-            content: '[IMAGE_FAILED]',
-            generation_context: {
-              ...existingCtxMulti,
-              prompt: existingCtxMulti.prompt || prompt || "",
-              status: "failed",
-              error_message: "No image URL returned from generator.",
-              failed_at: new Date().toISOString(),
-            },
-          }).catch(() => {});
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
           return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
         }
 
-        // Merge into existing context — never drop the prompt set by the frontend
         const generationContext = {
-          ...existingCtxMulti,
-          prompt: existingCtxMulti.prompt || prompt || "",
-          subject_type: 'multi',
-          selected_people: people.map(p => ({ role: p.role, id: p.id })),
-          character_reference_images: identityRefs,
-          location_name: locationName,
-          zone_name: zoneName,
-          location_reference_images: envRefs,
-          status: "success",
-          generated_at: new Date().toISOString(),
+          prompt,
+          subjectType: 'multi',
+          selectedPeople: people.map(p => ({ role: p.role, id: p.id })),
+          characterReferenceImages: identityRefs,
+          locationName,
+          zoneName,
+          locationReferenceImages: envRefs,
+          generatedAt: new Date().toISOString(),
         };
 
         await base44.asServiceRole.entities.Message.update(messageId, {
@@ -286,16 +248,7 @@ DO:
       } catch (genErr) {
         const msg = genErr?.message || '';
         if (/filter|guideline|block|violat/i.test(msg)) {
-          await base44.asServiceRole.entities.Message.update(messageId, {
-            content: '[IMAGE_FAILED]',
-            generation_context: {
-              ...existingCtxMulti,
-              prompt: existingCtxMulti.prompt || prompt || "",
-              status: "failed",
-              error_message: "Image blocked by content filter. Try rephrasing.",
-              failed_at: new Date().toISOString(),
-            },
-          }).catch(() => {});
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
           return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
         }
         throw genErr;
@@ -323,18 +276,7 @@ DO:
 
     if (!singleCharRes?.data?.success) {
       const errorMsg = singleCharRes?.data?.error || 'Image generation failed';
-      const msgListSingle = await base44.asServiceRole.entities.Message.filter({ id: messageId }, null, 1).catch(() => []);
-      const existingCtxSingle = msgListSingle?.[0]?.generation_context || {};
-      await base44.asServiceRole.entities.Message.update(messageId, {
-        content: '[IMAGE_FAILED]',
-        generation_context: {
-          ...existingCtxSingle,
-          prompt: existingCtxSingle.prompt || prompt || "",
-          status: "failed",
-          error_message: errorMsg,
-          failed_at: new Date().toISOString(),
-        },
-      }).catch(() => {});
+      await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
       return Response.json({ success: false, error: errorMsg }, { status: singleCharRes?.status || 500 });
     }
 
