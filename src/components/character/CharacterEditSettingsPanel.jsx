@@ -258,13 +258,15 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // Include: unlinked NPCs + relationships pointing to npc character_type
+  // Include: unlinked NPCs + relationships pointing to non-active character types
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
   const npcRels = (character.fictional_relationships || []).filter(r => {
     if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;
-    if (!r.related_character_id) return true; // unlinked
+    if (!r.related_character_id) return true; // unlinked — belongs here by default
     const linked = allCharacters.find(c => c.id === r.related_character_id);
-    return linked && linked.character_type === "npc"; // NPC fictitious
+    if (!linked) return false;
+    // Only active_created_character belongs in "Characters They Know" — everything else stays here
+    return linked.character_type !== "active_created_character";
   });
 
   const seen = new Set();
@@ -407,22 +409,19 @@ function KnownCharactersEditor({ character, allCharacters, onMoveToWorld }) {
       .map(r => r.related_character_id)
   );
 
+  // Only active_created_character records can be added here
   const available = allCharacters.filter(
     c => c.id !== character.id && !existingLinkedIds.has(c.id) &&
     c.status !== "deleted" && c.status !== "soft_deleted" && c.status !== "merged" &&
-    c.character_type !== "npc" && c.character_type !== "family_npc"
+    c.character_type === "active_created_character"
   );
 
-  // Show all relationships with a related_character_id that point to active/promoted characters.
-  // If the character isn't found in allCharacters, still show the relationship (don't silently drop it).
-  // Only exclude explicit npc/family_npc types.
+  // Characters They Know: ONLY active_created_character records with a related_character_id
   const linked = (character.fictional_relationships || []).filter(r => {
     if (!r.related_character_id) return false;
     const lc = allCharacters.find(c => c.id === r.related_character_id);
-    // If not found in list, keep it (don't silently drop)
-    if (!lc) return true;
-    // Exclude pure NPC types — those belong in "People In Their World"
-    return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+    if (!lc) return false; // if not found, don't show in either section
+    return lc.character_type === "active_created_character";
   });
 
   const addCharacter = async (char, relType) => {
@@ -842,7 +841,7 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
     try {
       const linkedChars = await base44.entities.Character.filter({ id: rel.related_character_id });
       const linked = linkedChars[0];
-      if (linked && ['npc_fictitious', 'npc_fictitious_person', 'npc_regular'].includes(linked.character_type)) {
+      if (linked && linked.character_type !== 'active_created_character') {
         await base44.entities.Character.update(linked.id, {
           character_type: 'active_created_character',
           is_active_character: true,
