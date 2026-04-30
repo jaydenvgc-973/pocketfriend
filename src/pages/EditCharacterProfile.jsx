@@ -76,6 +76,9 @@ export default function EditCharacterProfile() {
       job_title: char.work_details?.job_title || "",
       workplace_type: char.work_details?.workplace_type || "",
       work_environment: char.work_details?.work_environment || "",
+      work_start_time: char.work_start_time || "",
+      work_end_time: char.work_end_time || "",
+      work_days: char.work_days || [],
       // Second job
       job2_title: secondJob.job_title || "",
       job2_work_environment: secondJob.work_environment || "",
@@ -191,6 +194,9 @@ export default function EditCharacterProfile() {
         workplace_type: form.workplace_type,
         work_environment: form.work_environment,
       },
+      work_start_time: form.work_start_time || null,
+      work_end_time: form.work_end_time || null,
+      work_days: form.work_days || [],
       additional_occupation_locations: secondJobEntry,
       criminal_record: form.criminal_record,
       current_education_activity: form.current_education_activity,
@@ -404,6 +410,37 @@ export default function EditCharacterProfile() {
                   />
                 </div>
 
+                {/* Work Schedule */}
+                <div className="pt-2 border-t border-border space-y-3">
+                  <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Work Schedule</label>
+                  <div className="space-y-2">
+                    <label className="text-xs text-muted-foreground">Work Days</label>
+                    <div className="flex gap-1 flex-wrap">
+                      {[["Sun",0],["Mon",1],["Tue",2],["Wed",3],["Thu",4],["Fri",5],["Sat",6]].map(([label, day]) => (
+                        <button key={day} type="button"
+                          onClick={() => setForm(p => ({
+                            ...p,
+                            work_days: (p.work_days || []).includes(day)
+                              ? (p.work_days || []).filter(d => d !== day)
+                              : [...(p.work_days || []), day]
+                          }))}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${(form.work_days || []).includes(day) ? "bg-primary text-primary-foreground border-primary" : "bg-card border-border text-muted-foreground hover:border-primary/40"}`}
+                        >{label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <div className="flex-1 space-y-1">
+                      <label className="text-xs text-muted-foreground">Start Time</label>
+                      <Input type="time" value={form.work_start_time} onChange={e => setForm(p => ({ ...p, work_start_time: e.target.value }))} className="rounded-xl text-sm" />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                      <label className="text-xs text-muted-foreground">End Time</label>
+                      <Input type="time" value={form.work_end_time} onChange={e => setForm(p => ({ ...p, work_end_time: e.target.value }))} className="rounded-xl text-sm" />
+                    </div>
+                  </div>
+                </div>
+
                 <div className="space-y-2 pt-2 border-t border-border">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Criminal Record</label>
@@ -432,13 +469,9 @@ export default function EditCharacterProfile() {
                     </SelectContent>
                   </Select>
                 </div>
-                {form.current_education_activity !== "none" && (
-                  <>
-                    <Input value={form.education_course_name} onChange={e => setForm(p => ({ ...p, education_course_name: e.target.value }))} placeholder="Course / Program name" className="rounded-xl text-sm" />
-                    <Input value={form.education_institution} onChange={e => setForm(p => ({ ...p, education_institution: e.target.value }))} placeholder="Institution" className="rounded-xl text-sm" />
-                    <Input value={form.education_location} onChange={e => setForm(p => ({ ...p, education_location: e.target.value }))} placeholder="Location (city, online...)" className="rounded-xl text-sm" />
-                  </>
-                )}
+                <Input value={form.education_course_name} onChange={e => setForm(p => ({ ...p, education_course_name: e.target.value }))} placeholder="Course / Program name" className="rounded-xl text-sm" />
+                <Input value={form.education_institution} onChange={e => setForm(p => ({ ...p, education_institution: e.target.value }))} placeholder="Institution" className="rounded-xl text-sm" />
+                <Input value={form.education_location} onChange={e => setForm(p => ({ ...p, education_location: e.target.value }))} placeholder="Location (city, online...)" className="rounded-xl text-sm" />
                 {/* Location link for education */}
                 <div className="pt-2 border-t border-border">
                   <OccupationLocationPicker
@@ -463,13 +496,9 @@ export default function EditCharacterProfile() {
                       <SelectItem value="bootcamp">Bootcamp</SelectItem>
                     </SelectContent>
                   </Select>
-                  {form.current_job_training_activity !== "none" && (
-                    <>
-                      <Input value={form.job_training_name} onChange={e => setForm(p => ({ ...p, job_training_name: e.target.value }))} placeholder="Training / Program name" className="rounded-xl text-sm" />
-                      <Input value={form.job_training_company} onChange={e => setForm(p => ({ ...p, job_training_company: e.target.value }))} placeholder="Company" className="rounded-xl text-sm" />
-                      <Input value={form.job_training_position} onChange={e => setForm(p => ({ ...p, job_training_position: e.target.value }))} placeholder="Position title" className="rounded-xl text-sm" />
-                    </>
-                  )}
+                  <Input value={form.job_training_name} onChange={e => setForm(p => ({ ...p, job_training_name: e.target.value }))} placeholder="Training / Program name" className="rounded-xl text-sm" />
+                  <Input value={form.job_training_company} onChange={e => setForm(p => ({ ...p, job_training_company: e.target.value }))} placeholder="Company" className="rounded-xl text-sm" />
+                  <Input value={form.job_training_position} onChange={e => setForm(p => ({ ...p, job_training_position: e.target.value }))} placeholder="Position title" className="rounded-xl text-sm" />
                 </div>
               </div>
             )}
