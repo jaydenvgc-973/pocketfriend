@@ -118,9 +118,8 @@ Deno.serve(async (req) => {
           };
 
           try {
-            // Only repair if destination is fictional_relationships (not family or people)
-            // Family and People entries are managed separately; we only repair mutual awareness
             if (target.destinationSection === 'fictional_relationships') {
+              // Repair: add to fictional_relationships with related_character_id
               const safeEntry = {
                 related_character_id: charA.id,
                 person_name: charA.name || '',
@@ -144,11 +143,46 @@ Deno.serve(async (req) => {
               });
 
               report.gaps_repaired++;
-            } else {
-              // Skip family and people_in_their_world — these are managed by separate UI/logic
-              detailEntry.status = 'skipped';
-              detailEntry.skip_reason = `destination_section_managed_separately (${target.destinationSection})`;
-              report.gaps_skipped++;
+            } else if (target.destinationSection === 'family_members') {
+              // Repair: add to family_members array
+              const familyEntry = {
+                name: charA.name || '',
+                relationship_type: target.relationshipType || 'family',
+              };
+
+              const existingFamily = charB.family_members || [];
+              const updatedFamily = [...existingFamily, familyEntry];
+
+              await base44.entities.Character.update(charB.id, {
+                family_members: updatedFamily,
+              });
+
+              report.gaps_repaired++;
+            } else if (target.destinationSection === 'people_in_their_world') {
+              // Repair: add to fictional_relationships WITHOUT related_character_id (unlinked NPC)
+              const npcEntry = {
+                person_name: charA.name || '',
+                relationship_type: 'known_contact',
+                description: `NPC in their world: ${charA.name}.`,
+                // No related_character_id — this is a "people in their world" entry
+                user_respect_level: 50,
+                friendship_level: 50,
+                romantic_level: 0,
+                attraction_level: 0,
+                chosen_family_level: 0,
+                trust_level: 50,
+                relational_jealousy: 0,
+                envy_jealousy: 0,
+              };
+
+              const existingRels = charB.fictional_relationships || [];
+              const updatedRels = [...existingRels, npcEntry];
+
+              await base44.entities.Character.update(charB.id, {
+                fictional_relationships: updatedRels,
+              });
+
+              report.gaps_repaired++;
             }
           } catch (err) {
             detailEntry.status = 'skipped';
