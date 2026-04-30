@@ -245,14 +245,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                         >
                           <RefreshCw className="w-3 h-3" /> Regenerate Image
                         </button>
-                        {message.generation_context?.prompt && (
-                          <button
-                            onClick={handleEditPromptOpen}
-                            className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                          >
-                            <Sparkles className="w-3 h-3" /> Edit Prompt
-                          </button>
-                        )}
+                        <button
+                          onClick={handleEditPromptOpen}
+                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                        >
+                          <Sparkles className="w-3 h-3" /> Edit Prompt
+                        </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleImageRetry(false); }}
                           className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
@@ -313,14 +311,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                         >
                           <RefreshCw className="w-3 h-3" /> Regenerate
                         </button>
-                        {message.generation_context?.prompt && (
-                          <button
-                            onClick={handleEditPromptOpen}
-                            className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
-                          >
-                            <Sparkles className="w-3 h-3" /> Edit Prompt
-                          </button>
-                        )}
+                        <button
+                          onClick={handleEditPromptOpen}
+                          className="flex items-center justify-center gap-1 px-3 py-1 rounded-lg bg-secondary border border-border text-muted-foreground text-xs hover:text-foreground transition-colors w-full"
+                        >
+                          <Sparkles className="w-3 h-3" /> Edit Prompt
+                        </button>
                       </div>
                     )}
                   </>
