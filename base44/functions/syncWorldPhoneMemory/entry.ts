@@ -1,0 +1,149 @@
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+
+/**
+ * syncWorldPhoneMemory
+ * Writes conversation memory for ALL characters involved in a World Phone / Group Chat exchange.
+ * Called after any character-to-character interaction so both sides remember it.
+ * 
+ * Payload:
+ *   senderCharacterId: string — who sent the message
+ *   receiverCharacterId: string — who received it
+ *   messageContent: string — what was said
+ *   context: string — 'world_phone' | 'group_chat' | 'scene' | 'travel'
+ *   conversationId: string (optional)
+ */
+Deno.serve(async (req) => {
+  try {
+    const base44 = createClientFromRequest(req);
+    const user = await base44.auth.me();
+    if (!user) {
+      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { senderCharacterId, receiverCharacterId, messageContent, context, conversationId } = await req.json();
+
+    if (!senderCharacterId || !receiverCharacterId || !messageContent) {
+      return Response.json({ error: 'Missing required fields: senderCharacterId, receiverCharacterId, messageContent' }, { status: 400 });
+    }
+
+    // Fetch both characters — ownership enforced by owner_email
+    const [senderResults, receiverResults] = await Promise.all([
+      base44.entities.Character.filter({ id: senderCharacterId }),
+      base44.entities.Character.filter({ id: receiverCharacterId }),
+    ]);
+
+    const sender = senderResults[0];
+    const receiver = receiverResults[0];
+
+    if (!sender || !receiver) {
+      return Response.json({ error: 'One or both characters not found' }, { status: 404 });
+    }
+
+    // Ownership check — both must belong to current user
+    if (sender.owner_email !== user.email || receiver.owner_email !== user.email) {
+      return Response.json({ error: 'Ownership violation: characters must belong to current user' }, { status: 403 });
+    }
+
+    const contextLabel = context || 'world_phone';
+    const timestamp = new Date().toISOString();
+    const sourceCtx = conversationId ? `${contextLabel}_${conversationId}` : contextLabel;
+
+    // Write memory for SENDER (they remember what they said and the context)
+    const senderMemory = base44.entities.Memory.create({
+      character_id: senderCharacterId,
+      title: `${contextLabel.replace('_', ' ')} with ${receiver.name}`,
+      description: `I reached out to ${receiver.name} via ${contextLabel.replace('_', ' ')} and said: "${messageContent.substring(0, 300)}"`,
+      emotional_impact: 'neutral',
+      timestamp,
+      source_context: `${sourceCtx}_sender`,
+    });
+
+    // Write memory for RECEIVER (they remember what was said to them)
+    const receiverMemory = base44.entities.Memory.create({
+      character_id: receiverCharacterId,
+      title: `${contextLabel.replace('_', ' ')} from ${sender.name}`,
+      description: `${sender.name} contacted me via ${contextLabel.replace('_', ' ')} and said: "${messageContent.substring(0, 300)}"`,
+      emotional_impact: 'neutral',
+      timestamp,
+      source_context: `${sourceCtx}_receiver`,
+    });
+
+    await Promise.all([senderMemory, receiverMemory]);
+
+    // Update last_interaction_summary on both sides of the fictional_relationships
+    // Sender → Receiver relationship
+    const senderRels = sender.fictional_relationships || [];
+    const senderRelIdx = senderRels.findIndex(r => r.related_character_id === receiverCharacterId);
+    const senderInteractionSummary = `Sent a ${contextLabel.replace('_', ' ')} message: "${messageContent.substring(0, 100)}"`;
+
+    if (senderRelIdx >= 0) {
+      const updatedSenderRels = senderRels.map((r, i) =>
+        i === senderRelIdx ? { ...r, last_interaction_summary: senderInteractionSummary } : r
+      );
+      await base44.entities.Character.update(senderCharacterId, { fictional_relationships: updatedSenderRels });
+    } else {
+      // Auto-create relationship entry for sender → receiver
+      await base44.entities.Character.update(senderCharacterId, {
+        fictional_relationships: [
+          ...senderRels,
+          {
+            person_name: receiver.name,
+            related_character_id: receiverCharacterId,
+            relationship_type: 'acquaintance',
+            current_status: 'ongoing',
+            friendship_level: 50,
+            user_respect_level: 50,
+            romantic_level: 0,
+            attraction_level: 0,
+            chosen_family_level: 0,
+            last_interaction_summary: senderInteractionSummary,
+          },
+        ],
+      });
+    }
+
+    // Receiver → Sender relationship
+    const receiverRels = receiver.fictional_relationships || [];
+    const receiverRelIdx = receiverRels.findIndex(r => r.related_character_id === senderCharacterId);
+    const receiverInteractionSummary = `${sender.name} reached out via ${contextLabel.replace('_', ' ')}: "${messageContent.substring(0, 100)}"`;
+
+    if (receiverRelIdx >= 0) {
+      const updatedReceiverRels = receiverRels.map((r, i) =>
+        i === receiverRelIdx ? { ...r, last_interaction_summary: receiverInteractionSummary } : r
+      );
+      await base44.entities.Character.update(receiverCharacterId, { fictional_relationships: updatedReceiverRels });
+    } else {
+      // Auto-create relationship entry for receiver → sender
+      await base44.entities.Character.update(receiverCharacterId, {
+        fictional_relationships: [
+          ...receiverRels,
+          {
+            person_name: sender.name,
+            related_character_id: senderCharacterId,
+            relationship_type: 'acquaintance',
+            current_status: 'ongoing',
+            friendship_level: 50,
+            user_respect_level: 50,
+            romantic_level: 0,
+            attraction_level: 0,
+            chosen_family_level: 0,
+            last_interaction_summary: receiverInteractionSummary,
+          },
+        ],
+      });
+    }
+
+    console.log(`[syncWorldPhoneMemory] Wrote bi-directional memory: ${sender.name} ↔ ${receiver.name} via ${contextLabel}`);
+
+    return Response.json({
+      success: true,
+      sender: sender.name,
+      receiver: receiver.name,
+      context: contextLabel,
+    });
+
+  } catch (error) {
+    console.error('[syncWorldPhoneMemory] Error:', error.message);
+    return Response.json({ error: error.message }, { status: 500 });
+  }
+});

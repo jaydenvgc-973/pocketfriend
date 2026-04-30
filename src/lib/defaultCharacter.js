@@ -120,13 +120,44 @@ function buildRelationshipsContext(character) {
   }
 
   if (ongoing.length > 0) {
-    section += "\nPEOPLE IN YOUR LIFE:\n";
-    for (const r of ongoing) {
-      section += `\n• ${r.person_name} — ${r.relationship_type}\n`;
-      if (r.description) section += `  Who they are: ${r.description}\n`;
-      if (r.current_status) section += `  What's going on right now: ${r.current_status}\n`;
-      if (r.emotional_impact) section += `  How they make you feel: ${r.emotional_impact}\n`;
-      if (r.last_interaction_summary) section += `  Last time you interacted: ${r.last_interaction_summary}\n`;
+    // Separate linked (active characters) from unlinked (NPCs/world people)
+    const linked = ongoing.filter(r => r.related_character_id);
+    const unlinked = ongoing.filter(r => !r.related_character_id);
+
+    if (linked.length > 0) {
+      section += "\n════════════════════════════════════\n";
+      section += "CHARACTERS YOU KNOW — ACTIVE RELATIONSHIPS (you have real history with these people):\n";
+      section += "════════════════════════════════════\n";
+      for (const r of linked) {
+        const friendship = Math.round(r.friendship_level ?? 75);
+        const trust = Math.round(r.trust_level ?? 50);
+        const romantic = Math.round(r.romantic_level ?? 0);
+        section += `\n• ${r.person_name} — ${r.relationship_type}`;
+        if (romantic > 50) section += ` (romantic interest)`;
+        else if (friendship > 75) section += ` (close to you)`;
+        section += `\n`;
+        section += `  Bond: friendship ${friendship}/100 | trust ${trust}/100 | romantic ${romantic}/100\n`;
+        if (r.description) section += `  Who they are: ${r.description}\n`;
+        if (r.current_status) section += `  Current status: ${r.current_status}\n`;
+        if (r.emotional_impact) section += `  How they affect you: ${r.emotional_impact}\n`;
+        if (r.last_interaction_summary) section += `  Last time you interacted: ${r.last_interaction_summary}\n`;
+        if (r.history_summary) section += `  History: ${r.history_summary}\n`;
+      }
+      section += "\n⚠️ RECOGNITION RULE: If any of these people are mentioned by name in the conversation, you KNOW them. Respond with familiarity — reference the relationship, the history, the emotional tone. NEVER treat them like strangers.\n";
+    }
+
+    if (unlinked.length > 0) {
+      section += "\n════════════════════════════════════\n";
+      section += "PEOPLE IN YOUR WORLD (contacts, NPCs, people from your life):\n";
+      section += "════════════════════════════════════\n";
+      for (const r of unlinked) {
+        section += `\n• ${r.person_name} — ${r.relationship_type}\n`;
+        if (r.description) section += `  Who they are: ${r.description}\n`;
+        if (r.current_status) section += `  What's going on: ${r.current_status}\n`;
+        if (r.emotional_impact) section += `  How you feel about them: ${r.emotional_impact}\n`;
+        if (r.last_interaction_summary) section += `  Last interaction: ${r.last_interaction_summary}\n`;
+      }
+      section += "\n⚠️ RECOGNITION RULE: If any of these people are mentioned in conversation, you KNOW them. Respond with the context you have — don't act like you've never heard their name.\n";
     }
   }
 
@@ -148,7 +179,15 @@ function buildRelationshipsContext(character) {
     section += `\nPLACES YOU FREQUENT: ${character.frequented_places.join(", ")}\n`;
   }
 
-  section += `\nIMPORTANT: All of the above is your actual life. You do not know these relationships are generated. They are as real to you as your family. Bring them up naturally when it fits — share good news, vent, mention something that happened. Don't force it, but don't hide it either. React to life events the way your personality demands.`;
+  section += `\n════════════════════════════════════\n`;
+  section += `RELATIONSHIP AWARENESS — MANDATORY:\n`;
+  section += `All people listed above are REAL to you. They exist in your world. When they are mentioned:\n`;
+  section += `• You recognize them immediately by name\n`;
+  section += `• You respond based on your relationship type and history\n`;
+  section += `• You recall prior conversations and interactions naturally\n`;
+  section += `• You do NOT say "I don't know who that is" if they are on this list\n`;
+  section += `• Bring them up naturally when relevant — vent about them, share news involving them, mention something they did\n`;
+  section += `════════════════════════════════════\n`;
 
   return section;
 }

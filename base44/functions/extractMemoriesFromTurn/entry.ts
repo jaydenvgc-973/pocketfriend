@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
+
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
@@ -30,10 +31,12 @@ Deno.serve(async (req) => {
 
     let newPeopleDetected = [];
 
-    // ── TARGET CHARACTER: basic memory + new people detection ─────────────────
+    // ── TARGET CHARACTER: memory + new people detection + played-as-character cross-memory ─────────────────
     if (targetChar && characterReply) {
+      const senderLabel = playingAsChar ? playingAsChar.name : 'someone';
+
       const targetMemoryResult = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${targetChar.name}. Someone just said: "${userMessage}" and you replied: "${characterReply}".
+        prompt: `You are ${targetChar.name}. ${senderLabel} just said: "${userMessage}" and you replied: "${characterReply}".
 
 Extract any NEW people names mentioned (not yet in your world) from the exchange. Return JSON only.`,
         response_json_schema: {
@@ -56,14 +59,51 @@ Extract any NEW people names mentioned (not yet in your world) from the exchange
 
       newPeopleDetected = targetMemoryResult?.people || [];
 
+      // Build a meaningful memory description for target character
+      const targetMemDesc = playingAsChar
+        ? `${playingAsChar.name} said: "${userMessage}". I responded: "${characterReply.substring(0, 200)}"`
+        : `They said: "${userMessage}". I responded: "${characterReply.substring(0, 200)}"`;
+
       await base44.entities.Memory.create({
         character_id: characterId,
-        title: `Conversation moment`,
-        description: `They said: "${userMessage}". I responded: "${characterReply.substring(0, 200)}"`,
+        title: playingAsChar ? `Interaction with ${playingAsChar.name}` : `Conversation moment`,
+        description: targetMemDesc,
         emotional_impact: 'neutral',
         timestamp: new Date().toISOString(),
-        source_context: `conversation_${conversationId}`,
+        source_context: playingAsChar ? `play_as_${conversationId}_sender_${playingAsCharacterId}` : `conversation_${conversationId}`,
       });
+
+      // If being addressed by a known active character, update the target's last_interaction_summary for that relationship
+      if (playingAsChar) {
+        const existingRels = targetChar.fictional_relationships || [];
+        const relIdx = existingRels.findIndex(r => r.related_character_id === playingAsCharacterId);
+        const interactionSummary = `${playingAsChar.name} reached out: "${userMessage?.substring(0, 100)}"`;
+
+        if (relIdx >= 0) {
+          const updatedRels = existingRels.map((r, i) =>
+            i === relIdx ? { ...r, last_interaction_summary: interactionSummary } : r
+          );
+          await base44.entities.Character.update(characterId, { fictional_relationships: updatedRels });
+        } else {
+          // Add a new relationship entry on target char pointing back to the played character
+          const newRels = [
+            ...existingRels,
+            {
+              person_name: playingAsChar.name,
+              related_character_id: playingAsCharacterId,
+              relationship_type: 'acquaintance',
+              current_status: 'ongoing',
+              friendship_level: 50,
+              user_respect_level: 50,
+              romantic_level: 0,
+              attraction_level: 0,
+              chosen_family_level: 0,
+              last_interaction_summary: interactionSummary,
+            },
+          ];
+          await base44.entities.Character.update(characterId, { fictional_relationships: newRels });
+        }
+      }
     }
 
     // ── PLAYED CHARACTER: full multi-dimensional memory extraction ─────────────

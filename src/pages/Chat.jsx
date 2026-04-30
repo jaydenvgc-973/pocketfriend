@@ -1418,10 +1418,22 @@ Reply with ONLY the single emoji or the word "none".`,
         conversationId: convoId,
         userMessage: text,
         characterReply: responseText,
+        playingAsCharacterId: activeCharacter?.id || null,
       }).then(res => {
         const detected = res?.data?.newPeopleDetected?.relationships;
         if (detected?.length > 0) setNewPeopleDetected(detected);
       }).catch(() => {});
+
+      // If playing as an active character, also sync World Phone memory bi-directionally
+      if (activeCharacter?.id && responseText) {
+        base44.functions.invoke("syncWorldPhoneMemory", {
+          senderCharacterId: activeCharacter.id,
+          receiverCharacterId: characterId,
+          messageContent: text,
+          context: isPhone ? 'world_phone' : 'character_chat',
+          conversationId: convoId,
+        }).catch(() => {});
+      }
     }
 
     base44.functions.invoke("updateCharacterActivityFromMessage", {

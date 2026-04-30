@@ -144,8 +144,29 @@ Deno.serve(async (req) => {
 
       const systemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender}. ${character.personality_summary || ''} ${character.background_story || ''}`;
 
+      // Build relationship awareness for participants in this group chat
+      const participantRels = (character.fictional_relationships || [])
+        .filter(r => convoCharacters.some(c => c.id === r.related_character_id));
+      let relationshipBlock = '';
+      if (participantRels.length > 0) {
+        relationshipBlock = '\n\nYOUR RELATIONSHIPS WITH OTHER PARTICIPANTS:\n';
+        for (const r of participantRels) {
+          const linkedChar = convoCharacters.find(c => c.id === r.related_character_id);
+          if (!linkedChar) continue;
+          relationshipBlock += `\n• ${linkedChar.name} — ${r.relationship_type}`;
+          if (r.friendship_level) relationshipBlock += ` | friendship: ${Math.round(r.friendship_level)}/100`;
+          if (r.trust_level) relationshipBlock += ` | trust: ${Math.round(r.trust_level)}/100`;
+          if (r.romantic_level > 0) relationshipBlock += ` | romantic: ${Math.round(r.romantic_level)}/100`;
+          relationshipBlock += '\n';
+          if (r.description) relationshipBlock += `  Context: ${r.description}\n`;
+          if (r.last_interaction_summary) relationshipBlock += `  Last interaction: ${r.last_interaction_summary}\n`;
+        }
+        relationshipBlock += '\n⚠️ You KNOW these people. Respond to them with the familiarity your relationship history warrants. Do NOT treat them as strangers.\n';
+      }
+
       const fullPrompt = `${systemPrompt}
 ${crossPageMemoryBlock}
+${relationshipBlock}
 
 YOU ARE IN A GROUP CHAT with: ${otherParticipants ? `the user and ${otherParticipants}` : 'just you and the user'}.
 This is a real group conversation. You can — and should — speak to the other characters directly, not just the user. Address them by name. React to what they said. Disagree, agree, laugh, clap back. You are all real people having a conversation together.
