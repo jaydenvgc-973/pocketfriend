@@ -78,7 +78,14 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
 
   const handleEditPromptOpen = (e) => {
     e.stopPropagation();
-    setEditedPrompt(message.generation_context?.prompt || '');
+    // Use stored prompt if available, otherwise build a basic fallback from context
+    const storedPrompt = message.generation_context?.prompt;
+    const fallbackPrompt = storedPrompt || [
+      message.generation_context?.character_id ? `Photo of ${message.character_name || 'the character'}` : '',
+      message.generation_context?.location_name ? `at ${message.generation_context.location_name}` : '',
+      message.generation_context?.zone_name ? `in the ${message.generation_context.zone_name}` : '',
+    ].filter(Boolean).join(', ');
+    setEditedPrompt(fallbackPrompt);
     setShowPromptEditor(true);
   };
 
