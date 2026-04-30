@@ -121,7 +121,11 @@ function computeAdaptiveSleepWindow(character, etTime) {
 
 function isScheduledSleeping(character, etTime) {
   const window = computeAdaptiveSleepWindow(character, etTime);
-  if (!window) return false;
+  if (!window) {
+    // No schedule determinable — apply a hard default: midnight to 10 AM is sleep time
+    const now = etTime.getHours() * 60 + etTime.getMinutes();
+    return now < 10 * 60; // before 10:00 AM, treat as sleeping
+  }
   const now = etTime.getHours() * 60 + etTime.getMinutes();
   const { sleepStartMin, wakeMin } = window;
   if (sleepStartMin > wakeMin) return now >= sleepStartMin || now < wakeMin;
