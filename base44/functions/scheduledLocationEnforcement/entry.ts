@@ -146,6 +146,17 @@ function isInPreSleepWindow(character, etTime) {
   return now >= windowStart && now < sleepStartMin;
 }
 
+// Returns true if within `bufferMinutes` of the adaptive sleep start
+function isNearSleepWindow(character, etTime, bufferMinutes) {
+  const window = computeAdaptiveSleepWindow(character, etTime);
+  if (!window) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const { sleepStartMin } = window;
+  const windowStart = (sleepStartMin - bufferMinutes + 1440) % 1440;
+  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
+  return now >= windowStart && now < sleepStartMin;
+}
+
 // Valid sleep locations — categories that are acceptable for sleeping
 const VALID_SLEEP_CATEGORIES = new Set(['home', 'hotel', 'shelter', 'generic']);
 
@@ -326,7 +337,10 @@ function computeResolved(character, locationMap, etTime) {
     }
   }
 
-  // LAYER 1: Active system-placed visit (only allowed outside sleep/pre-sleep windows — guarded above)
+  // LAYER 4: Active system-placed visit
+  // ONLY honoured outside sleep and pre-sleep windows (guarded above by Layers 0A/0B/0C).
+  // Additionally, visits at invalid sleep locations (bar, gym, club, etc.) are NEVER preserved
+  // if the character is within 2 hours of their sleep window.
   const homeId = character.current_home_location_id || character.home_location_id;
   const resolvedLocId = character.resolved_current_location_id;
   const isAwayFromHome = resolvedLocId && resolvedLocId !== homeId;
@@ -339,7 +353,20 @@ function computeResolved(character, locationMap, etTime) {
 
   if (isAwayFromHome && isSystemVisit) {
     const visitLoc = locationMap[resolvedLocId];
-    if (visitLoc) {
+    // Block stale visits at non-sleep-valid locations if near sleep window (2hr buffer)
+    if (visitLoc && isValidSleepLocation(visitLoc)) {
+      // At a valid sleep location (hotel/shelter/home) — preserve it
+      return {
+        resolved_current_location_id: resolvedLocId,
+        resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
+        resolved_zone: null,
+        home_resolution_failed: false,
+      };
+    } else if (visitLoc && !isNearSleepWindow(character, etTime, 120)) {
+      // At a non-sleep location but still far enough from sleep — allow visit
       return {
         resolved_current_location_id: resolvedLocId,
         resolved_current_location_name: visitLoc.name || character.resolved_current_location_name || 'Visiting',
@@ -350,6 +377,7 @@ function computeResolved(character, locationMap, etTime) {
         home_resolution_failed: false,
       };
     }
+    // Otherwise: within 2hr of sleep at invalid sleep location → fall through to home fallback
   }
 
   // Resolve home base for fallback

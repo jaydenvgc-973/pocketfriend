@@ -100,6 +100,17 @@ function computeAdaptiveSleepWindow(character, etTime) {
   return null;
 }
 
+// Returns true if within `bufferMinutes` of adaptive sleep start
+function isNearSleepWindow(character, etTime, bufferMinutes) {
+  const window = computeAdaptiveSleepWindow(character, etTime);
+  if (!window) return false;
+  const now = etTime.getHours() * 60 + etTime.getMinutes();
+  const { sleepStartMin } = window;
+  const windowStart = (sleepStartMin - bufferMinutes + 1440) % 1440;
+  if (windowStart > sleepStartMin) return now >= windowStart || now < sleepStartMin;
+  return now >= windowStart && now < sleepStartMin;
+}
+
 // Returns true if within 60 minutes before adaptive sleep start
 const PRE_SLEEP_WINDOW_MINUTES = 60;
 
@@ -307,7 +318,9 @@ function computeResolvedLocation(character, locationMap, etTime) {
     }
   }
 
-  // LAYER 1: Active explicit visit (only allowed outside sleep/pre-sleep windows — guarded above)
+  // LAYER 4: Active system-placed visit
+  // ONLY honoured outside sleep and pre-sleep windows (guarded above by Layers 0A/0B/0C).
+  // Stale visits at invalid sleep-category locations are cleared if within 2 hours of sleep.
   const homeIdForVisitCheck = character.current_home_location_id || character.home_location_id;
   const resolvedLocIdForVisit = character.resolved_current_location_id;
   const isAwayFromHome = resolvedLocIdForVisit && resolvedLocIdForVisit !== homeIdForVisitCheck;
@@ -321,7 +334,19 @@ function computeResolvedLocation(character, locationMap, etTime) {
 
   if (isAwayFromHome && isSystemPlacedVisit) {
     const socialLocation = locationMap[resolvedLocIdForVisit];
-    if (socialLocation) {
+    if (socialLocation && isValidSleepLocation(socialLocation)) {
+      // Valid sleep location (hotel/shelter/home) — preserve
+      return {
+        resolved_current_location_id: resolvedLocIdForVisit,
+        resolved_current_location_name: socialLocation.name || character.resolved_current_location_name || 'Visiting',
+        resolved_location_type: 'visit',
+        resolved_presence_status: character.resolved_presence_status || 'visiting',
+        resolved_source_reason: character.resolved_source_reason || 'social_visit_from_system',
+        resolved_zone: null,
+        home_resolution_failed: false
+      };
+    } else if (socialLocation && !isNearSleepWindow(character, etTime, 120)) {
+      // Non-sleep location, far enough from sleep window — allow
       return {
         resolved_current_location_id: resolvedLocIdForVisit,
         resolved_current_location_name: socialLocation.name || character.resolved_current_location_name || 'Visiting',
@@ -332,6 +357,7 @@ function computeResolvedLocation(character, locationMap, etTime) {
         home_resolution_failed: false
       };
     }
+    // Within 2hr of sleep at a bar/gym/club/etc. → fall through to home fallback
   }
 
   // PHASE 4: RESOLVE HOME BASE (TEMPORARY HOUSING PRIORITY)
