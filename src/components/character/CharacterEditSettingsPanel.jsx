@@ -920,6 +920,12 @@ export default function CharacterEditSettingsPanel({ isOpen, onClose, character,
                 <TextareaField character={character} field="criminal_record" label="Criminal Record" placeholder="None" />
               </section>
 
+              {/* Occupation */}
+              <section className="space-y-4">
+                <p className="text-[10px] font-semibold text-primary/70 uppercase tracking-widest">Occupation</p>
+                <EditableTextField character={character} field="occupation" label="Job Title" placeholder="e.g. Nurse, Barista, Software Engineer" />
+              </section>
+
               {/* Needs */}
               <section className="space-y-4">
                 <div>

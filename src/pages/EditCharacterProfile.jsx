@@ -307,6 +307,7 @@ export default function EditCharacterProfile() {
     }));
 
     queryClient.invalidateQueries({ queryKey: ["characters", currentUser?.email] });
+    queryClient.invalidateQueries({ queryKey: ["character", selectedChar.id] });
     setIsSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
