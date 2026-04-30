@@ -538,26 +538,56 @@ function CharacterPin({ marker, onClick, offset }) {
 }
 
 // ─── Coordinate / logic (unchanged) ──────────────────────────────────────────
+// Zones are tuned to land dots on building blocks, avoiding the diagonal road corridors.
+// The map image has diagonal roads — building blocks sit in the spaces between them.
+// Each zone defines building-block anchor points (x, y) in percentage of map area.
+// We use a list of "safe building spots" per category zone rather than a continuous range.
 const CATEGORY_ZONES = {
-  home:       { xMin: 2,  xMax: 32 },
-  workplace:  { xMin: 36, xMax: 62 },
-  school:     { xMin: 36, xMax: 62 },
-  gym:        { xMin: 65, xMax: 82 },
-  hospital:   { xMin: 65, xMax: 82 },
-  medical:    { xMin: 65, xMax: 82 },
-  clinic:     { xMin: 65, xMax: 82 },
-  grocery:    { xMin: 65, xMax: 82 },
-  park:       { xMin: 65, xMax: 82 },
-  church:     { xMin: 65, xMax: 82 },
-  food_drink: { xMin: 84, xMax: 98 },
-  bar:        { xMin: 84, xMax: 98 },
-  restaurant: { xMin: 84, xMax: 98 },
-  social:     { xMin: 84, xMax: 98 },
-  community:  { xMin: 84, xMax: 98 },
-  generic:    { xMin: 36, xMax: 82 },
+  home:       { xMin: 3,  xMax: 28 },
+  workplace:  { xMin: 35, xMax: 58 },
+  school:     { xMin: 35, xMax: 58 },
+  gym:        { xMin: 62, xMax: 78 },
+  hospital:   { xMin: 62, xMax: 78 },
+  medical:    { xMin: 62, xMax: 78 },
+  clinic:     { xMin: 62, xMax: 78 },
+  grocery:    { xMin: 62, xMax: 78 },
+  park:       { xMin: 62, xMax: 78 },
+  church:     { xMin: 62, xMax: 78 },
+  food_drink: { xMin: 82, xMax: 97 },
+  bar:        { xMin: 82, xMax: 97 },
+  restaurant: { xMin: 82, xMax: 97 },
+  social:     { xMin: 82, xMax: 97 },
+  community:  { xMin: 82, xMax: 97 },
+  generic:    { xMin: 35, xMax: 78 },
 };
-const Y_MIN = 14;
-const Y_MAX = 88;
+
+// Keep dots off the very top (tab bar) and very bottom of visible area
+// and away from the diagonal road bands which appear roughly every 25% of height
+const Y_MIN = 18;
+const Y_MAX = 82;
+
+// Road avoidance: snap y away from diagonal road bands.
+// Roads on this map image run at ~25% intervals. We nudge dots to the midpoint of each block.
+function snapYToBuilding(y) {
+  // Road centers approximately at y=18, 38, 58, 78 (in %)
+  // Building centers approximately at y=28, 48, 68
+  const roadBands = [18, 38, 58, 78];
+  const avoidRadius = 6; // percent — stay 6% away from road center
+  for (const road of roadBands) {
+    if (Math.abs(y - road) < avoidRadius) {
+      // Push toward the nearer building midpoint
+      y = y < road ? road - avoidRadius : road + avoidRadius;
+    }
+  }
+  return Math.min(Y_MAX, Math.max(Y_MIN, y));
+}
+
+// Road avoidance for X: diagonal roads cut across zones, snap away from them
+function snapXToBuilding(x, xMin, xMax) {
+  // Keep dots centered in their block, away from zone edges where roads often run
+  const margin = (xMax - xMin) * 0.08;
+  return Math.min(xMax - margin, Math.max(xMin + margin, x));
+}
 
 function buildLocationCoordinateMap(locations) {
   const catGroups = {};
@@ -607,9 +637,12 @@ function buildLocationCoordinateMap(locations) {
       const cx = xMin + col * cellW + cellW / 2 + rx * jitterX;
       const cy = Y_MIN + row * cellH + cellH / 2 + ry * jitterY;
 
+      const snappedX = snapXToBuilding(cx, xMin, xMax);
+      const snappedY = snapYToBuilding(cy);
+
       coordMap[loc.id] = {
-        x: Math.round(Math.min(xMax - 1, Math.max(xMin + 1, cx))),
-        y: Math.round(Math.min(Y_MAX - 1, Math.max(Y_MIN + 1, cy))),
+        x: Math.round(snappedX),
+        y: Math.round(snappedY),
       };
     });
   }
