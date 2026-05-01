@@ -258,15 +258,14 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // Include: unlinked NPCs + relationships pointing to non-active character types
+  // People in Their World: unlinked + any type that is NOT active_created_character and NOT a family type
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
   const npcRels = (character.fictional_relationships || []).filter(r => {
-    if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;
-    if (!r.related_character_id) return true; // unlinked — belongs here by default
-    const linked = allCharacters.find(c => c.id === r.related_character_id);
-    if (!linked) return false;
-    // Only active_created_character belongs in "Characters They Know" — everything else stays here
-    return linked.character_type !== "active_created_character";
+  if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;
+  if (!r.related_character_id) return true; // unlinked — belongs here by default
+  const linked = allCharacters.find(c => c.id === r.related_character_id);
+  if (!linked) return false;
+  return linked.character_type !== "active_created_character" && linked.character_type !== "npc_family_member" && linked.character_type !== "NPC_family_member";
   });
 
   const seen = new Set();

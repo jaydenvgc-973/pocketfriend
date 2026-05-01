@@ -863,8 +863,8 @@ export default function CharacterProfile() {
               if (!r.related_character_id) return true; // unlinked → People in Their World
               const linked = allCharacters.find(c => c.id === r.related_character_id);
               if (!linked) return false;
-              // npc_fictitious and npc_regular → People in Their World
-              return linked.character_type === "npc_fictitious" || linked.character_type === "npc_regular";
+              // People in Their World: npc_fictitious, npc_regular, NPC_fictitious, regular NPC (all known variants)
+              return linked.character_type !== "active_created_character" && linked.character_type !== "npc_family_member" && linked.character_type !== "NPC_family_member";
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -883,7 +883,7 @@ export default function CharacterProfile() {
                   if (!r.related_character_id) return true; // unlinked → People in Their World
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
                   if (!linked) return false;
-                  return linked.character_type === "npc_fictitious" || linked.character_type === "npc_regular";
+                  return linked.character_type !== "active_created_character" && linked.character_type !== "npc_family_member" && linked.character_type !== "NPC_family_member";
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {
