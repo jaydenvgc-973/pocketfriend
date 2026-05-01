@@ -323,136 +323,109 @@ SELFIE RENDERING REQUIREMENTS
 
 `;
   } else {
-    // ── STANDARD SCENE MODE: full room blueprint re-render ──
+    // ── STANDARD SCENE MODE ──
+    // The SINGLE most important concept: character + background are ONE unified scene.
+    // The camera angle defines BOTH what the character looks like AND what the background looks like.
+    // They cannot be separated. The background is not static. It shifts perspective with the camera.
+
+    const place = hasEnv ? [locationName, zoneName].filter(Boolean).join(' → ') : null;
+
     preamble = `════════════════════════════════════════════════════════════
-THIS IS A FULL 3D RE-RENDER — NOT A PHOTO EDIT OR COMPOSITE
+UNIFIED SCENE RENDER — CHARACTER AND BACKGROUND SHARE ONE CAMERA
 ════════════════════════════════════════════════════════════
 
-You are NOT editing a photograph.
-You are NOT cutting and pasting a character onto a background.
-You are NOT overlaying anything onto reference images.
+FUNDAMENTAL RULE: The background is NOT a static backdrop. It is a 3D space.
+When the camera moves, EVERYTHING moves — the character, the furniture, the walls, the floor.
+The background perspective shifts in sync with the camera angle. They are ONE image, not two layers.
 
-You are RENDERING A COMPLETELY NEW IMAGE from scratch, using reference images only as a blueprint for:
-  • What furniture exists in the room (type, color, shape)
-  • What materials cover the floor and walls
-  • What the architectural layout looks like
+CAMERA POSITION FOR THIS RENDER: ${cameraPos}
+This is the position from which the ENTIRE scene — character AND environment — is rendered.
 
-The reference images are DEMOLISHED after reading. They are never the output. They are never the backdrop.
-You build a fresh 3D render of the same room — from a NEW angle — with the character naturally inside it.
-
-════════════════════════════════════════════════════════════
-STEP 1: READ THE ROOM BLUEPRINT (from zone reference photos)
-════════════════════════════════════════════════════════════
-Study the reference photos to extract:
-  • Floor material (wood, tile, carpet — exact color/texture)
-  • Wall color and finish
-  • What furniture is present (couch, table, bed, counter, etc.) — exact models
-  • Window/door positions and sizes
-  • Rug, art, shelves, lighting fixtures
-
-This is the ONLY data you take from the zone photos. You are reading a blueprint. You do NOT copy the photo.
+⛔ DO NOT render the background from one angle and place the character on top of it.
+⛔ DO NOT use any reference image as a flat background.
+⛔ DO NOT composite a character onto a photo.
+✅ Build ONE unified image where character and room share the same perspective, vanishing points, lighting, and depth.
 
 ════════════════════════════════════════════════════════════
-STEP 2: CHOOSE A NEW CAMERA POSITION
+REFERENCE IMAGE INSTRUCTIONS
 ════════════════════════════════════════════════════════════
-Camera: ${cameraPos}
-
-This is the angle from which you will RENDER the room.
-The reference photo camera angle is IRRELEVANT — you are starting fresh from this new viewpoint.
-The room will look different from this angle because you are rendering it fresh from a new position.
-
-════════════════════════════════════════════════════════════
-STEP 3: APPLY TIME-OF-DAY LIGHTING
-════════════════════════════════════════════════════════════
-Current time: ${resolvedTime}:${String(new Date().getMinutes()).padStart(2, '0')} → ${timeLighting.period}
-Lighting: ${timeLighting.desc}
-
-Apply this lighting to the NEWLY RENDERED room. The reference photo's lighting is ignored.
-
-════════════════════════════════════════════════════════════
-STEP 4: PLACE THE CHARACTER INSIDE THE RENDERED ROOM
-════════════════════════════════════════════════════════════
-The character is a live person standing, sitting, or moving INSIDE this freshly rendered 3D space.
-They share the same perspective lines, floor shadows, ambient light, and depth as the room.
-They are NOT cut out. They are NOT placed on top. They are PART of the render.
-
-════════════════════════════════════════════════════════════
-REFERENCE IMAGE ROLE ASSIGNMENT
-════════════════════════════════════════════════════════════
-  `;
+`;
 
     if (hasEnv) {
-       const place = [locationName, zoneName].filter(Boolean).join(' → ');
-       preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
-  These are photographs of the "${zoneName || place}".
+      preamble += `Images ${envRefStart}–${envEnd}: ROOM SPATIAL DATA — READ THE SPACE, DO NOT COPY THE PHOTO.
+These photos of "${place}" tell you what EXISTS in this room:
+  • Floor type, color, texture
+  • Wall color and finish
+  • What furniture is present, what color and shape it is
+  • Window/door positions
+  • Rugs, art, lighting fixtures, shelves, decor
 
-  70–80% STRUCTURAL TRUTH (preserve room identity, not camera view):
-  ✅ PRESERVE: walls, floor, furniture types, furniture placement, layout, materials, objects, fixtures, doors, windows
-  ✅ THIS IS TRUTH: the room structure, what's in it, and where things are relative to each other
+FROM THIS DATA you will construct the room fresh in 3D from camera position: ${cameraPos}
+The room as seen from THIS camera angle will look DIFFERENT than the reference photos — different perspective, different visible surfaces, different depth.
 
-  20–30% DYNAMIC FLEXIBILITY (required for realism):
-  ✓ REGENERATE: lighting (based on ${timeLighting.period}, not reference image lighting)
-  ✓ REGENERATE: camera angle (new position, not reference image camera view)
-  ✓ REGENERATE: composition (different camera placement, distance, framing)
-  ✓ REGENERATE: perspective (entire scene recomposed from new viewpoint)
-
-  ⛔ Do NOT copy the lighting, brightness, window glow, or sky from these photos—the time overrides this.
-  ⛔ Do NOT match the reference image camera angle—camera must move to a new position.
-  ⛔ Do NOT treat the reference image as a locked flat background—recompose the entire scene from the new camera viewpoint.
-  The zone stays TRUE while viewpoint and lighting CHANGE.
-
-  `;
-     }
-    if (hasChar) {
-       preamble += `Images ${charRefStart}–${charEnd}: CHARACTER FACE BLUEPRINT — READ FACE ONLY, RENDER FRESH.
-  These photos tell you what this person's face looks like. That is ALL they do.
-  Extract: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/texture, facial hair.
-  
-  ⛔ EVERYTHING ELSE IN THESE PHOTOS IS DISCARDED:
-  ⛔ The pose in these photos → DISCARD. Render a new pose appropriate to the scene.
-  ⛔ The background in these photos → DISCARD. The room comes from zone images only.
-  ⛔ The clothing in these photos → DISCARD unless no outfit is specified in the prompt.
-  ⛔ The lighting in these photos → DISCARD. Lighting comes from the server time.
-  ⛔ The camera angle in these photos → DISCARD. Camera comes from STEP 2.
-  ⛔ Any room, wall, furniture, or environment seen behind the person → DISCARD COMPLETELY.
-  
-  The character's face is the ONLY data extracted. Everything else is ignored and rebuilt fresh.
-
-  `;
-    }
-    if (hasUser) {
-      preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
-REPLICATE: face, skin tone, hair, body type.
-IGNORE: background, lighting, camera angle.
+⛔ Do NOT reproduce the reference photo's camera angle.
+⛔ Do NOT use the reference photo as the background layer.
+⛔ Do NOT copy the reference photo's lighting — lighting comes from: ${timeLighting.period} (${timeLighting.desc})
+✅ Use the reference photos ONLY to know what objects are in the room and what they look like.
+✅ Then RE-RENDER the entire room from ${cameraPos} as if you placed your own camera there.
 
 `;
     }
+
+    if (hasChar) {
+      preamble += `Images ${charRefStart}–${charEnd}: FACE IDENTITY ONLY for "${charName}".
+Extract: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/texture, facial hair.
+⛔ DISCARD everything else: pose, clothing, background, lighting, camera angle from these photos.
+The character's face is the ONLY data. Their body, pose, and position in the scene are rendered fresh.
+
+`;
+    }
+
+    if (hasUser) {
+      preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
+Extract: face, skin tone, hair, body type. Discard: background, lighting, camera angle.
+
+`;
+    }
+
     preamble += `════════════════════════════════════════════════════════════
-FAIL CONDITIONS — IMAGE IS INVALID IF
+HOW TO BUILD THIS IMAGE
 ════════════════════════════════════════════════════════════
-🚫 Daylight appears in a ${timeLighting.period} scene
-🚫 Camera matches the reference image angle
-🚫 Lighting matches the reference image (when time requires different lighting)
-🚫 Character is enlarged instead of camera moving closer
-🚫 Character looks pasted, cut-out, or composited — character MUST be organically rendered inside the room sharing its perspective and depth
-🚫 Character's background from reference photos bleeds into the scene environment
-🚫 Room becomes a different location or zone
-🚫 Composition matches reference image framing
-🚫 A second table, couch, bed, counter, stool, or chair is created when one already exists in the zone
-🚫 An existing object is replaced with a different version, shape, or style
-🚫 A structural object is invented when not requested by the user
-🚫 Furniture layout differs from reference images
-🚫 Object count differs from reference images
-🚫 Character appearance contradicts the appearance lock (wrong hair, facial hair, or skin tone)
+1. PLACE THE CAMERA at: ${cameraPos}
+2. CONSTRUCT THE ROOM from the reference data in images ${envRefStart > 0 ? `${envRefStart}–${envEnd}` : '(no env refs — use a contextually appropriate setting)'}, seen from that camera position.
+   The room has perspective, depth, vanishing points — it is a 3D space, not a flat photo.
+3. PLACE THE CHARACTER inside the room at the correct position for the scene action.
+   They are physically inside the space — same floor plane, same lighting, same perspective.
+4. APPLY LIGHTING: ${timeLighting.period} — ${timeLighting.desc}
+   Both character and room are lit from the same light source. No exceptions.
 
 ════════════════════════════════════════════════════════════
-SUCCESS CONDITION
+WHAT MAKES THIS LOOK REAL vs FAKE
 ════════════════════════════════════════════════════════════
-✅ Same room. Same furniture. Same layout. Same objects. Zero duplication.
-✅ Character framed correctly using EXISTING objects via camera positioning.
-✅ Camera moved to fit the scene — room was NOT changed to fit the camera.
-✅ Character appearance matches appearance lock exactly.
-✅ Fresh ${timeLighting.period} lighting. New camera position.
+FAKE (common failures):
+🚫 Character appears cut-out or pasted on top of a photo background
+🚫 Background looks like a flat photograph while character looks 3D
+🚫 Background perspective does not match the camera angle
+🚫 Character's shadow/lighting direction differs from the room's
+🚫 Background is a copy of the reference photo at its original angle
+
+REAL (what to do):
+✅ Character and background share identical perspective lines and vanishing points
+✅ Character casts shadows onto floor/furniture that match the time-of-day light source direction
+✅ Character's skin tone highlights and shadows match the room's ambient light color temperature
+✅ The room recedes naturally in 3D behind and around the character from the chosen camera angle
+✅ Both character and environment look like they were photographed together in the same space at the same moment
+
+════════════════════════════════════════════════════════════
+FAIL CONDITIONS
+════════════════════════════════════════════════════════════
+🚫 Background camera angle matches reference images instead of: ${cameraPos}
+🚫 Character looks composited, pasted, or cut out
+🚫 Character lighting doesn't match room lighting
+🚫 Background appears flat/2D while character appears 3D
+🚫 Wrong time-of-day lighting (daylight at night, etc.)
+🚫 Duplicate furniture created
+🚫 Character appearance contradicts appearance lock
 
 ════════════════════════════════════════════════════════════
 
@@ -574,36 +547,10 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     envLock = `
 
-  ════════════════════════════════════════════════════════════
-  ROOM BLUEPRINT — "${place}"
-  ════════════════════════════════════════════════════════════
-  Zone reference images ${envRefStart}–${envEnd} are your BLUEPRINT for what this room contains.
-  You will RE-RENDER this room from a fresh angle — you are NOT using these photos as a background.
-
-  FROM THE BLUEPRINT, extract and faithfully re-render:
-  ✅ Exact floor material, color, and texture (wood planks, tile, carpet — reproduce faithfully)
-  ✅ Exact wall color and finish
-  ✅ Every piece of furniture — type, color, shape, and its position in the room relative to walls
-  ✅ Rugs, curtains, windows, doors, and their positions
-  ✅ Art, shelves, lamps, ceiling lights, and decor
-  ✅ The overall spatial layout — what is left of what, what is near which wall
-
-  This room must LOOK like the same room from a different angle — same materials, same furniture, different viewpoint.
-  A person who has been in this room should recognize it immediately from the render.
-
-  ════════════════════════════════════════════════════════════
-  CAMERA PLACEMENT IN THE RENDERED ROOM
-  ════════════════════════════════════════════════════════════
-  Camera: ${cameraPos}
-
-  Place the camera at this new position INSIDE the re-rendered room.
-  Adjust perspective lines, vanishing points, and depth-of-field to match this real camera position.
-  The furniture must appear in the correct relative positions from this new viewpoint.
-  
-  If the scene action requires a specific object (sitting at a table, on a couch, etc.):
-  ✅ Include that object from the blueprint in the correct position for the camera angle
-  ✅ Move the camera to best frame the action — do NOT invent replacement furniture
-  ⛔ NEVER create a duplicate table, couch, bed, or counter alongside the existing one`;
+  FINAL REMINDER — UNIFIED SCENE: "${place}"
+  The background and the character are ONE render. Same camera (${cameraPos}), same lighting (${timeLighting.period}), same perspective.
+  The room does NOT look like the reference photos — it looks like the same room from a fresh angle.
+  If the scene action requires a specific object (table, bed, couch), move the camera to frame it — do NOT duplicate or invent furniture.`;
   }
 
   let refImageOverride = `
