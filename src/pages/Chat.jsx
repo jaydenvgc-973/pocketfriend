@@ -592,6 +592,48 @@ export default function Chat() {
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
+    // ── LINK-AWARE CONTEXT EXTRACTION ─────────────────────────────────────
+    // Detect any general URLs (non-music, non-video already handled above)
+    const generalLinkMatch = text.match(/https?:\/\/[^\s]+/gi);
+    let linkContext = "";
+    if (generalLinkMatch && generalLinkMatch.length > 0) {
+      const detectedLinks = generalLinkMatch.filter(url =>
+        !/(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|tidal\.com|soundcloud\.com|bandcamp\.com)/i.test(url) &&
+        !/(youtube\.com|youtu\.be|vimeo\.com|tiktok\.com|instagram\.com|twitch\.tv|dailymotion\.com)/i.test(url)
+      );
+      if (detectedLinks.length > 0) {
+        const linkResults = await Promise.all(detectedLinks.slice(0, 3).map(async (url) => {
+          try {
+            const res = await base44.functions.invoke('performWebLookup', {
+              characterId,
+              searchQuery: url,
+              sourceUrl: url,
+            });
+            const data = res?.data;
+            if (data?.title || data?.summary) {
+              return `URL: ${url}\nTitle: ${data.title || 'Unknown'}\nContent: ${data.summary || data.description || 'No content retrieved'}`;
+            }
+            return `URL: ${url}\n(Content could not be retrieved)`;
+          } catch {
+            return `URL: ${url}\n(Content could not be retrieved)`;
+          }
+        }));
+        linkContext = `\n\n════════════════════════════════════
+    LINK CONTENT — EXACT SOURCE REQUIRED
+    ════════════════════════════════════
+    The user shared the following link(s). You MUST respond ONLY based on the actual content provided below — NOT on general knowledge, artist reputation, title guesses, or assumptions.
+
+    ${linkResults.join('\n\n---\n\n')}
+
+    STRICT RULES:
+    - If content was retrieved: reference SPECIFIC details from it (quotes, facts, topics mentioned)
+    - If content shows "(Content could not be retrieved)": you MUST explicitly tell the user you can see the link but cannot access the actual content. You may mention the URL but must NOT fabricate or guess what it contains.
+    - NEVER pretend to have watched, read, or listened to something you did not receive content for above.
+    - NEVER summarize based on the link title, domain, or your general training knowledge.
+    ════════════════════════════════════`;
+      }
+    }
+
     let convoId = conversationIdRef.current || conversationId;
     if (!convoId) {
       const convo = await base44.entities.Conversation.create({
@@ -1035,7 +1077,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${linkContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
