@@ -85,7 +85,7 @@ Deno.serve(async (req) => {
       return s.trim();
     }
 
-    let sanitizedPrompt = sanitizeImagePrompt(prompt);
+    let sanitizedPrompt = prompt;
 
     // ── USER-UPLOADED REFERENCE IMAGE GUIDANCE ─────────────────────────────
     // If the user uploaded a reference image, inject purpose-specific guidance into the prompt.

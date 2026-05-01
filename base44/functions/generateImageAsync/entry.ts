@@ -833,7 +833,7 @@ Deno.serve(async (req) => {
 
       return s.trim();
     }
-    const sanitizedPrompt = sanitizePrompt(prompt);
+    const sanitizedPrompt = prompt;
 
     // ── 2. RESOLVE CHARACTER ──────────────────────────────────────────────────
     let charRecord = null;

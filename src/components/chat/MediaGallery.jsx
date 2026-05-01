@@ -188,7 +188,6 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Source-of-truth model: use exactly what the user selected. No guessing.
   const handleGenerate = async (subjectType) => {
     if (!character || !conversationId) return;
-    // If image-only mode, a default prompt is used; otherwise use the typed prompt
     const promptText = referenceImageMode === "image_only"
       ? (prompt.trim() || "realistic candid photo, match the visual style and composition of the reference image")
       : (prompt.trim() || "candid natural moment, everyday life");

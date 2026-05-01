@@ -430,11 +430,11 @@ Deno.serve(async (req) => {
     }
 
     // ── 3a. DETERMINE SCENE PROMPT (needed for zone resolution) ──────────────
-    let scenePrompt = sanitizeImagePrompt(originalPrompt);
+    let scenePrompt = originalPrompt;
     if (reason === 'dont_like' && customPrompt?.trim()) {
-      scenePrompt = sanitizeImagePrompt(customPrompt.trim());
+      scenePrompt = customPrompt.trim();
     } else if (reason === 'custom_prompt' && customPrompt?.trim()) {
-      scenePrompt = sanitizeImagePrompt(customPrompt.trim());
+      scenePrompt = customPrompt.trim();
     }
     if (!scenePrompt) scenePrompt = 'candid natural moment, everyday life';
 
