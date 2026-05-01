@@ -57,9 +57,21 @@ export default function NarrativeActionButton({
     setLoading(true);
 
     try {
+      // Build conversation context
       const recentContext = recentMessages.slice(-10).map(m =>
         `${m.sender_type === "user" ? "User" : character.name}: ${m.content || "(image)"}`
       ).join("\n");
+
+      // Extract recent action narratives to prevent repetition
+      const recentActionNarratives = recentMessages
+        .filter(m => m.is_narrative && m.sender_type === "character")
+        .slice(-3)
+        .map(m => m.content)
+        .join("\n---\n");
+      
+      const actionMemory = recentActionNarratives 
+        ? `\nRECENT ACTIONS TO AVOID REPEATING:\n${recentActionNarratives}\n\nDo NOT start with the same action or gesture as above. Choose a completely different approach.`
+        : "";
 
       const last5 = recentMessages.slice(-5).map(m => m.content || "").join(" ").toLowerCase();
 
@@ -193,7 +205,7 @@ Relationship type: ${intentType}
 Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction: ${attractionLevel}/100
 
 RECENT CONVERSATION:
-${recentContext || "(no recent messages)"}
+${recentContext || "(no recent messages)"}${actionMemory}
 
 ════════════════════════════════════
 MANDATORY ENGINE — EXECUTE BEFORE WRITING (all 4 steps required)
