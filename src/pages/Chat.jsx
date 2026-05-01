@@ -586,7 +586,11 @@ export default function Chat() {
       /\bwhere\s+are\s+you\b/i.test(text) ||
       /\bdrop\s+(your\s+)?pin\b/i.test(text);
 
-    if (locationShareRequest && charLocationName && charLocationId) {
+    // Resolve location from character NOW (before any try block)
+    const earlyCharLocationName = character.resolved_current_location_name || null;
+    const earlyCharLocationId = character.resolved_current_location_id || null;
+
+    if (locationShareRequest && earlyCharLocationName && earlyCharLocationId) {
       // Force the character to share their verified location — no image, no ambiguity
       let convoId = conversationIdRef.current || conversationId;
       if (!convoId) {
@@ -637,7 +641,7 @@ export default function Chat() {
       if (textMsg?.id) setMessages(prev => prev.some(m => m.id === textMsg.id) ? prev : [...prev, textMsg]);
 
       // Fetch location record for category
-      const locs = await base44.entities.LocationReference.filter({ id: charLocationId }).catch(() => []);
+      const locs = await base44.entities.LocationReference.filter({ id: earlyCharLocationId }).catch(() => []);
       const loc = locs?.[0];
 
       // Save location card message
@@ -651,8 +655,8 @@ export default function Chat() {
         is_read: true,
         timestamp: new Date().toISOString(),
         location_share: {
-          location_id: charLocationId,
-          location_name: charLocationName,
+          location_id: earlyCharLocationId,
+          location_name: earlyCharLocationName,
           presence_status: character.resolved_presence_status || character.location_status || null,
           location_category: loc?.category || null,
           character_avatar_url: character.avatar_url || null,
