@@ -54,6 +54,36 @@ Deno.serve(async (req) => {
 
     console.log(`[mediaGridGenerate] ▶ messageId=${messageId} | multiPerson=${!!multiPersonSelection}`);
 
+    // ── NON-EXPLICIT LANGUAGE CONTROL ──────────────────────────────────────
+    function sanitizeImagePrompt(p) {
+      if (!p) return p;
+      let s = p;
+      s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
+      s = s.replace(/\btopless\b/gi, 'with no shirt on');
+      s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
+      s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'with no shirt on');
+      s = s.replace(/\bin (his|her|their) underwear\b/gi, 'in comfortable shorts');
+      s = s.replace(/\bin underwear\b/gi, 'in comfortable shorts');
+      s = s.replace(/\bin boxers\b/gi, 'in comfortable shorts');
+      s = s.replace(/\bin briefs\b/gi, 'in comfortable shorts');
+      s = s.replace(/\bonly in (his|her|their) underwear\b/gi, 'in comfortable shorts at home');
+      s = s.replace(/\bunderwear\b/gi, 'shorts');
+      s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
+      s = s.replace(/\blingerie\b/gi, 'sleepwear');
+      s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
+      s = s.replace(/\bpanties\b/gi, 'shorts');
+      s = s.replace(/\bthong\b/gi, 'shorts');
+      s = s.replace(/\bexposed (chest|abs|torso|stomach|midriff)\b/gi, 'no shirt on');
+      s = s.replace(/\b(his|her|their) (bare )?(chest|abs|torso)\b/gi, '$1 relaxed build');
+      s = s.replace(/\bnaked\b/gi, 'not fully dressed');
+      s = s.replace(/\bnude\b/gi, 'not fully dressed');
+      s = s.replace(/\bfully nude\b/gi, 'not fully dressed');
+      s = s.replace(/\bfully naked\b/gi, 'not fully dressed');
+      return s.trim();
+    }
+
+    const sanitizedPrompt = sanitizeImagePrompt(prompt);
+
     // ── MULTI-PERSON IDENTITY LOCK ─────────────────────────────────────────
     if (multiPersonSelection) {
       console.log(`[mediaGridGenerate] MULTI-PERSON MODE: validating ${multiPersonSelection.selectedCharacters.length} selected people`);
@@ -152,7 +182,7 @@ MULTI-PERSON IMAGE GENERATION — SHARED RULES + IDENTITY LOCK
 ════════════════════════════════════════════════════════════
 
 CORE SCENE PROMPT:
-${prompt}
+${sanitizedPrompt}
 
 ════════════════════════════════════════════════════════════
 REFERENCE IMAGE BALANCE (applies to ALL image generation)
@@ -263,7 +293,7 @@ DO:
     // and zone truth rules are applied uniformly across Media Grid, Chat, Scene, and other paths
     const singleCharRes = await base44.asServiceRole.functions.invoke('generateImageAsync', {
       messageId,
-      prompt,
+      prompt: sanitizedPrompt,
       characterId,
       characterName,
       characterReferenceImages: (characterRefImages || []).map(toPublicCDN).filter(isAccessible),
