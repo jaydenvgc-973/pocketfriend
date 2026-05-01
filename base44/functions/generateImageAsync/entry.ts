@@ -256,65 +256,60 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const cameraPos = selectCameraPosition(zoneName, prompt + serverTime, prompt);
 
   let preamble = `════════════════════════════════════════════════════════════
-  UNIFIED CAMERA SYSTEM — MANDATORY GENERATION ORDER
-  ════════════════════════════════════════════════════════════
+THIS IS A FULL 3D RE-RENDER — NOT A PHOTO EDIT OR COMPOSITE
+════════════════════════════════════════════════════════════
 
-  STEP 1: RESOLVE SCENE TIME
-  Current time: ${resolvedTime}:${String(new Date().getMinutes()).padStart(2, '0')} → ${timeLighting.period}
+You are NOT editing a photograph.
+You are NOT cutting and pasting a character onto a background.
+You are NOT overlaying anything onto reference images.
 
-  STEP 2: DEFINE LIGHTING FROM TIME
-  Time-based lighting: ${timeLighting.desc}
-  Reference image lighting = IGNORED (0% influence)
+You are RENDERING A COMPLETELY NEW IMAGE from scratch, using reference images only as a blueprint for:
+  • What furniture exists in the room (type, color, shape)
+  • What materials cover the floor and walls
+  • What the architectural layout looks like
 
-  STEP 3: CHOOSE NEW CAMERA POSITION
-  Camera: ${cameraPos}
-  Reference image camera angle = IGNORED (camera must move)
+The reference images are DEMOLISHED after reading. They are never the output. They are never the backdrop.
+You build a fresh 3D render of the same room — from a NEW angle — with the character naturally inside it.
 
-  STEP 4: APPLY ZONE REFERENCE IMAGE FOR ROOM IDENTITY ONLY
-  Environment reference images define: room layout, furniture identity, materials, fixtures, walls, flooring
-  Environment reference images do NOT define: lighting, camera, framing, character scale
+════════════════════════════════════════════════════════════
+STEP 1: READ THE ROOM BLUEPRINT (from zone reference photos)
+════════════════════════════════════════════════════════════
+Study the reference photos to extract:
+  • Floor material (wood, tile, carpet — exact color/texture)
+  • Wall color and finish
+  • What furniture is present (couch, table, bed, counter, etc.) — exact models
+  • Window/door positions and sizes
+  • Rug, art, shelves, lighting fixtures
 
-  ⛔ ANTI-DUPLICATION LOCK: Every object visible in reference images is THE ONLY VERSION of that object in this room.
-  If character sits at a table → use THAT existing table. Do NOT create a second version.
-  If character sits on couch → use THAT existing couch. Do NOT duplicate.
-  If character stands at counter → use THAT existing counter. Do NOT invent a new one.
-  NO SUBSTITUTES. NO APPROXIMATIONS. NO "CLOSE ENOUGH."
+This is the ONLY data you take from the zone photos. You are reading a blueprint. You do NOT copy the photo.
 
-  STEP 5: PLACE CHARACTER WITH MATCHED LIGHTING & PERSPECTIVE
-  Character is integrated—not scaled or pasted—using the new camera angle and time-based lighting.
+════════════════════════════════════════════════════════════
+STEP 2: CHOOSE A NEW CAMERA POSITION
+════════════════════════════════════════════════════════════
+Camera: ${cameraPos}
 
-  ════════════════════════════════════════════════════════════
-  REFERENCE IMAGE HIERARCHY
-  ════════════════════════════════════════════════════════════
+This is the angle from which you will RENDER the room.
+The reference photo camera angle is IRRELEVANT — you are starting fresh from this new viewpoint.
+The room will look different from this angle because you are rendering it fresh from a new position.
 
-  STRUCTURAL TRUTH (70–80% from reference image):
-  ✅ Must preserve: layout, furniture identity, materials, objects, walls, floor, windows, fixtures, zone identity
-  ✅ Can change: camera viewpoint, lighting (time-based), framing, perspective angle
-  ⛔ Cannot ignore: what furniture exists and its structural position relative to room
-  ⛔ Cannot duplicate: if a table exists, NO second table is ever created
+════════════════════════════════════════════════════════════
+STEP 3: APPLY TIME-OF-DAY LIGHTING
+════════════════════════════════════════════════════════════
+Current time: ${resolvedTime}:${String(new Date().getMinutes()).padStart(2, '0')} → ${timeLighting.period}
+Lighting: ${timeLighting.desc}
 
-  DYNAMIC FLEXIBILITY (20–30% controlled adjustment):
-  ✅ Must vary: lighting (from server time, not reference), camera angle, camera position, framing
-  ✅ Must recapture: perspective based on new camera viewpoint
-  ⛔ Cannot change: room structure, furniture types/identities, zone layout, object count
+Apply this lighting to the NEWLY RENDERED room. The reference photo's lighting is ignored.
 
-  Time-of-Day Lighting: 100% from server time (OVERRIDES reference image lighting)
-  ✅ Use: current time-of-day lighting only
-  ⛔ Ignore: any daylight/nighttime in reference image
+════════════════════════════════════════════════════════════
+STEP 4: PLACE THE CHARACTER INSIDE THE RENDERED ROOM
+════════════════════════════════════════════════════════════
+The character is a live person standing, sitting, or moving INSIDE this freshly rendered 3D space.
+They share the same perspective lines, floor shadows, ambient light, and depth as the room.
+They are NOT cut out. They are NOT placed on top. They are PART of the render.
 
-  Camera Position: 100% from generated new position (OVERRIDES reference image camera angle)
-  ✅ Use: mandated camera offset, side angle, closer view from fresh viewpoint
-  ✅ Move camera if object is not perfectly framed — do NOT create replacement furniture
-  ⛔ Ignore: reference image framing, composition, or camera angle
-
-  Character Identity: 100% from provided character (OVERRIDES reference image background)
-  ✅ Use: character face, body, appearance traits from appearance_lock
-  ⛔ Ignore: reference image background behind the character
-  ⛔ Ignore: conflicting traits in reference images — TEXT DESCRIPTION WINS
-
-  ════════════════════════════════════════════════════════════
-  REFERENCE IMAGE ROLE ASSIGNMENT
-  ════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════
+REFERENCE IMAGE ROLE ASSIGNMENT
+════════════════════════════════════════════════════════════
   `;
 
   if (hasEnv) {
@@ -340,14 +335,19 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   `;
    }
   if (hasChar) {
-     preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY — THESE ARE FACE-CROP REFERENCE PHOTOS.
-  ⚠️ CRITICAL — THESE PHOTOS ARE FACE CLOSE-UPS FOR FACIAL IDENTITY MATCHING ONLY.
-  REPLICATE ONLY: face bone structure, eyes, nose, mouth shape, skin tone, hair color/texture/length, facial hair presence.
-  ⛔ ABSOLUTE PROHIBITION — BACKGROUND IN THESE PHOTOS: The background, walls, room, furniture, lighting, props, pose, and clothing in these photos ARE COMPLETELY IRRELEVANT AND MUST BE TOTALLY IGNORED.
-  ⛔ DO NOT USE THESE PHOTOS AS A SCENE BACKGROUND — the room comes from zone images only.
-  ⛔ DO NOT BLEND, COPY, OR REFERENCE any environment from these photos.
-  ⛔ The character must appear in the room defined by zone images (images 1–${envEnd}), NOT in any environment seen behind them in these face photos.
-  ⛔ Treat these purely as a face texture/structure sample — nothing else from these photos transfers.
+     preamble += `Images ${charRefStart}–${charEnd}: CHARACTER FACE BLUEPRINT — READ FACE ONLY, RENDER FRESH.
+  These photos tell you what this person's face looks like. That is ALL they do.
+  Extract: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/texture, facial hair.
+  
+  ⛔ EVERYTHING ELSE IN THESE PHOTOS IS DISCARDED:
+  ⛔ The pose in these photos → DISCARD. Render a new pose appropriate to the scene.
+  ⛔ The background in these photos → DISCARD. The room comes from zone images only.
+  ⛔ The clothing in these photos → DISCARD unless no outfit is specified in the prompt.
+  ⛔ The lighting in these photos → DISCARD. Lighting comes from the server time.
+  ⛔ The camera angle in these photos → DISCARD. Camera comes from STEP 2.
+  ⛔ Any room, wall, furniture, or environment seen behind the person → DISCARD COMPLETELY.
+  
+  The character's face is the ONLY data extracted. Everything else is ignored and rebuilt fresh.
 
   `;
   }
@@ -485,47 +485,35 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
     envLock = `
 
   ════════════════════════════════════════════════════════════
-  STRUCTURAL TRUTH — "${place}" — 70–80% IDENTITY, 20–30% DYNAMIC
+  ROOM BLUEPRINT — "${place}"
   ════════════════════════════════════════════════════════════
-  Reference images ${envRefStart}–${envEnd} define the room structure and identity (NOT the camera view).
+  Zone reference images ${envRefStart}–${envEnd} are your BLUEPRINT for what this room contains.
+  You will RE-RENDER this room from a fresh angle — you are NOT using these photos as a background.
 
-  STRUCTURAL TRUTH (must preserve):
-  ✅ Furniture types, colors, shapes, structural placement
-  ✅ Wall color, floor type, rug, curtains
-  ✅ All lighting fixtures and lamps
-  ✅ Wall art and shelves in relative positions
-  ✅ Room layout, windows, doors, architectural features
+  FROM THE BLUEPRINT, extract and faithfully re-render:
+  ✅ Exact floor material, color, and texture (wood planks, tile, carpet — reproduce faithfully)
+  ✅ Exact wall color and finish
+  ✅ Every piece of furniture — type, color, shape, and its position in the room relative to walls
+  ✅ Rugs, curtains, windows, doors, and their positions
+  ✅ Art, shelves, lamps, ceiling lights, and decor
+  ✅ The overall spatial layout — what is left of what, what is near which wall
 
-  DYNAMIC FLEXIBILITY (required for realism — do NOT freeze reference camera):
-  ✓ Camera position (MUST differ from reference image viewpoint)
-  ✓ Camera angle (MUST be new perspective, not matching reference)
-  ✓ Lighting (MUST match server time, NOT reference image lighting)
-  ✓ Composition (MUST be reframed from new viewpoint)
-  ✓ Depth of field
+  This room must LOOK like the same room from a different angle — same materials, same furniture, different viewpoint.
+  A person who has been in this room should recognize it immediately from the render.
 
   ════════════════════════════════════════════════════════════
-  EXISTING OBJECTS FIRST — NO DUPLICATION
+  CAMERA PLACEMENT IN THE RENDERED ROOM
   ════════════════════════════════════════════════════════════
-  CRITICAL RULE: When the scene requires a character to interact with an object (e.g., 'sitting at a table', 'on a couch', 'at a counter'):
+  Camera: ${cameraPos}
 
-  ✅ ALWAYS use existing furniture from images ${envRefStart}–${envEnd} FIRST
-  ✅ If the object is not visible from current camera angle, MOVE THE CAMERA to frame the existing object correctly
-  ✅ Adjust: camera angle, camera placement, framing, character placement — NOT the furniture
-
-  ⛔ NEVER duplicate, invent, or replace furniture
-  ⛔ NEVER create a second table when one already exists
-  ⛔ NEVER invent a replacement sofa, stove, bed, or counter
-  ⛔ If an existing object cannot be framed comfortably, move the camera — the room truth stays fixed
-
-  REASONABLE CREATION (ONLY when):
-  • User explicitly requests something new (e.g., "add flowers to the table")
-  • Object is logically appropriate for the room
-  • Object does NOT contradict the zone
-  • Object does NOT replace an existing object
-  • Object does NOT duplicate an existing object
-
-  NO OBJECT INVENTION — Every object must come from the structural truth of images ${envRefStart}–${envEnd}.
-  NO STATIC BACKGROUND LOCK — Recompose the entire scene from the new camera position. The room is the same; the viewpoint is different.`;
+  Place the camera at this new position INSIDE the re-rendered room.
+  Adjust perspective lines, vanishing points, and depth-of-field to match this real camera position.
+  The furniture must appear in the correct relative positions from this new viewpoint.
+  
+  If the scene action requires a specific object (sitting at a table, on a couch, etc.):
+  ✅ Include that object from the blueprint in the correct position for the camera angle
+  ✅ Move the camera to best frame the action — do NOT invent replacement furniture
+  ⛔ NEVER create a duplicate table, couch, bed, or counter alongside the existing one`;
   }
 
   let refImageOverride = `
@@ -558,24 +546,24 @@ The scene lighting must match the actual world time, not the reference images.`;
   : `No reference photos. Generate from text description: ${charDesc || 'realistic human'}.`
   }
 
-  CRITICAL GENERATION RULES:
-  ✅ Generate a new, original pose for this scene
+  CHARACTER RENDERING RULES — THIS PERSON IS RENDERED FRESH INSIDE THE ROOM:
+  ✅ Render a completely new pose appropriate to the scene action described in the prompt
+  ✅ The character's body, clothing, and pose are generated fresh — NOT copied from any reference photo
   ✅ Render natural, anatomically correct hands (exactly 5 fingers per hand)
-  ✅ Character MUST be lit consistently with the ${timeLighting.period} lighting defined above
-  ✅ Shadows, highlights, and skin tones MUST match the time-of-day lighting, NOT reference image lighting
-  ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — organically rendered inside the room, sharing its depth, perspective, shadows, and lighting
-  ✅ Character scale, position, and shadows MUST be consistent with the new camera viewpoint and room perspective
-  ✅ The character must look like they physically exist inside this room — NOT composited or overlaid
-  ⛔ ABSOLUTE FAIL: If the character looks "cut out" or "pasted" — this means the model imported the identity photo background. Do NOT do this under any circumstances.
-  ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
+  ✅ The character stands/sits/moves on the SAME floor as the re-rendered room — same perspective, same vanishing point
+  ✅ Cast real shadows from the character onto the floor and nearby furniture using ${timeLighting.period} lighting
+  ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
+  ✅ Character scale must be physically correct relative to the room furniture and camera distance
+  ✅ APPEARANCE LOCK (100% ABSOLUTE FROM FACE BLUEPRINT): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — NON-NEGOTIABLE
   ✅ OUTFIT: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `If the scene prompt specifies clothing, use THAT clothing. If no clothing is described in the scene prompt, default to: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}.` : 'Clothing should match what the scene prompt describes, or their personality and context if unspecified.'}
-  ⛔ Do NOT copy background, room, or pose from reference photos
-  ⛔ Do NOT scale the character over a static background — if larger, the camera moved closer and entire room perspective shifts
-  ⛔ Do NOT paste the character in — recompose the entire scene with character integrated, sharing the same perspective and lighting
-  ⛔ Do NOT copy props or lighting from reference photos
-  ⛔ Do NOT override appearance lock traits (hair, facial hair, skin tone) — these come from the character record, not reference images
-  ⛔ LIGHTING COMES ONLY FROM SERVER TIME — NEVER FROM REFERENCE IMAGES
-  ⛔ Do NOT render the reference image camera angle — render from the newly defined camera position only`;
+  
+  ⛔ HARD FAILS — ANY OF THESE MEANS THE IMAGE IS WRONG:
+  ⛔ Character appears cut-out or pasted onto a background photo → FAIL
+  ⛔ Character does not cast a shadow on the floor → FAIL  
+  ⛔ Character's lighting doesn't match the room's lighting → FAIL
+  ⛔ Character's scale is inconsistent with room perspective → FAIL
+  ⛔ The room behind the character looks like a flat photograph → FAIL
+  ⛔ Pose, background, or clothing copied from reference photos → FAIL`;
   }
   if (hasUser) {
     identityLock += `
