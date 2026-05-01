@@ -762,23 +762,76 @@ Deno.serve(async (req) => {
     const requestingUser = message.created_by || user.email;
 
     // ── SANITIZE PROMPT EARLY ─────────────────────────────────────────
-    // Do this before outfit resolution so we can check if prompt specifies clothing
+    // CLASSIFICATION-FIRST APPROACH:
+    // Before making any replacements, classify the scene's intent and context.
+    // Only apply heavy sanitization to genuinely explicit content.
+    // Lifestyle, emotional, and comfort scenes must NOT be over-restricted.
+
+    function classifySceneContext(p) {
+      const lower = p.toLowerCase();
+
+      // ── EXPLICIT SIGNALS — only these warrant aggressive sanitization ──
+      const explicitSignals = [
+        /\bsex(ual)?\b/, /\bporn\b/, /\berotic\b/, /\bgenitals?\b/, /\bpenis\b/, /\bvagina\b/,
+        /\bnipples?\b/, /\bsexually\b/, /\barouse[d]?\b/, /\borgasm\b/, /\bintercourse\b/,
+        /\bprivate parts?\b/, /\bexplicit(ly)?\b/, /\bsuggestive pose\b/, /\bseductive\b/,
+        /\bsex act\b/, /\bsexualize[d]?\b/,
+      ];
+      const isExplicit = explicitSignals.some(r => r.test(lower));
+
+      // ── SAFE LIFESTYLE SIGNALS — these override aggressive sanitization ──
+      // A scene matching these patterns is SAFE by context, not by word-by-word scanning.
+      const isSleepContext = /\b(sleep(ing)?|asleep|woke up|waking up|bed|bedroom|lying|laid down|resting|nap(ping)?|pillow|duvet|blanket|sheets?)\b/.test(lower);
+      const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing)\b/.test(lower);
+      const isLifestyleContext = /\b(beach|gym|workout|fitness|pool|vacation|home|apartment|mirror|selfie|casual|morning|routine|everyday|relaxing|chill(ing)?|hanging out)\b/.test(lower);
+      const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top)\b/.test(lower) && !isExplicit;
+
+      // Determine scene category
+      if (isExplicit) return 'explicit';
+      if (isSleepContext && isComfortContext) return 'emotional_comfort';
+      if (isSleepContext) return 'sleep_lifestyle';
+      if (isComfortContext) return 'comfort';
+      if (isLifestyleContext) return 'lifestyle';
+      if (isNonSexualBodyContext) return 'casual_body';
+      return 'neutral';
+    }
+
     function sanitizePrompt(p) {
       // Strip routing tag
       let s = p.replace(/^\[CHARACTER\]\s*/i, '').trim();
 
-      // ── NON-EXPLICIT LANGUAGE CONTROL ──────────────────────────────
-      // Replace clinical/sexualized clothing terms with casual, everyday phrasing.
-      // All replacements must include situational context (activity or setting).
-      // This prevents content filter blocks while preserving scene intent.
+      const sceneClass = classifySceneContext(s);
+      console.log(`[generateImageAsync] Scene classification: "${sceneClass}"`);
 
+      // ── SAFE SCENES: minimal sanitization, preserve emotional/lifestyle intent ──
+      // For emotional_comfort, sleep, lifestyle, casual_body — do NOT rewrite the core scene.
+      // Only remove genuinely explicit terms if any slipped through.
+      const isSafeScene = ['emotional_comfort', 'sleep_lifestyle', 'comfort', 'lifestyle', 'casual_body', 'neutral'].includes(sceneClass);
+
+      if (isSafeScene) {
+        // Only replace genuinely explicit anatomy/act terms — leave body/clothing context alone
+        s = s.replace(/\bnaked\b/gi, 'not fully dressed');
+        s = s.replace(/\bnude\b/gi, 'not fully dressed');
+        s = s.replace(/\bfully nude\b/gi, 'not fully dressed');
+        s = s.replace(/\bfully naked\b/gi, 'not fully dressed');
+        s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
+        s = s.replace(/\blingerie\b/gi, 'sleepwear');
+        s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
+        s = s.replace(/\bpanties\b/gi, 'underwear');
+        s = s.replace(/\bthong\b/gi, 'underwear');
+        // Do NOT replace: shirtless, no shirt, chest, torso, bedroom, lying together, intimate, vulnerable
+        // These are SAFE in lifestyle/comfort/sleep context
+        return s.trim();
+      }
+
+      // ── EXPLICIT SCENES: full sanitization pipeline ──
       // Upper body
       s = s.replace(/\bshirtless\b/gi, 'with no shirt on');
       s = s.replace(/\btopless\b/gi, 'with no shirt on');
       s = s.replace(/\bbarechested\b/gi, 'with no shirt on');
       s = s.replace(/\bbare[- ]?chest(ed)?\b/gi, 'with no shirt on');
 
-      // Lower body — isolated "underwear" or "boxer" without context
+      // Lower body
       s = s.replace(/\bin (his|her|their) underwear\b/gi, 'in comfortable shorts');
       s = s.replace(/\bin underwear\b/gi, 'in comfortable shorts');
       s = s.replace(/\bin boxers\b/gi, 'in comfortable shorts');
@@ -786,14 +839,14 @@ Deno.serve(async (req) => {
       s = s.replace(/\bonly in (his|her|their) underwear\b/gi, 'in comfortable shorts at home');
       s = s.replace(/\bunderwear\b/gi, 'shorts');
 
-      // Lingerie-style phrasing
+      // Lingerie-style
       s = s.replace(/\bin lingerie\b/gi, 'in comfortable sleepwear');
       s = s.replace(/\blingerie\b/gi, 'sleepwear');
       s = s.replace(/\bin a bra( and panties)?\b/gi, 'getting dressed at home');
       s = s.replace(/\bpanties\b/gi, 'shorts');
       s = s.replace(/\bthong\b/gi, 'shorts');
 
-      // Anatomy-focused descriptors
+      // Anatomy-focused
       s = s.replace(/\bexposed (chest|abs|torso|stomach|midriff)\b/gi, 'no shirt on');
       s = s.replace(/\b(his|her|their) (bare )?(chest|abs|torso)\b/gi, '$1 relaxed build');
 
