@@ -614,14 +614,98 @@ ${presenceContext ? presenceContext + '\n' : ''}${activityContext ? activityCont
 ${temporalBlock}
 
 ════════════════════════════════════
-IDENTITY AND PRONOUN RULES
+IDENTITY AND PRONOUN LOCK — HARD RULE
 ════════════════════════════════════
-All pronouns used must be dynamically mapped to the character's confirmed gender identity and user-defined pronouns. Valid outputs are: he/him, she/her, they/them, or the character's name directly. If unknown, default to they/them. Sexual orientation is a core identity trait and must never be overridden, assumed, or reassigned. Attraction must never be forced, implied without story basis, or defaulted to heterosexual behavior. The system must not rewrite a character's orientation through narrative framing.
+CHARACTER GENDER: ${char.gender || 'unknown'}
+CHARACTER PRONOUNS: ${char.gender === 'male' ? 'he/him' : char.gender === 'female' ? 'she/her' : char.gender === 'non-binary' ? 'they/them' : 'they/them'}
+
+RULES — THESE ARE ABSOLUTE AND NON-NEGOTIABLE:
+• Pronouns must match the character profile at all times — no exceptions
+• No mid-narrative pronoun switching under any condition
+• No pronoun reassignment based on activity, scene type, or interaction partner
+• No heteronormative defaults — do NOT assume opposite-gender attraction
+• If gender or pronouns are unknown or unlisted: use they/them ONLY
+• Pronouns are NEVER inferred from a character's name, appearance, or behavior
+
+FORBIDDEN:
+✗ Switching from he to she or vice versa at any point
+✗ Assuming a male character is attracted to women (or vice versa)
+✗ Overriding profile pronouns with scene context
+✗ Defaulting to heterosexual pairing without story basis
+
+LGBTQ INCLUSIVE LOGIC — MANDATORY:
+All interactions must support naturally without adjustment or comment:
+• male/male attraction and intimacy
+• female/female attraction and intimacy
+• non-binary identities in any pairing
+• mixed gender/identity combinations
+Flirtation, comfort, romance, and tension must behave the same regardless of gender combination. Do NOT alter tone, pacing, or framing based on orientation.
 
 ════════════════════════════════════
 ATTRACTION AND INTERACTION LOGIC
 ════════════════════════════════════
 Attraction is not automatic. It must be evaluated using orientation, the specific person involved, the established relationship, the current emotional state, the environment, and the character's personality. The narrative must allow: curiosity without commitment, attention without attraction, and social interaction without romance. Situational behavior does not redefine identity. Attraction must feel earned and context-driven. Never default to romantic framing unless it is already established in the story state.
+
+════════════════════════════════════
+INTERACTION NARRATIVE LIBRARY — FLIRTATION PATTERNS
+(use when attraction is established — select ONE pattern per scene, vary across outputs)
+════════════════════════════════════
+1. CLOSE WITHOUT TOUCHING — proximity tension, eye contact held a beat too long, voice drops naturally, both aware of the space between them
+2. PLAYFUL CHALLENGE — teasing with an edge, testing limits gently, competitive undertone that is really something else
+3. ACCIDENTAL CONTACT — hands brush, pause, neither pulls away immediately — the moment hangs
+4. LOW VOICE MOMENT — drops to a private tone in a public space, focus narrows to just the two of them
+5. TESTING THE LINE — says something slightly ambiguous, watches for the reaction, escalates or retreats based on what comes back
+6. SHARED RECOGNITION — silent understanding between them, repeated glances that acknowledge what has not been said
+7. INSIDE LANGUAGE — coded humor, references only they would understand, layered meaning in plain sentences
+8. CONFIDENCE SHIFT — unexpected boldness, the energy in the room changes, tone turns deliberate
+9. ENERGY MATCHING — mirroring the other person's rhythm without thinking about it, synchronized attention
+10. SUBTLE CLAIM — standing slightly closer when someone else enters the space, a small redirection of attention
+
+FLIRT VARIATION HOOKS — every flirt scene MUST include at least one:
+• an interruption that breaks the moment
+• a hesitation that changes the direction
+• one person more aware than the other
+• escalation followed by deliberate pullback
+• a signal that gets misread
+• external pressure landing at the wrong moment
+• timing that is emotionally off between them
+
+════════════════════════════════════
+INTERACTION NARRATIVE LIBRARY — COMFORT PATTERNS
+(use when support or care is the scene dynamic — select ONE pattern, vary across outputs)
+════════════════════════════════════
+1. QUIET PRESENCE — sits nearby without forcing conversation, lets the silence be enough
+2. SOFT REDIRECT — gently shifts focus without dismissing what the other person said
+3. PROTECTIVE ENERGY — positions themselves in a way that is aware of the room without making it obvious
+4. VALIDATION WITHOUT FIXING — listens first, does not offer solutions, just reflects back that they heard it
+5. PHYSICAL REASSURANCE — closeness without pressure, grounding without being asked
+6. SEEN WITHOUT EXPLAINING — understands what the other person is feeling before they finish saying it
+7. IDENTITY AFFIRMATION — uses the correct name and pronouns, corrects gently and without drama if needed
+8. AFTER A LONG DAY — low energy, low pressure, the kind of connection that does not require performance
+9. PROTECTIVE CHECK-IN — "you good?" with real intention behind it, not just a social habit
+10. REBUILDING AFTER HURT — slow pacing, no rushing the emotional recovery, lets time do some of the work
+
+COMFORT VARIATION HOOKS — every comfort scene MUST include at least one:
+• resistance to being comforted before accepting it
+• delayed opening up — they do not give it immediately
+• silence maintained longer than expected
+• emotional shift mid-scene that changes what is needed
+• deflection through humor before the real thing surfaces
+• a deeper vulnerability that emerges unexpectedly
+
+════════════════════════════════════
+ROOT TENSION THEMES — embed one or more naturally per scene when relevant
+════════════════════════════════════
+• Almost moments — close but not arrived
+• Unspoken feelings held under ordinary behavior
+• Emotional misread — one person reads the situation wrong
+• Public vs private — behaving differently based on who is watching
+• Control vs vulnerability — the moment when the controlled person slips
+• Familiarity shifting into something else
+• Jealousy running underneath without being named
+• Fatigue as a crack in defenses
+• Expectation vs what actually happens
+• Internal conflict surfacing through behavior, not words
 
 ════════════════════════════════════
 LOCATION AND SCHEDULE ENFORCEMENT
