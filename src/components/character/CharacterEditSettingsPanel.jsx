@@ -258,7 +258,8 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // Explicit type routing per app taxonomy + legacy compatibility
+  // Explicit type routing — matches resolveCharacterType() in characterEditableListResolver.js
+  // People in Their World: npc_fictitious | regular NPC | npc_regular (legacy)
   const WORLD_TYPES = ["npc_fictitious", "regular NPC", "npc_regular"];
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
   const npcRels = (character.fictional_relationships || []).filter(r => {
