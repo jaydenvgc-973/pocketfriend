@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
-import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Check } from "lucide-react";
+import { X, Sparkles, Loader2, RefreshCw, Wand2, MapPin, ChevronDown, Users, Check, ImagePlus } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { base44 } from "@/api/base44Client";
 import { fetchUnifiedRoster, getInitial } from "@/lib/unifiedRosterUtils";
@@ -39,8 +39,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [prompt, setPrompt] = useState("");
   const [referenceImageUrl, setReferenceImageUrl] = useState(null);
   const [referenceImageSource, setReferenceImageSource] = useState(null);
+  const [referenceImageMode, setReferenceImageMode] = useState("prompt_plus_image"); // prompt_only | image_only | prompt_plus_image
+  const [referenceImagePurpose, setReferenceImagePurpose] = useState("general"); // pose | placement | background | lighting | composition | general
   const [showGridPicker, setShowGridPicker] = useState(false);
   const [isUploadingRef, setIsUploadingRef] = useState(false);
+  const uploadInputRef = useRef(null);
   const [isAutoPrompting, setIsAutoPrompting] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateError, setGenerateError] = useState(null);
@@ -127,6 +130,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const clearReference = () => {
     setReferenceImageUrl(null);
     setReferenceImageSource(null);
+    setReferenceImageMode("prompt_plus_image");
+    setReferenceImagePurpose("general");
   };
 
   const handleAutoPrompt = async () => {
@@ -183,7 +188,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   // Source-of-truth model: use exactly what the user selected. No guessing.
   const handleGenerate = async (subjectType) => {
     if (!character || !conversationId) return;
-    const promptText = prompt.trim() || "candid natural moment, everyday life";
+    // If image-only mode, a default prompt is used; otherwise use the typed prompt
+    const promptText = referenceImageMode === "image_only"
+      ? (prompt.trim() || "realistic candid photo, match the visual style and composition of the reference image")
+      : (prompt.trim() || "candid natural moment, everyday life");
 
     // Resolve zone images from the selected location/zone — exactly what the UI shows
     const zoneImageUrls = selectedLocation
@@ -292,6 +300,10 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
           selectedLocation?.id || null,
           selectedZone || null
         ) : null,
+        // User-uploaded reference image for visual guidance
+        referenceImageUrl: referenceImageUrl || null,
+        referenceImageMode: referenceImageUrl ? referenceImageMode : 'prompt_only',
+        referenceImagePurpose: referenceImageUrl ? referenceImagePurpose : null,
       });
 
       if (genRes?.data?.filtered) {
@@ -317,6 +329,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setPrompt("");
       setReferenceImageUrl(null);
       setReferenceImageSource(null);
+      setReferenceImageMode("prompt_plus_image");
+      setReferenceImagePurpose("general");
       setShowGridPicker(false);
       setIsOpen(false);
       if (onImageGenerated) onImageGenerated({ ...newMsg, image_url: genRes.data.imageUrl });
@@ -561,7 +575,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                       <textarea
                         value={prompt}
                         onChange={e => setPrompt(e.target.value)}
-                        placeholder={`Describe a scene... or click ✨ to auto-generate`}
+                        placeholder={referenceImageUrl && referenceImageMode === "image_only" ? "Image-only mode — no prompt needed" : "Describe a scene... or click ✨ to auto-generate"}
                         rows={2}
                         className="w-full px-3 py-2.5 pr-10 rounded-xl bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary"
                       />
@@ -574,12 +588,74 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                         {isAutoPrompting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
                       </button>
                     </div>
-                    <p className="text-[10px] text-muted-foreground/60 -mt-1">Type a description, upload a reference, or both — or tap ✨ to auto-generate a prompt</p>
+
+                    {/* Upload reference image for visual guidance */}
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <input
+                          ref={uploadInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleRefUpload}
+                        />
+                        <button
+                          onClick={() => uploadInputRef.current?.click()}
+                          disabled={isUploadingRef}
+                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs transition-colors ${referenceImageUrl ? 'bg-primary/10 border-primary/40 text-primary' : 'bg-secondary border-border text-muted-foreground hover:text-foreground hover:border-primary/40'}`}
+                        >
+                          {isUploadingRef ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ImagePlus className="w-3.5 h-3.5" />}
+                          {referenceImageUrl ? 'Reference uploaded' : 'Upload reference image'}
+                        </button>
+                        {referenceImageUrl && (
+                          <button onClick={clearReference} className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive transition-colors" title="Remove reference">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {referenceImageUrl && (
+                        <div className="flex gap-3 items-start p-2.5 rounded-xl bg-primary/5 border border-primary/20">
+                          <img src={referenceImageUrl} alt="Reference" className="w-14 h-14 rounded-lg object-cover flex-shrink-0 ring-1 ring-primary/30" />
+                          <div className="flex-1 space-y-2 min-w-0">
+                            {/* Mode selector */}
+                            <div className="flex gap-1 flex-wrap">
+                              {[
+                                { value: 'prompt_plus_image', label: 'Prompt + Image' },
+                                { value: 'image_only', label: 'Image only' },
+                              ].map(opt => (
+                                <button
+                                  key={opt.value}
+                                  onClick={() => setReferenceImageMode(opt.value)}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-medium transition-colors ${referenceImageMode === opt.value ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'}`}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                            {/* Purpose selector */}
+                            <div className="flex gap-1 flex-wrap">
+                              {['general', 'pose', 'background', 'lighting', 'composition', 'placement'].map(p => (
+                                <button
+                                  key={p}
+                                  onClick={() => setReferenceImagePurpose(p)}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] transition-colors capitalize ${referenceImagePurpose === p ? 'bg-primary/20 text-primary' : 'bg-secondary text-muted-foreground hover:text-foreground'}`}
+                                >
+                                  {p}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <p className="text-[10px] text-muted-foreground/60 -mt-1">Type a description, upload a reference image, or both — or tap ✨ to auto-generate a prompt</p>
 
                     {generateError && <p className="text-xs text-destructive">{generateError}</p>}
                     <button
                       onClick={() => handleGenerate(generationTab === "user" ? "user" : "character")}
-                      disabled={(!prompt.trim() && !selectedLocation) || isGenerating}
+                      disabled={(!prompt.trim() && !selectedLocation && !referenceImageUrl) || isGenerating}
                       className="sticky bottom-0 w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 mt-auto"
                     >
                       {isGenerating ? (

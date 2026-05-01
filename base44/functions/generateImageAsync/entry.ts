@@ -691,6 +691,7 @@ Deno.serve(async (req) => {
       userReferenceImages,
       userWorldName,
       characterEmotionalState,
+      userUploadedReferenceUrl,   // optional: user-uploaded image for visual guidance (from Media Grid)
       // manualLocationId is NOT used — location resolved from character record
     } = await req.json();
 
@@ -1044,6 +1045,8 @@ Deno.serve(async (req) => {
       ...envRefs.slice(0, ENV_SLOTS),
       ...charRefs.slice(0, CHAR_SLOTS),
       ...userRefs.slice(0, USER_SLOTS),
+      // User-uploaded visual reference (from Media Grid) — appended last so it guides without overriding identity
+      ...(userUploadedReferenceUrl && cdnFilter([userUploadedReferenceUrl]).length > 0 ? [cdnFilter([userUploadedReferenceUrl])[0]] : []),
     ].filter(Boolean);
 
     console.log(`[generateImageAsync] FINAL REF URLS:`);

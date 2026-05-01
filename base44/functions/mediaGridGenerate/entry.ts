@@ -46,6 +46,9 @@ Deno.serve(async (req) => {
       zoneName,
       zoneImageUrls,
       multiPersonSelection,
+      referenceImageUrl,
+      referenceImageMode,   // 'prompt_only' | 'image_only' | 'prompt_plus_image'
+      referenceImagePurpose, // 'pose' | 'placement' | 'background' | 'lighting' | 'composition' | 'general'
     } = await req.json();
 
     if (!messageId || !prompt) {
@@ -82,7 +85,30 @@ Deno.serve(async (req) => {
       return s.trim();
     }
 
-    const sanitizedPrompt = sanitizeImagePrompt(prompt);
+    let sanitizedPrompt = sanitizeImagePrompt(prompt);
+
+    // ── USER-UPLOADED REFERENCE IMAGE GUIDANCE ─────────────────────────────
+    // If the user uploaded a reference image, inject purpose-specific guidance into the prompt.
+    // The written prompt still defines intent — the uploaded image defines visual guidance only.
+    const hasUserRef = referenceImageUrl && isAccessible(toPublicCDN(referenceImageUrl));
+    if (hasUserRef && referenceImageMode !== 'prompt_only') {
+      const purposeInstructions = {
+        pose:        'Use the uploaded reference image to match the pose, body position, and physical stance of the subject.',
+        placement:   'Use the uploaded reference image to match the placement and positioning of people and objects in the scene.',
+        background:  'Use the uploaded reference image to match the background environment, setting, and spatial layout.',
+        lighting:    'Use the uploaded reference image to match the lighting direction, quality, and color temperature.',
+        composition: 'Use the uploaded reference image to match the overall framing, camera angle, and compositional structure.',
+        general:     'Use the uploaded reference image as visual guidance for the overall look, feel, and style of the scene.',
+      };
+      const purposeText = purposeInstructions[referenceImagePurpose] || purposeInstructions.general;
+      if (referenceImageMode === 'image_only') {
+        // Image is the primary source — prompt is supplemental
+        sanitizedPrompt = `${purposeText} The reference image is the primary visual source. ${sanitizedPrompt}`;
+      } else {
+        // prompt_plus_image — written prompt defines intent, image guides visuals
+        sanitizedPrompt = `${sanitizedPrompt} [VISUAL GUIDANCE] ${purposeText} The written prompt takes priority for intent and subject; the reference image guides the visual execution.`;
+      }
+    }
 
     // ── MULTI-PERSON IDENTITY LOCK ─────────────────────────────────────────
     if (multiPersonSelection) {
@@ -239,6 +265,11 @@ DO:
         return Response.json({ success: false, error: 'No reference images available for any selected person.' }, { status: 400 });
       }
 
+      // Append user-uploaded reference image to the end (after identity refs, before generation)
+      if (hasUserRef) {
+        allReferences.push(toPublicCDN(referenceImageUrl));
+      }
+
       try {
         const genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
           prompt: multiPersonPrompt,
@@ -301,6 +332,8 @@ DO:
       userWorldName: userName || null,
       subjectType: subjectType || 'character',
       characterEmotionalState: 'calm',
+      // User-uploaded reference image for visual guidance
+      userUploadedReferenceUrl: hasUserRef ? toPublicCDN(referenceImageUrl) : null,
       // NO manualLocationId — generateImageAsync resolves from character record
     });
 
