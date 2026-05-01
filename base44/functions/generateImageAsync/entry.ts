@@ -674,9 +674,53 @@ Match: face structure, skin tone, hair, body type.`;
   }
 
   if (isSelfieMode) {
-    // Selfie mode: preamble already contains all instructions. Just append the prompt and identity lock.
-    // Do NOT inject camera/lighting/envLock blocks — they contradict the selfie framing.
-    return `${preamble}${prompt}\n\nPhotorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}`;
+    // Selfie mode: the character holds the phone — but the ROOM must still be re-rendered
+    // from that selfie camera angle. The environment reference images are a blueprint.
+    // The background visible BEHIND the subject must match the actual room structure
+    // recomposed from the selfie camera's position and angle.
+
+    let selfieEnvBlock = '';
+    if (hasEnv) {
+      const place = [locationName, zoneName].filter(Boolean).join(' → ');
+      selfieEnvBlock = `
+
+════════════════════════════════════════════════════════════
+ROOM BLUEPRINT FOR SELFIE BACKGROUND — CRITICAL
+════════════════════════════════════════════════════════════
+Reference images ${envRefStart}–${envEnd} are photographs of the "${zoneName || place}".
+
+The background of this selfie MUST show the real room — not a generic or invented space.
+
+YOUR JOB:
+1. READ the room blueprint: extract floor, walls, furniture types, colors, window positions, decor.
+2. DETERMINE what would be VISIBLE directly behind the subject given the selfie camera angle and body position described in the prompt (e.g. lying in bed → pillows, headboard, wall behind them; seated at desk → wall, shelving, window beside them).
+3. RE-RENDER only the portion of the room that appears in that angle as the background.
+
+RULES:
+✅ Background must show real elements from images ${envRefStart}–${envEnd} (correct wall color, correct furniture, correct materials)
+✅ Perspective and depth of background must match the selfie camera angle exactly — close-up selfie = compressed background, overhead selfie = ceiling/bedding visible
+✅ The room background adapts to the camera angle — it is NOT a flat copy of the reference photo
+✅ Time-of-day lighting: ${timeLighting.desc} — apply to background too
+⛔ Do NOT copy the reference photo camera angle as the background
+⛔ Do NOT invent a generic room — use what's in images ${envRefStart}–${envEnd}
+⛔ Do NOT show parts of the room that wouldn't be visible from this selfie angle`;
+    }
+
+    let selfieLightingBlock = `
+
+════════════════════════════════════════════════════════════
+LIGHTING — ${promptHasExplicitTime ? 'PROMPT-SPECIFIED TIME' : timeLighting.period}
+════════════════════════════════════════════════════════════
+${promptHasExplicitTime
+  ? 'Apply lighting that matches the time of day described in the prompt.'
+  : `Current time: ${serverHour}:00 → ${timeLighting.period}. Lighting: ${timeLighting.desc}.`}
+Both the subject AND the background must be lit consistently from the same light source.`;
+
+    return `${preamble}${selfieEnvBlock}${selfieLightingBlock}
+
+${prompt}
+
+Photorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}`;
   }
 
   return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
