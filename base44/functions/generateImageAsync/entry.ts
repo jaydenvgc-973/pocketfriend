@@ -340,12 +340,16 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   `;
    }
   if (hasChar) {
-    preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY — 100% AUTHORITY FOR CHARACTER APPEARANCE.
-REPLICATE: face shape, eyes, nose, mouth, skin tone, hair color/texture, facial hair, body type.
-IGNORE COMPLETELY: background, room, lighting, camera angle in these photos.
-⛔ The background in reference photos is irrelevant—the room comes from zone images, re-lit for time.
+     preamble += `Images ${charRefStart}–${charEnd}: FACE/IDENTITY ONLY — THESE ARE FACE-CROP REFERENCE PHOTOS.
+  ⚠️ CRITICAL — THESE PHOTOS ARE FACE CLOSE-UPS FOR FACIAL IDENTITY MATCHING ONLY.
+  REPLICATE ONLY: face bone structure, eyes, nose, mouth shape, skin tone, hair color/texture/length, facial hair presence.
+  ⛔ ABSOLUTE PROHIBITION — BACKGROUND IN THESE PHOTOS: The background, walls, room, furniture, lighting, props, pose, and clothing in these photos ARE COMPLETELY IRRELEVANT AND MUST BE TOTALLY IGNORED.
+  ⛔ DO NOT USE THESE PHOTOS AS A SCENE BACKGROUND — the room comes from zone images only.
+  ⛔ DO NOT BLEND, COPY, OR REFERENCE any environment from these photos.
+  ⛔ The character must appear in the room defined by zone images (images 1–${envEnd}), NOT in any environment seen behind them in these face photos.
+  ⛔ Treat these purely as a face texture/structure sample — nothing else from these photos transfers.
 
-`;
+  `;
   }
   if (hasUser) {
     preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
@@ -361,7 +365,8 @@ FAIL CONDITIONS — IMAGE IS INVALID IF
 🚫 Camera matches the reference image angle
 🚫 Lighting matches the reference image (when time requires different lighting)
 🚫 Character is enlarged instead of camera moving closer
-🚫 Character looks pasted—not integrated with matched shadows/depth
+🚫 Character looks pasted, cut-out, or composited — character MUST be organically rendered inside the room sharing its perspective and depth
+🚫 Character's background from reference photos bleeds into the scene environment
 🚫 Room becomes a different location or zone
 🚫 Composition matches reference image framing
 🚫 A second table, couch, bed, counter, stool, or chair is created when one already exists in the zone
@@ -558,8 +563,10 @@ The scene lighting must match the actual world time, not the reference images.`;
   ✅ Render natural, anatomically correct hands (exactly 5 fingers per hand)
   ✅ Character MUST be lit consistently with the ${timeLighting.period} lighting defined above
   ✅ Shadows, highlights, and skin tones MUST match the time-of-day lighting, NOT reference image lighting
-  ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — not a separate element pasted over background
+  ✅ Character MUST be integrated as ONE UNIFIED PART OF THE SCENE — organically rendered inside the room, sharing its depth, perspective, shadows, and lighting
   ✅ Character scale, position, and shadows MUST be consistent with the new camera viewpoint and room perspective
+  ✅ The character must look like they physically exist inside this room — NOT composited or overlaid
+  ⛔ ABSOLUTE FAIL: If the character looks "cut out" or "pasted" — this means the model imported the identity photo background. Do NOT do this under any circumstances.
   ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
   ✅ OUTFIT: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `If the scene prompt specifies clothing, use THAT clothing. If no clothing is described in the scene prompt, default to: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}.` : 'Clothing should match what the scene prompt describes, or their personality and context if unspecified.'}
   ⛔ Do NOT copy background, room, or pose from reference photos
@@ -659,9 +666,10 @@ Deno.serve(async (req) => {
         // This allows the model to compose the character fresh into the scene.
         const allRefUrls = cdnFilter(charRecord.reference_image_urls || []);
         const refUrls = allRefUrls.filter(url => !url.includes('generated_image'));
-        // Use ONLY dedicated reference images, never avatar
-        charRefs = refUrls.slice(0, 3);
-        console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (avatar NOT used — description-only mode for scene composition)`);
+        // CRITICAL: Use maximum 2 reference images. More refs = more background contamination.
+        // The model anchors visual context from ALL ref images — fewer refs = less bleed-through.
+        charRefs = refUrls.slice(0, 2);
+        console.log(`[generateImageAsync] Character "${charRecord.name}" — identity refs: ${charRefs.length} (max 2 to minimize background contamination)`);
 
         // Build appearance descriptor — rich text description used when no reference photos exist
         // This is the PRIMARY identity source for characters without reference_image_urls

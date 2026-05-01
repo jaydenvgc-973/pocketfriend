@@ -119,11 +119,14 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
 `;
   }
   if (hasChar) {
-    preamble += `Images ${charStart}–${charEnd}: CHARACTER IDENTITY — 100% AUTHORITY
-"${charName}" — Match: face structure, skin tone, hair, body type.
-⛔ Avatar background = 0%. Ignore any room/wall/furniture in these photos completely.
+     preamble += `Images ${charStart}–${charEnd}: FACE-CROP IDENTITY PHOTOS — FACE ONLY, NOTHING ELSE.
+  "${charName}" — Match ONLY: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/style, body type.
+  ⛔ ABSOLUTE PROHIBITION: The background, room, walls, lighting, furniture, pose, and clothing in these photos MUST BE COMPLETELY IGNORED.
+  ⛔ DO NOT USE THESE AS A SCENE BACKGROUND — the room comes from zone images only.
+  ⛔ DO NOT BLEND any environment from these photos into the output.
+  ⛔ Treat these as face texture samples ONLY — nothing else from them transfers to the scene.
 
-`;
+  `;
   }
   preamble += '════════════════════════════════════════════════════════════\n\n';
 
@@ -191,11 +194,11 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
 
   let identityLock = '';
   if (hasChar) {
-    identityLock = `
+     identityLock = `
 
   CHARACTER IDENTITY — "${charName}":
-  Images ${charStart}–${charEnd} are photographs of this exact person.
-  Match PRECISELY: face structure, eyes, skin tone, hair color/length/style, body type.
+  Images ${charStart}–${charEnd} are FACE-CROP REFERENCE PHOTOS. Use them for face structure and features ONLY.
+  Match PRECISELY: face bone structure, eyes, skin tone, hair color/length/style, body type.
 
   APPEARANCE LOCK (100% ABSOLUTE TRUTH):
   ✅ Hair: Match the hairstyle, length, texture, and color from reference images exactly
@@ -205,7 +208,9 @@ The room structure is TRUE — the viewpoint and lighting will change with new c
 
   ⛔ Do NOT generate a generic, approximate, or random person
   ⛔ Do NOT override appearance traits from the character record
-  ⛔ THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS`;
+  ⛔ THESE ARE NON-NEGOTIABLE IMMUTABLE TRUTHS
+  ⛔ CRITICAL: The character must look PHYSICALLY PRESENT inside the room — integrated with the room's perspective, depth, and lighting. NOT cut out. NOT composited. NOT overlaid on a background. ONE UNIFIED SCENE.
+  ⛔ If the character looks pasted or floating — the generation has FAILED. Redo with full integration.`;
   }
 
   return `${preamble}${scenePrompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${reasonBlock}${identityLock}`;
@@ -354,10 +359,10 @@ Deno.serve(async (req) => {
         // (background, pose, props, lighting), causing scene contamination. This is the ROOT CAUSE of "pasted character" failures.
         // If no reference images exist, generate from text description only.
         const refUrls = cdnFilter(charRecord.reference_image_urls || []);
-        // CRITICAL FIX: Filter out generated images to avoid perpetuating flawed identity from previous generations
+        // CRITICAL: Filter generated images + cap at 2. More refs = more background contamination bleed-through.
         const validRefUrls = refUrls.filter(url => !url.includes('generated_image'));
-        charRefs = validRefUrls.slice(0, 3);
-        console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs from reference_image_urls only: ${charRefs.length} (NOT using avatar to prevent scene contamination)`);
+        charRefs = validRefUrls.slice(0, 2);
+        console.log(`[regenerateImageWithReason] Character "${charName}" — identity refs: ${charRefs.length} (max 2, no generated images, no avatar)`);
         
         // Build appearance descriptor for text-based generation — CRITICAL: include appearance_lock traits as immutable truth
         const charDescParts = [
