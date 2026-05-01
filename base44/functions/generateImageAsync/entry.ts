@@ -1118,7 +1118,17 @@ Deno.serve(async (req) => {
       content: "",  // Clear any [IMAGE_FAILED] placeholder
     });
 
-    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} → ${genRes.url.substring(0, 60)}`);
+    // ── 9. SAVE CAMERA VARIABLES FOR NEXT GENERATION ──────────────────────
+    // Extract and store camera position/angle/distance/framing for regeneration validation
+    const cameraVars = {
+      distance: /\bwide shot|establishing shot|full body\b/i.test(sanitizedPrompt) ? 'wide' : /\bclose-up|tight|face\b/i.test(sanitizedPrompt) ? 'close' : 'medium',
+      angle: /\bhigh-?angle|overhead|from above\b/i.test(sanitizedPrompt) ? 'high' : /\blow-?angle|from below|looking up\b/i.test(sanitizedPrompt) ? 'low' : /\bover-?shoulder\b/i.test(sanitizedPrompt) ? 'over-shoulder' : 'straight',
+      height: /\bseated|sitting\b/i.test(sanitizedPrompt) ? 'seated' : 'eye-level',
+      framing: /\boff-?center|asymmetric\b/i.test(sanitizedPrompt) ? 'off-center' : /\bcropped|partial\b/i.test(sanitizedPrompt) ? 'cropped' : 'standard',
+      lens_style: /\bselfie|phone\b/i.test(sanitizedPrompt) ? 'phone' : 'standard',
+    };
+
+    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | camera: ${cameraVars.distance} ${cameraVars.angle} ${cameraVars.framing}`);
 
     return Response.json({
       success: true,
@@ -1126,6 +1136,7 @@ Deno.serve(async (req) => {
       messageId,
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
+      cameraVariables: cameraVars,
     });
 
   } catch (error) {
