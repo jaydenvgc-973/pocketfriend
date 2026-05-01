@@ -406,34 +406,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
             )}
             {/* Location Share Card */}
             {message.location_share && (
-              <div
-                className="mx-3 my-2 rounded-xl border border-border bg-card/80 overflow-hidden cursor-pointer hover:bg-card transition-colors"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (message.location_share.location_id) {
-                    onLocationSignal?.(message.location_share.location_id, message.character_id);
-                  }
-                }}
-              >
-                <div className="bg-primary/10 px-3 py-2 flex items-center gap-2 border-b border-border">
-                  <MapPin className="w-4 h-4 text-primary flex-shrink-0" />
-                  <span className="text-xs font-semibold text-primary">Location Shared</span>
-                </div>
-                <div className="px-3 py-2.5 space-y-0.5">
-                  <p className="text-sm font-semibold text-foreground">{message.location_share.location_name || 'Unknown Location'}</p>
-                  {message.location_share.note && (
-                    <p className="text-xs text-muted-foreground italic">{message.location_share.note}</p>
-                  )}
-                  {message.location_share.timestamp && (
-                    <p className="text-[10px] text-muted-foreground/60">{format(new Date(message.location_share.timestamp), "h:mm a")}</p>
-                  )}
-                </div>
-                {message.location_share.location_id && (
-                  <div className="px-3 pb-2">
-                    <span className="text-[10px] text-primary/60">Tap to update location</span>
-                  </div>
-                )}
-              </div>
+              <LocationShareCard
+                locationShare={message.location_share}
+                characterName={message.character_name}
+                onLocationSignal={onLocationSignal}
+                characterId={message.character_id}
+              />
             )}
             {message.songs_heard && message.songs_heard.length > 0 && (
               <div className="px-4 py-3 space-y-2">
@@ -514,6 +492,108 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
 }
 
 const REACTION_EMOJIS = ["❤️", "😂", "😮", "😢", "😡", "👍"];
+
+const PRESENCE_LABELS = {
+  at_work: "At Work",
+  home: "At Home",
+  visiting: "Visiting",
+  traveling: "Traveling",
+  at_school: "At School",
+  sleeping: "Sleeping",
+  napping: "Resting",
+  temporary_housing: "Staying Here",
+  under_supervision: "Here",
+};
+
+const CATEGORY_ICONS = {
+  home: "🏠",
+  workplace: "🏢",
+  gym: "💪",
+  social: "🎉",
+  outdoor: "🌳",
+  food_drink: "🍽️",
+  medical: "🏥",
+  education: "📚",
+  school: "🎓",
+  grocery: "🛒",
+  religion: "⛪",
+  government: "🏛️",
+  hotel: "🏨",
+  shelter: "🏠",
+  generic: "📍",
+};
+
+function LocationShareCard({ locationShare, characterName, onLocationSignal, characterId }) {
+  const locationName = locationShare.location_name || "Unknown Location";
+  const presenceLabel = PRESENCE_LABELS[locationShare.presence_status] || "Here";
+  const categoryIcon = CATEGORY_ICONS[locationShare.location_category] || "📍";
+  const timeLabel = locationShare.timestamp
+    ? format(new Date(locationShare.timestamp), "h:mm a")
+    : null;
+  const avatarUrl = locationShare.character_avatar_url;
+
+  const handleTap = (e) => {
+    e.stopPropagation();
+    if (locationShare.location_id && onLocationSignal) {
+      onLocationSignal(locationShare.location_id, characterId);
+    }
+  };
+
+  return (
+    <div
+      className="mx-2 my-2 rounded-2xl overflow-hidden border border-primary/20 bg-card shadow-lg cursor-pointer active:scale-[0.98] transition-transform"
+      onClick={handleTap}
+      style={{ minWidth: 240, maxWidth: 280 }}
+    >
+      {/* Map-style header */}
+      <div className="relative h-20 bg-gradient-to-br from-blue-950 via-blue-900 to-indigo-900 overflow-hidden flex items-center justify-center">
+        {/* Faux map grid lines */}
+        <div className="absolute inset-0 opacity-20"
+          style={{
+            backgroundImage: "linear-gradient(hsl(var(--primary)/0.3) 1px, transparent 1px), linear-gradient(90deg, hsl(var(--primary)/0.3) 1px, transparent 1px)",
+            backgroundSize: "20px 20px"
+          }}
+        />
+        {/* Pulse ring */}
+        <div className="absolute w-16 h-16 rounded-full bg-primary/20 animate-ping" style={{ animationDuration: "2.5s" }} />
+        <div className="absolute w-10 h-10 rounded-full bg-primary/30" />
+        {/* Avatar pin */}
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-11 h-11 rounded-full border-[3px] border-primary shadow-lg overflow-hidden bg-secondary">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt={characterName} className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-lg font-bold text-primary">
+                {characterName?.[0]?.toUpperCase() || "?"}
+              </div>
+            )}
+          </div>
+          {/* Pin point */}
+          <div className="w-2 h-2 rounded-full bg-primary shadow-md -mt-0.5" />
+        </div>
+        {/* Category icon top right */}
+        <div className="absolute top-2 right-2 text-lg">{categoryIcon}</div>
+      </div>
+
+      {/* Info section */}
+      <div className="px-3 pt-2.5 pb-2 bg-card">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <p className="text-[11px] font-semibold text-primary uppercase tracking-wide leading-none mb-1">{presenceLabel}</p>
+            <p className="text-sm font-bold text-foreground leading-tight truncate">{locationName}</p>
+            {locationShare.note && (
+              <p className="text-xs text-muted-foreground italic mt-0.5 leading-snug">{locationShare.note}</p>
+            )}
+          </div>
+          <MapPin className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+        </div>
+        {timeLabel && (
+          <p className="text-[10px] text-muted-foreground mt-1.5">Since {timeLabel}</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ReactionAddButton({ messageId, isUser, onReact }) {
   const [open, setOpen] = useState(false);

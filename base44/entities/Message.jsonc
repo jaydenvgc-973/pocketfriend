@@ -131,6 +131,41 @@
         }
       }
     },
+    "location_share": {
+      "type": "object",
+      "description": "Character location share card \u2014 populated when character shares their real verified location",
+      "properties": {
+        "location_id": {
+          "type": "string",
+          "description": "ID of the LocationReference record"
+        },
+        "location_name": {
+          "type": "string",
+          "description": "Display name of the location"
+        },
+        "presence_status": {
+          "type": "string",
+          "description": "Character's presence status at this location (at_work, home, visiting, etc.)"
+        },
+        "location_category": {
+          "type": "string",
+          "description": "Category of the location (home, workplace, gym, etc.)"
+        },
+        "character_avatar_url": {
+          "type": "string",
+          "description": "Character avatar URL for display in the card"
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional note from the character about why they're sharing"
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the location was shared"
+        }
+      }
+    },
     "songs_heard": {
       "type": "array",
       "description": "Songs shared or referenced in this message",
