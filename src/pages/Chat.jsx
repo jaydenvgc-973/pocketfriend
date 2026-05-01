@@ -592,7 +592,55 @@ export default function Chat() {
 
     const lookupMatch = text.match(/(?:look up|search|find out|what.*about|can you.*find|research)[\s:]*(.*?)(?:\?|$)/i);
 
-    // ── LINK-AWARE CONTEXT EXTRACTION ─────────────────────────────────────
+      // ── QR CODE DETECTION (when user uploads an image) ────────────────────
+      let qrContext = "";
+      if (userImageUrl) {
+        try {
+          const qrResult = await base44.integrations.Core.InvokeLLM({
+            prompt: `Examine this image carefully. Does it contain a QR code?
+    If YES: decode the QR code and return ONLY the decoded content (URL or text) — nothing else, no explanation.
+    If NO QR code is present: return exactly the word "NO_QR".
+    If a QR code is present but cannot be decoded: return exactly the word "QR_UNREADABLE".`,
+            file_urls: [userImageUrl],
+          });
+          const qrRaw = (typeof qrResult === 'string' ? qrResult : '').trim();
+
+          if (qrRaw && qrRaw !== 'NO_QR') {
+            if (qrRaw === 'QR_UNREADABLE') {
+              qrContext = `\n\nQR CODE DETECTED — CANNOT DECODE:
+    The user uploaded an image containing a QR code, but it could not be read clearly.
+    You MUST tell the user you can see the QR code but could not decode it. Do NOT guess what it contains.`;
+            } else if (/^https?:\/\//i.test(qrRaw)) {
+              // QR contains a URL — run it through the same link lookup flow
+              try {
+                const res = await base44.functions.invoke('performWebLookup', { characterId, searchQuery: qrRaw, sourceUrl: qrRaw });
+                const data = res?.data;
+                const content = (data?.title || data?.summary)
+                  ? `Title: ${data.title || 'Unknown'}\nContent: ${data.summary || data.description || 'No content retrieved'}`
+                  : '(Content could not be retrieved)';
+                qrContext = `\n\nQR CODE DECODED — LINK:
+    The user's uploaded image contained a QR code that decoded to this URL: ${qrRaw}
+    ${content}
+    STRICT RULES: Respond ONLY to the actual content above. If content was retrieved, reference specific details. If not retrieved, tell the user explicitly you cannot access the linked content. Do NOT fabricate or guess.`;
+              } catch {
+                qrContext = `\n\nQR CODE DECODED — LINK (unresolved):
+    The user's image contained a QR code that decoded to: ${qrRaw}
+    The linked content could not be retrieved. You MUST tell the user you can see the link from the QR code but cannot access its content.`;
+              }
+            } else {
+              // QR contains plain text
+              qrContext = `\n\nQR CODE DECODED — TEXT CONTENT:
+    The user's uploaded image contained a QR code with the following exact text:
+    "${qrRaw}"
+    Respond to this exact decoded content. Do NOT fabricate or expand on it beyond what is provided.`;
+            }
+          }
+        } catch {
+          // QR scan failed silently — do not block message flow
+        }
+      }
+
+      // ── LINK-AWARE CONTEXT EXTRACTION ─────────────────────────────────────
     // Detect any general URLs (non-music, non-video already handled above)
     const generalLinkMatch = text.match(/https?:\/\/[^\s]+/gi);
     let linkContext = "";
@@ -1077,7 +1125,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${linkContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
+      const fullPrompt = `${systemPrompt}${educationContext}${songsContext}${memoryContext}${lifeEventContext}${researchContext}${weatherContext}${recentEventsContext}${culturalContext}${timeContext}${needsContext}${catchupContext}${linkContext}${qrContext}${modeInstruction}${statusContext}${sleepContext}${awarenessContext}${spatialContext}${playAsInstruction}${evidenceInstruction}${toneContext}\n\n${lengthInstruction}\n${intensityInstruction}\n\nConversation so far:\n${conversationLog}\n\nWrite your next reply as ${character.name}. Do NOT start with your name or any label. Do NOT wrap up with a lesson or conclusion. Just say what you'd actually say — short, unpolished, real.\n- Do NOT end with a question every time. Real conversations aren't interrogations. Sometimes make a statement, vent something, or share what's on your mind and stop.\n- You have your own life. Bring it up naturally when it fits — something that happened at work, something on your mind, something you felt. You are not just asking about the user.\n- Do NOT reference or assume anything about the user's family unless they have told you directly in this conversation.\n- CRITICAL: Never repeat stories, anecdotes, or personal information you've already shared in this conversation. Check the conversation history carefully — if you've mentioned something before, do not bring it up again.\n- CULTURAL AWARENESS: When the user references celebrities, TV shows, music, entertainment, or cultural topics, you recognize them as real and familiar. You respond naturally without confusion or over-explanation.\n\nRespond ONLY with valid JSON in this exact format:\n{\n  "message_type": "text_only" | "image_only" | "text_then_image" | "image_then_text",\n  "text_content": "The visible character dialogue — ONLY include if message_type includes text. Never put image prompts here.",\n  "image_generation_prompt": "INTERNAL ONLY — vivid image description for generation. Never shown to user. Only include if message_type includes image.",\n  "image_generation_prompts": ["For multiple images only — array of internal image prompts"],\n  "scheduled_events": [\n    {\n      "description": "What will happen",\n      "trigger_time": "<ISO 8601 UTC datetime>"\n    }\n  ]\n}\nOnly include scheduled_events if a specific real-world action with a concrete time is committed to. Omit fields you don't use.\n\n${imageRule}`;
 
 
       const responseLagEnabled = userSettings.response_lag_enabled !== false;
