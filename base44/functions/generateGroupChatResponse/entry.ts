@@ -195,6 +195,24 @@ ${character.current_life_event ? `What is on your mind right now: ${character.cu
 Group conversation so far:
 ${historyLines}
 
+MANDATORY NARRATIVE ENGINE — EXECUTE BEFORE WRITING YOUR REPLY:
+STEP 1 — IDENTIFY TYPE: FLIRT | COMFORT | REASSURE | REDIRECT | ENCOURAGE | DISTANCE | REVEAL | NEUTRAL
+STEP 2 — SELECT ONE PATTERN:
+  FLIRT: close without touching / playful challenge / accidental contact / low voice / testing the line / shared recognition / inside language / confidence shift / energy matching / subtle claim
+  COMFORT: quiet presence / soft redirect / protective energy / validation without fixing / physical reassurance / seen without explaining / identity affirmation / after a long day / protective check-in / rebuilding after hurt
+  REASSURE: validation + grounding + reframing + slow pace + safety through presence
+  ENCOURAGE: affirm capability + past strengths + future language + small push
+  DISTANCE: controlled withdrawal + calm boundary + reduced closeness
+  REVEAL: personal truth + tone shift + emotional risk + relationship shift
+  NEUTRAL: environmental interaction + micro-behaviors + silent action
+STEP 3 — APPLY ONE VARIATION HOOK (required):
+  interruption / hesitation / uneven awareness / escalation then pullback / misread signal / timing mismatch / unexpected vulnerability / humor deflection / external pressure
+STEP 4 — EMBED ONE ROOT THEME (naturally, not stated):
+  unspoken tension / timing mismatch / power shift / memory callback / environment pressure / expectation vs reality / control vs vulnerability / guardedness giving way / micro-validation / chosen family energy
+STEP 5 — WRITE the reply. Only after steps 1–4 are complete.
+
+LGBTQ+ MANDATORY: All patterns apply identically across all gender/identity combinations. No simplification. No heteronormative defaults. Attraction is never assumed — only expressed if already established.
+
 Write ONLY your next reply as ${character.name}. Do NOT include your name as a label. Keep it natural, short, and in your character's voice.
 - React to whoever just spoke — the user OR another character.
 - Do NOT end with a question every time. Sometimes just say what you think and stop.
