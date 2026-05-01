@@ -1415,6 +1415,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           emotional_state: emotionalState,
           is_read: navigatedAway ? false : true,
           timestamp: new Date().toISOString(),
+          generation_context: {
+            prompt: imageGenPrompt,
+            character_id: characterId,
+            character_reference_images: charRefs,
+          },
         });
       } catch (err) {
         console.error('[createImageMessage] Network error saving image message:', err.message);

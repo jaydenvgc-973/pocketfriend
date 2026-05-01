@@ -65,22 +65,14 @@ export async function dispatchImageGeneration({
     const homeResolutionFailed = housing.home_resolution_failed || false;
     const mayAssignTemporaryHousing = housing.may_assign_temporary_housing || false;
 
-    // CRITICAL: Validate appearance_lock and outfit separation before sending
-    // Only block if the character HAS an appearance_lock defined — warn otherwise
+    // Appearance lock: warn only — backend generateImageAsync enforces via reference images
     if (character?.appearance_lock && Object.keys(character.appearance_lock).length > 0) {
       try {
         enforceValidation(character, imageGenPrompt);
       } catch (validationErr) {
-        console.error(`[ChatImageDispatch] Prompt validation failed for ${character.name}:`, validationErr.message);
-        // Hard block — do not send invalid prompt
-        if (isMountedRef.current) {
-          base44.entities.Message.update(targetMsgId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-          setMessages(prev => prev.map(m => m.id === targetMsgId ? { ...m, content: '[IMAGE_FAILED]' } : m));
-        }
-        return;
+        // Log but do NOT block — backend will enforce appearance via reference photos
+        console.warn(`[ChatImageDispatch] Appearance lock warning for ${character.name} (continuing):`, validationErr.message);
       }
-    } else {
-      console.warn(`[ChatImageDispatch] Character ${character?.name} has no appearance_lock — skipping validation`);
     }
 
     // Convert all ref URLs to public CDN before sending — private/internal URLs are rejected by provider
