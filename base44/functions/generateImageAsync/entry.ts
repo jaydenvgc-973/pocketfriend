@@ -252,8 +252,13 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const resolvedTime = serverHour;
   const timeLighting = getTimeLighting(resolvedTime);
   
-  // ── THEN CAMERA POSITION (NOT FROM REFERENCE) ──
-  const cameraPos = selectCameraPosition(zoneName, prompt + serverTime, prompt);
+  // ── THEN CAMERA POSITION (ONLY IF PROMPT DOESN'T SPECIFY) ──
+  // If the prompt explicitly describes a specific camera angle or pose (e.g. "selfie", "from above", "lying down"),
+  // DO NOT override it with an auto-generated position. Use the prompt's specification instead.
+  const promptHasExplicitCamera = /\b(selfie|self-portrait|from above|from below|wide shot|close-up|overhead|high-angle|low-angle|lying|sitting|standing|kneeling)\b/i.test(sanitizedPrompt);
+  const cameraPos = promptHasExplicitCamera 
+    ? "as described in the scene prompt"
+    : selectCameraPosition(zoneName, prompt + serverTime, prompt);
 
   let preamble = `════════════════════════════════════════════════════════════
 THIS IS A FULL 3D RE-RENDER — NOT A PHOTO EDIT OR COMPOSITE
@@ -389,7 +394,26 @@ SUCCESS CONDITION
 
 `;
 
-  let cameraBlock = `
+  let cameraBlock = '';
+  if (cameraPos === "as described in the scene prompt") {
+    cameraBlock = `
+
+════════════════════════════════════════════════════════════
+📸 CAMERA ANGLE — PROMPT-SPECIFIED
+════════════════════════════════════════════════════════════
+The scene prompt EXPLICITLY describes the camera angle or pose. This is MANDATORY.
+
+You MUST render the exact camera angle, pose, and framing described in the prompt.
+Examples:
+  • "selfie" → first-person perspective, phone held up by the character
+  • "high-angle" → looking down at the subject
+  • "lying on his back looking up" → character's POV is supine, camera is their phone
+  • "wide shot" → full scene visible
+  • "close-up of face" → framed tightly on the subject's head
+
+Render EXACTLY as the prompt describes. The prompt's description is the authority.`;
+  } else {
+    cameraBlock = `
 
 ════════════════════════════════════════════════════════════
 ⛔ MANDATORY CAMERA OVERRIDE — CAMERA MUST MOVE ⛔
@@ -414,6 +438,7 @@ REJECTION CRITERIA — IMAGE IS INVALID IF:
 🚫 Framing looks like a reused angle
 
 RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
+  }
 
   let lightingBlock = '';
   if (promptHasExplicitTime) {
