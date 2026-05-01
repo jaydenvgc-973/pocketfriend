@@ -320,12 +320,11 @@ export default function EditCharacterProfile() {
     c.character_type === 'active_created_character'
   );
   
-  // Filter char_relationships to only show active_created_character targets
-  // NPC_fictitious and family go to their own sections — not here
+  // Characters They Know: ONLY active_created_character (explicit match)
   const filteredCharRelationships = selectedChar
     ? filterOutTemporaryNPCs(form.char_relationships || []).filter(r => {
         const target = characters.find(c => c.id === r.related_character_id);
-        return target && target.character_type === 'active_created_character';
+        return target && target.character_type === "active_created_character";
       })
     : [];
 
