@@ -583,7 +583,6 @@ export default function Chat() {
     // bypass image generation entirely and force a location card response.
     const locationShareRequest =
       /\b(send|share|drop|give|show)\s+(me\s+)?(your\s+)?(location|loc|whereabouts|geotag|geo tag|pin|coordinates)\b/i.test(text) ||
-      /\b(where\s+are\s+you|where\s+you\s+at|where\s+r\s+u|wya|wru)\b/i.test(text) ||
       /\bdrop\s+(your\s+)?pin\b/i.test(text) ||
       /\bsend\s+loc\b/i.test(text) ||
       /\blocation\s+(tag|card|share|pin)\b/i.test(text) ||
