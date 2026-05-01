@@ -1077,20 +1077,104 @@ Deno.serve(async (req) => {
       serverTime: serverTime.toLocaleTimeString(),
     });
 
-    // ── 7. GENERATE ───────────────────────────────────────────────────────────
-    let genRes;
-    try {
-      genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-        prompt: finalPrompt,
-        existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-      });
-    } catch (genErr) {
-      const msg = genErr?.message || '';
-      if (/filter|guideline|block|violat/i.test(msg)) {
-        await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
-        return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+    // ── 7. CAMERA ENFORCEMENT — EXTRACT PREVIOUS CAMERA STATE ────────────────
+    // Read previous generation context from the message to compare camera variables.
+    // This is how we detect "same frame reuse" and force movement.
+    const previousCtx = message?.generation_context || null;
+    const previousCameraVars = previousCtx?.camera_variables || null;
+
+    // ── CAMERA VARIABLE EXTRACTOR (inlined — no local imports in Deno) ────────
+    function extractCameraVarsFromPrompt(p) {
+      const lower = (p || '').toLowerCase();
+      return {
+        distance: /wide shot|establishing shot|full body/.test(lower) ? 'wide' : /close-up|tight shot|face shot/.test(lower) ? 'close' : 'medium',
+        angle: /high-?angle|overhead|from above|top-?down/.test(lower) ? 'high' : /low-?angle|from below|looking up/.test(lower) ? 'low' : /over-?shoulder/.test(lower) ? 'over-shoulder' : /side angle|from the side/.test(lower) ? 'side' : 'straight',
+        height: /seated|sitting at|sat down/.test(lower) ? 'seated' : /crouching|crouched/.test(lower) ? 'crouched' : 'standing',
+        framing: /off-?center|asymmetric/.test(lower) ? 'off-center' : /cropped|partial body/.test(lower) ? 'cropped' : /environmental|full scene/.test(lower) ? 'environmental' : 'standard',
+        lens_style: /selfie|phone selfie/.test(lower) ? 'phone' : /wide-?angle|fisheye/.test(lower) ? 'wide-angle' : /cinematic/.test(lower) ? 'cinematic' : 'standard',
+      };
+    }
+
+    function countCameraDiffs(prev, next) {
+      if (!prev || !next) return 5; // no previous = always valid
+      let diffs = 0;
+      if (prev.distance !== next.distance) diffs++;
+      if (prev.angle !== next.angle) diffs++;
+      if (prev.height !== next.height) diffs++;
+      if (prev.framing !== next.framing) diffs++;
+      if (prev.lens_style !== next.lens_style) diffs++;
+      return diffs;
+    }
+
+    // Forced camera override presets — escalate randomness on retry
+    const CAMERA_FORCE_PRESETS = [
+      // Attempt 1: strong directional shift
+      `\n\n════ MANDATORY CAMERA OVERRIDE (validation retry 1) ════\nThe previous image reused the same camera position. You MUST physically move the camera.\nREQUIRED: wide shot from the far corner of the room, camera at LOW angle (below waist height), subject in right third of frame — asymmetric, off-center. Strong foreground element in lower-left. Background recedes into depth.\nThis camera position MUST be visibly different from any previous framing. Centered or eye-level framing = automatic fail.\n════════════════════════════════════════════════`,
+      // Attempt 2: escalated — completely different preset
+      `\n\n════ MANDATORY CAMERA OVERRIDE (validation retry 2 — ESCALATED) ════\nTwo consecutive generations used the same camera frame. Maximum variation required.\nREQUIRED: OVERHEAD / TOP-DOWN angle, camera directly above subject looking straight down. Subject centered but slightly offset to one side. Environmental context fully visible from above. No standard eye-level framing whatsoever.\nAlternatively if overhead is not contextually possible: EXTREME LOW ANGLE from floor level, camera tilted sharply upward. Subject fills upper portion of frame. Floor in foreground.\n════════════════════════════════════════════════`,
+    ];
+
+    // ── 8. GENERATE + VALIDATE LOOP (max 3 attempts) ─────────────────────────
+    let genRes = null;
+    let acceptedCameraVars = null;
+    let attemptPrompt = finalPrompt;
+    const MAX_ATTEMPTS = 3;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let attemptGenRes = null;
+      try {
+        attemptGenRes = await base44.asServiceRole.integrations.Core.GenerateImage({
+          prompt: attemptPrompt,
+          existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+        });
+      } catch (genErr) {
+        const msg = genErr?.message || '';
+        if (/filter|guideline|block|violat/i.test(msg)) {
+          await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
+          return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+        }
+        throw genErr;
       }
-      throw genErr;
+
+      if (!attemptGenRes?.url) {
+        console.warn(`[generateImageAsync] Attempt ${attempt}: no URL returned`);
+        continue;
+      }
+
+      // Extract camera variables from the PROMPT used (best proxy we have without image analysis)
+      const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
+      const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
+
+      console.log(`[generateImageAsync] Attempt ${attempt}: camera diffs vs previous = ${diffCount} | dist=${thisCameraVars.distance} angle=${thisCameraVars.angle} framing=${thisCameraVars.framing}`);
+
+      // FIRST GENERATION (no previous): always valid — no prior camera to compare against
+      if (!previousCameraVars) {
+        console.log(`[generateImageAsync] No previous camera state — accepting first generation`);
+        genRes = attemptGenRes;
+        acceptedCameraVars = thisCameraVars;
+        break;
+      }
+
+      if (diffCount >= 2) {
+        console.log(`[generateImageAsync] ✅ Camera validation PASSED (${diffCount} variables changed)`);
+        genRes = attemptGenRes;
+        acceptedCameraVars = thisCameraVars;
+        break;
+      }
+
+      // FAILED — camera didn't move enough
+      console.warn(`[generateImageAsync] ⚠️ Camera validation FAILED attempt ${attempt}: only ${diffCount} variable(s) changed. Forcing camera shift.`);
+
+      if (attempt < MAX_ATTEMPTS) {
+        // Inject forced camera override into prompt for next attempt
+        const overrideBlock = CAMERA_FORCE_PRESETS[Math.min(attempt - 1, CAMERA_FORCE_PRESETS.length - 1)];
+        attemptPrompt = attemptPrompt + overrideBlock;
+      } else {
+        // All attempts exhausted — accept last result with a warning rather than failing completely
+        console.warn(`[generateImageAsync] ⚠️ Max attempts reached — accepting last image (camera validation could not be enforced)`);
+        genRes = attemptGenRes;
+        acceptedCameraVars = thisCameraVars;
+      }
     }
 
     if (!genRes?.url) {
@@ -1098,7 +1182,7 @@ Deno.serve(async (req) => {
       return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
     }
 
-    // ── 8. SAVE ───────────────────────────────────────────────────────────────
+    // ── 9. SAVE — only reached after validation passed (or max attempts) ──────
     const generationContext = {
       prompt,
       character_id: characterId || null,
@@ -1110,25 +1194,16 @@ Deno.serve(async (req) => {
       location_reference_images: envRefs.slice(0, 4),
       subject_type: subjectType,
       generated_at: new Date().toISOString(),
+      camera_variables: acceptedCameraVars,
     };
 
     await base44.asServiceRole.entities.Message.update(messageId, {
       image_url: genRes.url,
       generation_context: generationContext,
-      content: "",  // Clear any [IMAGE_FAILED] placeholder
+      content: "",
     });
 
-    // ── 9. SAVE CAMERA VARIABLES FOR NEXT GENERATION ──────────────────────
-    // Extract and store camera position/angle/distance/framing for regeneration validation
-    const cameraVars = {
-      distance: /\bwide shot|establishing shot|full body\b/i.test(sanitizedPrompt) ? 'wide' : /\bclose-up|tight|face\b/i.test(sanitizedPrompt) ? 'close' : 'medium',
-      angle: /\bhigh-?angle|overhead|from above\b/i.test(sanitizedPrompt) ? 'high' : /\blow-?angle|from below|looking up\b/i.test(sanitizedPrompt) ? 'low' : /\bover-?shoulder\b/i.test(sanitizedPrompt) ? 'over-shoulder' : 'straight',
-      height: /\bseated|sitting\b/i.test(sanitizedPrompt) ? 'seated' : 'eye-level',
-      framing: /\boff-?center|asymmetric\b/i.test(sanitizedPrompt) ? 'off-center' : /\bcropped|partial\b/i.test(sanitizedPrompt) ? 'cropped' : 'standard',
-      lens_style: /\bselfie|phone\b/i.test(sanitizedPrompt) ? 'phone' : 'standard',
-    };
-
-    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | camera: ${cameraVars.distance} ${cameraVars.angle} ${cameraVars.framing}`);
+    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle} ${acceptedCameraVars?.framing}`);
 
     return Response.json({
       success: true,
@@ -1136,7 +1211,7 @@ Deno.serve(async (req) => {
       messageId,
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
-      cameraVariables: cameraVars,
+      cameraVariables: acceptedCameraVars,
     });
 
   } catch (error) {

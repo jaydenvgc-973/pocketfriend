@@ -523,40 +523,118 @@ Deno.serve(async (req) => {
       reason,
     });
 
-    // ── 7. GENERATE ───────────────────────────────────────────────────────────
-    let genRes;
-    try {
-      genRes = await base44.asServiceRole.integrations.Core.GenerateImage({
-        prompt: finalPrompt,
-        existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
-      });
-    } catch (genErr) {
-      const msg = genErr?.message || '';
-      if (/filter|guideline|block|violat/i.test(msg)) {
-        return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+    // ── 7. CAMERA ENFORCEMENT — INLINED HELPERS ───────────────────────────────
+    // Cannot import local lib in Deno — inline camera validation logic
+    function extractCameraVarsFromPrompt(p) {
+      const lower = (p || '').toLowerCase();
+      return {
+        distance: /wide shot|establishing shot|full body/.test(lower) ? 'wide' : /close-up|tight shot|face shot/.test(lower) ? 'close' : 'medium',
+        angle: /high-?angle|overhead|from above|top-?down/.test(lower) ? 'high' : /low-?angle|from below|looking up/.test(lower) ? 'low' : /over-?shoulder/.test(lower) ? 'over-shoulder' : /side angle|from the side/.test(lower) ? 'side' : 'straight',
+        height: /seated|sitting at|sat down/.test(lower) ? 'seated' : /crouching|crouched/.test(lower) ? 'crouched' : 'standing',
+        framing: /off-?center|asymmetric/.test(lower) ? 'off-center' : /cropped|partial body/.test(lower) ? 'cropped' : /environmental|full scene/.test(lower) ? 'environmental' : 'standard',
+        lens_style: /selfie|phone selfie/.test(lower) ? 'phone' : /wide-?angle|fisheye/.test(lower) ? 'wide-angle' : /cinematic/.test(lower) ? 'cinematic' : 'standard',
+      };
+    }
+
+    function countCameraDiffs(prev, next) {
+      if (!prev || !next) return 5;
+      let diffs = 0;
+      if (prev.distance !== next.distance) diffs++;
+      if (prev.angle !== next.angle) diffs++;
+      if (prev.height !== next.height) diffs++;
+      if (prev.framing !== next.framing) diffs++;
+      if (prev.lens_style !== next.lens_style) diffs++;
+      return diffs;
+    }
+
+    // Previous camera state from the message's generation context
+    const previousCameraVars = ctx.camera_variables || null;
+
+    const CAMERA_FORCE_PRESETS = [
+      `\n\n════ MANDATORY CAMERA OVERRIDE (regen validation retry 1) ════\nThe previous image reused the same camera position. You MUST physically move the camera.\nREQUIRED: wide shot from the far corner of the room, camera at LOW angle (below waist height), subject off-center in right third of frame. Strong foreground element in lower-left. Background recedes into depth.\n════════════════════════════════════════════════`,
+      `\n\n════ MANDATORY CAMERA OVERRIDE (regen validation retry 2 — ESCALATED) ════\nTwo consecutive generations used the same camera frame. Maximum variation required.\nREQUIRED: OVERHEAD / TOP-DOWN angle, camera directly above subject looking straight down. Subject slightly offset. Full environmental context visible from above. No standard eye-level framing.\nAlternative if overhead not contextually possible: EXTREME LOW ANGLE from floor level, camera tilted sharply upward. Subject fills upper portion of frame.\n════════════════════════════════════════════════`,
+    ];
+
+    // ── 8. GENERATE + VALIDATE LOOP (max 3 attempts) ─────────────────────────
+    let genRes = null;
+    let acceptedCameraVars = null;
+    let attemptPrompt = finalPrompt;
+    const MAX_ATTEMPTS = 3;
+
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      let attemptGenRes = null;
+      try {
+        attemptGenRes = await base44.asServiceRole.integrations.Core.GenerateImage({
+          prompt: attemptPrompt,
+          existing_image_urls: referenceImages.length > 0 ? referenceImages : undefined,
+        });
+      } catch (genErr) {
+        const msg = genErr?.message || '';
+        if (/filter|guideline|block|violat/i.test(msg)) {
+          return Response.json({ success: false, filtered: true, error: 'Image blocked by content filter. Try rephrasing.' });
+        }
+        throw genErr;
       }
-      throw genErr;
+
+      if (!attemptGenRes?.url) {
+        console.warn(`[regenerateImageWithReason] Attempt ${attempt}: no URL returned`);
+        continue;
+      }
+
+      const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
+      const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
+
+      console.log(`[regenerateImageWithReason] Attempt ${attempt}: camera diffs = ${diffCount} | dist=${thisCameraVars.distance} angle=${thisCameraVars.angle} framing=${thisCameraVars.framing}`);
+
+      if (!previousCameraVars || diffCount >= 2) {
+        console.log(`[regenerateImageWithReason] ✅ Camera validation PASSED`);
+        genRes = attemptGenRes;
+        acceptedCameraVars = thisCameraVars;
+        break;
+      }
+
+      console.warn(`[regenerateImageWithReason] ⚠️ Camera FAILED attempt ${attempt}: only ${diffCount} variable(s) changed. Injecting forced override.`);
+
+      if (attempt < MAX_ATTEMPTS) {
+        const overrideBlock = CAMERA_FORCE_PRESETS[Math.min(attempt - 1, CAMERA_FORCE_PRESETS.length - 1)];
+        attemptPrompt = attemptPrompt + overrideBlock;
+      } else {
+        console.warn(`[regenerateImageWithReason] ⚠️ Max attempts reached — accepting last image`);
+        genRes = attemptGenRes;
+        acceptedCameraVars = thisCameraVars;
+      }
     }
 
     if (!genRes?.url) {
       return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
     }
 
-    // ── 8. VERIFY AND SAVE ────────────────────────────────────────────────────
+    // ── 9. VERIFY AND SAVE — only after validation passed ────────────────────
     const targetMsg = await base44.asServiceRole.entities.Message.get(messageId).catch(() => null);
     if (!targetMsg || targetMsg.id !== messageId) {
       console.error(`[regenerateImageWithReason] ⛔ ID mismatch: requested=${messageId} got=${targetMsg?.id}`);
       return Response.json({ success: false, error: 'Message ID mismatch — aborting write.' }, { status: 400 });
     }
 
-    await base44.asServiceRole.entities.Message.update(messageId, { image_url: genRes.url });
-    console.log(`[regenerateImageWithReason] ✓ SUCCESS: ${messageId}`);
+    // Persist updated camera variables so the NEXT regeneration can compare against this one
+    const updatedContext = {
+      ...(ctx || {}),
+      camera_variables: acceptedCameraVars,
+    };
+
+    await base44.asServiceRole.entities.Message.update(messageId, {
+      image_url: genRes.url,
+      generation_context: updatedContext,
+    });
+
+    console.log(`[regenerateImageWithReason] ✓ SUCCESS: ${messageId} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle}`);
 
     return Response.json({
       success: true,
       image_url: genRes.url,
       messageId,
       reason,
+      cameraVariables: acceptedCameraVars,
     });
 
   } catch (error) {
