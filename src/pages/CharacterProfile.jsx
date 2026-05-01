@@ -146,7 +146,7 @@ export default function CharacterProfile() {
     queryFn: async () => {
       if (!currentUser?.email) return [];
       await new Promise(r => setTimeout(r, 400));
-      const chars = await base44.entities.Character.filter({ created_by: currentUser.email });
+      const chars = await base44.entities.Character.filter({ owner_email: currentUser.email });
       return chars.map(({ system_prompt, ...char }) => char);
     },
     enabled: !!currentUser?.email,
@@ -776,18 +776,18 @@ export default function CharacterProfile() {
             {(!character.fictional_relationships?.some(r => {
               if (!r.related_character_id) return false;
               const lc = allCharacters.find(c => c.id === r.related_character_id);
-              if (!lc) return true;
-              return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+              if (!lc) return false;
+              return lc.character_type === "active_created_character";
             })) && (
-              <p className="text-sm text-muted-foreground italic">No active character relationships yet.</p>
+              <p className="text-sm text-muted-foreground italic">No character relationships yet.</p>
             )}
             <div className="space-y-4">
               {(character.fictional_relationships || [])
                 .filter(r => {
                   if (!r.related_character_id) return false;
                   const lc = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!lc) return true;
-                  return lc.character_type !== "npc" && lc.character_type !== "family_npc";
+                  if (!lc) return false;
+                  return lc.character_type === "active_created_character";
                 })
                 .map((rel, idx) => {
                    const linkedChar = allCharacters.find(c => c.id === rel.related_character_id);
@@ -860,10 +860,11 @@ export default function CharacterProfile() {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return true;
+              if (!r.related_character_id) return true; // unlinked → People in Their World
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              const isNPC = linked && ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(linked.character_type);
-              return isNPC;
+              if (!linked) return false;
+              // npc_fictitious and npc_regular → People in Their World
+              return linked.character_type === "npc_fictitious" || linked.character_type === "npc_regular";
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -879,10 +880,10 @@ export default function CharacterProfile() {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
                 const npcRels = (character.fictional_relationships || []).filter(r => {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return true;
+                  if (!r.related_character_id) return true; // unlinked → People in Their World
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  const isNPC = linked && ['npc', 'family_npc', 'promoted_npc', 'npc_fictitious_person'].includes(linked.character_type);
-                  return isNPC;
+                  if (!linked) return false;
+                  return linked.character_type === "npc_fictitious" || linked.character_type === "npc_regular";
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {
