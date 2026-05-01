@@ -1078,10 +1078,9 @@ Deno.serve(async (req) => {
     });
 
     // ── 7. CAMERA ENFORCEMENT — EXTRACT PREVIOUS CAMERA STATE ────────────────
-    // Read previous generation context from the message to compare camera variables.
-    // This is how we detect "same frame reuse" and force movement.
-    const previousCtx = message?.generation_context || null;
-    const previousCameraVars = previousCtx?.camera_variables || null;
+    // Reuse `message` already fetched in step 1 — no second query needed.
+    // generation_context.camera_variables holds the previous image's camera state.
+    const previousCameraVars = message?.generation_context?.camera_variables || null;
 
     // ── CAMERA VARIABLE EXTRACTOR (inlined — no local imports in Deno) ────────
     function extractCameraVarsFromPrompt(p) {
