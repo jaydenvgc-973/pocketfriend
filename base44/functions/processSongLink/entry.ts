@@ -21,10 +21,6 @@ Deno.serve(async (req) => {
       character = chars?.[0] || null;
     } catch (_) {}
 
-    if (!character) {
-      return Response.json({ error: 'Character not found' }, { status: 404 });
-    }
-
     const detectPlatform = (url) => {
       if (/spotify\.com/.test(url)) return 'spotify';
       if (/apple\.com|music\.apple\.com/.test(url)) return 'apple';
@@ -40,6 +36,11 @@ Deno.serve(async (req) => {
 
     const isVideoLink = isVideo || /youtube\.com|youtu\.be|vimeo\.com|dailymotion\.com|twitch\.tv|tiktok\.com|instagram\.com.*video|instagram\.com.*reel/.test(songLink);
     const platform = detectPlatform(songLink);
+
+    // For non-video paths, character must exist (we need to save songs_heard)
+    if (!character && !isVideoLink) {
+      return Response.json({ error: 'Character not found' }, { status: 404 });
+    }
 
     // ── VIDEO PATH ──────────────────────────────────────────────────────
     if (isVideoLink) {
@@ -90,10 +91,12 @@ Deno.serve(async (req) => {
         destinationType: 'VIDEO',
       };
 
-      const videosWatched = character.videos_watched || [];
-      await base44.asServiceRole.entities.Character.update(characterId, {
-        videos_watched: [...videosWatched, newVideo],
-      });
+      if (character) {
+        const videosWatched = character.videos_watched || [];
+        await base44.asServiceRole.entities.Character.update(characterId, {
+          videos_watched: [...videosWatched, newVideo],
+        }).catch(() => {});
+      }
 
       return Response.json({
         success: true,
