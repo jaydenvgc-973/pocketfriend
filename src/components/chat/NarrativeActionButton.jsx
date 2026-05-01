@@ -195,6 +195,40 @@ Friendship: ${friendshipLevel}/100 | Romantic: ${romanticLevel}/100 | Attraction
 RECENT CONVERSATION:
 ${recentContext || "(no recent messages)"}
 
+════════════════════════════════════
+MANDATORY ENGINE — EXECUTE BEFORE WRITING (all 4 steps required)
+════════════════════════════════════
+STEP 1 — CONFIRM INTERACTION TYPE: ${intent.toUpperCase()} (${intentType})
+
+STEP 2 — SELECT ONE BEHAVIOR PATTERN (choose from the correct library, never repeat the same pattern twice):
+${intent === 'flirt' || (intent === 'action' && contextTier !== 'low' && romanticOk) ? `
+  FLIRT PATTERNS — select ONE:
+  close without touching | playful challenge | accidental contact | low voice moment | testing the line | shared recognition | inside language | confidence shift | energy matching | subtle claim` : ''}
+${intent === 'comfort' ? `
+  COMFORT PATTERNS — select ONE:
+  quiet presence | soft redirect | protective energy | validation without fixing | physical reassurance | seen without explaining | identity affirmation | after a long day | protective check-in | rebuilding after hurt` : ''}
+${intent === 'check_in' ? `
+  REASSURE or CHECK-IN PATTERNS — select ONE:
+  emotional validation + grounding | reframing fear into manageable | tone softness and pacing | safety through presence | open-ended question with real attention behind it | non-verbal cue detection | emotional temperature reading` : ''}
+${intent === 'confront' ? `
+  CONFLICT PATTERNS — select ONE:
+  emotional build-up before release | specific vs vague confrontation | who controls the floor | power dynamic shift | resolution path (explode / simmer / walk away)` : ''}
+${intent === 'spend_time' ? `
+  SPEND TIME PATTERNS — select ONE:
+  shared activity together | comfortable silence with no urgency | background environment shaping the moment | time passing naturally | subtle bonding through small things` : ''}
+${intent === 'action' ? `
+  LET THEM ACT PATTERNS — select ONE:
+  environmental interaction with objects | micro-behaviors (glance, posture shift, physical tell) | time progression awareness | reaction to background stimuli | silent action that carries meaning` : ''}
+
+STEP 3 — APPLY ONE VARIATION HOOK (required — scene without a hook is invalid):
+${intent === 'flirt' ? `
+  Choose one: interruption that breaks the moment | hesitation that changes direction | one person more aware than the other | escalation then deliberate pullback | signal that gets misread | external pressure at the wrong moment | timing emotionally off between them` : `
+  Choose one: timing mismatch | emotional misread | expectation vs what actually happens | memory callback shaping the present | environment applying pressure | someone opens up more than intended | humor deflects before the real thing surfaces`}
+
+STEP 4 — EMBED ONE ROOT THEME (weave naturally — never state it directly):
+unspoken tension | timing mismatch | power imbalance shift | memory callback | environment pressure | internal vs external conflict | expectation vs reality | control vs vulnerability | guardedness giving way | micro-validation | chosen family energy | public vs private identity shift
+
+════════════════════════════════════
 ${tierInstruction}
 
 INTENT: Generate ${intentDescriptions[intent] || intentDescriptions.action}
@@ -204,6 +238,8 @@ ${intentEnforcement[intentType] || ""}
 
 CONSENT CHECK: If the other person shows hesitation → reduce intensity. If clear resistance → block escalation entirely.
 
+LGBTQ+ RULE: All patterns apply identically regardless of gender combination. No tone changes based on pairing. Pronouns from profile only.
+
 STYLE RULES:
 - Third person only ("${character.name} reaches...", "He looks up...")
 - ONE continuous paragraph, clean punctuation, no em dashes mid-sentence
@@ -211,7 +247,8 @@ STYLE RULES:
 - 2-4 sentences max. Tight. Cinematic. Real.
 - No explicit content — suggestive and emotionally charged is fine
 - One short quoted line of dialogue allowed if it fits naturally
-- Include one grounded environmental detail specific to the actual location. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT. Do NOT default to "sheets crumpling."
+- Include one grounded environmental detail. Rotate from: SURFACE, OBJECTS, FABRIC, SOUND, LIGHT, MOVEMENT, TEMPERATURE, CONSTRAINT.
+- Do NOT repeat descriptive patterns from recent outputs. Vary the sensory entry point each time.
 
 Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
 
