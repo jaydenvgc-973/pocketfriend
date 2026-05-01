@@ -352,22 +352,43 @@ REFERENCE IMAGE INSTRUCTIONS
 `;
 
     if (hasEnv) {
-      preamble += `Images ${envRefStart}–${envEnd}: ROOM SPATIAL DATA — READ THE SPACE, DO NOT COPY THE PHOTO.
-These photos of "${place}" tell you what EXISTS in this room:
-  • Floor type, color, texture
-  • Wall color and finish
-  • What furniture is present, what color and shape it is
-  • Window/door positions
-  • Rugs, art, lighting fixtures, shelves, decor
+      preamble += `Images ${envRefStart}–${envEnd}: ZONE SPATIAL DATA — 3D ROOM MODEL, NOT A SCREENSHOT TEMPLATE.
+These photos of "${place}" define the room's identity: materials, furniture, layout, palette, style.
 
-FROM THIS DATA you will construct the room fresh in 3D from camera position: ${cameraPos}
-The room as seen from THIS camera angle will look DIFFERENT than the reference photos — different perspective, different visible surfaces, different depth.
+THIS IS A 3D SPACE. The camera has physically moved to: ${cameraPos}
+From this position, the scene will look COMPLETELY DIFFERENT from the reference photos.
+
+WHAT THIS MEANS FOR VISIBLE OBJECTS:
+  • Nearby objects appear LARGER and may dominate the foreground
+  • Far objects may DISAPPEAR from the frame entirely
+  • Some furniture may be CROPPED partially or not visible at all
+  • Only part of the zone needs to be visible — that is correct and expected
+  • Walls may appear from a different side than in the reference
+  • Foreground objects may partially block the view — that is realistic
+
+ZONE IDENTITY PRESERVATION RULES (required):
+  ✅ Preserve: the zone's visual style, color palette, materials
+  ✅ Preserve: the main layout logic (e.g., where the couch faces, which wall has windows)
+  ✅ Show at least 1–2 recognizable zone anchors (depending on camera angle)
+  ✅ The room must FEEL like the same space even if different objects are visible
+
+ZONE IDENTITY FAILURE (only reject if these are wrong):
+  🚫 Zone style/palette is completely different from reference
+  🚫 Completely unrelated furniture or architecture present
+  🚫 Zero recognizable elements from the reference zone
+
+DO NOT FAIL FOR:
+  ✓ Some furniture not visible (camera moved — this is correct)
+  ✓ Partial cropping of objects (correct for new angle)
+  ✓ Fewer objects visible than in reference (expected)
+  ✓ Different wall visible than in reference (camera moved)
 
 ⛔ Do NOT reproduce the reference photo's camera angle.
-⛔ Do NOT use the reference photo as the background layer.
+⛔ Do NOT use the reference photo as a flat background layer.
 ⛔ Do NOT copy the reference photo's lighting — lighting comes from: ${timeLighting.period} (${timeLighting.desc})
-✅ Use the reference photos ONLY to know what objects are in the room and what they look like.
-✅ Then RE-RENDER the entire room from ${cameraPos} as if you placed your own camera there.
+⛔ Do NOT require every reference object to appear in the frame.
+✅ Use reference photos ONLY to understand what the room contains and how it looks.
+✅ RE-RENDER the room from ${cameraPos} as a 3D space — only what would be visible from there.
 
 `;
     }
@@ -547,10 +568,11 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     envLock = `
 
-  FINAL REMINDER — UNIFIED SCENE: "${place}"
-  The background and the character are ONE render. Same camera (${cameraPos}), same lighting (${timeLighting.period}), same perspective.
-  The room does NOT look like the reference photos — it looks like the same room from a fresh angle.
-  If the scene action requires a specific object (table, bed, couch), move the camera to frame it — do NOT duplicate or invent furniture.`;
+  FINAL REMINDER — 3D ZONE: "${place}"
+  The background is a 3D space, not a photo. Camera: ${cameraPos}. Lighting: ${timeLighting.period}.
+  Only show what would naturally be visible from that camera position — some objects will be cropped or hidden. That is correct.
+  If the scene action requires a specific object (table, bed, couch), move the camera to frame it — do NOT duplicate or invent furniture.
+  Zone identity = preserved style, palette, and 1–2 anchors. Not every object needs to appear.`;
   }
 
   let refImageOverride = `
@@ -1113,11 +1135,35 @@ Deno.serve(async (req) => {
       `\n\n════ MANDATORY CAMERA OVERRIDE (validation retry 2 — ESCALATED) ════\nTwo consecutive generations used the same camera frame. Maximum variation required.\nREQUIRED: OVERHEAD / TOP-DOWN angle, camera directly above subject looking straight down. Subject centered but slightly offset to one side. Environmental context fully visible from above. No standard eye-level framing whatsoever.\nAlternatively if overhead is not contextually possible: EXTREME LOW ANGLE from floor level, camera tilted sharply upward. Subject fills upper portion of frame. Floor in foreground.\n════════════════════════════════════════════════`,
     ];
 
-    // ── 8. GENERATE + VALIDATE LOOP (max 3 attempts) ─────────────────────────
-    let genRes = null;
+    // ── 8. STAGED GENERATION + VALIDATION LOOP (max 3 attempts) ─────────────
+    // PRINCIPLE: Storage is ALWAYS separate from Acceptance.
+    //   - Every generated image is STAGED immediately (never lost).
+    //   - Camera validation controls ACCEPTANCE, not STORAGE.
+    //   - Only the accepted attempt is promoted to final image_url.
+    //   - All attempts (including rejected ones) are preserved in generation_context.attempts[].
+
+    let acceptedGenRes = null;
     let acceptedCameraVars = null;
+    let acceptedAttemptIndex = null;
     let attemptPrompt = finalPrompt;
     const MAX_ATTEMPTS = 3;
+    const stagedAttempts = []; // all attempts, win or lose
+
+    // Base generation context (shared across all attempts — written once, attempts appended)
+    const baseGenerationContext = {
+      prompt,
+      character_id: characterId || null,
+      character_reference_images: charRefs,
+      user_reference_images: userRefs,
+      location_id: charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null,
+      zone_name: resolvedZoneName,
+      location_name: resolvedLocationName,
+      location_reference_images: envRefs.slice(0, 4),
+      subject_type: subjectType,
+      generated_at: new Date().toISOString(),
+      camera_variables: null, // filled after acceptance
+      attempts: [],           // staging log — all attempts stored here
+    };
 
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       let attemptGenRes = null;
@@ -1137,80 +1183,131 @@ Deno.serve(async (req) => {
 
       if (!attemptGenRes?.url) {
         console.warn(`[generateImageAsync] Attempt ${attempt}: no URL returned`);
+        // Stage the failed attempt (no URL)
+        stagedAttempts.push({
+          attempt_index: attempt,
+          prompt: attemptPrompt.slice(0, 500), // cap for storage
+          generated_image_url: null,
+          camera: null,
+          status: 'failed_no_url',
+          created_at: new Date().toISOString(),
+        });
         continue;
       }
 
-      // Extract camera variables from the PROMPT used (best proxy we have without image analysis)
+      // Extract camera variables from the prompt used — best proxy without image analysis
       const thisCameraVars = extractCameraVarsFromPrompt(attemptPrompt);
       const diffCount = countCameraDiffs(previousCameraVars, thisCameraVars);
 
-      console.log(`[generateImageAsync] Attempt ${attempt}: camera diffs vs previous = ${diffCount} | dist=${thisCameraVars.distance} angle=${thisCameraVars.angle} framing=${thisCameraVars.framing}`);
+      console.log(`[generateImageAsync] Attempt ${attempt}: camera diffs=${diffCount} | dist=${thisCameraVars.distance} angle=${thisCameraVars.angle} height=${thisCameraVars.height} framing=${thisCameraVars.framing} lens=${thisCameraVars.lens_style}`);
 
-      // FIRST GENERATION (no previous): always valid — no prior camera to compare against
-      if (!previousCameraVars) {
-        console.log(`[generateImageAsync] No previous camera state — accepting first generation`);
-        genRes = attemptGenRes;
+      // ── VALIDATE: does camera move enough vs. previous accepted image? ──
+      // FIRST GENERATION (no prior accepted): always valid — nothing to compare against.
+      const isFirstGeneration = !previousCameraVars;
+      const cameraValid = isFirstGeneration || diffCount >= 2;
+
+      if (cameraValid) {
+        // ── STAGE: mark as accepted ──
+        stagedAttempts.push({
+          attempt_index: attempt,
+          prompt: attemptPrompt.slice(0, 500),
+          generated_image_url: attemptGenRes.url,
+          camera: thisCameraVars,
+          status: 'accepted',
+          created_at: new Date().toISOString(),
+        });
+
+        acceptedGenRes = attemptGenRes;
         acceptedCameraVars = thisCameraVars;
-        break;
-      }
+        acceptedAttemptIndex = attempt;
 
-      if (diffCount >= 2) {
-        console.log(`[generateImageAsync] ✅ Camera validation PASSED (${diffCount} variables changed)`);
-        genRes = attemptGenRes;
-        acceptedCameraVars = thisCameraVars;
-        break;
-      }
+        const reason = isFirstGeneration ? 'first generation (no prior camera)' : `${diffCount} camera variables changed`;
+        console.log(`[generateImageAsync] ✅ Camera ACCEPTED — attempt ${attempt} (${reason})`);
 
-      // FAILED — camera didn't move enough
-      console.warn(`[generateImageAsync] ⚠️ Camera validation FAILED attempt ${attempt}: only ${diffCount} variable(s) changed. Forcing camera shift.`);
+        // Write staging data + final image atomically
+        await base44.asServiceRole.entities.Message.update(messageId, {
+          image_url: acceptedGenRes.url,
+          generation_context: {
+            ...baseGenerationContext,
+            camera_variables: acceptedCameraVars,
+            attempts: stagedAttempts,
+            accepted_attempt_index: acceptedAttemptIndex,
+          },
+          content: '',
+        });
 
-      if (attempt < MAX_ATTEMPTS) {
-        // Inject forced camera override into prompt for next attempt
-        const overrideBlock = CAMERA_FORCE_PRESETS[Math.min(attempt - 1, CAMERA_FORCE_PRESETS.length - 1)];
-        attemptPrompt = attemptPrompt + overrideBlock;
+        break; // done — accepted image saved
+
       } else {
-        // All attempts exhausted — accept last result with a warning rather than failing completely
-        console.warn(`[generateImageAsync] ⚠️ Max attempts reached — accepting last image (camera validation could not be enforced)`);
-        genRes = attemptGenRes;
-        acceptedCameraVars = thisCameraVars;
+        // ── STAGE: mark as rejected (but keep the URL — never discard data) ──
+        stagedAttempts.push({
+          attempt_index: attempt,
+          prompt: attemptPrompt.slice(0, 500),
+          generated_image_url: attemptGenRes.url, // STORED even though rejected
+          camera: thisCameraVars,
+          status: 'rejected_camera_static',
+          rejection_reason: `Only ${diffCount} camera variable(s) changed (minimum 2 required)`,
+          created_at: new Date().toISOString(),
+        });
+
+        console.warn(`[generateImageAsync] ⚠️ Camera REJECTED attempt ${attempt}: only ${diffCount} variable(s) changed. Storing attempt, forcing camera shift.`);
+
+        // Write staging data to message immediately (image is stored, not displayed yet)
+        await base44.asServiceRole.entities.Message.update(messageId, {
+          generation_context: {
+            ...baseGenerationContext,
+            camera_variables: null,
+            attempts: stagedAttempts,
+            accepted_attempt_index: null,
+          },
+          // DO NOT set image_url yet — not accepted
+        }).catch(() => {}); // non-blocking staging write
+
+        if (attempt < MAX_ATTEMPTS) {
+          // Escalating forced camera override for next attempt
+          const overrideBlock = CAMERA_FORCE_PRESETS[Math.min(attempt - 1, CAMERA_FORCE_PRESETS.length - 1)];
+          attemptPrompt = attemptPrompt + overrideBlock;
+        } else {
+          // All attempts exhausted — accept the last one with a warning rather than fail completely
+          console.warn(`[generateImageAsync] ⚠️ Max attempts reached — promoting last image despite static camera`);
+
+          // Patch the last attempt's status to "accepted_fallback"
+          stagedAttempts[stagedAttempts.length - 1].status = 'accepted_fallback';
+
+          acceptedGenRes = attemptGenRes;
+          acceptedCameraVars = thisCameraVars;
+          acceptedAttemptIndex = attempt;
+
+          await base44.asServiceRole.entities.Message.update(messageId, {
+            image_url: acceptedGenRes.url,
+            generation_context: {
+              ...baseGenerationContext,
+              camera_variables: acceptedCameraVars,
+              attempts: stagedAttempts,
+              accepted_attempt_index: acceptedAttemptIndex,
+            },
+            content: '',
+          });
+        }
       }
     }
 
-    if (!genRes?.url) {
+    if (!acceptedGenRes?.url) {
       await base44.asServiceRole.entities.Message.update(messageId, { content: '[IMAGE_FAILED]' }).catch(() => {});
       return Response.json({ success: false, error: 'No image URL returned from generator.' }, { status: 500 });
     }
 
-    // ── 9. SAVE — only reached after validation passed (or max attempts) ──────
-    const generationContext = {
-      prompt,
-      character_id: characterId || null,
-      character_reference_images: charRefs,
-      user_reference_images: userRefs,
-      location_id: charRecord?.resolved_current_location_id || charRecord?.current_home_location_id || null,
-      zone_name: resolvedZoneName,
-      location_name: resolvedLocationName,
-      location_reference_images: envRefs.slice(0, 4),
-      subject_type: subjectType,
-      generated_at: new Date().toISOString(),
-      camera_variables: acceptedCameraVars,
-    };
-
-    await base44.asServiceRole.entities.Message.update(messageId, {
-      image_url: genRes.url,
-      generation_context: generationContext,
-      content: "",
-    });
-
-    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle} ${acceptedCameraVars?.framing}`);
+    console.log(`[generateImageAsync] ✓ SUCCESS: ${messageId} | accepted attempt ${acceptedAttemptIndex}/${MAX_ATTEMPTS} | camera: ${acceptedCameraVars?.distance} ${acceptedCameraVars?.angle} ${acceptedCameraVars?.framing} | total staged: ${stagedAttempts.length}`);
 
     return Response.json({
       success: true,
-      imageUrl: genRes.url,
+      imageUrl: acceptedGenRes.url,
       messageId,
       locationName: resolvedLocationName,
       zoneName: resolvedZoneName,
       cameraVariables: acceptedCameraVars,
+      attemptIndex: acceptedAttemptIndex,
+      totalAttempts: stagedAttempts.length,
     });
 
   } catch (error) {
