@@ -718,6 +718,8 @@ Deno.serve(async (req) => {
       const lower = p.toLowerCase();
 
       // ── EXPLICIT SIGNALS — only these warrant aggressive sanitization ──
+      // These signals define actual sexual content, independent of character gender/orientation.
+      // Explicit classification is BASED ONLY on sexual behavior, not on gender pairing.
       const explicitSignals = [
         /\bsex(ual)?\b/, /\bporn\b/, /\berotic\b/, /\bgenitals?\b/, /\bpenis\b/, /\bvagina\b/,
         /\bnipples?\b/, /\bsexually\b/, /\barouse[d]?\b/, /\borgasm\b/, /\bintercourse\b/,
@@ -727,13 +729,16 @@ Deno.serve(async (req) => {
       const isExplicit = explicitSignals.some(r => r.test(lower));
 
       // ── SAFE LIFESTYLE SIGNALS — these override aggressive sanitization ──
-      // A scene matching these patterns is SAFE by context, not by word-by-word scanning.
+      // A scene matching these patterns is SAFE by context, not by character gender/orientation.
+      // LGBTQ+ intimacy (same-gender, queer, transgender, nonbinary) is treated with equal respect
+      // and applies the SAME safety rules as heterosexual intimacy.
+      // Emotional closeness between any pairing is not inherently sexual or unsafe.
       const isSleepContext = /\b(sleep(ing)?|asleep|woke up|waking up|bed|bedroom|lying|laid down|resting|nap(ping)?|pillow|duvet|blanket|sheets?)\b/.test(lower);
-      const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing)\b/.test(lower);
+      const isComfortContext = /\b(comfort(ing)?|support(ing|ive)?|emotional|vulnerable|safe|holding|hugging|close|beside|next to|shoulder|arms? around|snuggle|cuddle|warm|peaceful|quiet moment|calming|soothing|affection(ate)?|tender(ness)?|intimate|love)\b/.test(lower);
       const isLifestyleContext = /\b(beach|gym|workout|fitness|pool|vacation|home|apartment|mirror|selfie|casual|morning|routine|everyday|relaxing|chill(ing)?|hanging out)\b/.test(lower);
       const isNonSexualBodyContext = /\b(no shirt|without (a )?shirt|shirtless|without (a )?top|no top)\b/.test(lower) && !isExplicit;
 
-      // Determine scene category
+      // Determine scene category based ONLY on behavior, context, and setting — NOT on character gender/orientation
       if (isExplicit) return 'explicit';
       if (isSleepContext && isComfortContext) return 'emotional_comfort';
       if (isSleepContext) return 'sleep_lifestyle';
