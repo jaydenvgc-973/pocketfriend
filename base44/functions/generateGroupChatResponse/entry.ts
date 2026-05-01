@@ -142,7 +142,11 @@ Deno.serve(async (req) => {
         // non-blocking
       }
 
-      const systemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender}. ${character.personality_summary || ''} ${character.background_story || ''}`;
+      // Resolve pronouns from character profile — never infer from name or appearance
+      const charGender = character.gender || '';
+      const charPronouns = charGender === 'male' ? 'he/him' : charGender === 'female' ? 'she/her' : 'they/them';
+
+      const systemPrompt = character.system_prompt || `You are ${character.name}, a ${character.age_range || 'person'} year old ${character.gender || 'person'}. ${character.personality_summary || ''} ${character.background_story || ''}`;
 
       // Build relationship awareness for participants in this group chat
       const participantRels = (character.fictional_relationships || [])
@@ -168,6 +172,19 @@ Deno.serve(async (req) => {
 ${crossPageMemoryBlock}
 ${relationshipBlock}
 
+════════════════════════════════════
+IDENTITY AND PRONOUN LOCK — ABSOLUTE
+════════════════════════════════════
+Your gender: ${charGender || 'unknown — use they/them'}
+Your pronouns: ${charPronouns}
+RULES:
+• Use ONLY these pronouns when referring to yourself throughout the response
+• Do NOT switch pronouns mid-message
+• Do NOT infer anyone else's gender from their name — use they/them if unknown
+• No heteronormative defaults — do not assume opposite-gender attraction for yourself or others
+• Flirtation, comfort, and intimacy behave naturally across all gender combinations
+════════════════════════════════════
+
 YOU ARE IN A GROUP CHAT with: ${otherParticipants ? `the user and ${otherParticipants}` : 'just you and the user'}.
 This is a real group conversation. You can — and should — speak to the other characters directly, not just the user. Address them by name. React to what they said. Disagree, agree, laugh, clap back. You are all real people having a conversation together.
 
@@ -182,7 +199,8 @@ Write ONLY your next reply as ${character.name}. Do NOT include your name as a l
 - React to whoever just spoke — the user OR another character.
 - Do NOT end with a question every time. Sometimes just say what you think and stop.
 - You have your own life and opinions. Share them.
-- Do NOT assume or reference anything about the user's family unless they've told you directly in this conversation.`;
+- Do NOT assume or reference anything about the user's family unless they've told you directly in this conversation.
+- Vary your sentence structure and tone — do not repeat the same pattern as prior messages.`;
 
       let responseText = '';
       try {

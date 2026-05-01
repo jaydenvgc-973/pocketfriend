@@ -203,6 +203,13 @@ ${locationDescription ? `- Environment: ${locationDescription}` : ''}
       ? `\nCURRENT PHYSICAL/EMOTIONAL STATE: ${needsHints.join(', ')}.`
       : '';
 
+    // Resolve pronouns from character profile — never infer from name or appearance
+    const charGender = character.gender || '';
+    const charPronouns = charGender === 'male' ? 'he/him' : charGender === 'female' ? 'she/her' : 'they/them';
+    const subjectPronoun = charGender === 'male' ? 'he' : charGender === 'female' ? 'she' : 'they';
+    const objectPronoun = charGender === 'male' ? 'him' : charGender === 'female' ? 'her' : 'them';
+    const possessivePronoun = charGender === 'male' ? 'his' : charGender === 'female' ? 'her' : 'their';
+
     const narrativePrompt = `Generate a vivid, present-moment narrative (2-4 sentences) describing exactly what ${character.name} is experiencing RIGHT NOW.
 
 TIME: ${timeStr} on ${dayName} (${timeOfDay.replace(/_/g, ' ')})
@@ -216,13 +223,30 @@ CHARACTER:
 - Current activity context: ${character.current_activity || 'none noted'}
 ${needsLine}
 
+════════════════════════════════════
+IDENTITY AND PRONOUN LOCK — ABSOLUTE
+════════════════════════════════════
+Character gender: ${charGender || 'unknown — use they/them'}
+Pronouns: ${charPronouns}
+Subject: ${subjectPronoun} | Object: ${objectPronoun} | Possessive: ${possessivePronoun}
+
+RULES — NON-NEGOTIABLE:
+• Use ONLY the pronouns above throughout the entire narrative
+• No pronoun switching mid-narrative under any condition
+• Do NOT infer gender from the character's name or appearance
+• If gender is unknown: use they/them exclusively
+• No heteronormative defaults — do NOT assume opposite-gender attraction
+• All interaction patterns (flirtatious, comfortable, romantic) apply equally regardless of gender combination
+════════════════════════════════════
+
 CRITICAL RULES:
 1. NEVER contradict the situation block above — it is the ground truth.
-2. Write in present tense, third-person (${character.name} is..., they are...).
+2. Write in present tense, third-person using the LOCKED pronouns above.
 3. Make it immersive and specific to the location and time.
 4. Reflect needs subtly if relevant — don't over-explain.
 5. No dialogue. No speculation about the future. Just this exact moment.
 6. 2-4 sentences only. No preamble, no labels.
+7. Vary sentence structure, tone, and pacing — do not repeat patterns from prior outputs.
 
 RESPOND WITH JSON:
 Return a JSON object with:
