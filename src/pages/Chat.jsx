@@ -581,14 +581,19 @@ export default function Chat() {
     // ── LOCATION SHARE DETECTION ───────────────────────────────────────────
     // If the user explicitly asks the character to share/send their location,
     // bypass image generation entirely and force a location card response.
-    const locationShareRequest = /\b(send|share|drop|give me|show me|what'?s?)\s+(your\s+)?(location|loc|whereabouts|where you are|where you'?re at)\b/i.test(text) ||
+    const locationShareRequest =
+      /\b(send|share|drop|give|show)\s+(me\s+)?(your\s+)?(location|loc|whereabouts|geotag|geo tag|pin|coordinates)\b/i.test(text) ||
+      /\b(where\s+are\s+you|where\s+you\s+at|where\s+r\s+u|wya|wru)\b/i.test(text) ||
+      /\bdrop\s+(your\s+)?pin\b/i.test(text) ||
       /\bsend\s+loc\b/i.test(text) ||
-      /\bwhere\s+are\s+you\b/i.test(text) ||
-      /\bdrop\s+(your\s+)?pin\b/i.test(text);
+      /\blocation\s+(tag|card|share|pin)\b/i.test(text) ||
+      /\b(tag\s+your\s+location|share\s+your\s+location|send\s+your\s+location)\b/i.test(text);
 
     // Resolve location from character NOW (before any try block)
     const earlyCharLocationName = character.resolved_current_location_name || null;
     const earlyCharLocationId = character.resolved_current_location_id || null;
+
+    console.log(`[LOCATION-SHARE] detected=${locationShareRequest} | locationName=${earlyCharLocationName} | locationId=${earlyCharLocationId} | text="${text.substring(0, 60)}"`);
 
     if (locationShareRequest && earlyCharLocationName && earlyCharLocationId) {
       // Force the character to share their verified location — no image, no ambiguity
