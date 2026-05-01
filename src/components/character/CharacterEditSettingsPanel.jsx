@@ -258,17 +258,18 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // Source of truth: characterEditableListResolver.js → resolveCharacterType()
-  // Settings confirms npc_fictitious only for "NPC Fictitious" group.
-  // Unlinked entries (no related_character_id) are always shown in People in Their World.
-  const WORLD_TYPES = ["npc_fictitious"];
-  const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+  // Routing rule: People in Their World = catch-all for everything that is NOT
+  // active_created_character and NOT this character's own family_members entry.
+  // Do NOT filter by specific type strings — use exclusion of active_created_character only.
+  // People in Their World = catch-all: everything that is NOT active_created_character
+  // and NOT this character's own family_members entry.
+  const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
   const npcRels = (character.fictional_relationships || []).filter(r => {
-    if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;
-    if (!r.related_character_id) return true; // unlinked — belongs here by default
+    if (r._from_family || ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
+    if (!r.related_character_id) return true; // unlinked → always here
     const linked = allCharacters.find(c => c.id === r.related_character_id);
-    if (!linked) return false;
-    return WORLD_TYPES.includes(linked.character_type);
+    if (!linked) return true; // ID not found in scope → show here
+    return linked.character_type !== "active_created_character";
   });
 
   const seen = new Set();

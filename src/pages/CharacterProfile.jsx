@@ -857,20 +857,23 @@ export default function CharacterProfile() {
           <AddPeopleInTheirWorldPanel character={character} onSuccess={() => refetch()} />
 
           {(() => {
-            // Source of truth: characterEditableListResolver.js → resolveCharacterType()
-            // Settings confirms: npc_fictitious → "NPC Fictitious", npc_family_member → "NPC Family Members"
-            // Characters They Know = active_created_character ONLY
-            // People in Their World = npc_fictitious for linked records; unlinked always shown here
-            const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-            const npcRels = (character.fictional_relationships || []).filter(r => {
-              if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return true; // unlinked → always People in Their World
+            // Routing rule (type-based only, relationship type is irrelevant):
+            // → active_created_character = Characters They Know (separate section above)
+            // → this character's own family_members array = Family (FamilyEditor below)
+            // → everything else = People in Their World (catch-all)
+            const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+            const worldRels = (character.fictional_relationships || []).filter(r => {
+              // Exclude this character's own family entries
+              if (ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
+              // Unlinked entries always belong here
+              if (!r.related_character_id) return true;
+              // Linked: exclude active_created_character (they go to "Characters They Know")
               const linked = allCharacters.find(c => c.id === r.related_character_id);
-              if (!linked) return false;
-              return linked.character_type === "npc_fictitious";
+              if (!linked) return true; // linked ID not found in scope → show here
+              return linked.character_type !== "active_created_character";
             });
             const seen = new Set();
-            const deduped = npcRels.filter(r => {
+            const deduped = worldRels.filter(r => {
               const key = r.person_name?.toLowerCase();
               if (seen.has(key)) return false;
               seen.add(key);
@@ -880,16 +883,16 @@ export default function CharacterProfile() {
           })() ? (
             <div className="space-y-5">
               {(() => {
-                const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-                const npcRels = (character.fictional_relationships || []).filter(r => {
-                  if (familyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return true; // unlinked → always People in Their World
+                const ownFamilyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+                const worldRels = (character.fictional_relationships || []).filter(r => {
+                  if (ownFamilyNames.has(r.person_name?.toLowerCase())) return false;
+                  if (!r.related_character_id) return true;
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
-                  if (!linked) return false;
-                  return linked.character_type === "npc_fictitious";
+                  if (!linked) return true;
+                  return linked.character_type !== "active_created_character";
                 });
                 const seen = new Set();
-                return npcRels.filter(r => {
+                return worldRels.filter(r => {
                   const key = r.person_name?.toLowerCase();
                   if (seen.has(key)) return false;
                   seen.add(key);
