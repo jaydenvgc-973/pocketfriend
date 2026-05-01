@@ -78,6 +78,20 @@ function selectCameraPosition(prompt = '') {
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildRegenPrompt({ scenePrompt, charName, locationName, zoneName, envRefs, charRefs, reason }) {
+  // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
+  // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
+  // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
+  // Priority 3: CAMERA POSITION — angle, distance, framing
+  // Priority 4: ZONE IDENTITY — room type and style
+  // Priority 5: REFERENCE IMAGE — guidance only, not replication
+  // Priority 6: SAFETY SANITIZATION — minimal, non-destructive
+  //
+  // CRITICAL: Lower priority NEVER overrides higher priority.
+  // CONFLICT RESOLUTION: scene intent → camera realism → zone identity → relax reference constraints
+  // ANTI-FLAT RULE: slightly imperfect room + correct emotion/camera = VALID
+  //                 perfect room + static camera + no realism = FAILED IMAGE
+  // ─────────────────────────────────────────────────────────────────────────
+
    const hasEnv  = envRefs.length > 0;
    const hasChar = charRefs.length > 0;
 

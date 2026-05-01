@@ -204,6 +204,18 @@ Deno.serve(async (req) => {
       // zone truth, reference balance (70-80% structure / 20-30% flexibility)
       const multiPersonPrompt = `
 ════════════════════════════════════════════════════════════
+IMAGE GENERATION PRIORITY STACK (GOVERNING LAW)
+════════════════════════════════════════════════════════════
+Priority 1: SCENE INTENT — user prompt meaning, emotion, action
+Priority 2: CHARACTER PRESENCE — who is there and what they are doing
+Priority 3: CAMERA POSITION — angle, distance, framing
+Priority 4: ZONE IDENTITY — room type and style
+Priority 5: REFERENCE IMAGE — guidance only, not replication
+
+Lower priority NEVER overrides higher priority.
+ANTI-FLAT RULE: slightly imperfect room + correct emotion/camera = VALID. Perfect room + static camera = FAILED.
+
+════════════════════════════════════════════════════════════
 MULTI-PERSON IMAGE GENERATION — SHARED RULES + IDENTITY LOCK
 ════════════════════════════════════════════════════════════
 

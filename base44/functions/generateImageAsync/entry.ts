@@ -235,6 +235,26 @@ function getTimeLighting(hour = new Date().getHours()) {
 // ── PROMPT BUILDER ────────────────────────────────────────────────────────────
 
 function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRefCount, charRefCount, userRefCount, userRefStart, charRefStart, envRefStart, serverHour, serverTime }) {
+  // ── IMAGE GENERATION PRIORITY STACK (GOVERNING LAW) ──────────────────────
+  // Priority 1: SCENE INTENT — user prompt meaning, emotion, action
+  // Priority 2: CHARACTER PRESENCE — who is there and what they are doing
+  // Priority 3: CAMERA POSITION — angle, distance, framing
+  // Priority 4: ZONE IDENTITY — room type and style
+  // Priority 5: REFERENCE IMAGE — guidance only, not replication
+  // Priority 6: SAFETY SANITIZATION — minimal, non-destructive
+  //
+  // CRITICAL: Lower priority NEVER overrides higher priority.
+  // - Zone must not override camera movement
+  // - Reference image must not override composition
+  // - Camera must not flatten scene to show all objects
+  //
+  // CONFLICT RESOLUTION: preserve scene intent → camera realism → zone identity → relax reference constraints
+  //
+  // ANTI-FLAT RULE: If all rules result in a flat/staged image → relax zone + reference, keep camera + intent
+  // A slightly imperfect room with correct emotion and camera = VALID
+  // A perfect room with static camera and no realism = FAILED IMAGE
+  // ─────────────────────────────────────────────────────────────────────────
+
   const hasEnv  = envRefCount > 0;
   const hasChar = charRefCount > 0;
   const hasUser = userRefCount > 0;
