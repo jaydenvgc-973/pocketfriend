@@ -578,6 +578,98 @@ export default function Chat() {
       return;
     }
 
+    // ── LOCATION SHARE DETECTION ───────────────────────────────────────────
+    // If the user explicitly asks the character to share/send their location,
+    // bypass image generation entirely and force a location card response.
+    const locationShareRequest = /\b(send|share|drop|give me|show me|what'?s?)\s+(your\s+)?(location|loc|whereabouts|where you are|where you'?re at)\b/i.test(text) ||
+      /\bsend\s+loc\b/i.test(text) ||
+      /\bwhere\s+are\s+you\b/i.test(text) ||
+      /\bdrop\s+(your\s+)?pin\b/i.test(text);
+
+    if (locationShareRequest && charLocationName && charLocationId) {
+      // Force the character to share their verified location — no image, no ambiguity
+      let convoId = conversationIdRef.current || conversationId;
+      if (!convoId) {
+        const convo = await base44.entities.Conversation.create({
+          title: `${chatType} with ${character.name}`,
+          type: chatType,
+          character_ids: [characterId],
+        });
+        convoId = convo.id;
+        setConversationId(convoId);
+      }
+
+      // Save user message
+      const userMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "user",
+        content: text,
+        timestamp: new Date().toISOString(),
+        ...(activeCharacter ? { played_as_character_id: activeCharacter.id, played_as_character_name: activeCharacter.name } : {}),
+      });
+      if (!userMsg?.id) { setSendError("Message failed to save. Try again."); return; }
+      setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
+
+      if (isMountedRef.current) setIsTyping(true);
+
+      // Small delay to feel natural
+      await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
+
+      if (isMountedRef.current) setIsTyping(false);
+
+      // Generate a short natural text reply
+      const locationReplyRes = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are ${character.name}. ${character.personality_summary || ""} The user just asked you to share your location. Write a very short, casual 1-sentence text message acknowledging you're sharing it. Be natural — like a real text. No quotes, no labels.`,
+      }).catch(() => null);
+      const locationReplyText = (typeof locationReplyRes === 'string' ? locationReplyRes.trim() : '') || "Here's where I'm at 📍";
+
+      // Save text reply
+      const textMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: locationReplyText,
+        emotional_state: character.emotional_state || "calm",
+        is_read: true,
+        timestamp: new Date().toISOString(),
+      });
+      if (textMsg?.id) setMessages(prev => prev.some(m => m.id === textMsg.id) ? prev : [...prev, textMsg]);
+
+      // Fetch location record for category
+      const locs = await base44.entities.LocationReference.filter({ id: charLocationId }).catch(() => []);
+      const loc = locs?.[0];
+
+      // Save location card message
+      const locCardMsg = await base44.entities.Message.create({
+        conversation_id: convoId,
+        sender_type: "character",
+        character_id: characterId,
+        character_name: character.name,
+        content: "",
+        emotional_state: character.emotional_state || "calm",
+        is_read: true,
+        timestamp: new Date().toISOString(),
+        location_share: {
+          location_id: charLocationId,
+          location_name: charLocationName,
+          presence_status: character.resolved_presence_status || character.location_status || null,
+          location_category: loc?.category || null,
+          character_avatar_url: character.avatar_url || null,
+          note: null,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      if (locCardMsg?.id) setMessages(prev => prev.some(m => m.id === locCardMsg.id) ? prev : [...prev, locCardMsg]);
+
+      await base44.entities.Conversation.update(convoId, {
+        last_message_preview: locationReplyText.substring(0, 100),
+        last_message_date: new Date().toISOString(),
+      });
+      queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+      return;
+    }
+
     const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
       await handleShareSong(musicLinkMatch[0], false);
