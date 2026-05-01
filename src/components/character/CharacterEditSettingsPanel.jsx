@@ -258,9 +258,10 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // Explicit type routing — matches resolveCharacterType() in characterEditableListResolver.js
-  // People in Their World: npc_fictitious | regular NPC | npc_regular (legacy)
-  const WORLD_TYPES = ["npc_fictitious", "regular NPC", "npc_regular"];
+  // Source of truth: characterEditableListResolver.js → resolveCharacterType()
+  // Settings confirms npc_fictitious only for "NPC Fictitious" group.
+  // Unlinked entries (no related_character_id) are always shown in People in Their World.
+  const WORLD_TYPES = ["npc_fictitious"];
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
   const npcRels = (character.fictional_relationships || []).filter(r => {
     if (r._from_family || familyNames.has(r.person_name?.toLowerCase())) return false;

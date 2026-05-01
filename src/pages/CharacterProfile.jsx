@@ -857,16 +857,17 @@ export default function CharacterProfile() {
           <AddPeopleInTheirWorldPanel character={character} onSuccess={() => refetch()} />
 
           {(() => {
+            // Source of truth: characterEditableListResolver.js → resolveCharacterType()
+            // Settings confirms: npc_fictitious → "NPC Fictitious", npc_family_member → "NPC Family Members"
+            // Characters They Know = active_created_character ONLY
+            // People in Their World = npc_fictitious for linked records; unlinked always shown here
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-            // Explicit type routing — matches resolveCharacterType() in characterEditableListResolver.js
-            // People in Their World: npc_fictitious | regular NPC | npc_regular (legacy)
-            const WORLD_TYPES = ["npc_fictitious", "regular NPC", "npc_regular"];
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
-              if (!r.related_character_id) return true; // unlinked → People in Their World
+              if (!r.related_character_id) return true; // unlinked → always People in Their World
               const linked = allCharacters.find(c => c.id === r.related_character_id);
               if (!linked) return false;
-              return WORLD_TYPES.includes(linked.character_type);
+              return linked.character_type === "npc_fictitious";
             });
             const seen = new Set();
             const deduped = npcRels.filter(r => {
@@ -880,14 +881,12 @@ export default function CharacterProfile() {
             <div className="space-y-5">
               {(() => {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
-                // Explicit type routing — matches resolveCharacterType() in characterEditableListResolver.js
-                const WORLD_TYPES = ["npc_fictitious", "regular NPC", "npc_regular"];
                 const npcRels = (character.fictional_relationships || []).filter(r => {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;
-                  if (!r.related_character_id) return true; // unlinked → People in Their World
+                  if (!r.related_character_id) return true; // unlinked → always People in Their World
                   const linked = allCharacters.find(c => c.id === r.related_character_id);
                   if (!linked) return false;
-                  return WORLD_TYPES.includes(linked.character_type);
+                  return linked.character_type === "npc_fictitious";
                 });
                 const seen = new Set();
                 return npcRels.filter(r => {
