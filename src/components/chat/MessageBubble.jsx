@@ -46,8 +46,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
 
   // Placeholder: no image yet (content is empty = still generating, or [IMAGE_FAILED] = generation failed)
   // Also covers imgLoadError: URL exists but the image itself failed to render in the browser
-  const isImageFailed = !isUser && !isNarrative && ((!localImageUrl && message.content === '[IMAGE_FAILED]') || imgLoadError);
-  const isImagePlaceholder = !isUser && !isNarrative && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
+  // Exclude location_share messages — they have empty content but are not image placeholders
+  const isLocationShare = !!message.location_share;
+  const isImageFailed = !isUser && !isNarrative && !isLocationShare && ((!localImageUrl && message.content === '[IMAGE_FAILED]') || imgLoadError);
+  const isImagePlaceholder = !isUser && !isNarrative && !isLocationShare && ((!localImageUrl && (message.content === "" || message.content === '[IMAGE_FAILED]')) || imgLoadError);
 
   const handleImageRetry = async (forceRegenerate = false) => {
     setImageRetrying(true);
@@ -370,10 +372,11 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
                     )}
                   </div>
                 )}
-                {!isUser && message.generation_context?.location_id && (
-                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 rounded-b-2xl opacity-0 group-hover/image:opacity-100 transition-opacity flex items-center gap-1">
+                {/* Image location label — always visible when location data exists, from the image's own generation context */}
+                {!isUser && (message.generation_context?.location_name || message.generation_context?.location_id) && (
+                  <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent px-2 py-1.5 rounded-b-2xl flex items-center gap-1">
                     <MapPin className="w-3 h-3 text-white flex-shrink-0" />
-                    <span className="text-xs text-white truncate">{message.generation_context?.location_name || 'Click to signal location'}</span>
+                    <span className="text-xs text-white truncate">{message.generation_context?.location_name || 'Location'}</span>
                   </div>
                 )}
               </div>
@@ -400,6 +403,37 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               ) : (
                 <p className="text-sm leading-relaxed whitespace-pre-wrap px-4 py-2.5">{isUser ? message.content : filterDashes(message.content)}</p>
               )
+            )}
+            {/* Location Share Card */}
+            {message.location_share && (
+              <div
+                className="mx-3 my-2 rounded-xl border border-border bg-card/80 overflow-hidden cursor-pointer hover:bg-card transition-colors"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (message.location_share.location_id) {
+                    onLocationSignal?.(message.location_share.location_id, message.character_id);
+                  }
+                }}
+              >
+                <div className="bg-primary/10 px-3 py-2 flex items-center gap-2 border-b border-border">
+                  <MapPin className="w-4 h-4 text-primary flex-shrink-0" />
+                  <span className="text-xs font-semibold text-primary">Location Shared</span>
+                </div>
+                <div className="px-3 py-2.5 space-y-0.5">
+                  <p className="text-sm font-semibold text-foreground">{message.location_share.location_name || 'Unknown Location'}</p>
+                  {message.location_share.note && (
+                    <p className="text-xs text-muted-foreground italic">{message.location_share.note}</p>
+                  )}
+                  {message.location_share.timestamp && (
+                    <p className="text-[10px] text-muted-foreground/60">{format(new Date(message.location_share.timestamp), "h:mm a")}</p>
+                  )}
+                </div>
+                {message.location_share.location_id && (
+                  <div className="px-3 pb-2">
+                    <span className="text-[10px] text-primary/60">Tap to update location</span>
+                  </div>
+                )}
+              </div>
             )}
             {message.songs_heard && message.songs_heard.length > 0 && (
               <div className="px-4 py-3 space-y-2">
