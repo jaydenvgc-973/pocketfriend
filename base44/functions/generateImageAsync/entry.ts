@@ -244,23 +244,87 @@ function buildPrompt({ prompt, charName, charDesc, locationName, zoneName, envRe
   const userEnd   = userRefStart + userRefCount - 1;
 
   // ── PROMPT TIME AUTHORITY CHECK ──
-  // If the prompt explicitly names a time of day, it is the authority — NOT the server clock.
-  // Rule: prompt controls time of day, pose, action, mood, and framing.
   const promptHasExplicitTime = /nighttime|night time|middle of the night|midnight|late night|daytime|broad daylight|morning|afternoon|evening|golden hour|sunset|sunrise|dusk|dawn/i.test(prompt);
 
-  // ── GENERATION ORDER: TIME FIRST ──
   const resolvedTime = serverHour;
   const timeLighting = getTimeLighting(resolvedTime);
-  
-  // ── THEN CAMERA POSITION (ONLY IF PROMPT DOESN'T SPECIFY) ──
-  // If the prompt explicitly describes a specific camera angle or pose (e.g. "selfie", "from above", "lying down"),
-  // DO NOT override it with an auto-generated position. Use the prompt's specification instead.
-  const promptHasExplicitCamera = /\b(selfie|self-portrait|from above|from below|wide shot|close-up|overhead|high-angle|low-angle|lying|sitting|standing|kneeling)\b/i.test(sanitizedPrompt);
-  const cameraPos = promptHasExplicitCamera 
+
+  // ── SELFIE / FIRST-PERSON POV DETECTION ──
+  // A selfie prompt means: character holds the phone, camera sees only what is directly
+  // behind/around them. There is NO room to re-render. The background is whatever is
+  // immediately behind the person at that angle. Skip the room-blueprint architecture entirely.
+  const isSelfieMode = /\b(selfie|self-?portrait|phone selfie|smartphone selfie)\b/i.test(prompt) ||
+    /lying.*?(flat|back|down).*?(selfie|looking up|staring up|phone|camera)/i.test(prompt) ||
+    /selfie.*?(lying|on his back|on her back|on their back|in bed|from above)/i.test(prompt) ||
+    /high[- ]angle selfie/i.test(prompt) ||
+    /overhead selfie/i.test(prompt);
+
+  // ── CAMERA POSITION (only for non-selfie) ──
+  const promptHasExplicitCamera = /\b(from above|from below|wide shot|close-up|overhead|high-angle|low-angle)\b/i.test(prompt);
+  const cameraPos = (isSelfieMode || promptHasExplicitCamera)
     ? "as described in the scene prompt"
     : selectCameraPosition(zoneName, prompt + serverTime, prompt);
 
-  let preamble = `════════════════════════════════════════════════════════════
+  let preamble = '';
+
+  if (isSelfieMode) {
+    // ── SELFIE MODE: render exactly what the prompt says, no room blueprint extraction ──
+    preamble = `════════════════════════════════════════════════════════════
+📸 SELFIE / FIRST-PERSON POV — RENDER EXACTLY AS DESCRIBED
+════════════════════════════════════════════════════════════
+
+This is a SELFIE or first-person phone photo. The prompt tells you EVERYTHING:
+  • The exact position of the person (e.g. lying flat on their back)
+  • The exact camera angle (e.g. high-angle, looking down at the subject)
+  • The exact framing and distance (e.g. face + upper chest fills the frame)
+  • The exact background visible (e.g. pillows directly behind head)
+  • The exact lighting (e.g. dim bedroom at night, soft warm side light)
+
+YOU MUST FOLLOW THE PROMPT EXACTLY. Every detail in the prompt is mandatory.
+
+DO NOT re-render a room from a third-person perspective.
+DO NOT place the character in a wide scene.
+DO NOT show the room from a standing observer's viewpoint.
+DO NOT ignore the stated body position, camera angle, or framing.
+
+The camera IS the character's phone. The background IS only what appears directly behind them at that angle.
+
+`;
+    if (hasChar) {
+      preamble += `REFERENCE IMAGES — FACE IDENTITY ONLY:
+${charRefCount > 0 ? `Images ${charRefStart}–${charEnd}: These are face reference photos for "${charName}".
+Extract ONLY: face structure, skin tone, eyes, nose, mouth, hair color/length/texture, facial hair.
+⛔ DISCARD: pose, background, clothing, lighting, camera angle from these photos.
+The face appearance is the ONLY data used from these references.` : `No reference photos. Generate "${charName}" from text description: ${charDesc || 'realistic human'}.`}
+
+`;
+    }
+    if (hasUser) {
+      preamble += `Images ${userRefStart}–${userEnd}: User identity reference — match face, skin tone, hair, body type only.
+
+`;
+    }
+    preamble += `════════════════════════════════════════════════════════════
+SELFIE RENDERING REQUIREMENTS
+════════════════════════════════════════════════════════════
+✅ Render EXACTLY the pose, angle, framing, and distance described in the prompt
+✅ The background must be ONLY what is visible from that specific angle and position
+✅ Lighting must match what the prompt describes (not server time)
+✅ This is a RAW SMARTPHONE PHOTO aesthetic — authentic, unposed, real
+✅ Character face and identity must match the reference exactly
+
+🚫 FAIL: Wide room shot shown instead of close selfie framing
+🚫 FAIL: Character appears from a standing third-person viewpoint
+🚫 FAIL: Body position differs from what the prompt describes
+🚫 FAIL: Background doesn't match the described position/angle
+🚫 FAIL: Lighting contradicts what the prompt says
+
+════════════════════════════════════════════════════════════
+
+`;
+  } else {
+    // ── STANDARD SCENE MODE: full room blueprint re-render ──
+    preamble = `════════════════════════════════════════════════════════════
 THIS IS A FULL 3D RE-RENDER — NOT A PHOTO EDIT OR COMPOSITE
 ════════════════════════════════════════════════════════════
 
@@ -317,9 +381,9 @@ REFERENCE IMAGE ROLE ASSIGNMENT
 ════════════════════════════════════════════════════════════
   `;
 
-  if (hasEnv) {
-     const place = [locationName, zoneName].filter(Boolean).join(' → ');
-     preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
+    if (hasEnv) {
+       const place = [locationName, zoneName].filter(Boolean).join(' → ');
+       preamble += `Images ${envRefStart}–${envEnd}: ROOM/ENVIRONMENT STRUCTURE — 70–80% AUTHORITY FOR LAYOUT/IDENTITY ONLY.
   These are photographs of the "${zoneName || place}".
 
   70–80% STRUCTURAL TRUTH (preserve room identity, not camera view):
@@ -338,9 +402,9 @@ REFERENCE IMAGE ROLE ASSIGNMENT
   The zone stays TRUE while viewpoint and lighting CHANGE.
 
   `;
-   }
-  if (hasChar) {
-     preamble += `Images ${charRefStart}–${charEnd}: CHARACTER FACE BLUEPRINT — READ FACE ONLY, RENDER FRESH.
+     }
+    if (hasChar) {
+       preamble += `Images ${charRefStart}–${charEnd}: CHARACTER FACE BLUEPRINT — READ FACE ONLY, RENDER FRESH.
   These photos tell you what this person's face looks like. That is ALL they do.
   Extract: face bone structure, skin tone, eye shape, nose, mouth, hair color/length/texture, facial hair.
   
@@ -355,15 +419,15 @@ REFERENCE IMAGE ROLE ASSIGNMENT
   The character's face is the ONLY data extracted. Everything else is ignored and rebuilt fresh.
 
   `;
-  }
-  if (hasUser) {
-    preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
+    }
+    if (hasUser) {
+      preamble += `Images ${userRefStart}–${userEnd}: FACE/IDENTITY ONLY — User appearance.
 REPLICATE: face, skin tone, hair, body type.
 IGNORE: background, lighting, camera angle.
 
 `;
-  }
-  preamble += `════════════════════════════════════════════════════════════
+    }
+    preamble += `════════════════════════════════════════════════════════════
 FAIL CONDITIONS — IMAGE IS INVALID IF
 ════════════════════════════════════════════════════════════
 🚫 Daylight appears in a ${timeLighting.period} scene
@@ -393,6 +457,7 @@ SUCCESS CONDITION
 ════════════════════════════════════════════════════════════
 
 `;
+  }
 
   let cameraBlock = '';
   if (cameraPos === "as described in the scene prompt") {
@@ -561,7 +626,8 @@ Generate ONLY from the server time lighting rules above.
 The scene lighting must match the actual world time, not the reference images.`;
 
   let identityLock = '';
-  if (hasChar) {
+  if (hasChar && !isSelfieMode) {
+    // Standard scene mode identity lock
     identityLock += `
 
   CHARACTER IDENTITY — "${charName}":
@@ -579,16 +645,25 @@ The scene lighting must match the actual world time, not the reference images.`;
   ✅ Cast real shadows from the character onto the floor and nearby furniture using ${timeLighting.period} lighting
   ✅ Skin tones, highlights, and shadows on the character MUST match the room's time-of-day lighting exactly
   ✅ Character scale must be physically correct relative to the room furniture and camera distance
-  ✅ APPEARANCE LOCK (100% ABSOLUTE FROM FACE BLUEPRINT): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — NON-NEGOTIABLE
+  ✅ APPEARANCE LOCK (100% ABSOLUTE): Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}), Body type (${(charDesc || '').match(/(?:slim|athletic|muscular|stocky|curvy|average|petite|tall|broad)(?:.*?(?:build|frame|type))?/i)?.[0] || 'as described'}) — NON-NEGOTIABLE
   ✅ OUTFIT: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1] ? `If the scene prompt specifies clothing, use THAT clothing. If no clothing is described in the scene prompt, default to: ${(charDesc || '').match(/Currently wearing: (.+?)(?:\.|$)/)?.[1]}.` : 'Clothing should match what the scene prompt describes, or their personality and context if unspecified.'}
   
-  ⛔ HARD FAILS — ANY OF THESE MEANS THE IMAGE IS WRONG:
-  ⛔ Character appears cut-out or pasted onto a background photo → FAIL
-  ⛔ Character does not cast a shadow on the floor → FAIL  
-  ⛔ Character's lighting doesn't match the room's lighting → FAIL
-  ⛔ Character's scale is inconsistent with room perspective → FAIL
-  ⛔ The room behind the character looks like a flat photograph → FAIL
+  ⛔ HARD FAILS:
+  ⛔ Character appears cut-out or pasted → FAIL
+  ⛔ Character does not cast a shadow → FAIL  
+  ⛔ Character lighting doesn't match room lighting → FAIL
   ⛔ Pose, background, or clothing copied from reference photos → FAIL`;
+  } else if (hasChar && isSelfieMode) {
+    // Selfie mode: identity lock focused on face match only, no room language
+    identityLock += `
+
+  CHARACTER IDENTITY — "${charName}":
+  ${charRefCount > 0
+  ? `Images ${charRefStart}–${charEnd} are face reference photos. Match ONLY face structure, skin tone, eyes, hair color/length/style, facial hair, body type.`
+  : `Generate "${charName}" from text description: ${charDesc || 'realistic human'}.`
+  }
+  ✅ APPEARANCE LOCK: Hair (${(charDesc || '').match(/(?:short|long|curly|straight|wavy|fade|pixie|bob|braid|updo|dyed|bleached|natural).*?(?:hair|style|locks)/i)?.[0] || 'as described'}), Facial hair (${(charDesc || '').match(/(?:clean-shaven|stubble|beard|goatee|mustache|facial hair)/i)?.[0] || 'as described'}), Skin tone (${(charDesc || '').match(/(?:fair|light|medium|tan|brown|dark|olive|pale|dusky).*?(?:skin|tone)/i)?.[0] || 'as described'}) — NON-NEGOTIABLE
+  ⛔ Do NOT copy pose, background, or clothing from reference photos — only the face identity transfers`;
   }
   if (hasUser) {
     identityLock += `
@@ -596,6 +671,12 @@ The scene lighting must match the actual world time, not the reference images.`;
 USER IDENTITY:
 Images ${userRefStart}–${userEnd} are this exact person's photos.
 Match: face structure, skin tone, hair, body type.`;
+  }
+
+  if (isSelfieMode) {
+    // Selfie mode: preamble already contains all instructions. Just append the prompt and identity lock.
+    // Do NOT inject camera/lighting/envLock blocks — they contradict the selfie framing.
+    return `${preamble}${prompt}\n\nPhotorealistic smartphone photograph. Ultra-detailed. Real human proportions. Not an illustration.${identityLock}`;
   }
 
   return `${preamble}${cameraBlock}${lightingBlock}${refImageOverride}${prompt}\n\nPhotorealistic photograph. Ultra-detailed. Real human proportions. Not an illustration.${envLock}${identityLock}`;
