@@ -513,11 +513,6 @@ export default function Chat() {
      });
      queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
 
-     if (isMountedRef.current) {
-       console.log('[handleShareSong] Adding to local state:', newMsg?.id);
-       setMessages(prev => [...prev, newMsg]);
-     }
-
      if (msgData.songs_heard?.length > 0) {
        msgData.songs_heard.forEach(song => {
          base44.functions.invoke('analyzeMediaUnderstanding', {
