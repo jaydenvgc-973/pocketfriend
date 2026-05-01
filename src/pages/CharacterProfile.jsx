@@ -858,6 +858,7 @@ export default function CharacterProfile() {
 
           {(() => {
             const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+            // Verified from DB: only "npc_fictitious" exists. "npc_regular" included as legacy fallback only.
             const WORLD_TYPES = ["npc_fictitious", "npc_regular"];
             const npcRels = (character.fictional_relationships || []).filter(r => {
               if (familyNames.has(r.person_name?.toLowerCase())) return false;
@@ -878,6 +879,7 @@ export default function CharacterProfile() {
             <div className="space-y-5">
               {(() => {
                 const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
+                // Verified from DB: only "npc_fictitious" exists. "npc_regular" included as legacy fallback only.
                 const WORLD_TYPES = ["npc_fictitious", "npc_regular"];
                 const npcRels = (character.fictional_relationships || []).filter(r => {
                   if (familyNames.has(r.person_name?.toLowerCase())) return false;

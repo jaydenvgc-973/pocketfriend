@@ -258,7 +258,7 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
   const queryClient = useQueryClient();
   const [linkingNpc, setLinkingNpc] = useState(null);
 
-  // People in Their World: ONLY npc_fictitious and npc_regular (explicit match)
+  // People in Their World: verified DB values only. "npc_fictitious" confirmed. "npc_regular" legacy fallback.
   const WORLD_TYPES = ["npc_fictitious", "npc_regular"];
   const familyNames = new Set((character.family_members || []).map(m => m.name?.toLowerCase()));
   const npcRels = (character.fictional_relationships || []).filter(r => {
