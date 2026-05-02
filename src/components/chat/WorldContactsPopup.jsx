@@ -4,9 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
-// Derive a stable conversation key for an NPC chat
-function npcConvoTitle(character, contactName) {
-  return `npc_chat__${character.id}__${contactName}`;
+// Derive a stable conversation key using character IDs only (NOT names)
+function npcConvoKey(characterId, contactCharacterId) {
+  // Sort IDs to ensure [A, B] and [B, A] map to same key
+  const ids = [characterId, contactCharacterId].sort();
+  return `npc_chat__${ids[0]}__${ids[1]}`;
 }
 
 export default function WorldContactsPopup({ isOpen, onClose, character, onConversationOpened }) {
@@ -20,7 +22,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
 
   const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
 
-  // Load or create a persistent conversation for the selected NPC
+  // Load or create a persistent conversation for the selected NPC using stable ID-based key
   const selectContact = async (contact) => {
     setSelectedContact(contact);
     setMessages([]);
@@ -29,14 +31,23 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
     setIsLoadingHistory(true);
 
     try {
-      const title = npcConvoTitle(character, contact.person_name);
-      // Look for an existing NPC conversation
+      // Use stable key based on character IDs only — NOT names
+      const key = npcConvoKey(character.id, contact.related_character_id);
+      
+      // Look for an existing NPC conversation by key (stored in title field for backwards compat)
       const existing = await base44.entities.Conversation.filter(
-        { type: "npc", character_ids: [character.id] },
+        { type: "npc" },
         "-updated_date",
-        50
+        100
       );
-      const found = existing.find(c => c.title === title);
+      
+      // Match by key (sorted IDs in title) and owner scope
+      const found = existing.find(c => 
+        c.title === key && 
+        c.character_ids?.length === 2 && 
+        c.character_ids.includes(character.id) && 
+        c.character_ids.includes(contact.related_character_id)
+      );
 
       if (found) {
         setConversationId(found.id);
@@ -44,7 +55,6 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
           { conversation_id: found.id },
           "created_date"
         );
-        // Normalize to local format
         setMessages(history.map(m => ({
           id: m.id,
           dbId: m.id,
@@ -84,27 +94,52 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
 
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
-    const title = npcConvoTitle(character, selectedContact.person_name);
+    
+    // Use stable ID-based key to prevent name-based duplicates
+    const key = npcConvoKey(character.id, selectedContact.related_character_id);
+    
+    // Check if conversation already exists by key
+    const existing = await base44.entities.Conversation.filter(
+      { type: "npc", title: key },
+      null,
+      1
+    ).catch(() => []);
+    
+    if (existing.length > 0) {
+      setConversationId(existing[0].id);
+      return existing[0].id;
+    }
+    
+    // Create new conversation with ID-based key
     const convo = await base44.entities.Conversation.create({
-      title,
+      title: key,
       type: "npc",
-      character_ids: [character.id],
+      character_ids: [character.id, selectedContact.related_character_id],
     });
     setConversationId(convo.id);
     return convo.id;
   };
 
   const sendMessage = async () => {
-    if (!inputText.trim() || isTyping) return;
+    if (!inputText.trim() || isTyping || !selectedContact?.related_character_id) return;
     const text = inputText.trim();
     setInputText("");
     setIsTyping(true);
 
-    // Persist user message
+    // Persist user message with ownership + character ID validation
     const convoId = await ensureConversation();
+    
+    // Validate sender and recipient are different valid character IDs
+    if (character.id === selectedContact.related_character_id) {
+      setIsTyping(false);
+      return; // Prevent self-messaging
+    }
+    
     const savedUserMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "user",
+      character_id: selectedContact.related_character_id,
+      character_name: selectedContact.person_name,
       content: text,
       timestamp: new Date().toISOString(),
     });
@@ -145,11 +180,11 @@ Reply as ${selectedContact.person_name}:`;
       npcText = "...";
     }
 
-    // Persist NPC reply
+    // Persist NPC reply — use selectedContact's character ID as the "speaker"
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
-      character_id: character.id,
+      character_id: selectedContact.related_character_id,
       character_name: selectedContact.person_name,
       content: npcText,
       timestamp: new Date().toISOString(),
@@ -242,7 +277,7 @@ Reply as ${selectedContact.person_name}:`;
               ) : (
                 contacts.map((contact, i) => (
                   <motion.button
-                    key={i}
+                    key={contact.related_character_id}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: i * 0.04 }}
