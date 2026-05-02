@@ -27,12 +27,12 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
   const [saved, setSaved] = useState(false);
 
   const storedShift = location.worker_shifts?.[characterId];
-  const shift = storedShift || { start: '09:00', end: '17:00', days: [1, 2, 3, 4, 5] };
+  const initialShift = storedShift || { start: '09:00', end: '17:00', days: [1, 2, 3, 4, 5] };
   const payType = location.worker_pay_type?.[characterId] || 'hourly';
   const payRate = location.worker_pay_rates?.[characterId] || 0;
   const jobTitle = location.worker_job_titles?.[characterId] || '';
 
-  const [form, setForm] = useState({ shift, payType, payRate, jobTitle });
+  const [form, setForm] = useState({ shift: initialShift, payType, payRate, jobTitle });
 
   const update = (field, val) => setForm(p => ({ ...p, [field]: val }));
   const updateShift = (field, val) => setForm(p => ({ ...p, shift: { ...p.shift, [field]: val } }));
@@ -54,7 +54,10 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
-    queryClient.invalidateQueries({ queryKey: ['workLocations', characterId] });
+    // Invalidate all workLocations queries for this character regardless of exact key shape,
+    // so CharacterProfile and any other consumer re-fetches fresh data from the Location resource.
+    queryClient.invalidateQueries({ queryKey: ['workLocations', characterId], exact: false });
+    queryClient.invalidateQueries({ queryKey: ['character', characterId], exact: false });
     onSaved?.();
   };
 
@@ -68,9 +71,9 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground">{location.name}</p>
           {form.jobTitle && <p className="text-xs text-muted-foreground">{form.jobTitle}</p>}
-          {storedShift?.start && storedShift?.end ? (
+          {form.shift?.start && form.shift?.end ? (
             <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-              <Clock className="w-3 h-3" /> {formatShift(storedShift)}
+              <Clock className="w-3 h-3" /> {formatShift(form.shift)}
             </p>
           ) : (
             <p className="text-xs text-muted-foreground/50 italic mt-0.5">No schedule set — expand to configure</p>
