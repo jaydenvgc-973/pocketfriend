@@ -177,13 +177,12 @@ export default function CharacterProfile() {
       });
 
       // Fetch all known job locations by ID (character-side truth)
-      const charFileLocs = locationIds.size > 0
-        ? await Promise.all(
-            [...locationIds].map(id =>
-              base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null)
-            )
-          )
-        : [];
+      // Fetch sequentially to avoid parallel request flood / rate limit
+      const charFileLocs = [];
+      for (const id of locationIds) {
+        const result = await base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null);
+        if (result) charFileLocs.push(result);
+      }
 
       // Also try worker_character_ids filter as a secondary source
       const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [characterId] }).catch(() => []);
@@ -203,7 +202,7 @@ export default function CharacterProfile() {
       });
     },
     enabled: !!characterId && !!character,
-    staleTime: 30000,
+    staleTime: 120000,
   });
 
   const getWorkLocationName = (locationId) => {

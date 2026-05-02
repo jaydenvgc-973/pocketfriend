@@ -192,13 +192,12 @@ export default function CharacterWorkScheduleEditor({ character }) {
         if (l.location_id) locationIds.add(l.location_id);
       });
 
-      const charFileLocs = locationIds.size > 0
-        ? await Promise.all(
-            [...locationIds].map(id =>
-              base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null)
-            )
-          )
-        : [];
+      // Fetch sequentially to avoid parallel request flood / rate limit
+      const charFileLocs = [];
+      for (const id of locationIds) {
+        const result = await base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null);
+        if (result) charFileLocs.push(result);
+      }
 
       const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [character.id] }).catch(() => []);
       byWorkerList.forEach(l => locationIds.add(l.id));
@@ -212,7 +211,7 @@ export default function CharacterWorkScheduleEditor({ character }) {
       });
     },
     enabled: !!character.id,
-    staleTime: 30000,
+    staleTime: 120000,
   });
 
   if (workLocations.length === 0) return null;
