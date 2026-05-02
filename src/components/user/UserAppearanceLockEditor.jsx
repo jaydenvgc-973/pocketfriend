@@ -15,6 +15,31 @@ const FIELDS = [
   { key: "overall_aesthetic", label: "Overall Aesthetic", placeholder: "e.g. dark academia, Caribbean casual, NYC streetwear..." },
 ];
 
+function inchesToFeet(totalInches) {
+  if (!totalInches) return '';
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return `${feet}'${inches}"`;
+}
+
+function feetStringToInches(str) {
+  if (!str) return null;
+  const stripped = str.trim().replace(/["""''`]/g, "'");
+  const feetInch = stripped.match(/^(\d+)'(\d*)$/);
+  if (feetInch) return parseInt(feetInch[1]) * 12 + (parseInt(feetInch[2]) || 0);
+  const pureInch = stripped.match(/^(\d+)$/);
+  if (pureInch) { const n = parseInt(pureInch[1]); return n < 12 ? n * 12 : n; }
+  return null;
+}
+
+function heightCategory(h) {
+  if (!h) return null;
+  if (h < 64) return 'short';
+  if (h <= 69) return 'average';
+  if (h <= 74) return 'tall';
+  return 'very tall';
+}
+
 export default function UserAppearanceLockEditor({ settings, user }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(settings.appearance_lock || {});
@@ -133,10 +158,34 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        Lock your appearance traits so generated images of you are always accurate — skin tone, hair, features, and style will never drift or default.
+        Lock your appearance traits so generated images of you are always accurate — skin tone, hair, features, height, and style will never drift or default.
       </p>
 
       <div className="space-y-3">
+        {/* Height field */}
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Height</label>
+          <input
+            type="text"
+            value={lock.height_inches ? inchesToFeet(lock.height_inches) : ''}
+            onChange={e => {
+              const parsed = feetStringToInches(e.target.value);
+              if (parsed !== null && parsed > 0) {
+                update('height_inches', parsed);
+              } else if (e.target.value === '') {
+                update('height_inches', null);
+              }
+            }}
+            placeholder="e.g. 5'8 or 5'10 — sets body proportions for image generation"
+            className="w-full h-10 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          {lock.height_inches > 0 && (
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {lock.height_inches}" → {heightCategory(lock.height_inches)} proportions
+            </p>
+          )}
+        </div>
+
         {FIELDS.map(({ key, label, placeholder }) => (
           <div key={key}>
             <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">{label}</label>
