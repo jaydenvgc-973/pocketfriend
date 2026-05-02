@@ -15,36 +15,27 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Backend function (catches NPCs created by service accounts via owner_email/owner_user_id)
-  const { data: backendNpcs = [], isLoading: isNpcLoading } = useQuery({
-   queryKey: ['npc-characters', currentUser?.id],
-   queryFn: async () => {
-     if (!currentUser?.id) return [];
-     const res = await base44.functions.invoke('fetchNPCsForUser', {});
-     return res?.data?.npcs || [];
-   },
-   enabled: !!currentUser?.id,
+  // Use RLS-filtered query (same as Settings page) to get all NPC fictitious records owned by user
+  const { data: npcCharacters = [], isLoading: isNpcLoading } = useQuery({
+    queryKey: ['characters', currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return [];
+      const allChars = await base44.entities.Character.filter(
+        { owner_email: currentUser.email },
+        '-created_date',
+        300
+      );
+      return allChars.filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted' && c.status !== 'soft_deleted');
+    },
+    enabled: !!currentUser?.email,
   });
 
-  // fetchNPCsForUser (service role) is the sole source of truth for NPC characters.
-  // It uses owner_email for ownership and covers all NPCs regardless of how they were created.
-  const rawNpcCharacters = backendNpcs;
-
-  // Contact NPC List shows ALL npc_fictitious characters owned by this user.
-  // Only filter: wrong type, or hard/soft deleted.
-  // Do NOT filter by protected_active, is_default, or is_active_character —
-  // those flags must not gate NPC chat access.
-  const npcCharacters = rawNpcCharacters
-    .filter(c => {
-      if (c.character_type !== 'npc_fictitious') return false;
-      if (c.status === 'deleted' || c.status === 'soft_deleted') return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const nameA = (a.display_name || a.name || '').toLowerCase();
-      const nameB = (b.display_name || b.name || '').toLowerCase();
-      return nameA.localeCompare(nameB);
-    });
+  // Sort by display name or name
+  const sortedNpcCharacters = npcCharacters.sort((a, b) => {
+    const nameA = (a.display_name || a.name || '').toLowerCase();
+    const nameB = (b.display_name || b.name || '').toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
 
   // Close dropdown when clicking outside
   React.useEffect(() => {
@@ -114,13 +105,13 @@ export default function NPCContactPanel() {
               overflowY: 'auto'
             }}
           >
-            {npcCharacters.length === 0 ? (
+            {sortedNpcCharacters.length === 0 ? (
               <div className="p-3 text-xs text-muted-foreground text-center">
                 No NPCs to contact
               </div>
             ) : (
               <div>
-                {npcCharacters.map((npc) => (
+                {sortedNpcCharacters.map((npc) => (
                   <motion.button
                     key={npc.id}
                     onClick={() => handleContactNPC(npc)}
