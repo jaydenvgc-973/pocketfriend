@@ -51,21 +51,30 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
 
       if (found) {
         setConversationId(found.id);
+        // Load messages in ascending order so oldest appears first
         const history = await base44.entities.Message.filter(
           { conversation_id: found.id },
-          "created_date"
+          "created_date",
+          200
         );
-        setMessages(history.map(m => ({
+        setMessages((history || []).map(m => ({
           id: m.id,
           dbId: m.id,
           role: m.sender_type === "user" ? "user" : "npc",
           content: m.content,
         })));
-        // Mark unread messages in this conversation as read
-        onConversationOpened?.(found.id);
+        // Mark all unread messages in this conversation as read
+        if (history && history.length > 0) {
+          for (const msg of history) {
+            if (msg.sender_type === "character" && !msg.is_read) {
+              await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
+            }
+          }
+          onConversationOpened?.(found.id);
+        }
       }
-    } catch {
-      // Could not load history — start fresh
+    } catch (err) {
+      console.error('[WorldContactsPopup] Failed to load conversation:', err.message);
     }
 
     setIsLoadingHistory(false);
@@ -276,35 +285,51 @@ Reply as ${selectedContact.person_name}:`;
                   </p>
                 </div>
               ) : (
-                contacts.map((contact, i) => (
-                  <motion.button
-                    key={contact.related_character_id}
-                    initial={{ opacity: 0, x: -10 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.04 }}
-                    onClick={() => selectContact(contact)}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
-                      <span className="text-sm font-semibold text-primary">
-                        {contact.person_name?.[0]?.toUpperCase() || "?"}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground">{contact.person_name}</p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {contact.relationship_type || "known contact"}
-                        {contact.current_status ? ` · ${contact.current_status}` : ""}
-                      </p>
-                    </div>
-                    <div className="flex-shrink-0 flex gap-1">
-                      {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}
-                      {contact.friendship_level > 70 && contact.romantic_level <= 30 && (
-                        <span className="text-xs text-emerald-400">✦</span>
-                      )}
-                    </div>
-                  </motion.button>
-                ))
+                contacts.map((contact, i) => {
+                  // Count unread messages for this contact
+                  const unreadCount = messages.filter(m =>
+                    m.sender_type === "character" &&
+                    m.character_id === contact.related_character_id &&
+                    !m.is_read
+                  ).length;
+
+                  return (
+                    <motion.button
+                      key={contact.related_character_id}
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: i * 0.04 }}
+                      onClick={() => selectContact(contact)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left ${
+                        unreadCount > 0 ? "bg-primary/10" : ""
+                      }`}
+                    >
+                      <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 relative">
+                        <span className="text-sm font-semibold text-primary">
+                          {contact.person_name?.[0]?.toUpperCase() || "?"}
+                        </span>
+                        {unreadCount > 0 && (
+                          <span className="absolute -top-1 -right-1 min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
+                            {unreadCount > 99 ? "99+" : unreadCount}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-foreground">{contact.person_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {contact.relationship_type || "known contact"}
+                          {contact.current_status ? ` · ${contact.current_status}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex-shrink-0 flex gap-1">
+                        {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}
+                        {contact.friendship_level > 70 && contact.romantic_level <= 30 && (
+                          <span className="text-xs text-emerald-400">✦</span>
+                        )}
+                      </div>
+                    </motion.button>
+                  );
+                })
               )}
             </div>
           ) : (
