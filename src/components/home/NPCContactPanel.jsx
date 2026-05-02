@@ -15,9 +15,9 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Use RLS-filtered query (same as Settings page) to get all NPC fictitious records owned by user
-  const { data: npcCharacters = [], isLoading: isNpcLoading } = useQuery({
-    queryKey: ['characters', currentUser?.email],
+  // Dedicated npc_fictitious query with strict type + status filter
+  const { data: npcCharacters = [] } = useQuery({
+    queryKey: ['contact-npc-fictitious', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
       const allChars = await base44.entities.Character.filter(
@@ -25,15 +25,16 @@ export default function NPCContactPanel() {
         '-created_date',
         300
       );
-      return allChars.filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted' && c.status !== 'soft_deleted');
+      // Exact Settings filter: npc_fictitious only, exclude all deleted statuses
+      return allChars.filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted');
     },
     enabled: !!currentUser?.email,
   });
 
-  // Sort by display name or name
+  // Sort by name
   const sortedNpcCharacters = npcCharacters.sort((a, b) => {
-    const nameA = (a.display_name || a.name || '').toLowerCase();
-    const nameB = (b.display_name || b.name || '').toLowerCase();
+    const nameA = (a.name || '').toLowerCase();
+    const nameB = (b.name || '').toLowerCase();
     return nameA.localeCompare(nameB);
   });
 
@@ -61,7 +62,7 @@ export default function NPCContactPanel() {
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
     try {
       await base44.entities.Character.delete(npcId);
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['contact-npc-fictitious', currentUser?.email] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }
@@ -73,7 +74,7 @@ export default function NPCContactPanel() {
       await base44.entities.Character.update(npc.id, {
         character_type: 'active_created_character',
       });
-      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['contact-npc-fictitious', currentUser?.email] });
     } catch (err) {
       alert('Failed to update character: ' + err.message);
     }
@@ -86,7 +87,7 @@ export default function NPCContactPanel() {
         className="w-full flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors"
       >
         <Users className="w-4 h-4" />
-        Contact NPC ({npcCharacters.length})
+        Contact NPC: {sortedNpcCharacters.length} shown
         <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
