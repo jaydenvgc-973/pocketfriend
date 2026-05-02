@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import React from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { Lock, Wand2, Loader2, X, Plus } from "lucide-react";
@@ -44,6 +45,7 @@ function feetStringToInches(str) {
 export default function AppearanceLockEditor({ character }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(character.appearance_lock || {});
+  const lockRef = useRef(lock);
   const [heightRaw, setHeightRaw] = useState(() => {
     const h = character.appearance_lock?.height_inches;
     return h ? inchesToFeet(h) : '';
@@ -53,21 +55,29 @@ export default function AppearanceLockEditor({ character }) {
   const [generating, setGenerating] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const setLockSynced = (updater) => {
+    setLock(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      lockRef.current = next;
+      return next;
+    });
+  };
+
   useEffect(() => {
     const al = character.appearance_lock || {};
     setLock(al);
+    lockRef.current = al;
     setHeightRaw(al.height_inches ? inchesToFeet(al.height_inches) : '');
   }, [character.id, JSON.stringify(character.appearance_lock)]);
 
   const commitHeight = () => {
     if (heightRaw === '') {
-      setLock(prev => ({ ...prev, height_inches: null }));
+      setLockSynced(prev => ({ ...prev, height_inches: null }));
     } else {
       const parsed = feetStringToInches(heightRaw);
       if (parsed !== null && parsed > 0) {
-        setLock(prev => ({ ...prev, height_inches: parsed }));
+        setLockSynced(prev => ({ ...prev, height_inches: parsed }));
       } else {
-        // Revert display to whatever is currently stored
         setHeightRaw(lock.height_inches ? inchesToFeet(lock.height_inches) : '');
       }
     }
@@ -75,28 +85,38 @@ export default function AppearanceLockEditor({ character }) {
   };
 
   const update = (field, value) => {
-    setLock(prev => ({ ...prev, [field]: value }));
+    setLockSynced(prev => ({ ...prev, [field]: value }));
     setSaved(false);
   };
 
   const addCustomKeyword = () => {
     const trimmed = customInput.trim();
     if (!trimmed) return;
-    const existing = lock.custom_keywords || [];
+    const existing = lockRef.current.custom_keywords || [];
     if (existing.includes(trimmed)) { setCustomInput(""); return; }
-    setLock(prev => ({ ...prev, custom_keywords: [...existing, trimmed] }));
+    setLockSynced(prev => ({ ...prev, custom_keywords: [...existing, trimmed] }));
     setCustomInput("");
     setSaved(false);
   };
 
   const removeCustomKeyword = (kw) => {
-    setLock(prev => ({ ...prev, custom_keywords: (prev.custom_keywords || []).filter(k => k !== kw) }));
+    setLockSynced(prev => ({ ...prev, custom_keywords: (prev.custom_keywords || []).filter(k => k !== kw) }));
     setSaved(false);
   };
 
   const save = async () => {
+    // Flush any pending height before saving
+    let finalLock = { ...lockRef.current };
+    if (heightRaw !== '') {
+      const parsed = feetStringToInches(heightRaw);
+      if (parsed !== null && parsed > 0) {
+        finalLock = { ...finalLock, height_inches: parsed };
+        setLockSynced(() => finalLock);
+        setHeightRaw(inchesToFeet(parsed));
+      }
+    }
     setSaving(true);
-    await base44.entities.Character.update(character.id, { appearance_lock: lock });
+    await base44.entities.Character.update(character.id, { appearance_lock: finalLock });
     queryClient.invalidateQueries({ queryKey: ["character", character.id] });
     setSaving(false);
     setSaved(true);

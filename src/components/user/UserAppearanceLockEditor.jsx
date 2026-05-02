@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import React from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import { Lock, Wand2, Loader2, X, Plus } from "lucide-react";
@@ -43,6 +44,7 @@ function heightCategory(h) {
 export default function UserAppearanceLockEditor({ settings, user }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(settings.appearance_lock || {});
+  const lockRef = React.useRef(lock);
   const [heightRaw, setHeightRaw] = useState(() => {
     const h = settings.appearance_lock?.height_inches;
     return h ? inchesToFeet(h) : '';
@@ -52,19 +54,28 @@ export default function UserAppearanceLockEditor({ settings, user }) {
   const [generating, setGenerating] = useState(false);
   const [saved, setSaved] = useState(false);
 
+  const setLockSynced = (updater) => {
+    setLock(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater;
+      lockRef.current = next;
+      return next;
+    });
+  };
+
   useEffect(() => {
     const al = settings.appearance_lock || {};
     setLock(al);
+    lockRef.current = al;
     setHeightRaw(al.height_inches ? inchesToFeet(al.height_inches) : '');
   }, [settings.id, JSON.stringify(settings.appearance_lock)]);
 
   const commitHeight = () => {
     if (heightRaw === '') {
-      setLock(prev => ({ ...prev, height_inches: null }));
+      setLockSynced(prev => ({ ...prev, height_inches: null }));
     } else {
       const parsed = feetStringToInches(heightRaw);
       if (parsed !== null && parsed > 0) {
-        setLock(prev => ({ ...prev, height_inches: parsed }));
+        setLockSynced(prev => ({ ...prev, height_inches: parsed }));
       } else {
         setHeightRaw(lock.height_inches ? inchesToFeet(lock.height_inches) : '');
       }
@@ -73,38 +84,48 @@ export default function UserAppearanceLockEditor({ settings, user }) {
   };
 
   const update = (field, value) => {
-    setLock(prev => ({ ...prev, [field]: value }));
+    setLockSynced(prev => ({ ...prev, [field]: value }));
     setSaved(false);
   };
 
   const addCustomKeyword = () => {
     const trimmed = customInput.trim();
     if (!trimmed) return;
-    const existing = lock.custom_keywords || [];
+    const existing = lockRef.current.custom_keywords || [];
     if (existing.includes(trimmed)) { setCustomInput(""); return; }
-    setLock(prev => ({ ...prev, custom_keywords: [...existing, trimmed] }));
+    setLockSynced(prev => ({ ...prev, custom_keywords: [...existing, trimmed] }));
     setCustomInput("");
     setSaved(false);
   };
 
   const removeCustomKeyword = (kw) => {
-    setLock(prev => ({ ...prev, custom_keywords: (prev.custom_keywords || []).filter(k => k !== kw) }));
+    setLockSynced(prev => ({ ...prev, custom_keywords: (prev.custom_keywords || []).filter(k => k !== kw) }));
     setSaved(false);
   };
 
   const save = async () => {
-    setSaving(true);
-    if (settings.id) {
-      await base44.entities.UserSettings.update(settings.id, { appearance_lock: lock });
-    } else {
-      // Double-check before creating to avoid duplicates
-      const freshList = await base44.entities.UserSettings.list();
-      if (freshList[0]?.id) {
-        await base44.entities.UserSettings.update(freshList[0].id, { appearance_lock: lock });
-      } else {
-        await base44.entities.UserSettings.create({ appearance_lock: lock });
+    // Commit any pending height before saving
+    let finalLock = { ...lockRef.current };
+    if (heightRaw !== '') {
+      const parsed = feetStringToInches(heightRaw);
+      if (parsed !== null && parsed > 0) {
+        finalLock = { ...finalLock, height_inches: parsed };
+        setLockSynced(() => finalLock);
+        setHeightRaw(inchesToFeet(parsed));
       }
     }
+    setSaving(true);
+    if (settings.id) {
+      await base44.entities.UserSettings.update(settings.id, { appearance_lock: finalLock });
+    } else {
+      const freshList = await base44.entities.UserSettings.list();
+      if (freshList[0]?.id) {
+        await base44.entities.UserSettings.update(freshList[0].id, { appearance_lock: finalLock });
+      } else {
+        await base44.entities.UserSettings.create({ appearance_lock: finalLock });
+      }
+    }
+    queryClient.invalidateQueries({ queryKey: ["userSettings"] });
     setSaving(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
