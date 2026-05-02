@@ -170,11 +170,23 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // Sync to Life Journal — fire-and-forget after every exchange
+    // Sync to Life Journal for owner character — fire-and-forget
     base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
       source: 'world_phone',
     }).catch(() => {});
+
+    // Write bi-directional durable memory if the contact has a linked character ID
+    // This ensures the contact remembers this exchange when encountered in Chat/Text/Scene
+    if (selectedContact.related_character_id) {
+      base44.functions.invoke('syncWorldPhoneMemory', {
+        senderCharacterId: character.id,
+        receiverCharacterId: selectedContact.related_character_id,
+        messageContent: `${character.name}: ${text}\n${selectedContact.person_name}: ${npcText}`,
+        context: 'world_phone',
+        conversationId: convoId,
+      }).catch(() => {});
+    }
   };
 
   const handleKeyDown = (e) => {
