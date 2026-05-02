@@ -1398,13 +1398,33 @@ export default function Locations() {
       location_type: formData.is_shared ? 'shared' : formData.location_type,
       created_by_role: isAdmin ? 'admin' : (currentUser?.role || 'user'),
     };
+
+    // ── PRESERVE UI SCHEDULE TRUTH ──────────────────────────────────────────
+    // The form shows 09:00–17:00 Mon-Fri as displayed defaults for workers with no stored shift.
+    // If the user never touched the time inputs, those values aren't written to worker_shifts.
+    // We must persist whatever the UI is showing as the authoritative schedule truth.
+    // Rule: for every worker in worker_character_ids, ensure worker_shifts has a real entry.
+    const guaranteedShifts = { ...(formData.worker_shifts || {}) };
+    (formData.worker_character_ids || []).forEach(workerId => {
+      if (!guaranteedShifts[workerId] || !guaranteedShifts[workerId].start || !guaranteedShifts[workerId].end) {
+        // Write the UI-displayed default as the real stored value
+        guaranteedShifts[workerId] = {
+          start: guaranteedShifts[workerId]?.start || '09:00',
+          end: guaranteedShifts[workerId]?.end || '17:00',
+          days: guaranteedShifts[workerId]?.days || [1, 2, 3, 4, 5],
+        };
+      }
+    });
+    const saveData = { ...formData, worker_shifts: guaranteedShifts };
+    // ────────────────────────────────────────────────────────────────────────
+
     if (editingLocationId) {
-      await base44.entities.LocationReference.update(editingLocationId, { ...formData, ...enrichedFields });
+      await base44.entities.LocationReference.update(editingLocationId, { ...saveData, ...enrichedFields });
       locationId = editingLocationId;
       setNewlyCreatedLocation(null);
     } else {
       const enriched = {
-        ...formData,
+        ...saveData,
         ...enrichedFields,
         owner_email: currentUser?.email,
         owner_user_id: currentUser?.id,
@@ -1480,8 +1500,8 @@ export default function Locations() {
       }
     }
 
-    const workerIds = formData.worker_character_ids || [];
-    const isEducation = formData.category === 'school' || formData.category === 'education';
+    const workerIds = saveData.worker_character_ids || [];
+    const isEducation = saveData.category === 'school' || saveData.category === 'education';
     for (const charId of workerIds) {
       if (charId.startsWith('npc__')) continue;
       base44.functions.invoke('syncLocationJobToCharacter', { locationId, characterId: charId, syncType: isEducation ? 'education' : 'work' }).catch(() => {});
