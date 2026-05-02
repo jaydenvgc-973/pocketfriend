@@ -18,30 +18,136 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [contacts, setContacts] = useState([]);
   const [contactUnreadCounts, setContactUnreadCounts] = useState({});
   const bottomRef = useRef(null);
 
-  // Get contacts from fictional relationships (primary source)
-  const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
+  // Load contacts from ALL valid sources:
+  // 1. fictional_relationships on the character (primary)
+  // 2. NPC_fictitious Character records owned by the user
+  // 3. Any existing NPC Conversation participants involving this character
+  // Deduplicate by related_character_id (ID-based, never name-based)
+  useEffect(() => {
+    if (!isOpen || !character) return;
+
+    const loadContacts = async () => {
+      const seen = new Set();
+      const merged = [];
+
+      // SOURCE 1: fictional_relationships embedded on the character
+      for (const r of (character.fictional_relationships || [])) {
+        if (!r.person_name || !r.related_character_id) continue;
+        if (!seen.has(r.related_character_id)) {
+          seen.add(r.related_character_id);
+          merged.push(r);
+        }
+      }
+
+      // SOURCE 2: NPC_fictitious Character records owned by the same user
+      try {
+        const npcChars = await base44.entities.Character.filter({
+          character_type: 'npc_fictitious',
+          owner_email: character.owner_email,
+        }, '-created_date', 200);
+
+        for (const npc of (npcChars || [])) {
+          if (!npc.id || npc.id === character.id) continue;
+          if (!seen.has(npc.id)) {
+            seen.add(npc.id);
+            merged.push({
+              person_name: npc.name || npc.display_name || npc.primary_name,
+              related_character_id: npc.id,
+              relationship_type: npc.archetype || 'NPC',
+              description: npc.profile_summary || npc.personality_summary || '',
+              current_status: npc.emotional_state || '',
+              friendship_level: npc.friendship_level || 0,
+              romantic_level: npc.romantic_level || 0,
+              avatar_url: npc.avatar_url || npc.image_avatar_url || null,
+              _source: 'npc_fictitious',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[WorldContacts] NPC_fictitious load failed:', err.message);
+      }
+
+      // SOURCE 3: Existing NPC Conversations involving this character
+      // This recovers any contacts from legacy organic interactions
+      try {
+        const allNpcConvos = await base44.entities.Conversation.filter(
+          { type: 'npc' }, '-updated_date', 200
+        );
+        const involvedConvos = (allNpcConvos || []).filter(c =>
+          Array.isArray(c.character_ids) && c.character_ids.includes(character.id)
+        );
+
+        for (const convo of involvedConvos) {
+          const otherIds = (convo.character_ids || []).filter(id => id !== character.id);
+          for (const otherId of otherIds) {
+            if (!seen.has(otherId)) {
+              // Try to load their Character record to get a name
+              try {
+                const otherChars = await base44.entities.Character.filter({ id: otherId });
+                const other = otherChars?.[0];
+                const name = other?.name || other?.display_name || other?.primary_name || `Contact ${otherId.substring(0, 6)}`;
+                seen.add(otherId);
+                merged.push({
+                  person_name: name,
+                  related_character_id: otherId,
+                  relationship_type: other?.archetype || other?.character_type || 'contact',
+                  description: other?.profile_summary || other?.personality_summary || '',
+                  current_status: other?.emotional_state || '',
+                  friendship_level: other?.friendship_level || 0,
+                  romantic_level: other?.romantic_level || 0,
+                  avatar_url: other?.avatar_url || other?.image_avatar_url || null,
+                  _source: 'existing_conversation',
+                });
+              } catch {
+                // Still add a placeholder so the contact is not hidden
+                seen.add(otherId);
+                merged.push({
+                  person_name: `Contact (${otherId.substring(0, 6)})`,
+                  related_character_id: otherId,
+                  relationship_type: 'contact',
+                  description: '',
+                  _source: 'existing_conversation_unresolved',
+                });
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[WorldContacts] Conversation-based contact load failed:', err.message);
+      }
+
+      setContacts(merged);
+    };
+
+    loadContacts();
+  }, [isOpen, character]);
 
   // Load unread counts for all contacts
   useEffect(() => {
-    if (!character) return;
+    if (!character || contacts.length === 0) return;
     const loadUnreadCounts = async () => {
       const counts = {};
+
+      // Load all NPC conversations once, then match per contact
+      let allNpcConvos = [];
+      try {
+        allNpcConvos = await base44.entities.Conversation.filter(
+          { type: "npc" }, null, 200
+        );
+      } catch { /* silent */ }
+
       for (const contact of contacts) {
         try {
-          const convos = await base44.entities.Conversation.filter(
-            { type: "npc" },
-            null,
-            100
-          );
-          const convo = convos.find(c =>
-            c.character_ids?.length === 2 &&
+          const convo = (allNpcConvos || []).find(c =>
+            Array.isArray(c.character_ids) &&
             c.character_ids.includes(character.id) &&
             c.character_ids.includes(contact.related_character_id)
           );
-          
+
           if (convo) {
             const unreadMsgs = await base44.entities.Message.filter({
               conversation_id: convo.id,
@@ -76,28 +182,43 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
       
       console.log(`[selectContact] Looking for conversation key: ${key}`);
 
-      // Look for conversation by both exact key match and by character IDs
+      // Look for conversation by multiple strategies — never by name alone
       let found = null;
-      
-      // First, try exact key match
+
+      // Strategy 1: Exact ID-based key (current format)
       const byKey = await base44.entities.Conversation.filter(
         { type: "npc", title: key },
         null,
         1
-      );
+      ).catch(() => []);
       if (byKey?.length > 0) {
         found = byKey[0];
       }
 
-      // If not found by key, search by character_ids
+      // Strategy 2: Legacy name-based key written by organicCharacterInteractions
+      // Format: npc_chat__CHARACTERID__ContactName  (NOT sorted IDs)
+      if (!found && contact.person_name) {
+        const legacyKey = `npc_chat__${character.id}__${contact.person_name}`;
+        const byLegacyKey = await base44.entities.Conversation.filter(
+          { type: "npc", title: legacyKey },
+          null,
+          1
+        ).catch(() => []);
+        if (byLegacyKey?.length > 0) {
+          found = byLegacyKey[0];
+        }
+      }
+
+      // Strategy 3: Search by character_ids array — works regardless of title format
+      // This is the most reliable fallback for any conversation format
       if (!found) {
         const allNpc = await base44.entities.Conversation.filter(
           { type: "npc" },
           "-updated_date",
-          100
-        );
-        found = allNpc.find(c =>
-          c.character_ids?.length === 2 &&
+          200
+        ).catch(() => []);
+        found = (allNpc || []).find(c =>
+          Array.isArray(c.character_ids) &&
           c.character_ids.includes(character.id) &&
           c.character_ids.includes(contact.related_character_id)
         );
@@ -165,23 +286,45 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
 
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
-    
-    // Use stable ID-based key to prevent name-based duplicates
+
     const key = npcConvoKey(character.id, selectedContact.related_character_id);
-    
-    // Check if conversation already exists by key
-    const existing = await base44.entities.Conversation.filter(
-      { type: "npc", title: key },
-      null,
-      1
+
+    // Try ID-based key first
+    const byKey = await base44.entities.Conversation.filter(
+      { type: "npc", title: key }, null, 1
     ).catch(() => []);
-    
-    if (existing.length > 0) {
-      setConversationId(existing[0].id);
-      return existing[0].id;
+    if (byKey?.length > 0) {
+      setConversationId(byKey[0].id);
+      return byKey[0].id;
     }
-    
-    // Create new conversation with ID-based key
+
+    // Try legacy name-based key
+    if (selectedContact.person_name) {
+      const legacyKey = `npc_chat__${character.id}__${selectedContact.person_name}`;
+      const byLegacy = await base44.entities.Conversation.filter(
+        { type: "npc", title: legacyKey }, null, 1
+      ).catch(() => []);
+      if (byLegacy?.length > 0) {
+        setConversationId(byLegacy[0].id);
+        return byLegacy[0].id;
+      }
+    }
+
+    // Try character_ids match — do not create duplicate
+    const allNpc = await base44.entities.Conversation.filter(
+      { type: "npc" }, "-updated_date", 200
+    ).catch(() => []);
+    const existing = (allNpc || []).find(c =>
+      Array.isArray(c.character_ids) &&
+      c.character_ids.includes(character.id) &&
+      c.character_ids.includes(selectedContact.related_character_id)
+    );
+    if (existing) {
+      setConversationId(existing.id);
+      return existing.id;
+    }
+
+    // Create new conversation only if none found by any method
     const convo = await base44.entities.Conversation.create({
       title: key,
       type: "npc",
