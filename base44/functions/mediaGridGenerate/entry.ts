@@ -215,6 +215,11 @@ Priority 5: REFERENCE IMAGE — guidance only, not replication
 Lower priority NEVER overrides higher priority.
 ANTI-FLAT RULE: slightly imperfect room + correct emotion/camera = VALID. Perfect room + static camera = FAILED.
 
+INTENSITY BALANCING:
+When closeness + nighttime + private setting + minimal clothing co-occur, do NOT maximize all signals at once.
+Balance by: reducing camera proximity slightly, softening physical contact wording, implying environment instead of naming it directly, keeping emotional tone without labeling it "intimate".
+Goal: preserve the visual moment while keeping overall intensity below filter threshold.
+
 ════════════════════════════════════════════════════════════
 MULTI-PERSON IMAGE GENERATION — SHARED RULES + IDENTITY LOCK
 ════════════════════════════════════════════════════════════
