@@ -514,204 +514,223 @@ export default function CharacterProfile() {
           </div>
         )}
 
-        {/* Work */}
-        {(character.work_details || character.occupation_location_id || character.additional_occupation_locations?.length > 0 || workLocations.length > 0) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Occupation</p>
-            <div className="space-y-3">
-              {(character.work_details?.job_title || character.occupation_location_name) && (
-                <div className="space-y-1">
-                  {character.work_details?.job_title && (
-                    <p className="text-sm text-foreground font-medium">{character.work_details.job_title}</p>
-                  )}
-                  {character.occupation_location_name && (
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Briefcase className="w-3 h-3" /> {character.occupation_location_name}
-                    </p>
-                  )}
-                  {character.work_details?.workplace_type && !character.occupation_location_name && (
-                    <p className="text-sm text-muted-foreground">{character.work_details.workplace_type}</p>
-                  )}
-                  {character.occupation_location_id && getWorkShift(character.occupation_location_id) && (
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Clock className="w-3 h-3" /> {getWorkShift(character.occupation_location_id)}
-                    </p>
-                  )}
+        {/* Work / School Details */}
+        {(() => {
+          const DAY_LABELS_FULL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const fmtTime = (t) => {
+            if (!t) return null;
+            const [h, m] = t.split(':').map(Number);
+            const period = h >= 12 ? 'pm' : 'am';
+            return `${h % 12 || 12}:${String(m).padStart(2, '0')}${period}`;
+          };
+
+          // Build the character-file schedule string (used as fallback when no location shift record exists)
+          const charFileSchedule = (() => {
+            if (!character.work_start_time && !character.work_end_time && !(character.work_days?.length > 0)) return null;
+            const days = character.work_days?.length > 0
+              ? character.work_days.map(d => DAY_LABELS_FULL[d]).join(' / ')
+              : null;
+            const start = fmtTime(character.work_start_time);
+            const end = fmtTime(character.work_end_time);
+            const timePart = (start && end) ? `${start}–${end}` : (start || end || null);
+            return [days, timePart].filter(Boolean).join(' · ') || null;
+          })();
+
+          // Build all job entries — primary + additional + workLocations not already listed
+          const jobs = [];
+
+          // 1. Primary job from character file
+          const primaryLocName = character.occupation_location_name ||
+            (character.occupation_location_id ? getWorkLocationName(character.occupation_location_id) : null);
+          const primaryShift = character.occupation_location_id
+            ? (getWorkShift(character.occupation_location_id) || charFileSchedule)
+            : charFileSchedule;
+
+          if (character.work_details?.job_title || character.occupation || primaryLocName || charFileSchedule) {
+            jobs.push({
+              key: 'primary',
+              jobTitle: character.work_details?.job_title || character.occupation || null,
+              locationName: primaryLocName,
+              isRabbitHole: !!(character.occupation_location_id && !primaryLocName),
+              schedule: primaryShift,
+            });
+          }
+
+          // 2. Additional occupation locations
+          (character.additional_occupation_locations || []).forEach((loc, idx) => {
+            const resolvedLoc = workLocations.find(wl => wl.id === loc.location_id);
+            const realName = resolvedLoc?.name || loc.location_name || null;
+            if (!realName && !loc.job_title) return;
+            const shift = loc.location_id ? (getWorkShift(loc.location_id) || null) : null;
+            jobs.push({
+              key: `additional-${idx}`,
+              jobTitle: loc.job_title || null,
+              locationName: realName,
+              isRabbitHole: !!(loc.location_id && !realName),
+              schedule: shift,
+            });
+          });
+
+          // 3. Work locations not already listed
+          workLocations
+            .filter(wl => {
+              const isAdditional = (character.additional_occupation_locations || []).some(l => l.location_id === wl.id);
+              const isPrimary = character.occupation_location_id === wl.id;
+              return !isAdditional && !isPrimary;
+            })
+            .forEach((wl, idx) => {
+              jobs.push({
+                key: `wl-${idx}`,
+                jobTitle: wl.worker_job_titles?.[characterId] || null,
+                locationName: wl.name,
+                isRabbitHole: false,
+                schedule: getWorkShift(wl.id),
+              });
+            });
+
+          // School enrollments from character file
+          const schoolEnrollments = [];
+          if (character.current_education_activity && character.current_education_activity !== 'none') {
+            schoolEnrollments.push({
+              key: 'primary-school',
+              locationName: character.education_location_name || null,
+              program: character.education_details?.course_name || character.current_education_activity,
+              schedule: null,
+            });
+          }
+          (character.additional_education_locations || []).forEach((loc, idx) => {
+            if (!loc.location_name && !loc.program_name) return;
+            schoolEnrollments.push({
+              key: `school-${idx}`,
+              locationName: loc.location_name || null,
+              program: loc.program_name || null,
+              schedule: null,
+            });
+          });
+
+          const hasWork = jobs.length > 0;
+          const hasSchool = schoolEnrollments.length > 0;
+          const hasAny = hasWork || hasSchool || character.work_details || character.occupation_location_id ||
+            character.additional_occupation_locations?.length > 0 || workLocations.length > 0;
+
+          if (!hasAny) return null;
+
+          return (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-5">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">Work / School Details</p>
+
+              {/* JOBS */}
+              <div className="space-y-1">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <Briefcase className="w-3.5 h-3.5 text-primary" />
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider">Jobs</p>
                 </div>
-              )}
-              {(character.additional_occupation_locations || []).map((loc, idx) => {
-                // Always prefer the resolved location name from workLocations, then loc.location_name, never raw IDs
-                const resolvedLoc = workLocations.find(wl => wl.id === loc.location_id);
-                const realName = resolvedLoc?.name || loc.location_name || null;
-                const shiftDisplay = getWorkShift(loc.location_id);
-                if (!realName) return null; // Don't display entries with no resolved name
-                return (
-                  <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
-                    {loc.job_title && <p className="text-sm text-foreground font-medium">{loc.job_title}</p>}
-                    <p className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Briefcase className="w-3 h-3" /> {realName}
-                    </p>
-                    {shiftDisplay && (
-                      <p className="text-xs text-muted-foreground flex items-center gap-1">
-                        <Clock className="w-3 h-3" /> {shiftDisplay}
-                      </p>
-                    )}
+                {jobs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground italic pl-1">No work details assigned.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {jobs.map((job, i) => (
+                      <div key={job.key} className={`space-y-0.5 ${i > 0 ? 'pl-3 border-l-2 border-border' : ''}`}>
+                        {job.jobTitle && (
+                          <p className="text-sm text-foreground font-medium">{job.jobTitle}</p>
+                        )}
+                        <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                          <MapPin className="w-3 h-3 flex-shrink-0" />
+                          <span>{job.locationName || (job.isRabbitHole ? 'Rabbit Hole / Off-App Location' : 'Location not set')}</span>
+                        </div>
+                        {job.schedule && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Clock className="w-3 h-3 flex-shrink-0" />
+                            <span>{job.schedule}</span>
+                          </div>
+                        )}
+                        {!job.schedule && !job.locationName && !job.jobTitle && null}
+                      </div>
+                    ))}
                   </div>
-                );
-              })}
-              {workLocations
-                .filter(wl => {
-                  const isAdditional = (character.additional_occupation_locations || []).some(l => l.location_id === wl.id);
-                  const isPrimary = character.occupation_location_id === wl.id;
-                  return !isAdditional && !isPrimary;
-                })
-                .map((wl, idx) => {
-                  const jobTitle = wl.worker_job_titles?.[characterId];
-                  const shiftDisplay = getWorkShift(wl.id);
-                  return (
-                    <div key={`wl-${idx}`} className="pl-3 border-l-2 border-border space-y-0.5">
-                      {jobTitle && <p className="text-sm text-foreground font-medium">{jobTitle}</p>}
-                      <p className="text-sm text-muted-foreground flex items-center gap-1">
-                        <Briefcase className="w-3 h-3" /> {wl.name}
-                      </p>
-                      {shiftDisplay && (
-                        <p className="text-xs text-muted-foreground flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {shiftDisplay}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })
-              }
+                )}
+              </div>
+
+              {/* SCHOOL */}
+              <div className="space-y-1 pt-3 border-t border-border">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <GraduationCap className="w-3.5 h-3.5 text-primary" />
+                  <p className="text-xs font-semibold text-foreground uppercase tracking-wider">School</p>
+                </div>
+                {schoolEnrollments.length === 0 ? (
+                  <p className="text-sm text-muted-foreground italic pl-1">No school details assigned.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {schoolEnrollments.map((enr, i) => (
+                      <div key={enr.key} className={`space-y-0.5 ${i > 0 ? 'pl-3 border-l-2 border-border' : ''}`}>
+                        {enr.program && (
+                          <p className="text-sm text-foreground font-medium">{enr.program}</p>
+                        )}
+                        {enr.locationName && (
+                          <div className="flex items-center gap-1 text-sm text-muted-foreground">
+                            <MapPin className="w-3 h-3 flex-shrink-0" />
+                            <span>{enr.locationName}</span>
+                          </div>
+                        )}
+                        {enr.schedule && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <Clock className="w-3 h-3 flex-shrink-0" />
+                            <span>{enr.schedule}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <CharacterWorkScheduleEditor character={character} />
             </div>
-            <CharacterWorkScheduleEditor character={character} />
-          </div>
-        )}
+          );
+        })()}
 
         {/* Businesses */}
         <CharacterBusinessesPanel characterId={characterId} />
 
-        {/* Education */}
-        {(character.current_education_activity || character.education_location_id || character.additional_education_locations?.length > 0 || character.completed_education?.length > 0) && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
-            <div className="flex items-center gap-2 mb-2">
-              <GraduationCap className="w-4 h-4 text-primary" />
-              <p className="text-xs text-muted-foreground uppercase tracking-wider">Education</p>
-            </div>
-            {(character.current_education_activity && character.current_education_activity !== "none") && (
-              <div className="space-y-0.5">
-                <p className="text-[10px] text-primary/70 uppercase tracking-wider font-semibold mb-1">Currently enrolled</p>
-                <p className="text-sm text-foreground font-medium">{character.education_details?.course_name || character.current_education_activity}</p>
-                {character.education_location_name && (
-                  <p className="text-sm text-muted-foreground flex items-center gap-1">
-                    <GraduationCap className="w-3 h-3" /> {character.education_location_name}
-                  </p>
-                )}
-              </div>
-            )}
-            {character.additional_education_locations?.map((loc, idx) => (
-              <div key={idx} className="pl-3 border-l-2 border-border space-y-0.5">
-                {loc.program_name && <p className="text-sm text-foreground font-medium">{loc.program_name}</p>}
-                <p className="text-sm text-muted-foreground flex items-center gap-1">
-                  <GraduationCap className="w-3 h-3" /> {loc.location_name}
-                </p>
-              </div>
-            ))}
-            {character.education_expected_completion_date && character.current_education_activity && character.current_education_activity !== 'none' && (
+        {/* Completed Education — kept separate so history is not lost */}
+        {(character.completed_education?.length > 0) && (() => {
+          const now = new Date();
+          const completedItems = (character.completed_education || []).filter(edu => {
+            if (!edu.completion_date) return false;
+            return new Date(edu.completion_date) <= now;
+          });
+          if (completedItems.length === 0) return null;
+          return (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">Expected completion:</span>
-                <span className="text-xs font-medium text-foreground">
-                  {format(new Date(character.education_expected_completion_date), "MMM d, yyyy")}
-                </span>
+                <GraduationCap className="w-4 h-4 text-primary" />
+                <p className="text-xs text-muted-foreground uppercase tracking-wider">Completed Education</p>
               </div>
-            )}
-            {(() => {
-              const now = new Date();
-              const currentItems = (character.completed_education || []).filter(edu => {
-                if (!edu.completion_date) return false;
-                return new Date(edu.completion_date) > now;
-              });
-              const completedItems = (character.completed_education || []).filter(edu => {
-                if (!edu.completion_date) return false;
-                return new Date(edu.completion_date) <= now;
-              });
-              return (
-                <>
-                  {currentItems.length > 0 && (
-                    <div>
-                      <p className="text-xs font-medium text-foreground mb-2">Currently Working On</p>
-                      <div className="space-y-1">
-                        {currentItems.map((edu, idx) => {
-                            const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote Scheduled' : 'On-Demand';
-                            const modeColor = edu.mode === 'in_person' ? 'text-orange-400 border-orange-400/30' : edu.mode === 'remote_scheduled' ? 'text-blue-400 border-blue-400/30' : 'text-emerald-400 border-emerald-400/30';
-                            return (
-                          <div key={idx} className="pl-3 border-l-2 border-primary/40 space-y-1">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm text-foreground font-medium">
-                                {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                              </p>
-                              <span className={`text-[10px] px-1.5 py-0.5 rounded-full bg-secondary border ${modeColor}`}>{modeLabel}</span>
-                            </div>
-                            {typeof edu.progress === 'number' && edu.progress > 0 && (
-                              <div className="space-y-0.5">
-                                <div className="flex justify-between">
-                                  <span className="text-[10px] text-muted-foreground">Progress</span>
-                                  <span className="text-[10px] text-foreground font-medium">{edu.progress}%</span>
-                                </div>
-                                <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
-                                  <div className="h-full bg-primary transition-all" style={{ width: `${edu.progress}%` }} />
-                                </div>
-                              </div>
-                            )}
-                            {edu.start_date && (
-                              <p className="text-xs text-muted-foreground/70">
-                                Started {format(new Date(edu.start_date), "MMM yyyy")}
-                              </p>
-                            )}
-                            {edu.completion_date && (
-                              <p className="text-xs text-primary/70">
-                                Expected {format(new Date(edu.completion_date), "MMM yyyy")}
-                              </p>
-                            )}
-                          </div>
-                            );
-                          })}
+              <div className="space-y-1">
+                {completedItems.map((edu, idx) => {
+                  const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
+                  return (
+                    <div key={idx}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="text-sm text-muted-foreground">
+                          {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
+                        </p>
+                        {modeLabel && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
+                        )}
                       </div>
+                      {edu.completion_date && (
+                        <p className="text-xs text-muted-foreground/60">
+                          Completed {format(new Date(edu.completion_date), "MMM yyyy")}
+                        </p>
+                      )}
                     </div>
-                  )}
-                  {completedItems.length > 0 && (
-                    <div>
-                      <p className="text-xs font-medium text-foreground mb-2">Completed</p>
-                      <div className="space-y-1">
-                        {completedItems.map((edu, idx) => {
-                            const modeLabel = edu.mode === 'in_person' ? 'In-Person' : edu.mode === 'remote_scheduled' ? 'Remote' : edu.mode === 'on_demand' ? 'On-Demand' : null;
-                            const statusColor = edu.status === 'at_risk' ? 'text-orange-400' : edu.status === 'dropped' ? 'text-destructive' : 'text-muted-foreground/60';
-                            return (
-                          <div key={idx}>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="text-sm text-muted-foreground">
-                                {edu.course_name}{edu.institution ? ` — ${edu.institution}` : ""}
-                              </p>
-                              {modeLabel && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground border border-border">{modeLabel}</span>
-                              )}
-                            </div>
-                            {edu.completion_date && (
-                              <p className="text-xs text-muted-foreground/60">
-                                Completed {format(new Date(edu.completion_date), "MMM yyyy")}
-                              </p>
-                            )}
-                          </div>
-                            );
-                          })}
-                      </div>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-        )}
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Home Location */}
         <HomeLocationField character={character} currentUser={currentUser} />
