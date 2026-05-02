@@ -61,7 +61,7 @@ export default function NPCContactPanel() {
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
     try {
       await base44.entities.Character.delete(npcId);
-      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }
@@ -70,12 +70,10 @@ export default function NPCContactPanel() {
   const handleMarkAsActive = async (e, npc) => {
     e.stopPropagation();
     try {
-      // Set character_type to 'active' AND protected_active=true so no system process ever re-adds them
       await base44.entities.Character.update(npc.id, {
-        character_type: 'active',
-        protected_active: true,
+        character_type: 'active_created_character',
       });
-      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
     } catch (err) {
       alert('Failed to update character: ' + err.message);
     }
