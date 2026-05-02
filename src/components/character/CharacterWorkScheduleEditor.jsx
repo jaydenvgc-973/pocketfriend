@@ -73,7 +73,7 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
               <Clock className="w-3 h-3" /> {formatShift(storedShift)}
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground/50 italic mt-0.5">No schedule saved yet</p>
+            <p className="text-xs text-muted-foreground/50 italic mt-0.5">No schedule set — expand to configure</p>
           )}
         </div>
         {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
