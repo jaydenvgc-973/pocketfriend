@@ -97,28 +97,24 @@ export default function Chat() {
     return () => { isMountedRef.current = false; };
   }, []);
 
+  const { data: currentUser = {} } = useQuery({
+    queryKey: ["user"],
+    queryFn: () => base44.auth.me(),
+  });
+
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
-      // Direct id filter fails RLS for service-role-written NPC records.
-      // Use the same ownership-scoped pattern the rest of the app uses:
-      // filter by owner_email (which is correctly set) then find by ID client-side.
-      const me = await base44.auth.me();
-      if (!me?.email) return null;
-      const chars = await base44.entities.Character.filter({ owner_email: me.email }, '-created_date', 500);
+      if (!currentUser?.email) return null;
+      const chars = await base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500);
       return chars.find(c => c.id === characterId) || null;
     },
-    enabled: !!characterId,
+    enabled: !!characterId && !!currentUser?.email,
   });
 
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
   const { settings: userSettings } = useUserSettings();
   const { playingAudioId, voiceErrors, playCharacterVoice } = useVoicePlayback(chatType);
-
-  const { data: currentUser = {} } = useQuery({
-    queryKey: ["user"],
-    queryFn: () => base44.auth.me(),
-  });
 
   const { data: characterFinancial = null } = useQuery({
     queryKey: ["characterFinancial", characterId],
