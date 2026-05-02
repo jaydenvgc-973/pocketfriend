@@ -949,7 +949,7 @@ Deno.serve(async (req) => {
     if (subjectType === 'user' || subjectType === 'joint') {
       // Try DB first
       if (requestingUser) {
-        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: requestingUser }, null, 1).catch(() => []);
+        const settingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: requestingUser }, null, 1).catch(() => []);
         const sett = settingsList?.[0] || {};
         // CRITICAL: Prefer real uploaded reference_image_urls over generated_avatar_urls.
         // Generated avatars may be lower quality or inconsistent. Real photos ensure authentic likeness.
@@ -1018,7 +1018,7 @@ Deno.serve(async (req) => {
         }
       } else {
         // No location on character — scan LocationReference records for resident match
-        const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ created_by: requestingUser }, '-created_date', 50).catch(() => []);
+        const savedLocs = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: requestingUser }, '-created_date', 50).catch(() => []);
         const residentHome = savedLocs.find(l =>
           l.category === 'home' &&
           ((l.resident_character_ids || []).includes(characterId) ||

@@ -41,14 +41,27 @@ function heightCategory(h) {
   return 'very tall';
 }
 
+function deriveHeadRatio(inches) {
+  if (!inches) return null;
+  if (inches < 64) return 7.0;
+  if (inches <= 69) return 7.5;
+  if (inches <= 74) return 8.0;
+  return 8.5;
+}
+
+// Prefer saved height_display string, fall back to converting height_inches
+function resolveHeightDisplay(al) {
+  if (!al) return '';
+  if (al.height_display) return al.height_display;
+  if (al.height_inches) return inchesToFeet(al.height_inches);
+  return '';
+}
+
 export default function UserAppearanceLockEditor({ settings, user }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(settings.appearance_lock || {});
   const lockRef = React.useRef(lock);
-  const [heightRaw, setHeightRaw] = useState(() => {
-    const h = settings.appearance_lock?.height_inches;
-    return h ? inchesToFeet(h) : '';
-  });
+  const [heightRaw, setHeightRaw] = useState(() => resolveHeightDisplay(settings.appearance_lock));
   const [customInput, setCustomInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -66,18 +79,25 @@ export default function UserAppearanceLockEditor({ settings, user }) {
     const al = settings.appearance_lock || {};
     setLock(al);
     lockRef.current = al;
-    setHeightRaw(al.height_inches ? inchesToFeet(al.height_inches) : '');
+    setHeightRaw(resolveHeightDisplay(al));
   }, [settings.id, JSON.stringify(settings.appearance_lock)]);
 
   const commitHeight = () => {
     if (heightRaw === '') {
-      setLockSynced(prev => ({ ...prev, height_inches: null }));
+      setLockSynced(prev => ({ ...prev, height_inches: null, height_display: null, head_ratio: null }));
     } else {
       const parsed = feetStringToInches(heightRaw);
       if (parsed !== null && parsed > 0) {
-        setLockSynced(prev => ({ ...prev, height_inches: parsed }));
+        const display = inchesToFeet(parsed);
+        setHeightRaw(display);
+        setLockSynced(prev => ({
+          ...prev,
+          height_inches: parsed,
+          height_display: display,
+          head_ratio: deriveHeadRatio(parsed),
+        }));
       } else {
-        setHeightRaw(lock.height_inches ? inchesToFeet(lock.height_inches) : '');
+        setHeightRaw(resolveHeightDisplay(lockRef.current));
       }
     }
     setSaved(false);
@@ -104,15 +124,19 @@ export default function UserAppearanceLockEditor({ settings, user }) {
   };
 
   const save = async () => {
-    // Commit any pending height before saving
+    // Flush any pending height before saving
     let finalLock = { ...lockRef.current };
     if (heightRaw !== '') {
       const parsed = feetStringToInches(heightRaw);
       if (parsed !== null && parsed > 0) {
-        finalLock = { ...finalLock, height_inches: parsed };
+        const display = inchesToFeet(parsed);
+        finalLock = { ...finalLock, height_inches: parsed, height_display: display, head_ratio: deriveHeadRatio(parsed) };
         setLockSynced(() => finalLock);
-        setHeightRaw(inchesToFeet(parsed));
+        setHeightRaw(display);
       }
+    } else {
+      finalLock = { ...finalLock, height_inches: null, height_display: null, head_ratio: null };
+      setLockSynced(() => finalLock);
     }
     setSaving(true);
     if (settings.id) {
@@ -169,16 +193,20 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
       }
     });
     if (result && typeof result === "object") {
-      setLock(prev => ({ ...prev, ...result }));
+      setLockSynced(prev => ({ ...prev, ...result }));
       setSaved(false);
     }
     setGenerating(false);
   };
 
   const hasAvatar = !!(user?.generated_avatar_urls?.length || user?.reference_image_urls?.length);
-  const normalizedLock = { ...lock, height_inches: lock.height_inches || null };
-  const normalizedSaved = { ...(settings.appearance_lock || {}), height_inches: (settings.appearance_lock?.height_inches) || null };
-  const hasChanges = JSON.stringify(normalizedLock) !== JSON.stringify(normalizedSaved);
+  const normalize = (l) => ({
+    ...l,
+    height_inches: l.height_inches || null,
+    height_display: l.height_display || null,
+    head_ratio: l.head_ratio || null,
+  });
+  const hasChanges = JSON.stringify(normalize(lock)) !== JSON.stringify(normalize(settings.appearance_lock || {}));
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-4">

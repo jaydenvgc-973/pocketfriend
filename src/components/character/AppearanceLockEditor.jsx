@@ -195,8 +195,7 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
       }
     });
     if (result && typeof result === "object") {
-      const merged = { ...lock, ...result };
-      setLock(merged);
+      setLockSynced(prev => ({ ...prev, ...result }));
       setSaved(false);
     }
     setGenerating(false);
