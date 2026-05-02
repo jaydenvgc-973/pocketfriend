@@ -10,12 +10,15 @@
  *  - Schedule enforcement
  *
  * RULES:
- *  - Employment comes from character file fields + location worker_shifts
+ *  - Employment comes from character file fields + location worker_shifts ONLY
  *  - Presence context is SEPARATE — never infer employment from current location
- *  - If no schedule set but job exists → apply DEFAULT_SCHEDULE (Mon–Fri 9am–5pm)
+ *  - If no schedule is stored → schedule fields are null, label is null. NEVER fabricate a default.
  *  - Do NOT call this from presence/travel logic — it is employment ONLY
+ *  - Do NOT write any schedule data back to the database from this resolver.
  */
 
+// Kept as a reference constant for UI display purposes ONLY.
+// NEVER inject these values as if they were real stored schedule data.
 export const DEFAULT_SCHEDULE = {
   days: [1, 2, 3, 4, 5], // Mon–Fri
   start_time: '09:00',
@@ -95,13 +98,12 @@ export function resolveEmployment(character, locationList = []) {
       end_time = character.work_end_time;
       source = 'character_file';
     } else {
-      // No schedule anywhere — apply default
-      schedule_days = DEFAULT_SCHEDULE.days;
-      start_time = DEFAULT_SCHEDULE.start_time;
-      end_time = DEFAULT_SCHEDULE.end_time;
-      source = 'default';
-      is_default_schedule = true;
-      default_schedule_applied = true;
+      // No schedule stored anywhere — leave null. Do NOT fabricate a default.
+      schedule_days = null;
+      start_time = null;
+      end_time = null;
+      source = 'none';
+      is_default_schedule = false;
     }
 
     jobs.push({
@@ -131,13 +133,12 @@ export function resolveEmployment(character, locationList = []) {
       end_time = workerShift.end;
       source = 'worker_shift';
     } else {
-      // Additional jobs always default — no character-file fallback for them
-      schedule_days = DEFAULT_SCHEDULE.days;
-      start_time = DEFAULT_SCHEDULE.start_time;
-      end_time = DEFAULT_SCHEDULE.end_time;
-      source = 'default';
-      is_default_schedule = true;
-      default_schedule_applied = true;
+      // No shift stored — leave null. Do NOT fabricate a default.
+      schedule_days = null;
+      start_time = null;
+      end_time = null;
+      source = 'none';
+      is_default_schedule = false;
     }
 
     jobs.push({
@@ -164,11 +165,11 @@ export function resolveEmployment(character, locationList = []) {
     if (alreadyCovered) continue;
 
     const workerShift = loc.worker_shifts?.[character.id];
-    const schedule_days = workerShift?.days?.length > 0 ? workerShift.days : DEFAULT_SCHEDULE.days;
-    const start_time = workerShift?.start || DEFAULT_SCHEDULE.start_time;
-    const end_time = workerShift?.end || DEFAULT_SCHEDULE.end_time;
-    const is_default_schedule = !workerShift?.days?.length;
-    if (is_default_schedule) default_schedule_applied = true;
+    // Only use stored shift data — do NOT fabricate defaults
+    const schedule_days = workerShift?.days?.length > 0 ? workerShift.days : null;
+    const start_time = workerShift?.start || null;
+    const end_time = workerShift?.end || null;
+    const is_default_schedule = false;
 
     jobs.push({
       job_title: loc.worker_job_titles?.[character.id] || null,
@@ -218,9 +219,10 @@ export function buildEmploymentPromptBlock(character, locationList = []) {
   if (jobs.length === 0 && !presence.current_location_name) return '';
 
   const jobLines = jobs.length > 0
-    ? jobs.map(j =>
-        `  • ${j.job_title || 'Employee'} at ${j.location_name || 'unlisted workplace'} | Schedule: ${j.schedule_label}${j.is_default_schedule ? ' (default)' : ''}`
-      ).join('\n')
+    ? jobs.map(j => {
+        const schedPart = j.schedule_label ? ` | Schedule: ${j.schedule_label}` : '';
+        return `  • ${j.job_title || 'Employee'} at ${j.location_name || 'unlisted workplace'}${schedPart}`;
+      }).join('\n')
     : '  • No job assigned';
 
   const mismatch = jobs.length > 0 &&

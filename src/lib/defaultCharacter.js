@@ -182,9 +182,9 @@ function buildRelationshipsContext(character) {
           character.work_days?.length > 0 ? character.work_days.map(d=>WD[d]).join('/') : null,
           (character.work_start_time && character.work_end_time) ? `${fmt(character.work_start_time)}–${fmt(character.work_end_time)}` : null,
         ].filter(Boolean).join(', ')
-      : 'Mon–Fri, 9:00am–5:00pm (default)';
+      : null; // No schedule stored — do not fabricate one
 
-    section += `\nYOUR WORK: You are a ${jobTitle}${workplaceName ? ` at ${workplaceName}` : ` at a ${workplaceType}`}. Schedule: ${schedLabel}.`;
+    section += `\nYOUR WORK: You are a ${jobTitle}${workplaceName ? ` at ${workplaceName}` : ` at a ${workplaceType}`}.${schedLabel ? ` Schedule: ${schedLabel}.` : ''}`;
     if (w.work_environment) section += ` ${w.work_environment}`;
     // CRITICAL: Hard-lock employment to the named workplace.
     section += ` ⚠️ EMPLOYMENT LOCK: "${workplaceName || workplaceType}" is your ONLY workplace. No other location you visit is your job, regardless of venue type.`;
