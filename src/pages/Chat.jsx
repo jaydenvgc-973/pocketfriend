@@ -100,12 +100,8 @@ export default function Chat() {
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
-      // Primary: user-scoped RLS query
       const chars = await base44.entities.Character.filter({ id: characterId });
-      if (chars[0]) return chars[0];
-      // Fallback: service-role lookup for NPCs created via backend (owner_email verified server-side)
-      const res = await base44.functions.invoke('getCharacterById', { characterId }).catch(() => null);
-      return res?.data?.character || null;
+      return chars[0] || null;
     },
     enabled: !!characterId,
   });
