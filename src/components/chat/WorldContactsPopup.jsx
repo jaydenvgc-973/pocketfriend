@@ -184,52 +184,19 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
     setIsLoadingHistory(true);
 
     try {
-      // Use stable key based on character IDs only — NOT names
-      const key = npcConvoKey(character.id, contact.related_character_id);
-      
-      console.log(`[selectContact] Looking for conversation key: ${key}`);
-
-      // Look for conversation by multiple strategies — never by name alone
+      // Query by character_ids array — enforces both participants must be present
       let found = null;
-
-      // Strategy 1: Exact ID-based key (current format)
-      const byKey = await base44.entities.Conversation.filter(
-        { type: "npc", title: key },
-        null,
-        1
+      const allNpc = await base44.entities.Conversation.filter(
+        { type: "npc" },
+        "-updated_date",
+        200
       ).catch(() => []);
-      if (byKey?.length > 0) {
-        found = byKey[0];
-      }
-
-      // Strategy 2: Legacy name-based key written by organicCharacterInteractions
-      // Format: npc_chat__CHARACTERID__ContactName  (NOT sorted IDs)
-      if (!found && contact.person_name) {
-        const legacyKey = `npc_chat__${character.id}__${contact.person_name}`;
-        const byLegacyKey = await base44.entities.Conversation.filter(
-          { type: "npc", title: legacyKey },
-          null,
-          1
-        ).catch(() => []);
-        if (byLegacyKey?.length > 0) {
-          found = byLegacyKey[0];
-        }
-      }
-
-      // Strategy 3: Search by character_ids array — works regardless of title format
-      // This is the most reliable fallback for any conversation format
-      if (!found) {
-        const allNpc = await base44.entities.Conversation.filter(
-          { type: "npc" },
-          "-updated_date",
-          200
-        ).catch(() => []);
-        found = (allNpc || []).find(c =>
-          Array.isArray(c.character_ids) &&
-          c.character_ids.includes(character.id) &&
-          c.character_ids.includes(contact.related_character_id)
-        );
-      }
+      found = (allNpc || []).find(c =>
+        Array.isArray(c.character_ids) &&
+        c.character_ids.length === 2 &&
+        c.character_ids.includes(character.id) &&
+        c.character_ids.includes(contact.related_character_id)
+      );
 
       if (found) {
         console.log(`[selectContact] Found conversation: ${found.id}`);
@@ -294,35 +261,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
 
-    const key = npcConvoKey(character.id, selectedContact.related_character_id);
-
-    // Try ID-based key first
-    const byKey = await base44.entities.Conversation.filter(
-      { type: "npc", title: key }, null, 1
-    ).catch(() => []);
-    if (byKey?.length > 0) {
-      setConversationId(byKey[0].id);
-      return byKey[0].id;
-    }
-
-    // Try legacy name-based key
-    if (selectedContact.person_name) {
-      const legacyKey = `npc_chat__${character.id}__${selectedContact.person_name}`;
-      const byLegacy = await base44.entities.Conversation.filter(
-        { type: "npc", title: legacyKey }, null, 1
-      ).catch(() => []);
-      if (byLegacy?.length > 0) {
-        setConversationId(byLegacy[0].id);
-        return byLegacy[0].id;
-      }
-    }
-
-    // Try character_ids match — do not create duplicate
+    // Query by character_ids array — enforce both participants
     const allNpc = await base44.entities.Conversation.filter(
       { type: "npc" }, "-updated_date", 200
     ).catch(() => []);
     const existing = (allNpc || []).find(c =>
       Array.isArray(c.character_ids) &&
+      c.character_ids.length === 2 &&
       c.character_ids.includes(character.id) &&
       c.character_ids.includes(selectedContact.related_character_id)
     );
@@ -331,7 +276,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
       return existing.id;
     }
 
-    // Create new conversation only if none found by any method
+    // Create new conversation only if none found
+    const key = npcConvoKey(character.id, selectedContact.related_character_id);
     const convo = await base44.entities.Conversation.create({
       title: key,
       type: "npc",
