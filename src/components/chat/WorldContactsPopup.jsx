@@ -201,10 +201,11 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // Sync to Life Journal — fire-and-forget after every exchange
-    base44.functions.invoke('syncGroupChatMemories', {
+    // Sync World Contacts conversation to character memory
+    // This makes the conversation durable across all pages where character context is built
+    base44.functions.invoke('syncWorldContactsMemory', {
       conversationId: convoId,
-      source: 'world_phone',
+      primaryCharacterId: character.id,
     }).catch(() => {});
   };
 
