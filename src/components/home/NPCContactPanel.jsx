@@ -30,13 +30,14 @@ export default function NPCContactPanel() {
   // It uses owner_email for ownership and covers all NPCs regardless of how they were created.
   const rawNpcCharacters = backendNpcs;
 
-  // Contact NPC List shows ONLY npc_fictitious type characters
+  // Contact NPC List shows ALL npc_fictitious characters owned by this user.
+  // Only filter: wrong type, or hard/soft deleted.
+  // Do NOT filter by protected_active, is_default, or is_active_character —
+  // those flags must not gate NPC chat access.
   const npcCharacters = rawNpcCharacters
     .filter(c => {
-      if (c.protected_active) return false;
-      if (c.is_default) return false;
-      if (c.is_active_character) return false;
       if (c.character_type !== 'npc_fictitious') return false;
+      if (c.status === 'deleted' || c.status === 'soft_deleted') return false;
       return true;
     })
     .sort((a, b) => {

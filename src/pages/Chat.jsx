@@ -100,8 +100,16 @@ export default function Chat() {
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
+      // Query by id only — RLS enforces owner_email == currentUser.email on the backend.
+      // The Character entity RLS allows access via owner_email OR created_by (legacy).
+      // For NPCs created by service role with owner_email set, we use the backend function
+      // to resolve the character if the RLS-scoped query returns nothing.
       const chars = await base44.entities.Character.filter({ id: characterId });
-      return chars[0] || null;
+      if (chars[0]) return chars[0];
+      // If RLS blocked it (NPC created by service role), fetch via backend which uses service role
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      const npcs = res?.data?.npcs || [];
+      return npcs.find(n => n.id === characterId) || null;
     },
     enabled: !!characterId,
   });
