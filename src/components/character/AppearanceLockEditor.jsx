@@ -24,32 +24,51 @@ function inchesToFeet(totalInches) {
 }
 
 function feetStringToInches(str) {
-  // Accepts: 5'8", 5'8, 5 8, 68"
   if (!str) return null;
   const stripped = str.trim().replace(/["""''`]/g, "'");
-  // feet'inches
+  // feet'inches  e.g. 5'8"  or  5'8
   const feetInch = stripped.match(/^(\d+)'(\d*)$/);
   if (feetInch) {
     return parseInt(feetInch[1]) * 12 + (parseInt(feetInch[2]) || 0);
   }
-  // pure inches
+  // pure number — under 12 = treat as feet, else inches
   const pureInch = stripped.match(/^(\d+)$/);
   if (pureInch) {
     const n = parseInt(pureInch[1]);
-    // if under 12, treat as feet
     return n < 12 ? n * 12 : n;
   }
   return null;
+}
+
+function deriveHeadRatio(inches) {
+  if (!inches) return null;
+  if (inches < 64) return 7.0;
+  if (inches <= 69) return 7.5;
+  if (inches <= 74) return 8.0;
+  return 8.5;
+}
+
+function heightLabel(inches) {
+  if (!inches) return '';
+  if (inches < 64) return 'short';
+  if (inches <= 69) return 'average';
+  if (inches <= 74) return 'tall';
+  return 'very tall';
+}
+
+// Load the display string from saved data: prefer height_display, fall back to height_inches conversion
+function resolveHeightDisplay(al) {
+  if (!al) return '';
+  if (al.height_display) return al.height_display;
+  if (al.height_inches) return inchesToFeet(al.height_inches);
+  return '';
 }
 
 export default function AppearanceLockEditor({ character }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(character.appearance_lock || {});
   const lockRef = useRef(lock);
-  const [heightRaw, setHeightRaw] = useState(() => {
-    const h = character.appearance_lock?.height_inches;
-    return h ? inchesToFeet(h) : '';
-  });
+  const [heightRaw, setHeightRaw] = useState(() => resolveHeightDisplay(character.appearance_lock));
   const [customInput, setCustomInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -67,18 +86,26 @@ export default function AppearanceLockEditor({ character }) {
     const al = character.appearance_lock || {};
     setLock(al);
     lockRef.current = al;
-    setHeightRaw(al.height_inches ? inchesToFeet(al.height_inches) : '');
+    setHeightRaw(resolveHeightDisplay(al));
   }, [character.id, JSON.stringify(character.appearance_lock)]);
 
   const commitHeight = () => {
     if (heightRaw === '') {
-      setLockSynced(prev => ({ ...prev, height_inches: null }));
+      setLockSynced(prev => ({ ...prev, height_inches: null, height_display: null, head_ratio: null }));
     } else {
       const parsed = feetStringToInches(heightRaw);
       if (parsed !== null && parsed > 0) {
-        setLockSynced(prev => ({ ...prev, height_inches: parsed }));
+        const display = inchesToFeet(parsed);
+        setHeightRaw(display); // normalize display string
+        setLockSynced(prev => ({
+          ...prev,
+          height_inches: parsed,
+          height_display: display,
+          head_ratio: deriveHeadRatio(parsed),
+        }));
       } else {
-        setHeightRaw(lock.height_inches ? inchesToFeet(lock.height_inches) : '');
+        // revert to last saved display
+        setHeightRaw(resolveHeightDisplay(lockRef.current));
       }
     }
     setSaved(false);
@@ -110,10 +137,20 @@ export default function AppearanceLockEditor({ character }) {
     if (heightRaw !== '') {
       const parsed = feetStringToInches(heightRaw);
       if (parsed !== null && parsed > 0) {
-        finalLock = { ...finalLock, height_inches: parsed };
+        const display = inchesToFeet(parsed);
+        finalLock = {
+          ...finalLock,
+          height_inches: parsed,
+          height_display: display,
+          head_ratio: deriveHeadRatio(parsed),
+        };
         setLockSynced(() => finalLock);
-        setHeightRaw(inchesToFeet(parsed));
+        setHeightRaw(display);
       }
+    } else {
+      // Explicitly clear if field is empty
+      finalLock = { ...finalLock, height_inches: null, height_display: null, head_ratio: null };
+      setLockSynced(() => finalLock);
     }
     setSaving(true);
     await base44.entities.Character.update(character.id, { appearance_lock: finalLock });
@@ -166,10 +203,14 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
   };
 
   const hasAvatar = !!(character.avatar_url || character.reference_image_urls?.length);
-  // Compare lock state vs saved — normalize null/undefined for height_inches
-  const normalizedLock = { ...lock, height_inches: lock.height_inches || null };
-  const normalizedSaved = { ...(character.appearance_lock || {}), height_inches: (character.appearance_lock?.height_inches) || null };
-  const hasChanges = JSON.stringify(normalizedLock) !== JSON.stringify(normalizedSaved);
+  // Compare lock state vs saved — normalize nullable height fields
+  const normalize = (l) => ({
+    ...l,
+    height_inches: l.height_inches || null,
+    height_display: l.height_display || null,
+    head_ratio: l.head_ratio || null,
+  });
+  const hasChanges = JSON.stringify(normalize(lock)) !== JSON.stringify(normalize(character.appearance_lock || {}));
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
@@ -209,7 +250,7 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
           />
           {lock.height_inches > 0 && (
             <p className="text-[10px] text-muted-foreground mt-1">
-              {lock.height_inches}" → {lock.height_inches < 64 ? 'short' : lock.height_inches <= 69 ? 'average' : lock.height_inches <= 74 ? 'tall' : 'very tall'} proportions
+              {lock.height_inches}" · {heightLabel(lock.height_inches)} · {lock.head_ratio ?? deriveHeadRatio(lock.height_inches)} head-units
             </p>
           )}
         </div>
