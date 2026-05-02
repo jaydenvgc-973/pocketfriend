@@ -168,10 +168,16 @@ function buildRelationshipsContext(character) {
     }
   }
 
-  if (character.work_details) {
-    const w = character.work_details;
-    section += `\nYOUR WORK: ${w.job_title || "your job"} at a ${w.workplace_type || "workplace"}. ${w.work_environment || ""}`;
-    if (w.coworker_names?.length) section += ` Coworkers you deal with: ${w.coworker_names.join(", ")}.`;
+  if (character.work_details || character.occupation_location_name || character.occupation) {
+    const w = character.work_details || {};
+    const jobTitle = w.job_title || character.occupation || "your job";
+    const workplaceName = character.occupation_location_name || null;
+    const workplaceType = w.workplace_type || "workplace";
+    // CRITICAL: Always bind job title to the actual named workplace (occupation_location_name).
+    // Without this binding, the LLM maps the job title to whatever location it's physically at.
+    section += `\nYOUR WORK: You are a ${jobTitle}${workplaceName ? ` at ${workplaceName}` : ` at a ${workplaceType}`}. ${w.work_environment || ""}`;
+    section += ` ⚠️ EMPLOYMENT LOCK: "${workplaceName || workplaceType}" is your ONLY workplace. No other location you visit or are physically present at is your job, regardless of the venue type.`;
+    if (w.coworker_names?.length) section += ` Coworkers: ${w.coworker_names.join(", ")}.`;
     section += "\n";
   }
 
