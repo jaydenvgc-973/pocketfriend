@@ -101,6 +101,7 @@ export default function Chat() {
     queryKey: ["character", characterId],
     queryFn: async () => {
       const chars = await base44.entities.Character.filter({ id: characterId });
+      console.log('[CHAT-DIAG-CHAR] characterId:', characterId, 'result length:', chars.length, 'char.id:', chars[0]?.id, 'owner_email:', chars[0]?.owner_email);
       return chars[0] || null;
     },
     enabled: !!characterId,
@@ -135,6 +136,7 @@ export default function Chat() {
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
+    console.log('[CHAT-DIAG-RLS] currentUser.email:', currentUser?.email, 'character.owner_email:', character?.owner_email, 'match:', currentUser?.email === character?.owner_email);
     
     const loadConvo = async () => {
       try {
@@ -143,11 +145,13 @@ export default function Chat() {
           "-updated_date",
           20
         );
+        console.log('[CHAT-DIAG-CONV] convos found:', allConvos.length);
         const convos = allConvos.filter(c =>
           c.character_ids &&
           c.character_ids.length === 1 &&
           c.character_ids[0] === characterId
         );
+        console.log('[CHAT-DIAG-CONV-FILTERED] filtered convos:', convos.length);
 
         let convoId = null;
 
@@ -161,6 +165,7 @@ export default function Chat() {
             "-created_date",
             msgLimit
           );
+          console.log('[CHAT-DIAG-MSG] conversation_id:', convoId, 'messages found:', loadedMsgs.length);
           
           if (loadedMsgs && loadedMsgs.length > 0) {
             setMessages(loadedMsgs.reverse());
@@ -177,11 +182,13 @@ export default function Chat() {
             setConversationId(convoId);
           }
         } else {
+          console.log('[CHAT-DIAG-NEW-CONVO] creating new conversation for:', characterId);
           const convo = await base44.entities.Conversation.create({
             title: `${chatType} with ${character.name}`,
             type: chatType,
             character_ids: [characterId],
           });
+          console.log('[CHAT-DIAG-NEW-CONVO-CREATED] convo.id:', convo.id);
           setConversationId(convo.id);
         }
 
