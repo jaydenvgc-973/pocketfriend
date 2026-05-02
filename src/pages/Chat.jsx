@@ -106,8 +106,15 @@ export default function Chat() {
     queryKey: ["character", characterId],
     queryFn: async () => {
       if (!currentUser?.email) return null;
+      // First try: user-scoped entity filter (works for active_created_character, npc_regular, npc_family_member)
       const chars = await base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500);
-      return chars.find(c => c.id === characterId) || null;
+      const found = chars.find(c => c.id === characterId);
+      if (found) return found;
+      // Second try: npc_fictitious records are written by service-role and fall outside user-token RLS.
+      // fetchNPCsForUser uses service-role and is the authoritative source for these records.
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      const allNpcs = res?.data?.npcs || [];
+      return allNpcs.find(c => c.id === characterId) || null;
     },
     enabled: !!characterId && !!currentUser?.email,
   });
