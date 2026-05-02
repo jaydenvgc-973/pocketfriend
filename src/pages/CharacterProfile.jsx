@@ -1212,7 +1212,7 @@ export default function CharacterProfile() {
 
       <BottomNav />
 
-      {editingNPCPhoto && character && (
+      {promotingNPC && character && (
         <NPCPromotionModal
           npcData={promotingNPC.rel}
           sourceCharacter={promotingNPC.sourceCharacter}
