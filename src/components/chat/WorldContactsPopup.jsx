@@ -18,9 +18,83 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [npcContacts, setNpcContacts] = useState([]);
+  const [contactUnreadCounts, setContactUnreadCounts] = useState({});
   const bottomRef = useRef(null);
 
-  const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
+  // Load NPC_fictitious characters as additional contacts
+  useEffect(() => {
+    if (!isOpen || !character) return;
+    const loadNPCs = async () => {
+      try {
+        const npcs = await base44.entities.Character.filter({
+          character_type: 'NPC_fictitious',
+          status: 'active',
+          is_test_character: false,
+          diagnostic_only: false
+        }, '-created_date', 100);
+        
+        const npcList = (npcs || []).map(npc => ({
+          person_name: npc.name || npc.display_name,
+          related_character_id: npc.id,
+          relationship_type: 'NPC',
+          description: npc.profile_summary || 'A character in your world',
+          current_status: npc.emotional_state || 'active',
+          friendship_level: 0,
+          romantic_level: 0
+        }));
+        
+        setNpcContacts(npcList);
+      } catch (err) {
+        console.error('[WorldContactsPopup] Failed to load NPCs:', err.message);
+      }
+    };
+    loadNPCs();
+  }, [isOpen, character]);
+
+  // Combine fictional relationships with NPC contacts and load unread counts
+  const fictionalRels = (character?.fictional_relationships || []).filter(r => r.person_name);
+  const contacts = [...fictionalRels, ...npcContacts].filter((c, i, arr) =>
+    arr.findIndex(x => x.related_character_id === c.related_character_id) === i
+  );
+
+  // Load unread counts for all contacts
+  useEffect(() => {
+    if (!character || contacts.length === 0) return;
+    const loadUnreadCounts = async () => {
+      const counts = {};
+      for (const contact of contacts) {
+        try {
+          const convos = await base44.entities.Conversation.filter(
+            { type: "npc" },
+            null,
+            100
+          );
+          const convo = convos.find(c =>
+            c.character_ids?.length === 2 &&
+            c.character_ids.includes(character.id) &&
+            c.character_ids.includes(contact.related_character_id)
+          );
+          
+          if (convo) {
+            const unreadMsgs = await base44.entities.Message.filter({
+              conversation_id: convo.id,
+              sender_type: "character",
+              is_read: false
+            });
+            counts[contact.related_character_id] = unreadMsgs?.length || 0;
+          } else {
+            counts[contact.related_character_id] = 0;
+          }
+        } catch (err) {
+          console.error('[loadUnreadCounts]', err.message);
+          counts[contact.related_character_id] = 0;
+        }
+      }
+      setContactUnreadCounts(counts);
+    };
+    loadUnreadCounts();
+  }, [character, contacts]);
 
   // Load or create a persistent conversation for the selected NPC using stable ID-based key
   const selectContact = async (contact) => {
@@ -308,12 +382,7 @@ Reply as ${selectedContact.person_name}:`;
                 </div>
               ) : (
                 contacts.map((contact, i) => {
-                  // Count unread messages for this contact
-                  const unreadCount = messages.filter(m =>
-                    m.sender_type === "character" &&
-                    m.character_id === contact.related_character_id &&
-                    !m.is_read
-                  ).length;
+                  const contactUnread = contactUnreadCounts[contact.related_character_id] || 0;
 
                   return (
                     <motion.button
@@ -323,16 +392,16 @@ Reply as ${selectedContact.person_name}:`;
                       transition={{ delay: i * 0.04 }}
                       onClick={() => selectContact(contact)}
                       className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left ${
-                        unreadCount > 0 ? "bg-primary/10" : ""
+                        contactUnread > 0 ? "bg-primary/10" : ""
                       }`}
                     >
                       <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 relative">
                         <span className="text-sm font-semibold text-primary">
                           {contact.person_name?.[0]?.toUpperCase() || "?"}
                         </span>
-                        {unreadCount > 0 && (
+                        {contactUnread > 0 && (
                           <span className="absolute -top-1 -right-1 min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
-                            {unreadCount > 99 ? "99+" : unreadCount}
+                            {contactUnread > 99 ? "99+" : contactUnread}
                           </span>
                         )}
                       </div>
