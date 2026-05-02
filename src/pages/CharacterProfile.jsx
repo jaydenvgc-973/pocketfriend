@@ -167,29 +167,31 @@ export default function CharacterProfile() {
       if (!character) return [];
       await new Promise(r => setTimeout(r, 1200));
 
-      // Collect all location IDs this character may work at
+      // Collect all location IDs from the character's own employment fields
+      // NOTE: worker_character_ids arrays are empty in the DB — cannot rely on them for lookup.
+      // Must resolve from character-side occupation fields first, then also try worker_character_ids as a secondary check.
       const locationIds = new Set();
       if (character.occupation_location_id) locationIds.add(character.occupation_location_id);
       (character.additional_occupation_locations || []).forEach(l => {
         if (l.location_id) locationIds.add(l.location_id);
       });
 
-      // Fetch by worker_character_ids (location has the character listed)
-      const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [characterId] });
-      byWorkerList.forEach(l => locationIds.add(l.id));
-
-      // Also fetch any job locations from character file that may store shifts there
+      // Fetch all known job locations by ID (character-side truth)
       const charFileLocs = locationIds.size > 0
         ? await Promise.all(
-            [...locationIds]
-              .filter(id => !byWorkerList.some(l => l.id === id))
-              .map(id => base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null))
+            [...locationIds].map(id =>
+              base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null)
+            )
           )
         : [];
 
+      // Also try worker_character_ids filter as a secondary source
+      const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [characterId] }).catch(() => []);
+      byWorkerList.forEach(l => locationIds.add(l.id));
+
       const combined = [
-        ...byWorkerList,
         ...charFileLocs.filter(Boolean),
+        ...byWorkerList,
       ];
 
       // Deduplicate by id
