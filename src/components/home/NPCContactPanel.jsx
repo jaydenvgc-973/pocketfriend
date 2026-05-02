@@ -15,21 +15,41 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Dedicated npc_fictitious query with strict type + status filter
-  const { data: npcCharacters = [] } = useQuery({
-    queryKey: ['contact-npc-fictitious', currentUser?.email],
+  // Fetch RLS-scoped characters (owner_email)
+  const { data: regularCharacters = [] } = useQuery({
+    queryKey: ['characters', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      const allChars = await base44.entities.Character.filter(
-        { owner_email: currentUser.email },
-        '-created_date',
-        300
-      );
-      // Exact Settings filter: npc_fictitious only, exclude all deleted statuses
-      return allChars.filter(c => c.character_type === 'npc_fictitious' && c.status !== 'deleted');
+      return base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 300);
     },
     enabled: !!currentUser?.email,
   });
+
+  // Fetch NPC fictitious via backend function (same source as Settings)
+  const { data: npcFictitiousFromBackend = [] } = useQuery({
+    queryKey: ['npc-characters', currentUser?.id],
+    queryFn: async () => {
+      if (!currentUser?.id) return [];
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      return res?.data?.npcs || [];
+    },
+    enabled: !!currentUser?.id,
+  });
+
+  // Merge both sources (same as Settings) and dedupe by ID
+  const mergedCharacters = (() => {
+    const seen = new Set();
+    return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  })();
+
+  // Filter to npc_fictitious only (exact Settings filter)
+  const npcCharacters = mergedCharacters.filter(
+    c => c.character_type === 'npc_fictitious' && c.status !== 'deleted'
+  );
 
   // Sort by name
   const sortedNpcCharacters = npcCharacters.sort((a, b) => {
@@ -62,7 +82,8 @@ export default function NPCContactPanel() {
     if (!window.confirm('Permanently delete this NPC? This cannot be undone.')) return;
     try {
       await base44.entities.Character.delete(npcId);
-      queryClient.invalidateQueries({ queryKey: ['contact-npc-fictitious', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
     } catch (err) {
       alert('Failed to delete NPC: ' + err.message);
     }
@@ -74,7 +95,8 @@ export default function NPCContactPanel() {
       await base44.entities.Character.update(npc.id, {
         character_type: 'active_created_character',
       });
-      queryClient.invalidateQueries({ queryKey: ['contact-npc-fictitious', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['characters', currentUser?.email] });
+      queryClient.invalidateQueries({ queryKey: ['npc-characters', currentUser?.id] });
     } catch (err) {
       alert('Failed to update character: ' + err.message);
     }
