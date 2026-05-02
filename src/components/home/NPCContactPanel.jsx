@@ -26,26 +26,9 @@ export default function NPCContactPanel() {
    enabled: !!currentUser?.id,
   });
 
-  // Direct RLS query (catches npc_fictitious created_by the user directly)
-  const { data: rlsNpcs = [] } = useQuery({
-    queryKey: ['npc-fictitious-rls', currentUser?.email],
-    queryFn: () => base44.entities.Character.filter(
-      { created_by: currentUser.email, character_type: 'npc_fictitious' },
-      '-created_date',
-      300
-    ),
-    enabled: !!currentUser?.email,
-  });
-
-  // Merge both sources, deduplicated
-  const rawNpcCharacters = (() => {
-    const seen = new Set();
-    return [...backendNpcs, ...rlsNpcs].filter(c => {
-      if (seen.has(c.id)) return false;
-      seen.add(c.id);
-      return true;
-    });
-  })();
+  // fetchNPCsForUser (service role) is the sole source of truth for NPC characters.
+  // It uses owner_email for ownership and covers all NPCs regardless of how they were created.
+  const rawNpcCharacters = backendNpcs;
 
   // Contact NPC List shows ONLY npc_fictitious type characters
   const npcCharacters = rawNpcCharacters
