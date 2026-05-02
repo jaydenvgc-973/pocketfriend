@@ -123,8 +123,8 @@ Deno.serve(async (req) => {
     // ── GROUP BY USER (owner_email) TO ENFORCE USER SCOPE ───────────────────
     const byUser = {};
     for (const c of eligible) {
-      const email = c.owner_email || c.created_by;
-      if (!email) continue;
+      const email = c.owner_email;
+      if (!email) continue; // skip records without owner_email
       if (!byUser[email]) byUser[email] = [];
       byUser[email].push(c);
     }
@@ -200,33 +200,85 @@ Deno.serve(async (req) => {
             const relType = buildRelationshipType(locCategory, priorCount);
             const timestamp = now.toISOString();
 
-            // ── CREATE MEMORY FOR CHAR A ────────────────────────────────
-            await base44.asServiceRole.entities.CharacterMemory.create({
-              character_id: charA.id,
-              memory_type: 'relationship',
-              memory_text: `They ${interactionNote} with ${charB.name || charB.display_name}. Familiarity: ${familiarityLabel}.`,
-              memory_summary: `[co-location] ${charB.name || charB.display_name} at ${locationName}`,
-              related_character_id: charB.id,
-              related_location_id: locId,
-              importance_score: Math.min(3 + newCount, 7),
-              confidence_score: 0.9,
-              permanence: 'long_term',
-              validation_status: 'confirmed',
-            }).catch(e => console.warn(`[organicInteractions] Memory A failed: ${e.message}`));
+            // ── CREATE/FIND CONVERSATION (character → character messaging) ────
+            const convoTitle = `npc_chat__${charA.id}__${charB.name || charB.display_name}`;
+            const existingConvo = await base44.asServiceRole.entities.Conversation.filter(
+              { title: convoTitle, type: 'npc' },
+              null,
+              1
+            ).catch(() => []);
 
-            // ── CREATE MEMORY FOR CHAR B ────────────────────────────────
-            await base44.asServiceRole.entities.CharacterMemory.create({
-              character_id: charB.id,
-              memory_type: 'relationship',
-              memory_text: `They ${interactionNote} with ${charA.name || charA.display_name}. Familiarity: ${familiarityLabel}.`,
-              memory_summary: `[co-location] ${charA.name || charA.display_name} at ${locationName}`,
-              related_character_id: charA.id,
-              related_location_id: locId,
-              importance_score: Math.min(3 + newCount, 7),
-              confidence_score: 0.9,
-              permanence: 'long_term',
-              validation_status: 'confirmed',
-            }).catch(e => console.warn(`[organicInteractions] Memory B failed: ${e.message}`));
+            const conversation = existingConvo[0] || 
+              await base44.asServiceRole.entities.Conversation.create({
+                title: convoTitle,
+                type: 'npc',
+                character_ids: [charA.id, charB.id],
+              }).catch(e => {
+                console.warn(`[organicInteractions] Conversation creation failed: ${e.message}`);
+                return null;
+              });
+
+            if (conversation) {
+              // ── CREATE INITIAL MESSAGE (Char A initiates) ────
+              await base44.asServiceRole.entities.Message.create({
+                conversation_id: conversation.id,
+                sender_type: 'character',
+                character_id: charA.id,
+                character_name: charA.name || charA.display_name,
+                content: `Hey ${charB.name || charB.display_name}, ${interactionNote.toLowerCase()}. How's it going?`,
+                timestamp: timestamp,
+              }).catch(e => console.warn(`[organicInteractions] Message creation failed: ${e.message}`));
+
+              // ── GENERATE & CREATE REPLY (Char B responds) ────
+              try {
+                const relationInfo = (charB.fictional_relationships || []).find(r => r.related_character_id === charA.id);
+                const prompt = `You are ${charB.name || charB.display_name}. ${charA.name || charA.display_name} just said: "Hey ${charB.name || charB.display_name}, ${interactionNote.toLowerCase()}. How's it going?"
+            ${relationInfo ? `Your relationship: ${relationInfo.description || 'acquaintance'}. Current status: ${relationInfo.current_status || 'friendly'}.` : 'You just met them.'}
+
+            Reply naturally in 1-2 sentences. Be conversational and brief.`;
+
+                const llmResponse = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt });
+                const replyContent = (llmResponse || '...').trim();
+
+                await base44.asServiceRole.entities.Message.create({
+                  conversation_id: conversation.id,
+                  sender_type: 'character',
+                  character_id: charB.id,
+                  character_name: charB.name || charB.display_name,
+                  content: replyContent,
+                  timestamp: new Date().toISOString(),
+                }).catch(e => console.warn(`[organicInteractions] Reply message creation failed: ${e.message}`));
+
+                // ── SYNC TO MEMORY (after messages created) ────
+                await base44.asServiceRole.entities.CharacterMemory.create({
+                  character_id: charA.id,
+                  memory_type: 'relationship',
+                  memory_text: `They ${interactionNote} with ${charB.name || charB.display_name}. Familiarity: ${familiarityLabel}.`,
+                  memory_summary: `[co-location] ${charB.name || charB.display_name} at ${locationName}`,
+                  related_character_id: charB.id,
+                  related_location_id: locId,
+                  importance_score: Math.min(3 + newCount, 7),
+                  confidence_score: 0.9,
+                  permanence: 'long_term',
+                  validation_status: 'confirmed',
+                }).catch(() => {});
+
+                await base44.asServiceRole.entities.CharacterMemory.create({
+                  character_id: charB.id,
+                  memory_type: 'relationship',
+                  memory_text: `They ${interactionNote} with ${charA.name || charA.display_name}. Familiarity: ${familiarityLabel}.`,
+                  memory_summary: `[co-location] ${charA.name || charA.display_name} at ${locationName}`,
+                  related_character_id: charA.id,
+                  related_location_id: locId,
+                  importance_score: Math.min(3 + newCount, 7),
+                  confidence_score: 0.9,
+                  permanence: 'long_term',
+                  validation_status: 'confirmed',
+                }).catch(() => {});
+              } catch (llmErr) {
+                console.warn(`[organicInteractions] LLM reply generation failed: ${llmErr.message}`);
+              }
+            }
 
             // ── UPDATE/CREATE fictional_relationships on active characters ──
             // Only applies to active_created_character type
@@ -279,6 +331,7 @@ Deno.serve(async (req) => {
               }).catch(e => console.warn(`[organicInteractions] fictional_relationships update failed: ${e.message}`));
             };
 
+            // Update fictional relationships (for active characters only)
             await Promise.all([
               updateFictionalRelationship(charA, charB),
               updateFictionalRelationship(charB, charA),
