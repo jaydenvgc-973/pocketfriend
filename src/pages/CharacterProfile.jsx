@@ -164,12 +164,45 @@ export default function CharacterProfile() {
   });
 
   const { data: workLocations = [] } = useQuery({
-    queryKey: ['workLocations', characterId],
+    queryKey: ['workLocations', characterId, character?.occupation_location_id, (character?.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
+      if (!character) return [];
       await new Promise(r => setTimeout(r, 1200));
-      return base44.entities.LocationReference.filter({ worker_character_ids: [characterId] });
+
+      // Collect all location IDs this character may work at
+      const locationIds = new Set();
+      if (character.occupation_location_id) locationIds.add(character.occupation_location_id);
+      (character.additional_occupation_locations || []).forEach(l => {
+        if (l.location_id) locationIds.add(l.location_id);
+      });
+
+      // Fetch by worker_character_ids (location has the character listed)
+      const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [characterId] });
+      byWorkerList.forEach(l => locationIds.add(l.id));
+
+      // Also fetch any job locations from character file that may store shifts there
+      const charFileLocs = locationIds.size > 0
+        ? await Promise.all(
+            [...locationIds]
+              .filter(id => !byWorkerList.some(l => l.id === id))
+              .map(id => base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null))
+          )
+        : [];
+
+      const combined = [
+        ...byWorkerList,
+        ...charFileLocs.filter(Boolean),
+      ];
+
+      // Deduplicate by id
+      const seen = new Set();
+      return combined.filter(l => {
+        if (seen.has(l.id)) return false;
+        seen.add(l.id);
+        return true;
+      });
     },
-    enabled: !!characterId,
+    enabled: !!characterId && !!character,
     staleTime: 30000,
   });
 
