@@ -91,6 +91,8 @@ export default function Chat() {
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
   const isMountedRef = useRef(true);
+  const isLoadingConvoRef = useRef(false);
+  const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -139,13 +141,19 @@ export default function Chat() {
 
   useEffect(() => {
     if (!characterId || !character || !currentUser.email) return;
-    
+
+    // Prevent concurrent runs — if already loading, do not re-enter
+    if (isLoadingConvoRef.current) return;
+
     isMountedRef.current = true;
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
+    setConvoLoadError(null);
     
     const loadConvo = async () => {
+      if (isLoadingConvoRef.current) return;
+      isLoadingConvoRef.current = true;
       try {
         const allConvos = await base44.entities.Conversation.filter(
           { type: chatType, character_ids: [characterId] },
@@ -224,12 +232,23 @@ export default function Chat() {
         }
       } catch (err) {
         console.error('Failed to load conversation:', err);
+        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
+        if (isRateLimit) {
+          setConvoLoadError('rate_limited');
+        } else {
+          setConvoLoadError('error');
+        }
+      } finally {
+        isLoadingConvoRef.current = false;
       }
     };
 
     const timer = setTimeout(() => loadConvo(), 300);
-    return () => clearTimeout(timer);
-  }, [characterId, character, chatType, currentUser.email]);
+    return () => {
+      clearTimeout(timer);
+      isLoadingConvoRef.current = false;
+    };
+  }, [characterId, character?.id, chatType, currentUser.email]);
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
@@ -1826,26 +1845,14 @@ Reply with ONLY the single emoji or the word "none".`,
           characterBalance={characterFinancial?.current_balance ?? 0}
         />
       )}
-      <ChatMessageList
-        messages={messages}
-        conversationId={conversationId}
-        characterId={characterId}
-        character={character}
-        userSettings={userSettings}
-        isTyping={isTyping}
-        sendError={sendError}
-        setSendError={setSendError}
-        playingAudioId={playingAudioId}
-        voiceErrors={voiceErrors}
-        bottomRef={bottomRef}
-        onReact={handleReact}
-        onDelete={handleDeleteMessage}
-        onDeleteImage={handleDeleteImage}
-        onPlayVoice={playCharacterVoice}
-        onForward={(msg) => setForwardTarget(msg)}
-        onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))}
-        onLocationSignal={handleLocationSignal}
-      />
+      {convoLoadError ? (
+        <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
+          <p className="text-sm font-medium text-foreground">{convoLoadError === 'rate_limited' ? 'Chat is temporarily rate limited. Please try again shortly.' : 'Failed to load chat. Check connection and retry.'}</p>
+          <button onClick={() => { setConvoLoadError(null); isLoadingConvoRef.current = false; }} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
+        </div>
+      ) : (
+        <ChatMessageList messages={messages} conversationId={conversationId} characterId={characterId} character={character} userSettings={userSettings} isTyping={isTyping} sendError={sendError} setSendError={setSendError} playingAudioId={playingAudioId} voiceErrors={voiceErrors} bottomRef={bottomRef} onReact={handleReact} onDelete={handleDeleteMessage} onDeleteImage={handleDeleteImage} onPlayVoice={playCharacterVoice} onForward={(msg) => setForwardTarget(msg)} onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))} onLocationSignal={handleLocationSignal} />
+      )}
       {activeCharacter && character ? (
         <DialogueSelector
           playingAs={activeCharacter}
