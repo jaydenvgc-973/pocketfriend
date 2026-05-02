@@ -44,14 +44,35 @@ function feetStringToInches(str) {
 export default function AppearanceLockEditor({ character }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(character.appearance_lock || {});
+  const [heightRaw, setHeightRaw] = useState(() => {
+    const h = character.appearance_lock?.height_inches;
+    return h ? inchesToFeet(h) : '';
+  });
   const [customInput, setCustomInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setLock(character.appearance_lock || {});
+    const al = character.appearance_lock || {};
+    setLock(al);
+    setHeightRaw(al.height_inches ? inchesToFeet(al.height_inches) : '');
   }, [character.id, JSON.stringify(character.appearance_lock)]);
+
+  const commitHeight = () => {
+    if (heightRaw === '') {
+      setLock(prev => ({ ...prev, height_inches: null }));
+    } else {
+      const parsed = feetStringToInches(heightRaw);
+      if (parsed !== null && parsed > 0) {
+        setLock(prev => ({ ...prev, height_inches: parsed }));
+      } else {
+        // Revert display to whatever is currently stored
+        setHeightRaw(lock.height_inches ? inchesToFeet(lock.height_inches) : '');
+      }
+    }
+    setSaved(false);
+  };
 
   const update = (field, value) => {
     setLock(prev => ({ ...prev, [field]: value }));
@@ -125,7 +146,10 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
   };
 
   const hasAvatar = !!(character.avatar_url || character.reference_image_urls?.length);
-  const hasChanges = JSON.stringify(lock) !== JSON.stringify(character.appearance_lock || {});
+  // Compare lock state vs saved — normalize null/undefined for height_inches
+  const normalizedLock = { ...lock, height_inches: lock.height_inches || null };
+  const normalizedSaved = { ...(character.appearance_lock || {}), height_inches: (character.appearance_lock?.height_inches) || null };
+  const hasChanges = JSON.stringify(normalizedLock) !== JSON.stringify(normalizedSaved);
 
   return (
     <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
@@ -152,21 +176,15 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
       </p>
 
       <div className="space-y-3">
-        {/* Height field — stored as height_inches, enforces head-unit proportions in all generated images */}
+        {/* Height field — stored as height_inches, parsed on blur */}
         <div>
           <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Height</label>
           <input
             type="text"
-            value={lock.height_inches ? inchesToFeet(lock.height_inches) : ''}
-            onChange={e => {
-              const parsed = feetStringToInches(e.target.value);
-              if (parsed !== null && parsed > 0) {
-                update('height_inches', parsed);
-              } else if (e.target.value === '') {
-                update('height_inches', null);
-              }
-            }}
-            placeholder="e.g. 5'8 or 5'10 — sets body proportions for image generation"
+            value={heightRaw}
+            onChange={e => { setHeightRaw(e.target.value); setSaved(false); }}
+            onBlur={commitHeight}
+            placeholder="e.g. 5'8 or 5'10"
             className="w-full h-10 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
           />
           {lock.height_inches > 0 && (
