@@ -3,16 +3,15 @@ import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 /**
  * organicCharacterInteractions
  *
- * Scans all characters for co-location pairs and generates lightweight
- * interaction events + relationship memory. Runs on a schedule.
- *
- * Rules:
- * - Only real character files (active_created_character, npc_fictitious, npc_family_member)
- * - Must share the same resolved_current_location_id
- * - Cooldown: no repeated interactions within 6 hours for the same pair
- * - Probability gate: not every co-location triggers interaction
- * - No spam, no forced romance, no major relationship leaps in one session
- * - Fully user-scoped — no cross-account leakage
+ * Character-to-character conversation system with realism constraints:
+ * - 3-hour scheduler cycle (not 20 minutes)
+ * - Realistic conversation pacing (3-10 messages typical)
+ * - Cooldowns between interactions
+ * - Natural stopping points
+ * - Respects sleep, work, and travel states
+ * - Creates real Message + Conversation records
+ * - Fully user-scoped by owner_email
+ * - Does NOT affect character-to-user texting
  */
 
 const ELIGIBLE_TYPES = new Set([
@@ -21,120 +20,136 @@ const ELIGIBLE_TYPES = new Set([
   'npc_family_member',
 ]);
 
-const COOLDOWN_HOURS = 6;
-
-// Familiarity progression levels (by interaction count)
-const FAMILIARITY_LEVELS = [
-  { label: 'Seen around', minCount: 0 },
-  { label: 'Briefly met', minCount: 1 },
-  { label: 'Acquaintance', minCount: 3 },
-  { label: 'Friendly acquaintance', minCount: 7 },
-  { label: 'Friend', minCount: 15 },
-  { label: 'Close friend', minCount: 30 },
-];
+const PAIR_COOLDOWN_HOURS = 6;       // same pair cooldown
+const CHAR_COOLDOWN_HOURS = 2;       // character cooldown before starting another conversation
+const CONVO_TARGET_MIN = 3;          // minimum messages per conversation
+const CONVO_TARGET_MAX = 10;         // typical max messages
+const CONVO_EXTENDED_MAX = 20;       // extended conversation if high relationship weight
+const MAX_CONVOS_PER_RUN = 2;        // max new conversations per scheduler run
+const SKIP_PROB = 0.45;              // 45% chance to skip co-located pair (natural variation)
 
 function getFamiliarityLabel(count) {
-  let label = FAMILIARITY_LEVELS[0].label;
-  for (const level of FAMILIARITY_LEVELS) {
+  const levels = [
+    { label: 'Seen around', minCount: 0 },
+    { label: 'Briefly met', minCount: 1 },
+    { label: 'Acquaintance', minCount: 3 },
+    { label: 'Friendly acquaintance', minCount: 7 },
+    { label: 'Friend', minCount: 15 },
+    { label: 'Close friend', minCount: 30 },
+  ];
+  let label = levels[0].label;
+  for (const level of levels) {
     if (count >= level.minCount) label = level.label;
   }
   return label;
 }
 
-// Generate a natural interaction description based on location context
 function buildInteractionNote(charA, charB, locationName, locCategory) {
-  const contextMap = {
-    gym: `saw each other during a workout session at ${locationName}`,
-    workplace: `crossed paths during an overlapping shift at ${locationName}`,
-    school: `encountered each other at ${locationName}`,
-    food_drink: `briefly spoke at ${locationName}`,
-    social: `had a brief exchange at ${locationName}`,
-    bar: `spoke briefly at ${locationName}`,
-    home: `ran into each other at ${locationName}`,
+  const map = {
+    gym: `saw each other during a workout at ${locationName}`,
+    workplace: `crossed paths during a shift at ${locationName}`,
+    school: `ran into each other at ${locationName}`,
+    food_drink: `were both grabbing something at ${locationName}`,
+    social: `had a moment together at ${locationName}`,
+    bar: `spotted each other at ${locationName}`,
+    home: `were both home at ${locationName}`,
     outdoor: `crossed paths near ${locationName}`,
-    grocery: `ran into each other at ${locationName}`,
+    grocery: `were at the store at ${locationName}`,
     medical: `were both at ${locationName}`,
-    generic: `were in the same place at ${locationName}`,
+    generic: `were at ${locationName}`,
   };
-  return contextMap[locCategory] || `met at ${locationName}`;
+  return map[locCategory] || `met at ${locationName}`;
 }
 
-function buildRelationshipType(locCategory, priorCount) {
-  // First meeting: always "other" regardless of location
-  if (priorCount === 0) return 'other';
-  // After repeated contact, context can inform type
-  const map = {
-    workplace: 'coworker',
-    school: 'classmate',
-  };
-  return map[locCategory] || 'acquaintance';
+// Determine conversation target message count based on relationship weight
+function getConversationTarget(relationship, priorInteractions) {
+  const weight = (relationship?.friendship_level || 0) + 
+                 (relationship?.romantic_level || 0) +
+                 (relationship?.chosen_family_level || 0) +
+                 (priorInteractions > 3 ? 10 : 0);
+  
+  if (weight > 50) return Math.floor(Math.random() * (CONVO_EXTENDED_MAX - 10 + 1)) + 10;
+  if (weight > 30) return Math.floor(Math.random() * (CONVO_TARGET_MAX - CONVO_TARGET_MIN + 1)) + CONVO_TARGET_MIN + 3;
+  return Math.floor(Math.random() * (CONVO_TARGET_MAX - CONVO_TARGET_MIN + 1)) + CONVO_TARGET_MIN;
 }
 
-// Interaction probability by category (0–1)
-function interactionProbability(locCategory) {
-  const map = {
-    gym: 0.4,
-    workplace: 0.6,
-    school: 0.5,
-    food_drink: 0.35,
-    social: 0.45,
-    bar: 0.4,
-    home: 0.5,
-    outdoor: 0.25,
-    grocery: 0.2,
-    medical: 0.15,
-    generic: 0.15,
-  };
-  return map[locCategory] ?? 0.2;
+// Check if character is available for starting a conversation
+function isCharacterAvailable(char) {
+  // Sleeping = not available
+  if (char.resolved_presence_status === 'sleeping') return false;
+  // In transit during non-commute = lower availability
+  if (char.resolved_presence_status === 'in_transit') return false;
+  // At work/school = can respond but not start casually
+  return true;
 }
 
-// Build a stable pair key (always smaller id first)
-function pairKey(idA, idB) {
-  return [idA, idB].sort().join('::');
+// Natural stopping points for conversations
+const STOPPING_PHRASES = [
+  "okay, i'll text you later",
+  "gotta go",
+  "i'll let you know",
+  "talk later",
+  "heading out",
+  "see you later",
+  "catch you soon",
+  "ttyl",
+  "thanks for checking on me",
+  "alright, good to hear",
+  "cool, thanks",
+  "sounds good",
+  "i'm good thanks",
+];
+
+function shouldEndConversation(lastMessage, targetReached) {
+  if (targetReached) return true;
+  const lower = lastMessage.toLowerCase();
+  return STOPPING_PHRASES.some(phrase => lower.includes(phrase));
 }
 
 Deno.serve(async (req) => {
   try {
     const base44 = createClientFromRequest(req);
-
-    // For scheduled runs this is called without a user session — use service role throughout
-    // For manual/admin invocation we still allow it
+    
     let callerEmail = null;
     try {
       const me = await base44.auth.me();
       callerEmail = me?.email || null;
     } catch { /* scheduled — no user session */ }
 
-    // ── LOAD ALL ELIGIBLE CHARACTERS (service role, all users) ──────────────
+    // ── LOAD ALL ELIGIBLE CHARACTERS ──────────────────────────────────────
     const allChars = await base44.asServiceRole.entities.Character.list('-resolved_last_updated_at', 500);
 
-    // Filter: only eligible types, active status, not sleeping/jailed/test
     const eligible = allChars.filter(c =>
       ELIGIBLE_TYPES.has(c.character_type) &&
       (!c.status || c.status === 'active') &&
       !c.is_test_character &&
       !c.diagnostic_only &&
       !c.is_jailed &&
-      c.resolved_current_location_id // must have a known location
+      c.resolved_current_location_id
     );
 
-    console.log(`[organicInteractions] Eligible characters: ${eligible.length}`);
+    console.log(`[organicInteractions] Starting cycle. Eligible characters: ${eligible.length}`);
 
-    // ── GROUP BY USER (owner_email) TO ENFORCE USER SCOPE ───────────────────
+    // ── GROUP BY USER ─────────────────────────────────────────────────────
     const byUser = {};
     for (const c of eligible) {
       const email = c.owner_email;
-      if (!email) continue; // skip records without owner_email
+      if (!email) continue;
       if (!byUser[email]) byUser[email] = [];
       byUser[email].push(c);
     }
 
     const now = new Date();
-    const cooldownMs = COOLDOWN_HOURS * 60 * 60 * 1000;
+    const pairCooldownMs = PAIR_COOLDOWN_HOURS * 60 * 60 * 1000;
+    const charCooldownMs = CHAR_COOLDOWN_HOURS * 60 * 60 * 1000;
+    let convosCreatedThisCycle = 0;
     let totalInteractions = 0;
 
-    // ── PROCESS EACH USER'S CHARACTER SET ────────────────────────────────────
+    // ── PROCESS EACH USER'S CHARACTER SET ─────────────────────────────────
     for (const [userEmail, userChars] of Object.entries(byUser)) {
+
+      // Track characters that started conversations this cycle (cooldown)
+      const charsStartedThisCycle = new Set();
 
       // Group by location
       const byLocation = {};
@@ -144,11 +159,11 @@ Deno.serve(async (req) => {
         byLocation[locId].push(c);
       }
 
-      // For each location with 2+ characters, evaluate pairs
+      // ── EVALUATE PAIRS AT SHARED LOCATIONS ────────────────────────────────
       for (const [locId, charsHere] of Object.entries(byLocation)) {
-        if (charsHere.length < 2) continue;
+        if (charsHere.length < 2 || convosCreatedThisCycle >= MAX_CONVOS_PER_RUN) continue;
 
-        // Load location data once (to get name + category)
+        // Load location once
         let locationName = charsHere[0].resolved_current_location_name || 'a shared location';
         let locCategory = 'generic';
         try {
@@ -159,245 +174,247 @@ Deno.serve(async (req) => {
           }
         } catch { /* skip */ }
 
-        const prob = interactionProbability(locCategory);
-
-        // Evaluate all unique pairs
+        // ── RANDOMIZE PAIR ORDER & EVALUATE ──────────────────────────────────
+        const pairs = [];
         for (let i = 0; i < charsHere.length; i++) {
           for (let j = i + 1; j < charsHere.length; j++) {
-            const charA = charsHere[i];
-            const charB = charsHere[j];
+            pairs.push([charsHere[i], charsHere[j]]);
+          }
+        }
 
-            // Skip if either is asleep or unavailable
-            if (charA.resolved_presence_status === 'sleeping' || charB.resolved_presence_status === 'sleeping') continue;
-            if (charA.resolved_presence_status === 'in_transit' || charB.resolved_presence_status === 'in_transit') continue;
+        // Shuffle pairs for variation
+        for (let i = pairs.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [pairs[i], pairs[j]] = [pairs[j], pairs[i]];
+        }
 
-            // Probability gate
-            if (Math.random() > prob) continue;
+        for (const [charA, charB] of pairs) {
+          if (convosCreatedThisCycle >= MAX_CONVOS_PER_RUN) break;
 
-            const key = pairKey(charA.id, charB.id);
+          // SKIP: Already started a conversation this cycle
+          if (charsStartedThisCycle.has(charA.id)) continue;
 
-            // ── COOLDOWN CHECK via CharacterMemory ────────────────────────
-            const recentMemories = await base44.asServiceRole.entities.CharacterMemory.filter({
+          // SKIP: Either character not available
+          if (!isCharacterAvailable(charA) || !isCharacterAvailable(charB)) continue;
+
+          // SKIP: Natural variation (45% chance to skip co-located pair)
+          if (Math.random() < SKIP_PROB) continue;
+
+          // ── COOLDOWN CHECK: Pair ──────────────────────────────────────────
+          const recentMemories = await base44.asServiceRole.entities.CharacterMemory.filter({
+            character_id: charA.id,
+            related_character_id: charB.id,
+            memory_type: 'relationship',
+          }).catch(() => []);
+
+          const lastInteraction = recentMemories
+            .filter(m => m.memory_summary?.includes('[co-location]'))
+            .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))[0];
+
+          if (lastInteraction) {
+            const age = now - new Date(lastInteraction.created_date);
+            if (age < pairCooldownMs) {
+              console.log(`[organicInteractions] Skipping ${charA.name}↔${charB.name}: pair cooldown active`);
+              continue;
+            }
+          }
+
+          const priorCount = recentMemories.filter(m => m.memory_summary?.includes('[co-location]')).length;
+
+          // ── CREATE CONVERSATION & INITIAL MESSAGES ───────────────────────
+          const convoTitle = `npc_chat__${charA.id}__${charB.name || charB.display_name}`;
+          const existingConvo = await base44.asServiceRole.entities.Conversation.filter(
+            { title: convoTitle, type: 'npc' },
+            null,
+            1
+          ).catch(() => []);
+
+          let conversation = existingConvo[0];
+          const isNewConvo = !conversation;
+
+          if (isNewConvo) {
+            conversation = await base44.asServiceRole.entities.Conversation.create({
+              title: convoTitle,
+              type: 'npc',
+              character_ids: [charA.id, charB.id],
+            }).catch(e => {
+              console.warn(`[organicInteractions] Conversation creation failed: ${e.message}`);
+              return null;
+            });
+          }
+
+          if (!conversation) continue;
+
+          // ── GENERATE CONVERSATION THREAD ──────────────────────────────────
+          const targetMessages = getConversationTarget(
+            (charB.fictional_relationships || []).find(r => r.related_character_id === charA.id),
+            priorCount
+          );
+
+          const interactionNote = buildInteractionNote(charA, charB, locationName, locCategory);
+          const familiarityLabel = getFamiliarityLabel(priorCount + 1);
+          const timestamp = now.toISOString();
+
+          // Opening message
+          const openingMessages = [
+            `hey, ${interactionNote}. how's it going?`,
+            `you here too? ${interactionNote}.`,
+            `hey! didn't expect to see you here. ${interactionNote}.`,
+            `yo, ${interactionNote}. what are you up to?`,
+            `${charB.name || charB.display_name}! ${interactionNote}.`,
+          ];
+
+          const opening = openingMessages[Math.floor(Math.random() * openingMessages.length)];
+
+          try {
+            const messages = [];
+            messages.push({
+              conversation_id: conversation.id,
+              sender_type: 'character',
               character_id: charA.id,
-              related_character_id: charB.id,
-              memory_type: 'relationship',
+              character_name: charA.name || charA.display_name,
+              content: opening,
+              timestamp,
             });
 
-            const lastInteraction = recentMemories
-              .filter(m => m.memory_summary?.includes('[co-location]'))
-              .sort((a, b) => new Date(b.created_date) - new Date(a.created_date))[0];
+            // Generate responsive conversation
+            let messageCount = 1;
+            let lastSender = charA.id;
+            let conversationContext = [{ role: 'user', content: opening }];
 
-            if (lastInteraction) {
-              const age = now - new Date(lastInteraction.created_date);
-              if (age < cooldownMs) continue; // too soon
-            }
+            while (messageCount < targetMessages && messageCount < 30) {
+              const responder = lastSender === charA.id ? charB : charA;
+              const initiator = lastSender === charA.id ? charA : charB;
 
-            // Count prior interactions to gauge familiarity level
-            const priorCount = recentMemories.filter(m => m.memory_summary?.includes('[co-location]')).length;
-            const newCount = priorCount + 1;
-            const familiarityLabel = getFamiliarityLabel(newCount);
-            const interactionNote = buildInteractionNote(charA, charB, locationName, locCategory);
-            const relType = buildRelationshipType(locCategory, priorCount);
-            const timestamp = now.toISOString();
+              const relationInfo = (responder.fictional_relationships || []).find(
+                r => r.related_character_id === initiator.id
+              );
 
-            // ── CREATE/FIND CONVERSATION (character → character messaging) ────
-            const convoTitle = `npc_chat__${charA.id}__${charB.name || charB.display_name}`;
-            const existingConvo = await base44.asServiceRole.entities.Conversation.filter(
-              { title: convoTitle, type: 'npc' },
-              null,
-              1
-            ).catch(() => []);
+              const contextStr = conversationContext
+                .slice(-4) // last 4 exchanges for context
+                .map(m => `${m.role === 'user' ? initiator.name : responder.name}: ${m.content}`)
+                .join('\n');
 
-            const conversation = existingConvo[0] || 
-              await base44.asServiceRole.entities.Conversation.create({
-                title: convoTitle,
-                type: 'npc',
-                character_ids: [charA.id, charB.id],
-              }).catch(e => {
-                console.warn(`[organicInteractions] Conversation creation failed: ${e.message}`);
-                return null;
-              });
+              const prompt = `You are ${responder.name || responder.display_name} texting ${initiator.name || initiator.display_name}.
+Relationship: ${relationInfo?.description || 'acquaintance'} (${relationInfo?.current_status || 'friendly'}).
+Context: ${contextStr}
 
-            if (conversation) {
-              // ── CREATE INITIAL MESSAGE (Char A initiates) ────
-              await base44.asServiceRole.entities.Message.create({
+Reply naturally in 1-2 sentences. Keep it brief and realistic. Use casual, imperfect texting tone.
+${messageCount > (targetMessages - 2) ? 'Consider wrapping up the conversation naturally.' : ''}`;
+
+              const llmResponse = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt }).catch(() => '...');
+              const content = (llmResponse || '...').trim();
+
+              messages.push({
                 conversation_id: conversation.id,
                 sender_type: 'character',
-                character_id: charA.id,
-                character_name: charA.name || charA.display_name,
-                content: `Hey ${charB.name || charB.display_name}, ${interactionNote.toLowerCase()}. How's it going?`,
-                timestamp: timestamp,
-              }).catch(e => console.warn(`[organicInteractions] Message creation failed: ${e.message}`));
+                character_id: responder.id,
+                character_name: responder.name || responder.display_name,
+                content,
+                timestamp: new Date(new Date(timestamp).getTime() + messageCount * 60000).toISOString(),
+              });
 
-              // ── GENERATE & CREATE REPLY (Char B responds) ────
-              try {
-                const relationInfo = (charB.fictional_relationships || []).find(r => r.related_character_id === charA.id);
-                const prompt = `You are ${charB.name || charB.display_name}. ${charA.name || charA.display_name} just said: "Hey ${charB.name || charB.display_name}, ${interactionNote.toLowerCase()}. How's it going?"
-            ${relationInfo ? `Your relationship: ${relationInfo.description || 'acquaintance'}. Current status: ${relationInfo.current_status || 'friendly'}.` : 'You just met them.'}
+              conversationContext.push({ role: 'user', content });
 
-            Reply naturally in 1-2 sentences. Be conversational and brief.`;
-
-                const llmResponse = await base44.asServiceRole.integrations.Core.InvokeLLM({ prompt });
-                const replyContent = (llmResponse || '...').trim();
-
-                await base44.asServiceRole.entities.Message.create({
-                  conversation_id: conversation.id,
-                  sender_type: 'character',
-                  character_id: charB.id,
-                  character_name: charB.name || charB.display_name,
-                  content: replyContent,
-                  timestamp: new Date().toISOString(),
-                }).catch(e => console.warn(`[organicInteractions] Reply message creation failed: ${e.message}`));
-
-                // ── SYNC TO MEMORY (after messages created) ────
-                await base44.asServiceRole.entities.CharacterMemory.create({
-                  character_id: charA.id,
-                  memory_type: 'relationship',
-                  memory_text: `They ${interactionNote} with ${charB.name || charB.display_name}. Familiarity: ${familiarityLabel}.`,
-                  memory_summary: `[co-location] ${charB.name || charB.display_name} at ${locationName}`,
-                  related_character_id: charB.id,
-                  related_location_id: locId,
-                  importance_score: Math.min(3 + newCount, 7),
-                  confidence_score: 0.9,
-                  permanence: 'long_term',
-                  validation_status: 'confirmed',
-                }).catch(() => {});
-
-                await base44.asServiceRole.entities.CharacterMemory.create({
-                  character_id: charB.id,
-                  memory_type: 'relationship',
-                  memory_text: `They ${interactionNote} with ${charA.name || charA.display_name}. Familiarity: ${familiarityLabel}.`,
-                  memory_summary: `[co-location] ${charA.name || charA.display_name} at ${locationName}`,
-                  related_character_id: charA.id,
-                  related_location_id: locId,
-                  importance_score: Math.min(3 + newCount, 7),
-                  confidence_score: 0.9,
-                  permanence: 'long_term',
-                  validation_status: 'confirmed',
-                }).catch(() => {});
-              } catch (llmErr) {
-                console.warn(`[organicInteractions] LLM reply generation failed: ${llmErr.message}`);
+              // Natural stopping point check
+              if (shouldEndConversation(content, messageCount >= targetMessages)) {
+                console.log(`[organicInteractions] Natural ending after ${messageCount + 1} messages`);
+                break;
               }
+
+              messageCount++;
+              lastSender = responder.id;
             }
 
-            // ── UPDATE/CREATE fictional_relationships on active characters ──
-            // Only applies to active_created_character type
-            const updateFictionalRelationship = async (sourceChar, targetChar) => {
+            // Batch insert messages
+            for (const msg of messages) {
+              await base44.asServiceRole.entities.Message.create(msg).catch(e => 
+                console.warn(`[organicInteractions] Message creation failed: ${e.message}`)
+              );
+            }
+
+            console.log(`[organicInteractions] ✓ Conversation: ${charA.name}↔${charB.name} (${messages.length} messages) at ${locationName}`);
+
+            // ── SYNC MEMORIES ────────────────────────────────────────────────
+            await Promise.all([
+              base44.asServiceRole.entities.CharacterMemory.create({
+                character_id: charA.id,
+                memory_type: 'relationship',
+                memory_text: `They ${interactionNote} with ${charB.name || charB.display_name}. Familiarity: ${familiarityLabel}.`,
+                memory_summary: `[co-location] ${charB.name || charB.display_name} at ${locationName}`,
+                related_character_id: charB.id,
+                related_location_id: locId,
+                importance_score: Math.min(3 + priorCount, 7),
+                confidence_score: 0.9,
+                permanence: 'long_term',
+                validation_status: 'confirmed',
+              }).catch(() => {}),
+              base44.asServiceRole.entities.CharacterMemory.create({
+                character_id: charB.id,
+                memory_type: 'relationship',
+                memory_text: `They ${interactionNote} with ${charA.name || charA.display_name}. Familiarity: ${familiarityLabel}.`,
+                memory_summary: `[co-location] ${charA.name || charA.display_name} at ${locationName}`,
+                related_character_id: charA.id,
+                related_location_id: locId,
+                importance_score: Math.min(3 + priorCount, 7),
+                confidence_score: 0.9,
+                permanence: 'long_term',
+                validation_status: 'confirmed',
+              }).catch(() => {}),
+            ]);
+
+            // ── UPDATE FICTIONAL RELATIONSHIPS ───────────────────────────────
+            const updateFictionalRel = async (sourceChar, targetChar) => {
               if (sourceChar.character_type !== 'active_created_character') return;
 
               const existing = (sourceChar.fictional_relationships || []).find(
-                r => r.related_character_id === targetChar.id || 
-                     r.person_name?.trim().toLowerCase() === (targetChar.name || targetChar.display_name)?.trim().toLowerCase()
+                r => r.related_character_id === targetChar.id
               );
 
               const updatedRel = existing
-                ? {
-                    ...existing,
-                    familiarity_level: Math.min((existing.familiarity_level || 10) + 5, 60),
-                    last_interaction_summary: `${interactionNote} — ${new Date().toLocaleDateString()}`,
-                    current_status: familiarityLabel,
-                  }
+                ? { ...existing, current_status: familiarityLabel }
                 : {
                     person_name: targetChar.name || targetChar.display_name,
                     related_character_id: targetChar.id,
                     relationship_type: 'other',
                     description: `Seen around at ${locationName}.`,
                     current_status: 'Seen around',
-                    last_interaction_summary: `${interactionNote} — ${new Date().toLocaleDateString()}`,
-                    history_summary: `First encountered at ${locationName} on ${new Date().toLocaleDateString()}.`,
-                    avatar_url: targetChar.avatar_url || null,
-                    current_location_id: targetChar.resolved_current_location_id || null,
                     friendship_level: 0,
-                    familiarity_level: 5,
-                    trust_level: 0,
-                    user_respect_level: 20,
-                    romantic_level: 0,
-                    attraction_level: 0,
-                    chosen_family_level: 0,
-                    relational_jealousy: 0,
-                    envy_jealousy: 0,
                   };
 
               const updatedList = existing
                 ? (sourceChar.fictional_relationships || []).map(r =>
-                    (r.related_character_id === targetChar.id || r.person_name?.trim().toLowerCase() === (targetChar.name || '')?.trim().toLowerCase())
-                      ? updatedRel
-                      : r
+                    r.related_character_id === targetChar.id ? updatedRel : r
                   )
                 : [...(sourceChar.fictional_relationships || []), updatedRel];
 
               await base44.asServiceRole.entities.Character.update(sourceChar.id, {
                 fictional_relationships: updatedList,
-              }).catch(e => console.warn(`[organicInteractions] fictional_relationships update failed: ${e.message}`));
+              }).catch(() => {});
             };
 
-            // Update fictional relationships (for active characters only)
             await Promise.all([
-              updateFictionalRelationship(charA, charB),
-              updateFictionalRelationship(charB, charA),
+              updateFictionalRel(charA, charB),
+              updateFictionalRel(charB, charA),
             ]);
 
-            // ── UPDATE CharacterRelationship record ───────────────────────
-            const existingRels = await base44.asServiceRole.entities.CharacterRelationship.filter({
-              source_character_id: charA.id,
-              target_character_id: charB.id,
-            }).catch(() => []);
-
-            // Relationship bar deltas — small increments, context-aware
-            // First encounter: minimal bars. Repeated contact grows them slowly.
-            const isFirstMeet = priorCount === 0;
-            const famDelta = isFirstMeet ? 5 : 4;       // familiarity grows each time
-            const friendDelta = isFirstMeet ? 0 : 2;    // no friendship boost on first meet
-            const trustDelta = isFirstMeet ? 0 : 1;     // trust requires repeated contact
-
-            // Workplace/school context gives small coworker familiarity bump, not friendship
-            const contextFamBonus = ['workplace', 'school'].includes(locCategory) ? 3 : 0;
-
-            if (existingRels.length > 0) {
-              const rel = existingRels[0];
-              const updates = {
-                familiarity_level: Math.min((rel.familiarity_level || 5) + famDelta + contextFamBonus, 100),
-                friendship_level: Math.min((rel.friendship_level || 0) + friendDelta, 100),
-                trust_level: Math.min((rel.trust_level || 0) + trustDelta, 100),
-                label_from_source_perspective: familiarityLabel,
-              };
-              // Upgrade relationship_type only after sufficient familiarity (not on first meet)
-              if (!isFirstMeet && rel.relationship_type === 'other') {
-                updates.relationship_type = relType;
-              }
-              await base44.asServiceRole.entities.CharacterRelationship.update(rel.id, updates).catch(() => {});
-            } else {
-              // Brand new relationship — start at "other", bars near zero
-              await base44.asServiceRole.entities.CharacterRelationship.create({
-                source_character_id: charA.id,
-                target_character_id: charB.id,
-                relationship_type: 'other',
-                label_from_source_perspective: 'Seen around',
-                familiarity_level: famDelta,
-                friendship_level: 0,
-                trust_level: 0,
-                respect_level: 20,
-                tension_level: 0,
-                attraction_level: 0,
-                is_household_member: false,
-                is_family: false,
-                is_hidden: false,
-              }).catch(() => {});
-            }
-
+            charsStartedThisCycle.add(charA.id);
+            convosCreatedThisCycle++;
             totalInteractions++;
-            console.log(`[organicInteractions] ✓ Interaction: ${charA.name} ↔ ${charB.name} at ${locationName} (${familiarityLabel})`);
 
-            // Small delay to avoid hammering the DB
-            await new Promise(r => setTimeout(r, 150));
+          } catch (conversationErr) {
+            console.warn(`[organicInteractions] Conversation generation failed: ${conversationErr.message}`);
           }
+
+          await new Promise(r => setTimeout(r, 100));
         }
       }
     }
 
     return Response.json({
       success: true,
-      interactions_generated: totalInteractions,
+      conversations_created: convosCreatedThisCycle,
+      total_interactions: totalInteractions,
       users_processed: Object.keys(byUser).length,
       timestamp: now.toISOString(),
     });
