@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useWorldContactsUnread } from '@/hooks/useWorldContactsUnread';
 
 export default function NPCContactPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -58,6 +59,14 @@ export default function NPCContactPanel() {
     return nameA.localeCompare(nameB);
   });
 
+  // Get unread counts for World Contacts
+  const { unreadByContact, globalUnreadCount } = useWorldContactsUnread(
+    currentUser?.id,
+    sortedNpcCharacters.length > 0
+      ? sortedNpcCharacters.map(c => ({ person_name: c.name, id: c.id }))
+      : []
+  );
+
   // Close dropdown when clicking outside
   React.useEffect(() => {
     const handleClickOutside = (e) => {
@@ -106,10 +115,19 @@ export default function NPCContactPanel() {
     <div className="relative w-full" data-npc-panel>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="w-full flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors"
+        className="w-full flex items-center gap-2 px-4 py-2 rounded-xl bg-purple-500/10 border border-purple-500/30 text-purple-400 hover:bg-purple-500/20 transition-colors relative"
       >
         <Users className="w-4 h-4" />
         Contact NPC: {sortedNpcCharacters.length} shown
+        {globalUnreadCount > 0 && (
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center"
+          >
+            {globalUnreadCount > 9 ? '9+' : globalUnreadCount}
+          </motion.div>
+        )}
         <ChevronDown className={`w-4 h-4 ml-auto transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </button>
 
@@ -136,7 +154,7 @@ export default function NPCContactPanel() {
                   <motion.button
                     key={npc.id}
                     onClick={() => handleContactNPC(npc)}
-                    className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0"
+                    className="w-full flex items-center justify-between gap-3 px-3 py-2 hover:bg-secondary transition-colors text-left border-b border-border last:border-b-0 relative"
                     whileHover={{ x: 2 }}
                   >
                     <div className="flex items-center gap-3 flex-1 min-w-0">
@@ -152,6 +170,15 @@ export default function NPCContactPanel() {
                         <p className="text-xs text-muted-foreground truncate capitalize">{npc.character_type}</p>
                       </div>
                     </div>
+                    {unreadByContact[npc.name] > 0 && (
+                      <motion.div
+                        initial={{ scale: 0 }}
+                        animate={{ scale: 1 }}
+                        className="w-4 h-4 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center flex-shrink-0"
+                      >
+                        {unreadByContact[npc.name] > 9 ? '9+' : unreadByContact[npc.name]}
+                      </motion.div>
+                    )}
                     <div className="flex items-center gap-1 flex-shrink-0">
                       <button
                         onClick={(e) => handleMarkAsActive(e, npc)}

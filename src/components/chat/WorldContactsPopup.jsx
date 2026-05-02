@@ -51,6 +51,12 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           role: m.sender_type === "user" ? "user" : "npc",
           content: m.content,
         })));
+
+        // Mark all unread incoming messages in this conversation as read
+        const unreadIncoming = history.filter(m => m.sender_type === "character" && !m.is_read);
+        for (const msg of unreadIncoming) {
+          await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
+        }
       }
     } catch {
       // Could not load history — start fresh
