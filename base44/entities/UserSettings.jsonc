@@ -136,6 +136,15 @@
             "type": "string"
           },
           "default": []
+        },
+        "height_inches": {
+          "type": "number"
+        },
+        "height_display": {
+          "type": "string"
+        },
+        "head_ratio": {
+          "type": "number"
         }
       }
     },
@@ -395,6 +404,10 @@
       "type": "string",
       "format": "date-time",
       "description": "Timestamp of last world context fetch"
+    },
+    "holiday_observation_enabled": {
+      "type": "boolean",
+      "default": true
     }
   },
   "required": []

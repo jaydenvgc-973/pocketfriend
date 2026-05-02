@@ -257,6 +257,15 @@
             "type": "string"
           },
           "default": []
+        },
+        "height_inches": {
+          "type": "number"
+        },
+        "height_display": {
+          "type": "string"
+        },
+        "head_ratio": {
+          "type": "number"
         }
       }
     },
