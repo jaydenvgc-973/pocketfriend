@@ -9,6 +9,98 @@
  */
 
 /**
+ * Convert height in inches to a head ratio category and fractional value.
+ * Default (no height stored) → 7.5 heads, ~5'7.5" average adult.
+ */
+export function resolveHeightProportions(heightInches) {
+  if (!heightInches || heightInches <= 0) {
+    return { heightInches: null, headRatio: 7.5, category: 'average', isDefault: true };
+  }
+  const h = Number(heightInches);
+  let headRatio;
+  let category;
+  if (h < 64) {
+    headRatio = 7.0 + ((h - 60) / 4) * 0.25; // scale within short range
+    category = 'short';
+  } else if (h <= 69) {
+    headRatio = 7.25 + ((h - 64) / 5) * 0.5;  // 7.25–7.75
+    category = 'average';
+  } else if (h <= 74) {
+    headRatio = 7.75 + ((h - 70) / 4) * 0.25; // 7.75–8.0
+    category = 'tall';
+  } else {
+    headRatio = 8.0 + ((h - 75) / 4) * 0.5;   // 8.0–8.5+
+    category = 'very_tall';
+  }
+  // Round to 1 decimal
+  headRatio = Math.round(headRatio * 10) / 10;
+  return { heightInches: h, headRatio, category, isDefault: false };
+}
+
+/**
+ * Convert total inches to feet+inches string: 68 → "5'8\""
+ */
+function inchesToFeetStr(totalInches) {
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return `${feet}'${inches}"`;
+}
+
+/**
+ * Build the height proportion enforcement block.
+ * Returns empty string when no height is stored (default behavior: use ~7.5 heads / average).
+ */
+export function buildHeightProportionBlock(character) {
+  if (!character) return '';
+  const lock = character.appearance_lock || {};
+  const stored = lock.height_inches;
+
+  const { heightInches, headRatio, category, isDefault } = resolveHeightProportions(stored);
+
+  // Proportion descriptions by category
+  const proportionNote = {
+    short:     'shorter legs relative to torso, more compact proportions — do NOT stretch the body',
+    average:   'standard human proportions — torso and legs balanced naturally',
+    tall:      'longer legs relative to torso, slightly elongated proportions — do NOT compress the body',
+    very_tall: 'noticeably longer legs, elongated torso, visibly above average in all frame references',
+  }[category];
+
+  const heightLabel = isDefault
+    ? `~5'7.5" (default average — no height stored)`
+    : `${inchesToFeetStr(heightInches)} (${heightInches} inches)`;
+
+  return `\n\n════════════════════════════════════════════════════════════════════════════════
+HEIGHT + BODY PROPORTION LOCK (MANDATORY)
+════════════════════════════════════════════════════════════════════════════════
+
+Character height: ${heightLabel}
+Head unit ratio: ~${headRatio} heads tall
+Proportion class: ${category}
+
+BODY STRUCTURE RULES:
+✓ Build body using head-unit ratio — head = 1 unit, torso ≈ 2.5–3 units, legs ≈ 3.5–4 units
+✓ ${proportionNote}
+✓ All anatomy must remain believable — do NOT stretch or compress the body uniformly
+✓ This height must remain CONSISTENT across all images — do NOT drift or randomize
+
+ENVIRONMENT ALIGNMENT (when character is standing and anchors are visible):
+${category === 'short'    ? '✓ Standard countertop (~36") rises ABOVE waist | doorknob (~36") rises toward upper abdomen' : ''}
+${category === 'average'  ? '✓ Standard countertop (~36") ≈ waist level | doorknob (~36") ≈ belly button' : ''}
+${category === 'tall'     ? '✓ Standard countertop (~36") falls BELOW waist | doorknob (~36") falls below belly button' : ''}
+${category === 'very_tall'? '✓ Standard countertop (~36") well below waist | doorknob noticeably below belly button' : ''}
+✓ Standard door ≈ 80 inches — use for full-height validation when visible
+
+CONTEXT RULES:
+✓ Apply full height + anchor enforcement ONLY when character is standing and anchors or other characters are present
+✓ For seated, lying, close-up, or portrait scenes: maintain correct body proportions internally — do NOT force standing
+✓ Do NOT convert seated scenes to standing to prove height
+✓ Do NOT insert objects for scale unless they are naturally part of the scene
+✓ Do NOT use camera tricks or depth positioning to fake height — height comes from body scale only
+✓ Multi-character scenes: ALL characters must share the same ground plane
+════════════════════════════════════════════════════════════════════════════════`;
+}
+
+/**
  * Build the appearance lock block from character data
  * STRICT: Must include exact fields from appearance_lock
  * 
@@ -47,9 +139,9 @@ export function buildAppearanceLockBlock(character) {
     customKeywords,
   ].filter(Boolean);
   
-  if (parts.length === 0) return '';
+  if (parts.length === 0 && !lock.height_inches) return '';
   
-  return `\n\n════════════════════════════════════════════════════════════════════════════════
+  const identityBlock = parts.length > 0 ? `\n\n════════════════════════════════════════════════════════════════════════════════
 APPEARANCE LOCK — CHARACTER IDENTITY (MANDATORY)
 ════════════════════════════════════════════════════════════════════════════════
 
@@ -65,7 +157,11 @@ CRITICAL RULES:
 ✓ Identity is SEPARATE from clothing — clothing comes from outfit data only
 
 This is the character's immutable visual identity. Every image must match.
-════════════════════════════════════════════════════════════════════════════════`;
+════════════════════════════════════════════════════════════════════════════════` : '';
+
+  const heightBlock = buildHeightProportionBlock(character);
+
+  return identityBlock + heightBlock;
 }
 
 /**

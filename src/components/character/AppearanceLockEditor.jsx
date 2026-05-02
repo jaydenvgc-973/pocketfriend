@@ -15,6 +15,32 @@ const FIELDS = [
   { key: "overall_aesthetic", label: "Overall Aesthetic", placeholder: "e.g. dark academia, Caribbean casual, NYC streetwear..." },
 ];
 
+function inchesToFeet(totalInches) {
+  if (!totalInches) return '';
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return `${feet}'${inches}"`;
+}
+
+function feetStringToInches(str) {
+  // Accepts: 5'8", 5'8, 5 8, 68"
+  if (!str) return null;
+  const stripped = str.trim().replace(/["""''`]/g, "'");
+  // feet'inches
+  const feetInch = stripped.match(/^(\d+)'(\d*)$/);
+  if (feetInch) {
+    return parseInt(feetInch[1]) * 12 + (parseInt(feetInch[2]) || 0);
+  }
+  // pure inches
+  const pureInch = stripped.match(/^(\d+)$/);
+  if (pureInch) {
+    const n = parseInt(pureInch[1]);
+    // if under 12, treat as feet
+    return n < 12 ? n * 12 : n;
+  }
+  return null;
+}
+
 export default function AppearanceLockEditor({ character }) {
   const queryClient = useQueryClient();
   const [lock, setLock] = useState(character.appearance_lock || {});
@@ -122,10 +148,34 @@ Return a JSON object with these exact keys (omit any key you cannot confidently 
         )}
       </div>
       <p className="text-xs text-muted-foreground">
-        These traits are locked identity anchors. They guide image generation and prevent drift — race, skin tone, and features will never default or change.
+        These traits are locked identity anchors. They guide image generation and prevent drift — race, skin tone, features, and body proportions will never default or change.
       </p>
 
       <div className="space-y-3">
+        {/* Height field — stored as height_inches, enforces head-unit proportions in all generated images */}
+        <div>
+          <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Height</label>
+          <input
+            type="text"
+            value={lock.height_inches ? inchesToFeet(lock.height_inches) : ''}
+            onChange={e => {
+              const parsed = feetStringToInches(e.target.value);
+              if (parsed !== null && parsed > 0) {
+                update('height_inches', parsed);
+              } else if (e.target.value === '') {
+                update('height_inches', null);
+              }
+            }}
+            placeholder="e.g. 5'8 or 5'10 — sets body proportions for image generation"
+            className="w-full h-10 px-3 rounded-xl bg-secondary border border-border text-foreground text-sm placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          {lock.height_inches > 0 && (
+            <p className="text-[10px] text-muted-foreground mt-1">
+              {lock.height_inches}" → {lock.height_inches < 64 ? 'short' : lock.height_inches <= 69 ? 'average' : lock.height_inches <= 74 ? 'tall' : 'very tall'} proportions
+            </p>
+          )}
+        </div>
+
         {FIELDS.map(({ key, label, placeholder }) => (
           <div key={key}>
             <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">{label}</label>
