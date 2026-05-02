@@ -18,49 +18,15 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [npcContacts, setNpcContacts] = useState([]);
   const [contactUnreadCounts, setContactUnreadCounts] = useState({});
   const bottomRef = useRef(null);
 
-  // Load NPC_fictitious characters as additional contacts
-  useEffect(() => {
-    if (!isOpen || !character) return;
-    const loadNPCs = async () => {
-      try {
-        const npcs = await base44.entities.Character.filter({
-          character_type: 'NPC_fictitious',
-          status: 'active',
-          is_test_character: false,
-          diagnostic_only: false
-        }, '-created_date', 100);
-        
-        const npcList = (npcs || []).map(npc => ({
-          person_name: npc.name || npc.display_name,
-          related_character_id: npc.id,
-          relationship_type: 'NPC',
-          description: npc.profile_summary || 'A character in your world',
-          current_status: npc.emotional_state || 'active',
-          friendship_level: 0,
-          romantic_level: 0
-        }));
-        
-        setNpcContacts(npcList);
-      } catch (err) {
-        console.error('[WorldContactsPopup] Failed to load NPCs:', err.message);
-      }
-    };
-    loadNPCs();
-  }, [isOpen, character]);
-
-  // Combine fictional relationships with NPC contacts and load unread counts
-  const fictionalRels = (character?.fictional_relationships || []).filter(r => r.person_name);
-  const contacts = [...fictionalRels, ...npcContacts].filter((c, i, arr) =>
-    arr.findIndex(x => x.related_character_id === c.related_character_id) === i
-  );
+  // Get contacts from fictional relationships (primary source)
+  const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
 
   // Load unread counts for all contacts
   useEffect(() => {
-    if (!character || contacts.length === 0) return;
+    if (!character) return;
     const loadUnreadCounts = async () => {
       const counts = {};
       for (const contact of contacts) {
