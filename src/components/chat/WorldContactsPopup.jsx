@@ -4,178 +4,23 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, Send, Globe, ArrowLeft, User, Loader2 } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 
-// Derive a stable conversation key using character IDs only (NOT names)
-function npcConvoKey(characterId, contactCharacterId) {
-  // Sort IDs to ensure [A, B] and [B, A] map to same key
-  const ids = [characterId, contactCharacterId].sort();
-  return `npc_chat__${ids[0]}__${ids[1]}`;
+// Derive a stable conversation key for an NPC chat
+function npcConvoTitle(character, contactName) {
+  return `npc_chat__${character.id}__${contactName}`;
 }
 
-export default function WorldContactsPopup({ isOpen, onClose, character, onConversationOpened }) {
+export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const [selectedContact, setSelectedContact] = useState(null);
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState(null);
   const [inputText, setInputText] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-  const [contacts, setContacts] = useState([]);
-  const [contactUnreadCounts, setContactUnreadCounts] = useState({});
-  const [currentUser, setCurrentUser] = useState(null);
   const bottomRef = useRef(null);
 
-  // Fetch current user
-  useEffect(() => {
-    base44.auth.me().then(setCurrentUser).catch(() => {});
-  }, []);
+  const contacts = (character?.fictional_relationships || []).filter(r => r.person_name);
 
-  // Load contacts from ALL valid sources:
-  // 1. fictional_relationships on the character (primary)
-  // 2. NPC_fictitious Character records owned by the user
-  // 3. Any existing NPC Conversation participants involving this character
-  // Deduplicate by related_character_id (ID-based, never name-based)
-  useEffect(() => {
-    if (!isOpen || !character) return;
-
-    const loadContacts = async () => {
-      const seen = new Set();
-      const merged = [];
-
-      // SOURCE 1: fictional_relationships embedded on the character
-      for (const r of (character.fictional_relationships || [])) {
-        if (!r.person_name || !r.related_character_id) continue;
-        if (!seen.has(r.related_character_id)) {
-          seen.add(r.related_character_id);
-          merged.push(r);
-        }
-      }
-
-      // SOURCE 2: Load all npc_fictitious characters owned by the user
-      // These are the People in Their World and should appear as contacts
-      try {
-        const npcFictitious = await base44.entities.Character.filter(
-          { character_type: 'npc_fictitious', owner_email: currentUser?.email },
-          null,
-          200
-        ).catch(() => []);
-
-        for (const npc of (npcFictitious || [])) {
-          if (!seen.has(npc.id)) {
-            seen.add(npc.id);
-            merged.push({
-              person_name: npc.name,
-              related_character_id: npc.id,
-              relationship_type: npc.archetype || 'npc',
-              description: npc.profile_summary || npc.personality_summary || '',
-              current_status: npc.emotional_state || '',
-              friendship_level: npc.friendship_level || 0,
-              romantic_level: npc.romantic_level || 0,
-              avatar_url: npc.avatar_url || npc.image_avatar_url || null,
-              _source: 'npc_fictitious',
-            });
-          }
-        }
-      } catch (err) {
-        console.error('[WorldContacts] NPC fictitious load failed:', err.message);
-      }
-
-      // SOURCE 3: Existing NPC Conversations involving this character
-      // This recovers any contacts from prior interactions
-      try {
-        const allNpcConvos = await base44.entities.Conversation.filter(
-          { type: 'npc' }, '-updated_date', 200
-        );
-        const involvedConvos = (allNpcConvos || []).filter(c =>
-          Array.isArray(c.character_ids) && c.character_ids.includes(character.id)
-        );
-
-        for (const convo of involvedConvos) {
-          const otherIds = (convo.character_ids || []).filter(id => id !== character.id);
-          for (const otherId of otherIds) {
-            if (!seen.has(otherId)) {
-              // Try to load their Character record to get a name
-              try {
-                const otherChars = await base44.entities.Character.filter({ id: otherId });
-                const other = otherChars?.[0];
-                const name = other?.name || other?.display_name || other?.primary_name || `Contact ${otherId.substring(0, 6)}`;
-                seen.add(otherId);
-                merged.push({
-                  person_name: name,
-                  related_character_id: otherId,
-                  relationship_type: other?.archetype || other?.character_type || 'contact',
-                  description: other?.profile_summary || other?.personality_summary || '',
-                  current_status: other?.emotional_state || '',
-                  friendship_level: other?.friendship_level || 0,
-                  romantic_level: other?.romantic_level || 0,
-                  avatar_url: other?.avatar_url || other?.image_avatar_url || null,
-                  _source: 'existing_conversation',
-                });
-              } catch {
-                // Still add a placeholder so the contact is not hidden
-                seen.add(otherId);
-                merged.push({
-                  person_name: `Contact (${otherId.substring(0, 6)})`,
-                  related_character_id: otherId,
-                  relationship_type: 'contact',
-                  description: '',
-                  _source: 'existing_conversation_unresolved',
-                });
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.error('[WorldContacts] Conversation-based contact load failed:', err.message);
-      }
-
-      setContacts(merged);
-    };
-
-    loadContacts();
-  }, [isOpen, character, currentUser]);
-
-  // Load unread counts for all contacts
-  useEffect(() => {
-    if (!character || contacts.length === 0) return;
-    const loadUnreadCounts = async () => {
-      const counts = {};
-
-      // Load all NPC conversations once, then match per contact
-      let allNpcConvos = [];
-      try {
-        allNpcConvos = await base44.entities.Conversation.filter(
-          { type: "npc" }, null, 200
-        );
-      } catch { /* silent */ }
-
-      for (const contact of contacts) {
-        try {
-          const convo = (allNpcConvos || []).find(c =>
-            Array.isArray(c.character_ids) &&
-            c.character_ids.includes(character.id) &&
-            c.character_ids.includes(contact.related_character_id)
-          );
-
-          if (convo) {
-            const unreadMsgs = await base44.entities.Message.filter({
-              conversation_id: convo.id,
-              sender_type: "character",
-              is_read: false
-            });
-            counts[contact.related_character_id] = unreadMsgs?.length || 0;
-          } else {
-            counts[contact.related_character_id] = 0;
-          }
-        } catch (err) {
-          console.error('[loadUnreadCounts]', err.message);
-          counts[contact.related_character_id] = 0;
-        }
-      }
-      setContactUnreadCounts(counts);
-    };
-    loadUnreadCounts();
-  }, [character, contacts]);
-
-  // Load or create a persistent conversation for the selected NPC using stable ID-based key
+  // Load or create a persistent conversation for the selected NPC
   const selectContact = async (contact) => {
     setSelectedContact(contact);
     setMessages([]);
@@ -184,54 +29,31 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
     setIsLoadingHistory(true);
 
     try {
-      // Query by character_ids array — enforces both participants must be present
-      let found = null;
-      const allNpc = await base44.entities.Conversation.filter(
-        { type: "npc" },
+      const title = npcConvoTitle(character, contact.person_name);
+      // Look for an existing NPC conversation
+      const existing = await base44.entities.Conversation.filter(
+        { type: "npc", character_ids: [character.id] },
         "-updated_date",
-        200
-      ).catch(() => []);
-      found = (allNpc || []).find(c =>
-        Array.isArray(c.character_ids) &&
-        c.character_ids.length === 2 &&
-        c.character_ids.includes(character.id) &&
-        c.character_ids.includes(contact.related_character_id)
+        50
       );
+      const found = existing.find(c => c.title === title);
 
       if (found) {
-        console.log(`[selectContact] Found conversation: ${found.id}`);
         setConversationId(found.id);
-        
-        // Load ALL messages (no limit, ascending order)
         const history = await base44.entities.Message.filter(
           { conversation_id: found.id },
           "created_date"
         );
-        
-        console.log(`[selectContact] Loaded ${history?.length || 0} messages`);
-        
-        const mapped = (history || []).map(m => ({
+        // Normalize to local format
+        setMessages(history.map(m => ({
           id: m.id,
           dbId: m.id,
           role: m.sender_type === "user" ? "user" : "npc",
           content: m.content,
-        }));
-        
-        setMessages(mapped);
-        
-        // Mark all unread messages in this conversation as read
-        for (const msg of (history || [])) {
-          if (msg.sender_type === "character" && !msg.is_read) {
-            await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
-          }
-        }
-        
-        onConversationOpened?.(found.id);
-      } else {
-        console.log(`[selectContact] No conversation found for ${contact.person_name}`);
+        })));
       }
-    } catch (err) {
-      console.error('[selectContact] Error:', err.message);
+    } catch {
+      // Could not load history — start fresh
     }
 
     setIsLoadingHistory(false);
@@ -260,53 +82,27 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
 
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
-
-    // Query by character_ids array — enforce both participants
-    const allNpc = await base44.entities.Conversation.filter(
-      { type: "npc" }, "-updated_date", 200
-    ).catch(() => []);
-    const existing = (allNpc || []).find(c =>
-      Array.isArray(c.character_ids) &&
-      c.character_ids.length === 2 &&
-      c.character_ids.includes(character.id) &&
-      c.character_ids.includes(selectedContact.related_character_id)
-    );
-    if (existing) {
-      setConversationId(existing.id);
-      return existing.id;
-    }
-
-    // Create new conversation only if none found
-    const key = npcConvoKey(character.id, selectedContact.related_character_id);
+    const title = npcConvoTitle(character, selectedContact.person_name);
     const convo = await base44.entities.Conversation.create({
-      title: key,
+      title,
       type: "npc",
-      character_ids: [character.id, selectedContact.related_character_id],
+      character_ids: [character.id],
     });
     setConversationId(convo.id);
     return convo.id;
   };
 
   const sendMessage = async () => {
-    if (!inputText.trim() || isTyping || !selectedContact?.related_character_id) return;
+    if (!inputText.trim() || isTyping) return;
     const text = inputText.trim();
     setInputText("");
     setIsTyping(true);
 
-    // Persist user message with ownership + character ID validation
+    // Persist user message
     const convoId = await ensureConversation();
-    
-    // Validate sender and recipient are different valid character IDs
-    if (character.id === selectedContact.related_character_id) {
-      setIsTyping(false);
-      return; // Prevent self-messaging
-    }
-    
     const savedUserMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "user",
-      character_id: selectedContact.related_character_id,
-      character_name: selectedContact.person_name,
       content: text,
       timestamp: new Date().toISOString(),
     });
@@ -347,11 +143,11 @@ Reply as ${selectedContact.person_name}:`;
       npcText = "...";
     }
 
-    // Persist NPC reply — use selectedContact's character ID as the "speaker"
+    // Persist NPC reply
     const savedNpcMsg = await base44.entities.Message.create({
       conversation_id: convoId,
       sender_type: "character",
-      character_id: selectedContact.related_character_id,
+      character_id: character.id,
       character_name: selectedContact.person_name,
       content: npcText,
       timestamp: new Date().toISOString(),
@@ -368,11 +164,10 @@ Reply as ${selectedContact.person_name}:`;
 
     setIsTyping(false);
 
-    // Sync World Contacts conversation to character memory
-    // This makes the conversation durable across all pages where character context is built
-    base44.functions.invoke('syncWorldContactsMemory', {
+    // Sync to Life Journal — fire-and-forget after every exchange
+    base44.functions.invoke('syncGroupChatMemories', {
       conversationId: convoId,
-      primaryCharacterId: character.id,
+      source: 'world_phone',
     }).catch(() => {});
   };
 
@@ -443,46 +238,35 @@ Reply as ${selectedContact.person_name}:`;
                   </p>
                 </div>
               ) : (
-                contacts.map((contact, i) => {
-                  const contactUnread = contactUnreadCounts[contact.related_character_id] || 0;
-
-                  return (
-                    <motion.button
-                      key={contact.related_character_id}
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: i * 0.04 }}
-                      onClick={() => selectContact(contact)}
-                      className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left ${
-                        contactUnread > 0 ? "bg-primary/10" : ""
-                      }`}
-                    >
-                      <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 relative">
-                        <span className="text-sm font-semibold text-primary">
-                          {contact.person_name?.[0]?.toUpperCase() || "?"}
-                        </span>
-                        {contactUnread > 0 && (
-                          <span className="absolute -top-1 -right-1 min-w-[20px] h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-1">
-                            {contactUnread > 99 ? "99+" : contactUnread}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-foreground">{contact.person_name}</p>
-                        <p className="text-xs text-muted-foreground truncate">
-                          {contact.relationship_type || "known contact"}
-                          {contact.current_status ? ` · ${contact.current_status}` : ""}
-                        </p>
-                      </div>
-                      <div className="flex-shrink-0 flex gap-1">
-                        {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}
-                        {contact.friendship_level > 70 && contact.romantic_level <= 30 && (
-                          <span className="text-xs text-emerald-400">✦</span>
-                        )}
-                      </div>
-                    </motion.button>
-                  );
-                })
+                contacts.map((contact, i) => (
+                  <motion.button
+                    key={i}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: i * 0.04 }}
+                    onClick={() => selectContact(contact)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/60 transition-colors text-left"
+                  >
+                    <div className="w-10 h-10 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0">
+                      <span className="text-sm font-semibold text-primary">
+                        {contact.person_name?.[0]?.toUpperCase() || "?"}
+                      </span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground">{contact.person_name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {contact.relationship_type || "known contact"}
+                        {contact.current_status ? ` · ${contact.current_status}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex-shrink-0 flex gap-1">
+                      {contact.romantic_level > 30 && <span className="text-xs text-pink-400">❤</span>}
+                      {contact.friendship_level > 70 && contact.romantic_level <= 30 && (
+                        <span className="text-xs text-emerald-400">✦</span>
+                      )}
+                    </div>
+                  </motion.button>
+                ))
               )}
             </div>
           ) : (

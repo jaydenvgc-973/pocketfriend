@@ -6,7 +6,6 @@ import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
 import { base44 } from "@/api/base44Client";
 
-
 export default function ChatHeader({
   character,
   characterId,
@@ -21,7 +20,6 @@ export default function ChatHeader({
   onSendMoneyToggle,
   onTroubleshootingToggle,
   onShoppingToggle,
-  worldContactsUnread,
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
 
@@ -84,7 +82,6 @@ export default function ChatHeader({
         <p className="text-xs text-muted-foreground">{isPhone ? "Texting" : "Talking"}</p>
       </div>
       <ChatActionsMenu
-        worldContactsUnread={worldContactsUnread}
         visible={{
           media: !!character,
           game: !!character && !isPhone,

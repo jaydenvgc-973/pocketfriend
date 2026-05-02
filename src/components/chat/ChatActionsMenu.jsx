@@ -18,7 +18,7 @@ const appsDrawerItems = [
   { id: "shopping",  icon: ShoppingBag, label: "Shopping" },
 ];
 
-export default function ChatActionsMenu({ visible = {}, onSelect, worldContactsUnread = 0 }) {
+export default function ChatActionsMenu({ visible = {}, onSelect }) {
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [appsOpen, setAppsOpen] = useState(false);
 
@@ -118,21 +118,13 @@ export default function ChatActionsMenu({ visible = {}, onSelect, worldContactsU
               <div className="grid grid-cols-2 gap-4">
                 {filteredApps.map(item => {
                   const Icon = item.icon;
-                  const badge = item.id === "contacts" && worldContactsUnread > 0 ? worldContactsUnread : 0;
                   return (
                     <button
                       key={item.id}
                       onClick={() => handleAppsSelect(item.id)}
-                      className="aspect-square flex flex-col items-center justify-center gap-2 rounded-2xl bg-secondary hover:bg-secondary/80 transition-colors relative"
+                      className="aspect-square flex flex-col items-center justify-center gap-2 rounded-2xl bg-secondary hover:bg-secondary/80 transition-colors"
                     >
-                      <div className="relative">
-                        <Icon className="w-6 h-6 text-primary" />
-                        {badge > 0 && (
-                          <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center px-0.5 leading-none">
-                            {badge > 99 ? "99+" : badge}
-                          </span>
-                        )}
-                      </div>
+                      <Icon className="w-6 h-6 text-primary" />
                       <span className="text-xs font-medium text-foreground text-center px-1">{item.label}</span>
                     </button>
                   );

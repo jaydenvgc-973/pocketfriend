@@ -313,14 +313,14 @@ export default function EditCharacterProfile() {
     setTimeout(() => setSaved(false), 2000);
   };
 
-  // Characters They Know: Include active_created_character AND npc_fictitious
+  // Only active_created_character records are valid targets for "Characters They Know"
   const otherChars = characters.filter(c =>
     c.id !== selectedChar?.id &&
     !['deleted','soft_deleted','merged'].includes(c.status) &&
-    (c.character_type === 'active_created_character' || c.character_type === 'npc_fictitious')
+    c.character_type === 'active_created_character'
   );
   
-  // Filter relationships to match valid character types
+  // Characters They Know: ONLY active_created_character (explicit match)
   const filteredCharRelationships = selectedChar
     ? filterOutTemporaryNPCs(form.char_relationships || []).filter(r => {
         const target = characters.find(c => c.id === r.related_character_id);

@@ -42,7 +42,6 @@ import {
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
 import { filterDashes } from "@/lib/dashFilter";
-import { useWorldContactsUnread } from "@/hooks/useWorldContactsUnread";
 import { stripCharacterNamePrefix, stripSelfReferenceName } from "@/lib/nameFilterUtils";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
@@ -115,8 +114,6 @@ export default function Chat() {
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
   });
-
-  const { unreadCount: worldContactsUnread, markConversationRead: markNpcConversationRead } = useWorldContactsUnread(currentUser?.email);
 
   const { data: characterFinancial = null } = useQuery({
     queryKey: ["characterFinancial", characterId],
@@ -1762,7 +1759,6 @@ Reply with ONLY the single emoji or the word "none".`,
         onSendMoneyToggle={() => setShowSendMoney(true)}
         onShoppingToggle={() => setShowShopping(true)}
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
-        worldContactsUnread={worldContactsUnread}
       />
       {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (
@@ -1863,7 +1859,6 @@ Reply with ONLY the single emoji or the word "none".`,
         isOpen={showWorldContacts}
         onClose={() => setShowWorldContacts(false)}
         character={character}
-        onConversationOpened={markNpcConversationRead}
       />
       <TroubleshootingPanel
         isOpen={showTroubleshooting}

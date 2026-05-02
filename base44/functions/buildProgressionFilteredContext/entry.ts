@@ -238,22 +238,8 @@ Deno.serve(async (req) => {
       { character_id: characterId }, '-timestamp', 30
     ).catch(() => []);
 
-    // Load character memories (for character-to-character continuity)
-    // This includes World Contacts conversations and other relationship history
-    const memories = await base44.entities.CharacterMemory.filter(
-      { character_id: characterId, memory_type: 'relationship' },
-      '-created_date',
-      15
-    ).catch(() => []);
-
     if (!events || events.length === 0) {
-      return Response.json({
-        success: true,
-        progressionContext: '',
-        domainStateMap: {},
-        eventCount: 0,
-        memoryCount: memories.length
-      });
+      return Response.json({ success: true, progressionContext: '', domainStateMap: {}, eventCount: 0 });
     }
 
     // Build domain state map (progression locks)
@@ -261,38 +247,6 @@ Deno.serve(async (req) => {
 
     // Build context string
     const progressionContext = buildProgressionContextString(char, events, domainMap);
-
-    // Build character memory context (character-to-character continuity)
-    let memoryContext = '';
-    if (memories.length > 0) {
-      const worldContactsMems = memories.filter(m =>
-        m.memory_summary?.includes('[world_contacts]')
-      );
-
-      if (worldContactsMems.length > 0) {
-        const memLines = [
-          '\n═══════════════════════════════════════════════════════════',
-          'CHARACTER-TO-CHARACTER CONVERSATION HISTORY (AVAILABLE ACROSS ALL PAGES)',
-          'These conversations happened in World Contacts. Both characters remember them.',
-          '═══════════════════════════════════════════════════════════'
-        ];
-
-        for (const mem of worldContactsMems.slice(0, 5)) {
-          const tone = mem.memory_summary?.includes('warm') ? '🤍' :
-                       mem.memory_summary?.includes('tense') ? '⚡' :
-                       mem.memory_summary?.includes('positive') ? '😊' :
-                       mem.memory_summary?.includes('vulnerable') ? '💭' : '💬';
-          memLines.push(`${tone} ${mem.memory_summary}`);
-          if (mem.memory_text) {
-            memLines.push(`   "${mem.memory_text.substring(0, 150)}..."`);
-          }
-        }
-
-        memoryContext = memLines.join('\n');
-      }
-    }
-
-    const fullContext = progressionContext + memoryContext;
 
     // Also build a compact invalidation map for debugging/logging
     const invalidatedStates = {};
@@ -319,12 +273,10 @@ Deno.serve(async (req) => {
 
     return Response.json({
       success: true,
-      progressionContext: fullContext,
+      progressionContext,
       domainStateMap: domainMap,
       invalidatedStates,
       eventCount: events.length,
-      memoryCount: memories.length,
-      worldContactsMemoryCount: memories.filter(m => m.memory_summary?.includes('[world_contacts]')).length
     });
 
   } catch (error) {
