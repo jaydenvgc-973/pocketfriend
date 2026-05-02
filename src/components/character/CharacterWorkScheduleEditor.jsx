@@ -26,7 +26,8 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const shift = location.worker_shifts?.[characterId] || { start: '09:00', end: '17:00', days: [1, 2, 3, 4, 5] };
+  const storedShift = location.worker_shifts?.[characterId];
+  const shift = storedShift || { start: '09:00', end: '17:00', days: [1, 2, 3, 4, 5] };
   const payType = location.worker_pay_type?.[characterId] || 'hourly';
   const payRate = location.worker_pay_rates?.[characterId] || 0;
   const jobTitle = location.worker_job_titles?.[characterId] || '';
@@ -67,10 +68,12 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground">{location.name}</p>
           {form.jobTitle && <p className="text-xs text-muted-foreground">{form.jobTitle}</p>}
-          {formatShift(form.shift) && (
+          {storedShift?.start && storedShift?.end ? (
             <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
-              <Clock className="w-3 h-3" /> {formatShift(form.shift)}
+              <Clock className="w-3 h-3" /> {formatShift(storedShift)}
             </p>
+          ) : (
+            <p className="text-xs text-muted-foreground/50 italic mt-0.5">No schedule saved yet</p>
           )}
         </div>
         {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
