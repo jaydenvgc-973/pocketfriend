@@ -33,8 +33,6 @@ import LifeJournal from "@/components/character/LifeJournal";
 import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
 import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
-import { resolveEmployment } from "@/lib/employmentResolver.js";
-
 
 const ZODIAC_SIGNS = {
   "aries": { symbol: "♈", dates: "Mar 21 - Apr 19", emoji: "🐑" },
@@ -550,18 +548,96 @@ export default function CharacterProfile() {
 
         {/* Work / School Details */}
         {(() => {
-          // Use shared employment resolver — single source of truth
-          const empResult = resolveEmployment(character, workLocations);
+          // Build job list directly from character file job entries.
+          // Schedule is resolved ONLY from the matching location's worker_shifts[characterId].
+          // No character-file schedule fallback. No default. No cross-job reuse.
+          const resolveScheduleFromLocation = (locationId) => {
+            if (!locationId) return null;
+            const loc = workLocations.find(l => l.id === locationId);
+            if (!loc) return null;
+            const shift = loc.worker_shifts?.[characterId];
+            if (!shift?.start || !shift?.end) return null;
+            const fmt = (t) => {
+              const [h, m] = t.split(':').map(Number);
+              return `${h % 12 || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`;
+            };
+            const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+            const days = shift.days?.length > 0 ? shift.days.map(d => DAY_LABELS[d]).join('/') : '';
+            return `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
+          };
 
-          // Map resolver jobs to display shape
-          const jobs = empResult.jobs.map((job, idx) => ({
-            key: `job-${idx}`,
-            jobTitle: job.job_title,
-            locationName: job.location_name,
-            isRabbitHole: !!(job.location_id && !job.location_name),
-            schedule: job.schedule_label,
-            isDefault: job.is_default_schedule,
-          }));
+          const jobEntries = [];
+
+          // Primary job
+          const hasPrimaryJob = !!(
+            character.work_details?.job_title ||
+            character.occupation ||
+            character.occupation_location_id ||
+            character.occupation_location_name
+          );
+          if (hasPrimaryJob) {
+            const locId = character.occupation_location_id || null;
+            const locName = character.occupation_location_name ||
+              (locId ? workLocations.find(l => l.id === locId)?.name : null) || null;
+            const jobTitle = character.work_details?.job_title || character.occupation || null;
+            const schedule = resolveScheduleFromLocation(locId);
+            jobEntries.push({
+              key: 'primary-job',
+              jobTitle,
+              locationName: locName,
+              locationId: locId,
+              isRabbitHole: !!(locId && !locName),
+              schedule,
+              scheduleNotFound: !schedule,
+            });
+          }
+
+          // Additional jobs
+          (character.additional_occupation_locations || []).forEach((addl, idx) => {
+            if (!addl.location_id && !addl.location_name && !addl.job_title) return;
+            const locId = addl.location_id || null;
+            const locName = addl.location_name ||
+              (locId ? workLocations.find(l => l.id === locId)?.name : null) || null;
+            const schedule = resolveScheduleFromLocation(locId);
+            jobEntries.push({
+              key: `addl-job-${idx}`,
+              jobTitle: addl.job_title || null,
+              locationName: locName,
+              locationId: locId,
+              isRabbitHole: !!(locId && !locName),
+              schedule,
+              scheduleNotFound: !schedule,
+            });
+          });
+
+          // Also catch any jobs on locations not yet on character file (location has character in worker list)
+          const coveredLocIds = new Set(jobEntries.map(j => j.locationId).filter(Boolean));
+          workLocations.forEach(loc => {
+            if (!(loc.worker_character_ids || []).includes(characterId)) return;
+            if (coveredLocIds.has(loc.id)) return;
+            const shift = loc.worker_shifts?.[characterId];
+            const fmt = (t) => {
+              const [h, m] = t.split(':').map(Number);
+              return `${h % 12 || 12}:${String(m).padStart(2, '0')}${h >= 12 ? 'pm' : 'am'}`;
+            };
+            const DAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'];
+            let schedule = null;
+            if (shift?.start && shift?.end) {
+              const days = shift.days?.length > 0 ? shift.days.map(d => DAY_LABELS[d]).join('/') : '';
+              schedule = `${fmt(shift.start)}–${fmt(shift.end)}${days ? ' · ' + days : ''}`;
+            }
+            jobEntries.push({
+              key: `loc-job-${loc.id}`,
+              jobTitle: loc.worker_job_titles?.[characterId] || null,
+              locationName: loc.name || null,
+              locationId: loc.id,
+              isRabbitHole: false,
+              schedule,
+              scheduleNotFound: !schedule,
+            });
+          });
+
+          const jobs = jobEntries;
 
           // School enrollments from character file
           const schoolEnrollments = [];
@@ -612,13 +688,14 @@ export default function CharacterProfile() {
                           <MapPin className="w-3 h-3 flex-shrink-0" />
                           <span>{job.locationName || (job.isRabbitHole ? 'Rabbit Hole / Off-App Location' : 'Location not set')}</span>
                         </div>
-                        {job.schedule && (
+                        {job.schedule ? (
                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
                             <Clock className="w-3 h-3 flex-shrink-0" />
                             <span>{job.schedule}</span>
-                            {job.isDefault && <span className="text-[10px] text-muted-foreground/50 ml-1">(default)</span>}
                           </div>
-                        )}
+                        ) : job.scheduleNotFound ? (
+                          <p className="text-xs text-muted-foreground/50 italic pl-0.5">Schedule not set on location resource</p>
+                        ) : null}
                       </div>
                     ))}
                   </div>
