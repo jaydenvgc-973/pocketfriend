@@ -20,7 +20,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [contactUnreadCounts, setContactUnreadCounts] = useState({});
+  const [currentUser, setCurrentUser] = useState(null);
   const bottomRef = useRef(null);
+
+  // Fetch current user
+  useEffect(() => {
+    base44.auth.me().then(setCurrentUser).catch(() => {});
+  }, []);
 
   // Load contacts from ALL valid sources:
   // 1. fictional_relationships on the character (primary)
@@ -43,7 +49,36 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
         }
       }
 
-      // SOURCE 2: Existing NPC Conversations involving this character
+      // SOURCE 2: Load all npc_fictitious characters owned by the user
+      // These are the People in Their World and should appear as contacts
+      try {
+        const npcFictitious = await base44.entities.Character.filter(
+          { character_type: 'npc_fictitious', owner_email: currentUser?.email },
+          null,
+          200
+        ).catch(() => []);
+
+        for (const npc of (npcFictitious || [])) {
+          if (!seen.has(npc.id)) {
+            seen.add(npc.id);
+            merged.push({
+              person_name: npc.name,
+              related_character_id: npc.id,
+              relationship_type: npc.archetype || 'npc',
+              description: npc.profile_summary || npc.personality_summary || '',
+              current_status: npc.emotional_state || '',
+              friendship_level: npc.friendship_level || 0,
+              romantic_level: npc.romantic_level || 0,
+              avatar_url: npc.avatar_url || npc.image_avatar_url || null,
+              _source: 'npc_fictitious',
+            });
+          }
+        }
+      } catch (err) {
+        console.error('[WorldContacts] NPC fictitious load failed:', err.message);
+      }
+
+      // SOURCE 3: Existing NPC Conversations involving this character
       // This recovers any contacts from prior interactions
       try {
         const allNpcConvos = await base44.entities.Conversation.filter(
@@ -96,7 +131,7 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
     };
 
     loadContacts();
-  }, [isOpen, character]);
+  }, [isOpen, character, currentUser]);
 
   // Load unread counts for all contacts
   useEffect(() => {

@@ -324,7 +324,7 @@ export default function EditCharacterProfile() {
   const filteredCharRelationships = selectedChar
     ? filterOutTemporaryNPCs(form.char_relationships || []).filter(r => {
         const target = characters.find(c => c.id === r.related_character_id);
-        return target && (target.character_type === "active_created_character" || target.character_type === "npc_fictitious");
+        return target && target.character_type === "active_created_character";
       })
     : [];
 
