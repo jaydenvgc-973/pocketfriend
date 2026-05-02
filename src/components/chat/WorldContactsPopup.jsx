@@ -34,47 +34,69 @@ export default function WorldContactsPopup({ isOpen, onClose, character, onConve
       // Use stable key based on character IDs only — NOT names
       const key = npcConvoKey(character.id, contact.related_character_id);
       
-      // Look for an existing NPC conversation by key (stored in title field for backwards compat)
-      const existing = await base44.entities.Conversation.filter(
-        { type: "npc" },
-        "-updated_date",
-        100
-      );
+      console.log(`[selectContact] Looking for conversation key: ${key}`);
+
+      // Look for conversation by both exact key match and by character IDs
+      let found = null;
       
-      // Match by key (sorted IDs in title) and owner scope
-      const found = existing.find(c => 
-        c.title === key && 
-        c.character_ids?.length === 2 && 
-        c.character_ids.includes(character.id) && 
-        c.character_ids.includes(contact.related_character_id)
+      // First, try exact key match
+      const byKey = await base44.entities.Conversation.filter(
+        { type: "npc", title: key },
+        null,
+        1
       );
+      if (byKey?.length > 0) {
+        found = byKey[0];
+      }
+
+      // If not found by key, search by character_ids
+      if (!found) {
+        const allNpc = await base44.entities.Conversation.filter(
+          { type: "npc" },
+          "-updated_date",
+          100
+        );
+        found = allNpc.find(c =>
+          c.character_ids?.length === 2 &&
+          c.character_ids.includes(character.id) &&
+          c.character_ids.includes(contact.related_character_id)
+        );
+      }
 
       if (found) {
+        console.log(`[selectContact] Found conversation: ${found.id}`);
         setConversationId(found.id);
-        // Load messages in ascending order so oldest appears first
+        
+        // Load ALL messages (no limit, ascending order)
         const history = await base44.entities.Message.filter(
           { conversation_id: found.id },
-          "created_date",
-          200
+          "created_date"
         );
-        setMessages((history || []).map(m => ({
+        
+        console.log(`[selectContact] Loaded ${history?.length || 0} messages`);
+        
+        const mapped = (history || []).map(m => ({
           id: m.id,
           dbId: m.id,
           role: m.sender_type === "user" ? "user" : "npc",
           content: m.content,
-        })));
+        }));
+        
+        setMessages(mapped);
+        
         // Mark all unread messages in this conversation as read
-        if (history && history.length > 0) {
-          for (const msg of history) {
-            if (msg.sender_type === "character" && !msg.is_read) {
-              await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
-            }
+        for (const msg of (history || [])) {
+          if (msg.sender_type === "character" && !msg.is_read) {
+            await base44.entities.Message.update(msg.id, { is_read: true }).catch(() => {});
           }
-          onConversationOpened?.(found.id);
         }
+        
+        onConversationOpened?.(found.id);
+      } else {
+        console.log(`[selectContact] No conversation found for ${contact.person_name}`);
       }
     } catch (err) {
-      console.error('[WorldContactsPopup] Failed to load conversation:', err.message);
+      console.error('[selectContact] Error:', err.message);
     }
 
     setIsLoadingHistory(false);
