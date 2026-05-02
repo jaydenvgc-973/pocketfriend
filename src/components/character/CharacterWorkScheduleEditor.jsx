@@ -179,10 +179,34 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
 
 export default function CharacterWorkScheduleEditor({ character }) {
   const { data: workLocations = [] } = useQuery({
-    queryKey: ['workLocations', character.id],
+    queryKey: ['workLocations', character.id, character.occupation_location_id, (character.additional_occupation_locations || []).map(l => l.location_id).join(',')],
     queryFn: async () => {
-      const locs = await base44.entities.LocationReference.filter({ worker_character_ids: [character.id] });
-      return locs;
+      // worker_character_ids arrays are empty in DB — resolve from character employment fields first.
+      // Then try worker_character_ids as a secondary check for any stragglers.
+      const locationIds = new Set();
+      if (character.occupation_location_id) locationIds.add(character.occupation_location_id);
+      (character.additional_occupation_locations || []).forEach(l => {
+        if (l.location_id) locationIds.add(l.location_id);
+      });
+
+      const charFileLocs = locationIds.size > 0
+        ? await Promise.all(
+            [...locationIds].map(id =>
+              base44.entities.LocationReference.filter({ id }).then(r => r[0]).catch(() => null)
+            )
+          )
+        : [];
+
+      const byWorkerList = await base44.entities.LocationReference.filter({ worker_character_ids: [character.id] }).catch(() => []);
+      byWorkerList.forEach(l => locationIds.add(l.id));
+
+      const combined = [...charFileLocs.filter(Boolean), ...byWorkerList];
+      const seen = new Set();
+      return combined.filter(l => {
+        if (seen.has(l.id)) return false;
+        seen.add(l.id);
+        return true;
+      });
     },
     enabled: !!character.id,
     staleTime: 30000,

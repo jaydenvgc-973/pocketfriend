@@ -147,10 +147,11 @@ export function isCharacterAtWork(character, workplaceLocation = null) {
     const onShift = isCharacterOnShift(character.id, workplaceLocation);
     if (onShift) return true;
 
-    // Only block if a shift was explicitly defined for this character but they're not on it
-    // If NO shift is defined for this character, fall through to Layer 2 (character's own schedule)
+    // Only block if a shift was explicitly defined for this character but they're not on it.
+    // NOTE: worker_character_ids arrays are not reliable (may be empty even when worker_shifts has data).
+    // Use worker_shifts presence as the sole authority — do NOT gate on worker_character_ids.
     const definedShift = getCharacterShiftAtLocation(character.id, workplaceLocation);
-    if (definedShift && workplaceLocation.worker_character_ids?.includes(character.id) && !onShift) {
+    if (definedShift && !onShift) {
       // Character has a defined shift here but is not currently on it
       return false;
     }
