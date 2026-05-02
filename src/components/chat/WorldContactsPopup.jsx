@@ -9,7 +9,7 @@ function npcConvoTitle(character, contactName) {
   return `npc_chat__${character.id}__${contactName}`;
 }
 
-export default function WorldContactsPopup({ isOpen, onClose, character }) {
+export default function WorldContactsPopup({ isOpen, onClose, character, onConversationOpened }) {
   const [selectedContact, setSelectedContact] = useState(null);
   const [messages, setMessages] = useState([]);
   const [conversationId, setConversationId] = useState(null);
@@ -51,6 +51,8 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
           role: m.sender_type === "user" ? "user" : "npc",
           content: m.content,
         })));
+        // Mark unread messages in this conversation as read
+        onConversationOpened?.(found.id);
       }
     } catch {
       // Could not load history — start fresh
