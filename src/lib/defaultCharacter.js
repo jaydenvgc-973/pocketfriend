@@ -170,13 +170,24 @@ function buildRelationshipsContext(character) {
 
   if (character.work_details || character.occupation_location_name || character.occupation) {
     const w = character.work_details || {};
-    const jobTitle = w.job_title || character.occupation || "your job";
+    const jobTitle = w.job_title || character.occupation || "employee";
     const workplaceName = character.occupation_location_name || null;
     const workplaceType = w.workplace_type || "workplace";
-    // CRITICAL: Always bind job title to the actual named workplace (occupation_location_name).
-    // Without this binding, the LLM maps the job title to whatever location it's physically at.
-    section += `\nYOUR WORK: You are a ${jobTitle}${workplaceName ? ` at ${workplaceName}` : ` at a ${workplaceType}`}. ${w.work_environment || ""}`;
-    section += ` ⚠️ EMPLOYMENT LOCK: "${workplaceName || workplaceType}" is your ONLY workplace. No other location you visit or are physically present at is your job, regardless of the venue type.`;
+    // Build schedule label inline — resolver import not available synchronously here
+    const hasSched = character.work_start_time || character.work_end_time || character.work_days?.length > 0;
+    const fmt = (t) => { if (!t) return null; const [h,m]=t.split(':').map(Number); return `${h%12||12}:${String(m).padStart(2,'0')}${h>=12?'pm':'am'}`; };
+    const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const schedLabel = hasSched
+      ? [
+          character.work_days?.length > 0 ? character.work_days.map(d=>WD[d]).join('/') : null,
+          (character.work_start_time && character.work_end_time) ? `${fmt(character.work_start_time)}–${fmt(character.work_end_time)}` : null,
+        ].filter(Boolean).join(', ')
+      : 'Mon–Fri, 9:00am–5:00pm (default)';
+
+    section += `\nYOUR WORK: You are a ${jobTitle}${workplaceName ? ` at ${workplaceName}` : ` at a ${workplaceType}`}. Schedule: ${schedLabel}.`;
+    if (w.work_environment) section += ` ${w.work_environment}`;
+    // CRITICAL: Hard-lock employment to the named workplace.
+    section += ` ⚠️ EMPLOYMENT LOCK: "${workplaceName || workplaceType}" is your ONLY workplace. No other location you visit is your job, regardless of venue type.`;
     if (w.coworker_names?.length) section += ` Coworkers: ${w.coworker_names.join(", ")}.`;
     section += "\n";
   }

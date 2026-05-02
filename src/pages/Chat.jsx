@@ -46,6 +46,7 @@ import { stripCharacterNamePrefix, stripSelfReferenceName } from "@/lib/nameFilt
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
+import { buildEmploymentPromptBlock } from "@/lib/employmentResolver.js";
 import LocationAliasResolutionPopup from "@/components/location/LocationAliasResolutionPopup";
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
@@ -1223,15 +1224,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const presenceIsWork = character.resolved_source_reason === 'work_schedule' || character.resolved_source_reason === 'work_schedule_enforced';
-      const empLoc = character.occupation_location_name || null;
-      const empJob = character.work_details?.job_title || character.occupation || null;
-      const fmtWT = (t) => { if (!t) return null; const [h,m]=t.split(':').map(Number); return `${h%12||12}:${String(m).padStart(2,'0')}${h>=12?'pm':'am'}`; };
-      const WD=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-      const wSched = (character.work_start_time&&character.work_end_time&&character.work_days?.length>0)?`${character.work_days.map(d=>WD[d]).join('/')} ${fmtWT(character.work_start_time)}–${fmtWT(character.work_end_time)}`:null;
-      const curLoc = character.resolved_current_location_name||null;
-      const hasMismatch = !presenceIsWork&&curLoc&&empLoc&&curLoc!==empLoc;
-      const employmentPresenceSeparation = `\n\nEMPLOYMENT vs PRESENCE — HARD SEPARATION:\nJob: ${empJob||'None'} at ${empLoc||'Not assigned'} | Schedule: ${wSched||'Not set'}\nCurrent location (PRESENCE ONLY): ${curLoc||'Unknown'} | At assigned workplace: ${presenceIsWork?'YES':'NO'}${hasMismatch?`\n⚠️ MISMATCH: You are VISITING "${curLoc}" — this is NOT your job. Never say you work/manage there. Work questions → "${empLoc}". Location questions → "${curLoc}".`:''}`;
+      const employmentPresenceSeparation = buildEmploymentPromptBlock(character, []);
 
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";

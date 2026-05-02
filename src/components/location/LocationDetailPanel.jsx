@@ -3,6 +3,7 @@ import { useState } from "react";
 import { base44 } from "@/api/base44Client";
 import ConfirmCharacterMoveModal from "./ConfirmCharacterMoveModal";
 import { hydrateCharacterReference } from "@/lib/characterEditableListResolver";
+import { DEFAULT_SCHEDULE } from "@/lib/employmentResolver.js";
 const Church = Heart;
 
 function DetailRow({ label, value, highlight }) {
@@ -204,13 +205,23 @@ export default function LocationDetailPanel({ location, characters = [], allLoca
                           </span>
                         )}
                       </div>
-                      {shift && (
-                        <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
-                          <Clock className="w-2.5 h-2.5" />
-                          {shift.start} – {shift.end}
-                          {shift.days && ` · ${shift.days.map(d => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`}
-                        </div>
-                      )}
+                      {(() => {
+                        const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+                        const fmt = (t) => { if (!t) return null; const [h,m]=t.split(':').map(Number); return `${h%12||12}:${String(m).padStart(2,'0')}${h>=12?'pm':'am'}`; };
+                        const hasShift = shift?.start && shift?.end;
+                        const displayStart = hasShift ? fmt(shift.start) : fmt(DEFAULT_SCHEDULE.start_time);
+                        const displayEnd = hasShift ? fmt(shift.end) : fmt(DEFAULT_SCHEDULE.end_time);
+                        const displayDays = hasShift && shift.days?.length > 0
+                          ? shift.days.map(d => WD[d]).join('/')
+                          : DEFAULT_SCHEDULE.days.map(d => WD[d]).join('/');
+                        return (
+                          <div className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                            <Clock className="w-2.5 h-2.5" />
+                            {displayDays} · {displayStart}–{displayEnd}
+                            {!hasShift && <span className="text-muted-foreground/50 ml-1">(default)</span>}
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}

@@ -33,6 +33,7 @@ import LifeJournal from "@/components/character/LifeJournal";
 import CharacterQuirksPanel from "@/components/character/CharacterQuirksPanel";
 import CharacterClosetPanel from "@/components/character/CharacterClosetPanel";
 import AddPeopleInTheirWorldPanel from "@/components/character/AddPeopleInTheirWorldPanel";
+import { resolveEmployment } from "@/lib/employmentResolver.js";
 
 
 const ZODIAC_SIGNS = {
@@ -516,77 +517,18 @@ export default function CharacterProfile() {
 
         {/* Work / School Details */}
         {(() => {
-          const DAY_LABELS_FULL = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-          const fmtTime = (t) => {
-            if (!t) return null;
-            const [h, m] = t.split(':').map(Number);
-            const period = h >= 12 ? 'pm' : 'am';
-            return `${h % 12 || 12}:${String(m).padStart(2, '0')}${period}`;
-          };
+          // Use shared employment resolver — single source of truth
+          const empResult = resolveEmployment(character, workLocations);
 
-          // Build the character-file schedule string (used as fallback when no location shift record exists)
-          const charFileSchedule = (() => {
-            if (!character.work_start_time && !character.work_end_time && !(character.work_days?.length > 0)) return null;
-            const days = character.work_days?.length > 0
-              ? character.work_days.map(d => DAY_LABELS_FULL[d]).join(' / ')
-              : null;
-            const start = fmtTime(character.work_start_time);
-            const end = fmtTime(character.work_end_time);
-            const timePart = (start && end) ? `${start}–${end}` : (start || end || null);
-            return [days, timePart].filter(Boolean).join(' · ') || null;
-          })();
-
-          // Build all job entries — primary + additional + workLocations not already listed
-          const jobs = [];
-
-          // 1. Primary job from character file
-          const primaryLocName = character.occupation_location_name ||
-            (character.occupation_location_id ? getWorkLocationName(character.occupation_location_id) : null);
-          const primaryShift = character.occupation_location_id
-            ? (getWorkShift(character.occupation_location_id) || charFileSchedule)
-            : charFileSchedule;
-
-          if (character.work_details?.job_title || character.occupation || primaryLocName || charFileSchedule) {
-            jobs.push({
-              key: 'primary',
-              jobTitle: character.work_details?.job_title || character.occupation || null,
-              locationName: primaryLocName,
-              isRabbitHole: !!(character.occupation_location_id && !primaryLocName),
-              schedule: primaryShift,
-            });
-          }
-
-          // 2. Additional occupation locations
-          (character.additional_occupation_locations || []).forEach((loc, idx) => {
-            const resolvedLoc = workLocations.find(wl => wl.id === loc.location_id);
-            const realName = resolvedLoc?.name || loc.location_name || null;
-            if (!realName && !loc.job_title) return;
-            const shift = loc.location_id ? (getWorkShift(loc.location_id) || null) : null;
-            jobs.push({
-              key: `additional-${idx}`,
-              jobTitle: loc.job_title || null,
-              locationName: realName,
-              isRabbitHole: !!(loc.location_id && !realName),
-              schedule: shift,
-            });
-          });
-
-          // 3. Work locations not already listed
-          workLocations
-            .filter(wl => {
-              const isAdditional = (character.additional_occupation_locations || []).some(l => l.location_id === wl.id);
-              const isPrimary = character.occupation_location_id === wl.id;
-              return !isAdditional && !isPrimary;
-            })
-            .forEach((wl, idx) => {
-              jobs.push({
-                key: `wl-${idx}`,
-                jobTitle: wl.worker_job_titles?.[characterId] || null,
-                locationName: wl.name,
-                isRabbitHole: false,
-                schedule: getWorkShift(wl.id),
-              });
-            });
+          // Map resolver jobs to display shape
+          const jobs = empResult.jobs.map((job, idx) => ({
+            key: `job-${idx}`,
+            jobTitle: job.job_title,
+            locationName: job.location_name,
+            isRabbitHole: !!(job.location_id && !job.location_name),
+            schedule: job.schedule_label,
+            isDefault: job.is_default_schedule,
+          }));
 
           // School enrollments from character file
           const schoolEnrollments = [];
@@ -610,8 +552,7 @@ export default function CharacterProfile() {
 
           const hasWork = jobs.length > 0;
           const hasSchool = schoolEnrollments.length > 0;
-          const hasAny = hasWork || hasSchool || character.work_details || character.occupation_location_id ||
-            character.additional_occupation_locations?.length > 0 || workLocations.length > 0;
+          const hasAny = hasWork || hasSchool;
 
           if (!hasAny) return null;
 
@@ -642,9 +583,9 @@ export default function CharacterProfile() {
                           <div className="flex items-center gap-1 text-xs text-muted-foreground">
                             <Clock className="w-3 h-3 flex-shrink-0" />
                             <span>{job.schedule}</span>
+                            {job.isDefault && <span className="text-[10px] text-muted-foreground/50 ml-1">(default)</span>}
                           </div>
                         )}
-                        {!job.schedule && !job.locationName && !job.jobTitle && null}
                       </div>
                     ))}
                   </div>
