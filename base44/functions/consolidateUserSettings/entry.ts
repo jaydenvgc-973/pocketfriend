@@ -6,7 +6,7 @@ Deno.serve(async (req) => {
   if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
   // Get all UserSettings records for THIS USER ONLY
-  const allSettings = await base44.entities.UserSettings.filter({ created_by: user.email });
+  const allSettings = await base44.entities.UserSettings.filter({ owner_email: user.email });
 
   if (allSettings.length <= 1) {
     return Response.json({ message: 'No duplicates found', count: allSettings.length });
@@ -48,25 +48,57 @@ Deno.serve(async (req) => {
     if (!merged.default_character_id && dup.default_character_id) merged.default_character_id = dup.default_character_id;
     if (!merged.openai_api_key && dup.openai_api_key) merged.openai_api_key = dup.openai_api_key;
     if (!merged.has_completed_onboarding && dup.has_completed_onboarding) merged.has_completed_onboarding = dup.has_completed_onboarding;
-    if ((!merged.appearance_lock || !Object.values(merged.appearance_lock).some(Boolean)) && dup.appearance_lock) merged.appearance_lock = dup.appearance_lock;
+    if (!merged.appearance_lock) {
+      merged.appearance_lock = dup.appearance_lock;
+    } else if (dup.appearance_lock) {
+      // Deep merge appearance_lock to preserve all fields
+      merged.appearance_lock = { ...dup.appearance_lock, ...merged.appearance_lock };
+    }
     if (!merged.user_aliases?.length && dup.user_aliases?.length) merged.user_aliases = dup.user_aliases;
     if ((!merged.user_balance || merged.user_balance === 6000) && dup.user_balance && dup.user_balance !== 6000) merged.user_balance = dup.user_balance;
     if (!merged.user_relatives && dup.user_relatives) merged.user_relatives = dup.user_relatives;
     if (merged.home_key_holders === undefined && dup.home_key_holders?.length) merged.home_key_holders = dup.home_key_holders;
   }
 
+  // Log merge results for safety verification
+  console.log('CONSOLIDATION: Canonical record ID:', canonical.id);
+  console.log('CONSOLIDATION: Duplicates to consolidate:', duplicates.length);
+  console.log('CONSOLIDATION: Merged data keys:', Object.keys(merged));
+  if (merged.appearance_lock) {
+    console.log('CONSOLIDATION: Appearance lock preserved:', Object.keys(merged.appearance_lock));
+  }
+
   // Update the canonical record with merged data
   const { id, created_date, updated_date, created_by, ...updateData } = merged;
   await base44.entities.UserSettings.update(canonical.id, updateData);
+  console.log('CONSOLIDATION: Canonical record updated successfully');
 
-  // Delete all duplicates
+  // SAFETY CHECK: Verify merged data before deletion
+  const verifyMerged = await base44.entities.UserSettings.filter({ id: canonical.id });
+  const verifiedRecord = verifyMerged[0];
+  
+  if (!verifiedRecord || !verifiedRecord.appearance_lock || !Object.keys(verifiedRecord.appearance_lock).some(k => verifiedRecord.appearance_lock[k])) {
+    console.error('CONSOLIDATION FAILED: appearance_lock not preserved in merged record. Aborting deletion.');
+    return Response.json({
+      message: 'Consolidation aborted: data preservation check failed',
+      reason: 'appearance_lock not fully preserved',
+      canonical_id: canonical.id,
+      deleted_count: 0,
+    }, { status: 400 });
+  }
+
+  console.log('CONSOLIDATION: Safety check passed. Proceeding with duplicate deletion.');
+
+  // Delete all duplicates ONLY after safety verification
   for (const dup of duplicates) {
     await base44.entities.UserSettings.delete(dup.id);
+    console.log('CONSOLIDATION: Deleted duplicate record ID:', dup.id);
   }
 
   return Response.json({
     message: `Consolidated ${allSettings.length} records into 1`,
     canonical_id: canonical.id,
     deleted_count: duplicates.length,
+    status: 'success',
   });
 });
