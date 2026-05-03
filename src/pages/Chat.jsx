@@ -125,7 +125,7 @@ export default function Chat() {
       return allNpcs.find(c => c.id === characterId) || null;
     },
     // Wait until user query has fully resolved (not just has a value) before fetching character
-    enabled: !!characterId && !isUserLoading && !!currentUser?.email,
+    enabled: !!characterId && !isUserLoading && !!currentUser?.email && !!currentUser,
     staleTime: 60 * 1000,
   });
 
@@ -151,7 +151,7 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    if (!characterId || !character || !currentUser?.email) return;
+    if (!characterId || !character || !currentUser || !currentUser.email) return;
     if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
     setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null);
@@ -160,7 +160,7 @@ export default function Chat() {
       setIsLoadingConvo(true);
       try {
         const allConvos = await base44.entities.Conversation.filter(
-          { type: chatType, owner_email: currentUser?.email, character_ids: [characterId] },
+          { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
           "-updated_date",
           20
         );
@@ -202,7 +202,7 @@ export default function Chat() {
             title: `${chatType} with ${character.name}`,
             type: chatType,
             character_ids: [characterId],
-            owner_email: currentUser?.email,
+            owner_email: currentUser.email,
           });
           setConversationId(convo.id);
         }
@@ -1095,7 +1095,7 @@ export default function Chat() {
         (character.occupation_location_id || character.current_activity)
           ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
               const allLocs = allLocRes?.data?.locations || [];
-              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser?.email, status: 'active' });
+              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
               const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
               const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
               return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
