@@ -6,10 +6,15 @@ async function fetchAndConsolidate(userEmail) {
   const list = await base44.entities.UserSettings.filter({ owner_email: userEmail });
   if (list.length === 0) return null;
   if (list.length === 1) return list[0];
-  // Silently consolidate duplicates
-  await base44.functions.invoke("consolidateUserSettings", {});
-  const consolidated = await base44.entities.UserSettings.filter({ owner_email: userEmail });
-  return consolidated[0] || null;
+  // Consolidate duplicates — but only once per session to avoid 429 storms
+  const consolidateKey = `settings_consolidated_${userEmail}`;
+  if (!sessionStorage.getItem(consolidateKey)) {
+    sessionStorage.setItem(consolidateKey, '1');
+    await base44.functions.invoke("consolidateUserSettings", {}).catch(() => {});
+    const consolidated = await base44.entities.UserSettings.filter({ owner_email: userEmail });
+    return consolidated[0] || list[0];
+  }
+  return list[0];
 }
 
 export function useUserSettings() {

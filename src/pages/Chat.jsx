@@ -100,7 +100,7 @@ export default function Chat() {
     return () => { isMountedRef.current = false; };
   }, []);
 
-  const { data: currentUser = {} } = useQuery({
+  const { data: currentUser, isLoading: isUserLoading } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
     staleTime: 5 * 60 * 1000,
@@ -109,7 +109,7 @@ export default function Chat() {
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
-      if (!characterId || !currentUser.email) return null;
+      if (!characterId || !currentUser?.email) return null;
       // First: check if already cached in Home's characters query to avoid a redundant fetch
       const cachedAll = queryClient.getQueryData(["characters", currentUser.email]);
       if (Array.isArray(cachedAll)) {
@@ -124,7 +124,8 @@ export default function Chat() {
       const allNpcs = res?.data?.npcs || [];
       return allNpcs.find(c => c.id === characterId) || null;
     },
-    enabled: !!characterId && !!currentUser.email,
+    // Wait until user query has fully resolved (not just has a value) before fetching character
+    enabled: !!characterId && !isUserLoading && !!currentUser?.email,
     staleTime: 60 * 1000,
   });
 
@@ -142,11 +143,15 @@ export default function Chat() {
   });
 
   useEffect(() => {
+    // Guard: only run once per session — prevents 429 storms on repeated Chat mounts
+    const voiceInitKey = 'voice_settings_initialized';
+    if (sessionStorage.getItem(voiceInitKey)) return;
+    sessionStorage.setItem(voiceInitKey, '1');
     base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
   }, []);
 
   useEffect(() => {
-    if (!characterId || !character || !currentUser.email) return;
+    if (!characterId || !character || !currentUser?.email) return;
     if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
     setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null);
@@ -155,7 +160,7 @@ export default function Chat() {
       setIsLoadingConvo(true);
       try {
         const allConvos = await base44.entities.Conversation.filter(
-          { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
+          { type: chatType, owner_email: currentUser?.email, character_ids: [characterId] },
           "-updated_date",
           20
         );
@@ -197,7 +202,7 @@ export default function Chat() {
             title: `${chatType} with ${character.name}`,
             type: chatType,
             character_ids: [characterId],
-            owner_email: currentUser.email,
+            owner_email: currentUser?.email,
           });
           setConversationId(convo.id);
         }
@@ -628,7 +633,7 @@ export default function Chat() {
         title: `${chatType} with ${character.name}`,
         type: chatType,
         character_ids: [characterId],
-        owner_email: currentUser.email,
+        owner_email: currentUser?.email,
       });
         convoId = convo.id;
         setConversationId(convoId);
@@ -815,7 +820,7 @@ export default function Chat() {
         title: `${chatType} with ${character.name}`,
         type: chatType,
         character_ids: [characterId],
-        owner_email: currentUser.email,
+        owner_email: currentUser?.email,
       });
       convoId = convo.id;
       setConversationId(convoId);
@@ -828,8 +833,8 @@ export default function Chat() {
       image_url: userImageUrl || undefined,
       timestamp: new Date().toISOString(),
       ...(activeCharacter ? {
-        played_as_character_id: activeCharacter.id,
-        played_as_character_name: activeCharacter.name,
+        played_as_character_id: activeCharacter?.id,
+        played_as_character_name: activeCharacter?.name,
       } : {}),
     });
     if (!userMsg || !userMsg.id) {
@@ -1090,7 +1095,7 @@ export default function Chat() {
         (character.occupation_location_id || character.current_activity)
           ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
               const allLocs = allLocRes?.data?.locations || [];
-              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
+              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser?.email, status: 'active' });
               const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
               const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
               return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
@@ -1672,7 +1677,7 @@ Reply with ONLY the single emoji or the word "none".`,
     if (responseText) {
       let allCharsForApproval = [];
       try {
-        allCharsForApproval = await base44.entities.Character.filter({ owner_email: currentUser.email });
+        allCharsForApproval = await base44.entities.Character.filter({ owner_email: currentUser?.email });
       } catch (approvalLoadError) {
         console.warn("[Approval] Character lookup failed. Continuing with current character only.", approvalLoadError);
       }
