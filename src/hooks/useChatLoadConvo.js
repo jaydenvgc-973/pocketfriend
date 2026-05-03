@@ -29,6 +29,13 @@ export function useChatLoadConvo({
   const isLoadingConvoRef = useRef(false);
 
   useEffect(() => {
+    // If we have characterId and a resolved user but character came back null,
+    // the character query is done and found nothing — exit the spinner visibly.
+    if (characterId && currentUser?.email && character === null) {
+      setConvoLoadError('error');
+      setIsLoadingConvo(false);
+      return;
+    }
     if (!characterId || !character || !currentUser || !currentUser.email) return;
     // Guard: do not load conversation for a stale character object from a previous navigation
     if (character.id !== characterId) return;
