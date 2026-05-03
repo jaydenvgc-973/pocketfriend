@@ -89,10 +89,13 @@ export default function WorldContactsPopup({ isOpen, onClose, character }) {
   const ensureConversation = async () => {
     if (conversationId) return conversationId;
     const title = npcConvoTitle(character, selectedContact.person_name);
+    // Fetch current user email for ownership stamping
+    const me = await base44.auth.me().catch(() => null);
     const convo = await base44.entities.Conversation.create({
       title,
       type: "npc",
       character_ids: [character.id],
+      owner_email: me?.email || character.owner_email,
     });
     setConversationId(convo.id);
     return convo.id;

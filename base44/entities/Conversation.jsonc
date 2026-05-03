@@ -23,6 +23,10 @@
       },
       "description": "IDs of characters in this conversation"
     },
+    "owner_email": {
+      "type": "string",
+      "description": "Email of the user who owns this conversation. Required for ownership scoping."
+    },
     "last_message_preview": {
       "type": "string"
     },

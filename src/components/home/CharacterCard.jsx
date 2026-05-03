@@ -59,6 +59,12 @@ const stateDots = {
 
 
 export default function CharacterCard({ character, onDelete, onMoveAway, locationMap = {} }) {
+  // OWNERSHIP GUARD: owner_email is the sole ownership source of truth.
+  // If missing, log visibly so data integrity issues surface rather than silently fail.
+  if (!character.owner_email) {
+    console.error(`[CharacterCard] MISSING owner_email on character id=${character.id} name="${character.name}". Cache invalidation and ownership scoping will be incorrect.`);
+  }
+
   const state = character.emotional_state || "calm";
   const [showPhoto, setShowPhoto] = useState(false);
   const [showEditName, setShowEditName] = useState(false);
@@ -80,9 +86,14 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const balance = financialRecords[0]?.current_balance;
 
   const { data: conversations = [] } = useQuery({
-    queryKey: ['conversations', character.id],
+    // Query key includes owner_email to prevent cross-user cache collisions.
+    // The filter uses character_ids only because existing Conversation records may not have owner_email yet.
+    // Platform RLS ensures the authenticated user only receives their own records.
+    // Once owner_email is backfilled on all Conversation records, add it to the filter as well.
+    queryKey: ['conversations', character.id, character.owner_email],
     queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id] }),
-    staleTime: 30000, // 30s — don't re-fetch on every render
+    staleTime: 30000,
+    enabled: !!character.id,
   });
 
 
@@ -129,12 +140,12 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   // Re-count when user returns to the tab/window
   useEffect(() => {
     const handleFocus = () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations', character.id] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', character.id, character.owner_email] });
       countUnread();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [conversations, character.id, queryClient]);
+  }, [conversations, character.id, character.owner_email, queryClient]);
 
   // Real-time: recount when a relevant message changes for this character
   useEffect(() => {

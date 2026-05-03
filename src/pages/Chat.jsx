@@ -198,6 +198,7 @@ export default function Chat() {
             title: `${chatType} with ${character.name}`,
             type: chatType,
             character_ids: [characterId],
+            owner_email: currentUser.email,
           });
           setConversationId(convo.id);
         }
@@ -619,14 +620,15 @@ export default function Chat() {
     console.log(`[LOCATION-SHARE] detected=${locationShareRequest} | locationName=${earlyCharLocationName} | locationId=${earlyCharLocationId} | text="${text.substring(0, 60)}"`);
 
     if (locationShareRequest && earlyCharLocationName && earlyCharLocationId) {
-      // Force the character to share their verified location — no image, no ambiguity
-      let convoId = conversationIdRef.current || conversationId;
-      if (!convoId) {
-        const convo = await base44.entities.Conversation.create({
-          title: `${chatType} with ${character.name}`,
-          type: chatType,
-          character_ids: [characterId],
-        });
+    // Force the character to share their verified location — no image, no ambiguity
+    let convoId = conversationIdRef.current || conversationId;
+    if (!convoId) {
+      const convo = await base44.entities.Conversation.create({
+        title: `${chatType} with ${character.name}`,
+        type: chatType,
+        character_ids: [characterId],
+        owner_email: currentUser.email,
+      });
         convoId = convo.id;
         setConversationId(convoId);
       }
@@ -812,10 +814,11 @@ export default function Chat() {
         title: `${chatType} with ${character.name}`,
         type: chatType,
         character_ids: [characterId],
+        owner_email: currentUser.email,
       });
       convoId = convo.id;
       setConversationId(convoId);
-      }
+    }
 
     const userMsg = await base44.entities.Message.create({
       conversation_id: convoId,
