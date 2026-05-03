@@ -30,6 +30,11 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   useEffect(() => {
     if (externalTrigger) { setIsOpen(true); onExternalClose?.(); }
   }, [externalTrigger]);
+
+  // Reset DB image cache when gallery closes so next open re-fetches fresh
+  useEffect(() => {
+    if (!isOpen) setAllImages([]);
+  }, [isOpen]);
   const [selectedImage, setSelectedImage] = useState(null);
   const [regenTarget, setRegenTarget] = useState(null); // { id, url } of image to regenerate
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -148,15 +153,55 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
   };
 
-  const images = messages
+  // ── MEDIA SOURCE OF TRUTH: fetch ALL images directly from DB when gallery opens.
+  // This is independent of the visible message feed window (which is limited to 50).
+  // Older images remain accessible in the gallery even when not rendered in chat.
+  const [allImages, setAllImages] = useState([]);
+  const [isFetchingImages, setIsFetchingImages] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen || !conversationId) return;
+    setIsFetchingImages(true);
+    // Fetch the most recent 500 messages to source images — separate from the 50-message chat feed
+    base44.entities.Message.filter(
+      { conversation_id: conversationId },
+      "-created_date",
+      500
+    )
+      .then(msgs => {
+        const imgs = (msgs || [])
+          .filter(m => m.image_url)
+          .map(m => ({
+            id: m.id,
+            url: m.image_url,
+            senderType: m.sender_type,
+            senderName: m.character_name || "You",
+            timestamp: m.timestamp || m.created_date,
+          }))
+          // Sort newest→oldest for display
+          .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+        setAllImages(imgs);
+      })
+      .catch(() => {})
+      .finally(() => setIsFetchingImages(false));
+  }, [isOpen, conversationId]);
+
+  // Also merge in any new images from the current feed (real-time arrivals not yet in DB fetch)
+  const feedImages = messages
     .filter(msg => msg.image_url)
     .map(msg => ({
       id: msg.id,
       url: msg.image_url,
       senderType: msg.sender_type,
       senderName: msg.character_name || "You",
-      timestamp: msg.timestamp,
+      timestamp: msg.timestamp || msg.created_date,
     }));
+
+  // Merge: DB images + any feed images not already in DB result (dedup by id)
+  const dbImageIds = new Set(allImages.map(i => i.id));
+  const freshFeedImages = feedImages.filter(i => !dbImageIds.has(i.id));
+  const images = [...freshFeedImages, ...allImages]
+    .sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
 
   const handleRegenSelect = async (reason, customPrompt, manualLocationId = null, manualZoneId = null, directLocationImages = null, directLocationName = null) => {
     if (!regenTarget) return;
@@ -359,8 +404,9 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                 onClick={e => e.stopPropagation()}
               >
                 <div className="flex items-center justify-between px-6 py-4 border-b border-border flex-shrink-0">
-                  <h3 className="text-lg font-semibold text-foreground">
+                  <h3 className="text-lg font-semibold text-foreground flex items-center gap-2">
                     Media {images.length > 0 ? `(${images.length})` : ""}
+                    {isFetchingImages && <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />}
                   </h3>
                   <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-secondary rounded-lg transition-colors">
                     <X className="w-5 h-5 text-muted-foreground" />

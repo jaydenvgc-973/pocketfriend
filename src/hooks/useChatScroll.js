@@ -27,11 +27,12 @@ export function useChatScroll(lastMessageId, characterId, userScrolledAway, bott
     if (!lastMessageId) return;
 
     if (isInitialLoadRef.current) {
-      // First batch of messages: defer scroll until after framer-motion + image layout settles
+      // First batch of messages: defer scroll until after render + framer-motion settle.
+      // 150ms gives AnimatePresence time to mount all message bubbles before we jump.
       isInitialLoadRef.current = false;
       const timer = setTimeout(() => {
         bottomRef.current?.scrollIntoView({ behavior: "auto" });
-      }, 80);
+      }, 150);
       return () => clearTimeout(timer);
     }
 

@@ -1,10 +1,11 @@
-import React from "react";
+import React, { useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import MessageBubble from "@/components/chat/MessageBubble";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import ArchiveNotice from "@/components/chat/ArchiveNotice";
 import DateSeparator from "@/components/chat/DateSeparator";
 import { injectDateSeparators } from "@/lib/messageDateGrouping";
+import { ChevronUp, Loader2 } from "lucide-react";
 
 /**
  * ChatMessageList
@@ -33,12 +34,41 @@ export default function ChatMessageList({
   onDismissError,
   setSendError,
   onLocationSignal,
+  hasOlderMessages,
+  onLoadOlderMessages,
 }) {
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+
+  const handleLoadOlder = async () => {
+    if (isLoadingOlder || !onLoadOlderMessages) return;
+    setIsLoadingOlder(true);
+    try {
+      await onLoadOlderMessages();
+    } finally {
+      setIsLoadingOlder(false);
+    }
+  };
   const itemsWithSeparators = injectDateSeparators(messages);
   if (messages.length > 0) console.log(`[CHAT_TIMING] ChatMessageList_RENDER n=${messages.length} at=${Date.now()}`);
 
   return (
     <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
+      {/* Load older messages button — only shown when more history exists */}
+      {hasOlderMessages && onLoadOlderMessages && (
+        <div className="flex justify-center pt-2 pb-1">
+          <button
+            onClick={handleLoadOlder}
+            disabled={isLoadingOlder}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-full bg-secondary border border-border text-xs text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors disabled:opacity-50"
+          >
+            {isLoadingOlder
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading older…</>
+              : <><ChevronUp className="w-3.5 h-3.5" /> Load older messages</>
+            }
+          </button>
+        </div>
+      )}
+
       {messages.length > 0 && (
         <ArchiveNotice
           conversationId={conversationId}

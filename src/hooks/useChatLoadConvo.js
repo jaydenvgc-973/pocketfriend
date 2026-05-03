@@ -1,16 +1,20 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 
 /**
  * useChatLoadConvo
  *
- * Extracted from pages/Chat lines 148–259.
- * Handles: Conversation.filter, Message.filter, PendingMessage.filter,
+ * Handles: Conversation.filter, Message.filter (50-message window), PendingMessage.filter,
  * conversation creation, and pending message delivery.
  *
- * NO behavior changes. Same logic, same guards, same error handling.
- * Instrumentation logs added ONLY to the load chain steps — no logic changes.
+ * Exposes loadOlderMessages() for timestamp-based pagination (loads messages
+ * strictly older than the oldest currently visible message, using created_date).
+ *
+ * "Old message" definition: any message whose created_date timestamp is earlier
+ * than the oldest timestamp in the current 50-message window. Never based on
+ * array position or load order. New messages created in the current session
+ * are never classified as old.
  */
 export function useChatLoadConvo({
   characterId,
@@ -23,25 +27,39 @@ export function useChatLoadConvo({
   setIsTyping,
   setConvoLoadError,
   setIsLoadingConvo,
+  setHasOlderMessages,
   retryKey = 0,
 }) {
   const queryClient = useQueryClient();
   const isLoadingConvoRef = useRef(false);
+  // Stable refs for pagination — do not cause re-renders
+  const convoIdRef = useRef(null);
+  const oldestMsgTimestampRef = useRef(null);
+  const isLoadingOlderRef = useRef(false);
 
   useEffect(() => {
-    // If we have characterId and a resolved user but character came back null,
-    // the character query is done and found nothing — exit the spinner visibly.
+    // If character came back null (query done, not found), fail visibly
     if (characterId && currentUser?.email && character === null) {
       setConvoLoadError('error');
       setIsLoadingConvo(false);
       return;
     }
     if (!characterId || !character || !currentUser || !currentUser.email) return;
-    // Guard: do not load conversation for a stale character object from a previous navigation
+    // Guard: stale character object from previous navigation
     if (character.id !== characterId) return;
     if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
-    setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null);
+
+    // Reset all state immediately on character switch
+    setMessages([]);
+    setConversationId(null);
+    setIsTyping(false);
+    setConvoLoadError(null);
+    if (setHasOlderMessages) setHasOlderMessages(false);
+    convoIdRef.current = null;
+    oldestMsgTimestampRef.current = null;
+
+    const MSG_LIMIT = 50;
 
     const loadConvo = async () => {
       isLoadingConvoRef.current = true;
@@ -83,16 +101,14 @@ export function useChatLoadConvo({
           convoId = selectedConvo.id;
           console.log(`[CHAT_LOAD] CONVO_SELECTED id=${convoId} candidates=${convos.length} last_msg=${selectedConvo.last_message_date || 'none'} t=${Date.now()}`);
 
-          // ── STEP 2: Message.filter ─────────────────────────────────────────
-          const isProtected = ['69c0d59d7e382cc866ded9c9'].includes(characterId);
-          const msgLimit = isProtected ? 1000 : 50;
-          console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} limit=${msgLimit} t=${Date.now()}`);
+          // ── STEP 2: Message.filter — most recent 50, sorted by timestamp ───
+          console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} limit=${MSG_LIMIT} t=${Date.now()}`);
           let loadedMsgs;
           try {
             loadedMsgs = await base44.entities.Message.filter(
               { conversation_id: convoId },
               "-created_date",
-              msgLimit
+              MSG_LIMIT
             );
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
@@ -100,8 +116,20 @@ export function useChatLoadConvo({
             throw err;
           }
 
+          convoIdRef.current = convoId;
+
           if (loadedMsgs && loadedMsgs.length > 0) {
-            setMessages(loadedMsgs.reverse());
+            // Sort chronologically oldest→newest before rendering
+            const sorted = [...loadedMsgs].sort((a, b) =>
+              new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+            );
+            // Pagination cursor = oldest timestamp in current window
+            oldestMsgTimestampRef.current = sorted[0]?.created_date || sorted[0]?.timestamp || null;
+            // Signal whether there are older messages available
+            const hasOlder = loadedMsgs.length >= MSG_LIMIT;
+            if (setHasOlderMessages) setHasOlderMessages(hasOlder);
+
+            setMessages(sorted);
             setConversationId(convoId);
 
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
@@ -112,6 +140,8 @@ export function useChatLoadConvo({
               queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
             }
           } else {
+            if (setHasOlderMessages) setHasOlderMessages(false);
+            oldestMsgTimestampRef.current = null;
             setConversationId(convoId);
           }
         } else {
@@ -124,7 +154,9 @@ export function useChatLoadConvo({
             owner_email: currentUser.email,
           });
           setConversationId(convo.id);
+          convoIdRef.current = convo.id;
           convoId = convo.id;
+          if (setHasOlderMessages) setHasOlderMessages(false);
           console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} t=${Date.now()}`);
         }
 
@@ -188,7 +220,68 @@ export function useChatLoadConvo({
       isLoadingConvoRef.current = false;
       setIsLoadingConvo(false);
     };
-  }, [characterId, character?.id, chatType, currentUser?.email, retryKey]);
+  }, [characterId, character?.id, chatType, currentUser?.email, retryKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { isLoadingConvoRef };
+  /**
+   * loadOlderMessages
+   *
+   * Fetches messages strictly older than the current oldest visible message.
+   * Uses created_date timestamp cursor — never array position or load order.
+   * Only fetches if there are known older messages (hasOlderMessages === true).
+   * New messages in the current session are never affected by this function.
+   */
+  const loadOlderMessages = useCallback(async () => {
+    const convoId = convoIdRef.current;
+    const cursor = oldestMsgTimestampRef.current;
+    if (!convoId || !cursor || isLoadingOlderRef.current) return false;
+
+    isLoadingOlderRef.current = true;
+    console.log(`[CHAT_LOAD] loadOlderMessages cursor=${cursor} convoId=${convoId}`);
+    try {
+      // Fetch 50 messages older than the cursor timestamp
+      const older = await base44.entities.Message.filter(
+        { conversation_id: convoId },
+        "-created_date",
+        50
+      );
+      // Filter to only messages strictly before our cursor
+      const cursorTime = new Date(cursor).getTime();
+      const olderFiltered = older.filter(m => {
+        const t = new Date(m.created_date || m.timestamp || 0).getTime();
+        return t < cursorTime;
+      });
+
+      if (olderFiltered.length === 0) {
+        if (setHasOlderMessages) setHasOlderMessages(false);
+        return false;
+      }
+
+      // Sort chronologically
+      olderFiltered.sort((a, b) =>
+        new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
+      );
+
+      // Update cursor to oldest in this new batch
+      oldestMsgTimestampRef.current = olderFiltered[0]?.created_date || olderFiltered[0]?.timestamp || cursor;
+
+      // Signal if more may exist
+      if (setHasOlderMessages) setHasOlderMessages(olderFiltered.length >= 50);
+
+      // Prepend older messages to top of feed — do NOT affect current messages
+      setMessages(prev => {
+        const existingIds = new Set(prev.map(m => m.id));
+        const newOlder = olderFiltered.filter(m => !existingIds.has(m.id));
+        return [...newOlder, ...prev];
+      });
+
+      return true;
+    } catch (err) {
+      console.error(`[CHAT_LOAD] loadOlderMessages FAILED error="${err?.message}"`);
+      return false;
+    } finally {
+      isLoadingOlderRef.current = false;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return { isLoadingConvoRef, loadOlderMessages };
 }

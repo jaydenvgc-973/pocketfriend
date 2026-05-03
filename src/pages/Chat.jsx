@@ -82,6 +82,7 @@ export default function Chat() {
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
   const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
+  const [hasOlderMessages, setHasOlderMessages] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
   // Reset conversation state immediately when switching characters.
@@ -196,7 +197,7 @@ export default function Chat() {
     base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
   }, []);
 
-  useChatLoadConvo({
+  const { isLoadingConvoRef, loadOlderMessages } = useChatLoadConvo({
     characterId,
     character,
     chatType,
@@ -207,6 +208,7 @@ export default function Chat() {
     setIsTyping,
     setConvoLoadError,
     setIsLoadingConvo,
+    setHasOlderMessages,
     retryKey,
   });
 
@@ -1815,7 +1817,7 @@ Reply with ONLY the single emoji or the word "none".`,
           <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
         </div>
       ) : (
-        <ChatMessageList messages={messages} conversationId={conversationId} characterId={characterId} character={character} userSettings={userSettings} isTyping={isTyping} sendError={sendError} setSendError={setSendError} playingAudioId={playingAudioId} voiceErrors={voiceErrors} bottomRef={bottomRef} onReact={handleReact} onDelete={handleDeleteMessage} onDeleteImage={handleDeleteImage} onPlayVoice={playCharacterVoice} onForward={(msg) => setForwardTarget(msg)} onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))} onLocationSignal={handleLocationSignal} />
+        <ChatMessageList messages={messages} conversationId={conversationId} characterId={characterId} character={character} userSettings={userSettings} isTyping={isTyping} sendError={sendError} setSendError={setSendError} playingAudioId={playingAudioId} voiceErrors={voiceErrors} bottomRef={bottomRef} onReact={handleReact} onDelete={handleDeleteMessage} onDeleteImage={handleDeleteImage} onPlayVoice={playCharacterVoice} onForward={(msg) => setForwardTarget(msg)} onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))} onLocationSignal={handleLocationSignal} hasOlderMessages={hasOlderMessages} onLoadOlderMessages={loadOlderMessages} />
       )}
       {activeCharacter && character ? (
         <DialogueSelector
