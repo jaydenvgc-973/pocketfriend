@@ -166,8 +166,8 @@ export default function Chat() {
         );
         const convos = allConvos.filter(c =>
           c.character_ids &&
-          c.character_ids.length === 1 &&
-          c.character_ids[0] === characterId
+          Array.isArray(c.character_ids) &&
+          c.character_ids.includes(characterId)
         );
 
         let convoId = null;
@@ -255,7 +255,7 @@ export default function Chat() {
       isLoadingConvoRef.current = false;
       setIsLoadingConvo(false);
     };
-  }, [characterId, character?.id, chatType, currentUser.email]);
+  }, [characterId, character?.id, chatType, currentUser?.email]);
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
