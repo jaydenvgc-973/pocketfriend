@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { AnimatePresence } from "framer-motion";
 import ChatHeader from "@/components/chat/ChatHeader";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -56,8 +56,8 @@ import { useChatLoadConvo } from "@/hooks/useChatLoadConvo";
 
 export default function Chat() {
   const { characterId } = useParams();
-  const urlParams = new URLSearchParams(window.location.search);
-  const chatType = urlParams.get("type") || "direct";
+  const [searchParams] = useSearchParams();
+  const chatType = searchParams.get("type") || "direct";
   const isPhone = chatType === "phone";
 
   const [messages, setMessages] = useState([]);

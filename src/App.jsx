@@ -48,8 +48,11 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
   // Preserve current route across orientation changes and remounts (read-only — no navigate)
   useRoutePreservation();
 
-  // Ensure every authenticated user has VGC Towers
+  // Ensure every authenticated user has VGC Towers — run once per session only
   useEffect(() => {
+    const key = 'vgc_towers_ensured';
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, '1');
     base44.functions.invoke('ensureUserVGCTowers', {}).catch(() => {});
   }, []);
 
