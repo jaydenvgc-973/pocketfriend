@@ -21,21 +21,14 @@ export default function NPCContactPanel() {
     queryKey: ['characters', currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      return base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 300);
+      return base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date');
     },
     enabled: !!currentUser?.email,
   });
 
-  // Fetch NPC fictitious via backend function (same source as Settings)
-  const { data: npcFictitiousFromBackend = [] } = useQuery({
-    queryKey: ['npc-characters', currentUser?.id],
-    queryFn: async () => {
-      if (!currentUser?.id) return [];
-      const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      return res?.data?.npcs || [];
-    },
-    enabled: !!currentUser?.id,
-  });
+  // npc_fictitious records are already included in the regularCharacters query (owner_email-scoped).
+  // No separate fetchNPCsForUser call needed — deduplication with the Home query prevents double API calls.
+  const npcFictitiousFromBackend = [];
 
   // Merge both sources (same as Settings) and dedupe by ID
   const mergedCharacters = (() => {

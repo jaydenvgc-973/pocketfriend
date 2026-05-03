@@ -110,16 +110,22 @@ export default function Chat() {
     queryKey: ["character", characterId],
     queryFn: async () => {
       if (!characterId || !currentUser.email) return null;
-      // Scoped direct filter — owner_email + id, no full list fetch
+      // First: check if already cached in Home's characters query to avoid a redundant fetch
+      const cachedAll = queryClient.getQueryData(["characters", currentUser.email]);
+      if (Array.isArray(cachedAll)) {
+        const found = cachedAll.find(c => c.id === characterId);
+        if (found) return found;
+      }
+      // Direct scoped fetch by id + owner_email
       const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
       if (chars.length > 0) return chars[0];
-      // Fallback: NPC fictitious records scoped to current user via fetchNPCsForUser
+      // Fallback: NPC fictitious scoped via fetchNPCsForUser
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
       const allNpcs = res?.data?.npcs || [];
       return allNpcs.find(c => c.id === characterId) || null;
     },
     enabled: !!characterId && !!currentUser.email,
-    staleTime: 30 * 1000,
+    staleTime: 60 * 1000,
   });
 
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
@@ -140,13 +146,13 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    console.log(`[CHAT-LOAD] charId=${characterId} char=${!!character} email=${currentUser?.email} refLocked=${isLoadingConvoRef.current}`);
-    if (!characterId || !character || !currentUser.email) { console.log(`[CHAT-LOAD] Bailed early`); return; }
-    if (isLoadingConvoRef.current) { console.warn(`[CHAT-LOAD] ref stuck — resetting`); isLoadingConvoRef.current = false; }
+    if (!characterId || !character || !currentUser.email) return;
+    if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
-    setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null); setIsLoadingConvo(true);
+    setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null);
     const loadConvo = async () => {
       isLoadingConvoRef.current = true;
+      setIsLoadingConvo(true);
       try {
         const allConvos = await base44.entities.Conversation.filter(
           { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
@@ -242,6 +248,7 @@ export default function Chat() {
     return () => {
       clearTimeout(timer);
       isLoadingConvoRef.current = false;
+      setIsLoadingConvo(false);
     };
   }, [characterId, character?.id, chatType, currentUser.email]);
 

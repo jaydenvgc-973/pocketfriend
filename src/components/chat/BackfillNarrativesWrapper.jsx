@@ -10,6 +10,11 @@ export default function BackfillNarrativesWrapper({ conversationId, characterId,
   useEffect(() => {
     if (!conversationId || !characterId || !character) return;
 
+    // Only run once per session per character — prevents re-running on every navigation or re-mount
+    const sessionKey = `backfill_done_${characterId}`;
+    if (sessionStorage.getItem(sessionKey)) return;
+    sessionStorage.setItem(sessionKey, '1');
+
     const runBackfill = async () => {
       try {
         const res = await base44.functions.invoke('backfillMissingNarratives', {
