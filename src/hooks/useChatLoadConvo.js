@@ -43,6 +43,9 @@ export function useChatLoadConvo({
 }) {
   const queryClient = useQueryClient();
   const isLoadingConvoRef = useRef(false);
+  // Tracks the characterId that initiated the currently-running load.
+  // If characterId changes mid-load, the old load's setState calls are dropped.
+  const loadingForCharacterIdRef = useRef(null);
   // Stable refs for pagination — updated on load, never cause re-renders
   const convoIdRef = useRef(null);
   const oldestMsgTimestampRef = useRef(null);
@@ -72,6 +75,7 @@ export function useChatLoadConvo({
 
     const loadConvo = async () => {
       isLoadingConvoRef.current = true;
+      loadingForCharacterIdRef.current = characterId; // stamp which character this load is for
       setIsLoadingConvo(true);
       const t0 = Date.now();
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
@@ -136,6 +140,12 @@ export function useChatLoadConvo({
               new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
             );
 
+            // STALE LOAD GUARD: if user switched characters while this load was in flight, discard
+            if (loadingForCharacterIdRef.current !== characterId) {
+              console.warn(`[CHAT_LOAD] Stale load result for charId=${characterId} — active charId=${loadingForCharacterIdRef.current}. Discarding.`);
+              return;
+            }
+
             // Pagination cursor = oldest timestamp currently in the visible window
             oldestMsgTimestampRef.current = sorted[0]?.created_date || sorted[0]?.timestamp || null;
 
@@ -187,7 +197,7 @@ export function useChatLoadConvo({
           throw err;
         }
 
-        if (pending.length > 0 && convoId) {
+        if (pending.length > 0 && convoId && loadingForCharacterIdRef.current === characterId) {
           for (const pm of pending) {
             const charMsg = await base44.entities.Message.create({
               conversation_id: convoId,

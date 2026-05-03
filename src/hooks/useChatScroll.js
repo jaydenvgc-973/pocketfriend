@@ -27,7 +27,10 @@ export function useChatScroll(lastMessageId, characterId, userScrolledAway, bott
   }, [characterId]);
 
   // Initial scroll: fires when first batch of messages arrives after character load.
-  // Deferred 150ms so framer-motion and image heights have settled.
+  // Two-pass strategy:
+  //   Pass 1 at 300ms — covers most cases after framer-motion initial render.
+  //   Pass 2 at 750ms — catches lazy image/content height changes that delay the true bottom.
+  // Both passes are instant (no smooth animation) so the user never sees a slow drift.
   useEffect(() => {
     if (!lastMessageId) return;
     if (!isInitialLoadRef.current) return;
@@ -36,10 +39,13 @@ export function useChatScroll(lastMessageId, characterId, userScrolledAway, bott
     isInitialLoadRef.current = false;
     hasDoneInitialScrollRef.current = true;
 
-    const timer = setTimeout(() => {
+    const t1 = setTimeout(() => {
       bottomRef.current?.scrollIntoView({ behavior: "auto" });
-    }, 150);
-    return () => clearTimeout(timer);
+    }, 300);
+    const t2 = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    }, 750);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [lastMessageId, messagesCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Subsequent new messages: smooth scroll only when user is near bottom

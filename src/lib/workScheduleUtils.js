@@ -132,14 +132,8 @@ export function isCharacterAtWork(character, workplaceLocation = null) {
   const workType = (character?.work_details?.workplace_type || '').toLowerCase();
   if (unemployedKeywords.some(k => workType.includes(k))) return false;
   if (!character?.work_details?.job_title && !character?.occupation_location_id && !workplaceLocation) {
-    // No job info at all
-    const workDaysDefault = character?.work_days || [1, 2, 3, 4, 5];
-    const workStartDefault = character?.work_start_time || '09:00';
-    const workEndDefault = character?.work_end_time || '17:00';
-    const currentMinutes = getLocalMinutes();
-    const currentDay = getLocalDay();
-    if (!workDaysDefault.includes(currentDay)) return false;
-    return isInWindow(currentMinutes, workStartDefault, workEndDefault);
+    // No job info at all — cannot determine schedule. Do not fabricate 9-to-5.
+    return false;
   }
 
   // Layer 1: Location-specific shift (MOST AUTHORITATIVE)
@@ -166,16 +160,22 @@ export function isCharacterAtWork(character, workplaceLocation = null) {
   }
 
   // Layer 2: Character's own work schedule (fallback only if no location shift data)
-  // CRITICAL: Only return true if character is scheduled to work TODAY at a TIME that's within work hours
-  const workDays = character?.work_days || [1, 2, 3, 4, 5];
-  const workStart = character?.work_start_time || '09:00';
-  const workEnd = character?.work_end_time || '17:00';
+  // CRITICAL: If no actual schedule is stored, do NOT fabricate 9-to-5.
+  // A missing schedule means unknown — not Mon–Fri 9am–5pm.
+  const workDays = character?.work_days;
+  const workStart = character?.work_start_time;
+  const workEnd = character?.work_end_time;
+
+  // No stored schedule — cannot determine if at work. Return false (do not assume).
+  if (!workStart || !workEnd) return false;
+
+  const resolvedDays = workDays?.length > 0 ? workDays : [1, 2, 3, 4, 5]; // days default to Mon–Fri only if start/end ARE stored
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
 
   // Not a work day — return false
-  if (!workDays.includes(currentDay)) return false;
-  
+  if (!resolvedDays.includes(currentDay)) return false;
+
   // Is a work day AND within work hours — return true
   return isInWindow(currentMinutes, workStart, workEnd);
 }

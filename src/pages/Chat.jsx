@@ -248,44 +248,51 @@ export default function Chat() {
   }, [conversationId]);
 
   useEffect(() => {
-    if (!conversationId) return;
+    if (!conversationId || !characterId) return;
 
+    // Guard: capture the characterId at the time this effect fires.
+    // If the user switches characters before the async work completes, we abort.
+    const snapshotCharacterId = characterId;
     let isMounted = true;
 
     (async () => {
       try {
-        const res = await base44.functions.invoke('markThreadRead', { conversationId, characterId });
+        const res = await base44.functions.invoke('markThreadRead', { conversationId, characterId: snapshotCharacterId });
 
-        if (!isMounted) return;
-
-        const markedCount = res?.data?.marked_read || 0;
+        // Stale check: if characterId changed since this effect started, discard
+        if (!isMounted || snapshotCharacterId !== characterId) return;
 
         setMessages(prev => prev.map(m =>
           m.sender_type === "character" ? { ...m, is_read: true } : m
         ));
 
-        queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+        queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId] });
 
       } catch (err) {
-        if (isMounted) {
+        if (isMounted && snapshotCharacterId === characterId) {
           setMessages(prev => prev.map(m => m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m));
-          queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
+          queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId] });
         }
       }
-      if (isMounted && conversationId && messages.length > 0) {
+
+      // Catchup narrative: only fire if still on same character and messages are loaded
+      if (isMounted && snapshotCharacterId === characterId && conversationId && messages.length > 0) {
         const lastUserMsg = [...messages].reverse().find(m => m.sender_type === 'user');
         if (lastUserMsg) {
           const lastTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date);
           if ((new Date() - lastTime) / 60000 >= 30) {
-            base44.functions.invoke('generateCatchupNarrative', { characterId, conversationId, lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date })
-              .then(r => { if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText); })
+            base44.functions.invoke('generateCatchupNarrative', { characterId: snapshotCharacterId, conversationId, lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date })
+              .then(r => {
+                if (!isMounted || snapshotCharacterId !== characterId) return;
+                if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText);
+              })
               .catch(() => {});
           }
         }
       }
     })();
     return () => { isMounted = false; };
-  }, [conversationId]);
+  }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useChatScroll(
     messages.length > 0 ? messages[messages.length - 1].id : null,

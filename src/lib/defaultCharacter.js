@@ -168,29 +168,12 @@ function buildRelationshipsContext(character) {
     }
   }
 
-  if (character.work_details || character.occupation_location_name || character.occupation) {
-    const w = character.work_details || {};
-    const jobTitle = w.job_title || character.occupation || "employee";
-    const workplaceName = character.occupation_location_name || null;
-    const workplaceType = w.workplace_type || "workplace";
-    // Build schedule label inline — resolver import not available synchronously here
-    const hasSched = character.work_start_time || character.work_end_time || character.work_days?.length > 0;
-    const fmt = (t) => { if (!t) return null; const [h,m]=t.split(':').map(Number); return `${h%12||12}:${String(m).padStart(2,'0')}${h>=12?'pm':'am'}`; };
-    const WD = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-    const schedLabel = hasSched
-      ? [
-          character.work_days?.length > 0 ? character.work_days.map(d=>WD[d]).join('/') : null,
-          (character.work_start_time && character.work_end_time) ? `${fmt(character.work_start_time)}–${fmt(character.work_end_time)}` : null,
-        ].filter(Boolean).join(', ')
-      : null; // No schedule stored — do not fabricate one
-
-    section += `\nYOUR WORK: You are a ${jobTitle}${workplaceName ? ` at ${workplaceName}` : ` at a ${workplaceType}`}.${schedLabel ? ` Schedule: ${schedLabel}.` : ''}`;
-    if (w.work_environment) section += ` ${w.work_environment}`;
-    // CRITICAL: Hard-lock employment to the named workplace.
-    section += ` ⚠️ EMPLOYMENT LOCK: "${workplaceName || workplaceType}" is your ONLY workplace. No other location you visit is your job, regardless of venue type.`;
-    if (w.coworker_names?.length) section += ` Coworkers: ${w.coworker_names.join(", ")}.`;
-    section += "\n";
-  }
+  // NOTE: Work/employment context (job title, workplace, schedule) is intentionally
+  // NOT built here. It is fully handled by buildEmploymentPromptBlock() in Chat.jsx,
+  // which has access to locationList and reads worker_shifts as the authoritative
+  // schedule source. Building it here too would create two conflicting blocks — one
+  // with full schedule data and one without — causing the LLM to default to 9–5.
+  // Do NOT restore inline work context here.
 
   if ((character.frequented_places || []).length > 0) {
     section += `\nPLACES YOU FREQUENT: ${character.frequented_places.join(", ")}\n`;
