@@ -115,7 +115,7 @@ Make it feel like a real person, not a description. No flowery language.`
 
     // Always upload system prompt as a file to avoid size limit
     const uploadRes = await base44.integrations.Core.UploadFile({
-      file: new Blob([systemPrompt], { type: "text/plain" })
+      file: new File([systemPrompt], "system_prompt.txt", { type: "text/plain" })
     });
 
     const { voice_enabled, voice_name, voice_style_note, memories, ...formWithoutVoice } = form;
