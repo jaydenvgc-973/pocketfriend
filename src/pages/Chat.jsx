@@ -156,7 +156,7 @@ export default function Chat() {
       isLoadingConvoRef.current = true;
       try {
         const allConvos = await base44.entities.Conversation.filter(
-          { type: chatType, character_ids: [characterId] },
+          { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
           "-updated_date",
           20
         );
