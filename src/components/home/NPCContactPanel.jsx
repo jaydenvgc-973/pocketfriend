@@ -30,14 +30,14 @@ export default function NPCContactPanel() {
   // and therefore won't appear in the RLS-scoped query. fetchNPCsForUser uses
   // service role and finds them by account association. Dedupe prevents duplicates.
   const { data: npcBackendResult = null } = useQuery({
-    queryKey: ['npc-characters-backend', currentUser?.email],
+    queryKey: ['npc-characters', currentUser?.id],
     queryFn: async () => {
-      if (!currentUser?.email) return null;
+      if (!currentUser?.id) return null;
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
       return res?.data?.npcs || [];
     },
-    enabled: !!currentUser?.email,
-    staleTime: 5 * 60 * 1000, // 5 min — NPCs don't change frequently
+    enabled: !!currentUser?.id,
+    staleTime: 5 * 60 * 1000,
     gcTime: 10 * 60 * 1000,
   });
   const npcFictitiousFromBackend = npcBackendResult || [];

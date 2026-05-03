@@ -40,8 +40,8 @@ export default function Home() {
     queryKey: ["characters", currentUser?.email],
     queryFn: async () => {
       if (!currentUser?.email) return [];
-      // Query by owner_email ONLY — sole ownership authority
-      const characters = await base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date");
+      // Query by owner_email ONLY — sole ownership authority. Limit 300 matches Settings.
+      const characters = await base44.entities.Character.filter({ owner_email: currentUser.email }, "-created_date", 300);
       // EXCLUDE diagnostic/test characters from homepage
       return characters.filter(c => {
         if (c.is_test_character === true) return false;
@@ -55,6 +55,29 @@ export default function Home() {
     refetchOnMount: true,
     refetchOnWindowFocus: true,
   });
+
+  // Fetch NPC fictitious characters via service-role backend — same query key as Settings
+  const { data: npcFictitiousFromBackend = [] } = useQuery({
+    queryKey: ["npc-characters", currentUser?.id],
+    queryFn: async () => {
+      if (!currentUser?.id) return [];
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      return res?.data?.npcs || [];
+    },
+    enabled: !!currentUser?.id,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+  });
+
+  // Merge RLS characters + NPC backend results, deduped by ID — matches Settings merge logic exactly
+  const allCharacters = (() => {
+    const seen = new Set();
+    return [...characters, ...npcFictitiousFromBackend].filter(c => {
+      if (seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  })();
 
   // Fetch locations with zero cache to prevent stale empty data
   const { data: locationsData = [], isLoading: isLocationsLoading } = useQuery({
@@ -191,10 +214,10 @@ export default function Home() {
     }
   }, [isLoading, currentUser?.email, navigate]);
 
-  const defaultChar = characters.find(c => c.is_default);
-  const customChars = characters.filter(c => !c.is_default && c.status !== "deleted");
+  const defaultChar = allCharacters.find(c => c.is_default);
+  const customChars = allCharacters.filter(c => !c.is_default && c.status !== "deleted");
   
-  // Use unified resolver to get homepage-eligible characters
+  // Use unified resolver to get homepage-eligible characters from the full merged pool
   const { activeCharacters } = getCharactersForHomepage(customChars, currentUser?.id, currentUser?.email);
   
   // Sort remaining active created characters alphabetically
@@ -210,7 +233,7 @@ export default function Home() {
   const canCreate = true;
   const canMoveBack = movedAwayChars.length > 0;
   const showPerformanceWarning = activeCustomChars.length >= 7;
-  const thomasAnderson = characters.find(c => c.name === 'Thomas Anderson' || c.name === 'Thomas');
+  const thomasAnderson = allCharacters.find(c => c.name === 'Thomas Anderson' || c.name === 'Thomas');
   const thomasInDisplay = activeCustomChars.some(c => c.id === thomasAnderson?.id);
   const showThomasAndersonFix = thomasAnderson && !thomasInDisplay;
 
@@ -277,7 +300,7 @@ export default function Home() {
             <CharacterInteractionSimulator characters={[
               ...(defaultChar ? [defaultChar] : []),
               ...activeCustomChars,
-              ...characters.filter(c => c.character_type === 'npc_fictitious' && c.status === 'active' && !c.is_test_character && !c.diagnostic_only),
+              ...allCharacters.filter(c => c.character_type === 'npc_fictitious' && c.status === 'active' && !c.is_test_character && !c.diagnostic_only),
             ]} />
           ) : null}
           
