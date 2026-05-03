@@ -805,26 +805,68 @@ export default function CharacterProfile() {
         {/* Manual Needs Override — for debugging/repair */}
         <ManualNeedsEditor character={character} />
 
-        {/* Key Life Events & Memories */}
-        {character.memories?.length > 0 && (
-          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
-            <p className="text-xs text-muted-foreground uppercase tracking-wider">Key Life Events & Memories</p>
-            <div className="space-y-3">
-              {character.memories.map((memory, idx) => (
-                <div key={idx} className="pb-3 border-b border-border last:border-b-0">
-                  <p className="text-sm font-medium text-foreground">{memory.title}</p>
-                  <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>
-                  {memory.emotional_impact && (
-                    <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>
-                  )}
-                  {memory.lesson_learned && (
-                    <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>
-                  )}
+        {/* Key Life Events & Memories — grouped by category when available */}
+        {character.memories?.length > 0 && (() => {
+          const categoryMeta = {
+            challenges: { label: "Challenges", color: "text-rose-400", bg: "bg-rose-500/10", border: "border-rose-500/20" },
+            positive: { label: "Positive Experiences", color: "text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
+            growth: { label: "Growth & Resilience", color: "text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/20" },
+          };
+          const categorized = { challenges: [], positive: [], growth: [], uncategorized: [] };
+          character.memories.forEach(m => {
+            const cat = m.category && categorized[m.category] !== undefined ? m.category : 'uncategorized';
+            categorized[cat].push(m);
+          });
+          const hasAnyCategory = categorized.challenges.length > 0 || categorized.positive.length > 0 || categorized.growth.length > 0;
+
+          return (
+            <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+              <p className="text-xs text-muted-foreground uppercase tracking-wider">What They've Been Through</p>
+
+              {/* Categorized preset memories — shown as grouped chips */}
+              {hasAnyCategory && (
+                <div className="space-y-3">
+                  {['challenges', 'positive', 'growth'].map(cat => {
+                    const mems = categorized[cat];
+                    if (mems.length === 0) return null;
+                    const meta = categoryMeta[cat];
+                    return (
+                      <div key={cat}>
+                        <p className={`text-[10px] font-bold uppercase tracking-widest ${meta.color} mb-1.5`}>{meta.label}</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {mems.map((m, i) => (
+                            <span key={i} className={`px-2.5 py-1 rounded-full text-xs font-medium border ${meta.bg} ${meta.color} ${meta.border}`}>
+                              {m.title}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              ))}
+              )}
+
+              {/* Uncategorized / AI-generated memories — shown as full detail cards */}
+              {categorized.uncategorized.length > 0 && (
+                <div className={`space-y-3 ${hasAnyCategory ? 'pt-3 border-t border-border' : ''}`}>
+                  {hasAnyCategory && <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Key Memories</p>}
+                  {categorized.uncategorized.map((memory, idx) => (
+                    <div key={idx} className="pb-3 border-b border-border last:border-b-0">
+                      <p className="text-sm font-medium text-foreground">{memory.title}</p>
+                      {memory.description && <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{memory.description}</p>}
+                      {memory.emotional_impact && (
+                        <p className="text-xs text-muted-foreground/70 mt-2"><span className="font-medium">Impact:</span> {memory.emotional_impact}</p>
+                      )}
+                      {memory.lesson_learned && (
+                        <p className="text-xs text-muted-foreground/70 mt-1"><span className="font-medium">Lesson:</span> {memory.lesson_learned}</p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Family Members */}
         <FamilyEditor character={character} readOnly={character.is_default} allCharacters={allCharacters} currentUser={currentUser} userSettings={userSettings[0]} />
