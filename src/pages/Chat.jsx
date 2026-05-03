@@ -51,6 +51,7 @@ import LocationAliasResolutionPopup from "@/components/location/LocationAliasRes
 import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import ChatMessageList from "@/components/chat/ChatMessageList";
+import { useChatScroll } from "@/hooks/useChatScroll";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -332,11 +333,12 @@ export default function Chat() {
     return () => { isMounted = false; };
   }, [conversationId]);
 
-  useEffect(() => {
-    if (!userScrolledAway) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [messages.length > 0 && messages[messages.length - 1]?.id, userScrolledAway]);
+  useChatScroll(
+    messages.length > 0 ? messages[messages.length - 1].id : null,
+    characterId,
+    userScrolledAway,
+    bottomRef
+  );
 
   useEffect(() => {
     const container = document.querySelector('[data-chat-container="true"]');
