@@ -30,6 +30,8 @@ export function useChatLoadConvo({
 
   useEffect(() => {
     if (!characterId || !character || !currentUser || !currentUser.email) return;
+    // Guard: do not load conversation for a stale character object from a previous navigation
+    if (character.id !== characterId) return;
     if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
     setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null);

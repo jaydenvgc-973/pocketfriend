@@ -84,6 +84,16 @@ export default function Chat() {
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
   const [retryKey, setRetryKey] = useState(0);
 
+  // Reset all conversation state immediately when switching characters.
+  // This prevents Character A's messages showing while Character B loads.
+  useEffect(() => {
+    setMessages([]);
+    setConversationId(null);
+    setIsTyping(false);
+    setConvoLoadError(null);
+    setIsLoadingConvo(true);
+  }, [characterId]);
+
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
   });
