@@ -8,7 +8,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import BottomNav from "@/components/BottomNav";
 import VoiceSettings from "@/components/character/VoiceSettings";
-import { buildSystemPrompt } from "@/lib/defaultCharacter";
 import { useSettingsCharacters } from "@/hooks/useSettingsCharacters";
 import SettingsCharacterList from "@/components/settings/SettingsCharacterList";
 
@@ -110,14 +109,6 @@ Background: ${merged.background_story || "not specified"}.
 Make it feel like a real person, not a description. No flowery language.`
     });
 
-    merged.personality_summary = personality;
-    const systemPrompt = buildSystemPrompt(merged);
-
-    // Always upload system prompt as a file to avoid size limit
-    const uploadRes = await base44.integrations.Core.UploadFile({
-      file: new File([systemPrompt], "system_prompt.txt", { type: "text/plain" })
-    });
-
     const { voice_enabled, voice_name, voice_style_note, memories, ...formWithoutVoice } = form;
     const updateData = {
       ...formWithoutVoice,
@@ -126,7 +117,11 @@ Make it feel like a real person, not a description. No flowery language.`
       voice_style_note,
       memories,
       personality_summary: personality,
-      system_prompt_url: uploadRes.file_url,
+      // Clear the cached system_prompt_url so Chat.jsx rebuilds it live from
+      // the updated character fields on next load (Chat already has a local
+      // buildSystemPrompt fallback for this case). Avoids creating orphan files
+      // on every save since Base44 has no file deletion API.
+      system_prompt_url: null,
     };
 
     await base44.entities.Character.update(selectedChar.id, updateData);
