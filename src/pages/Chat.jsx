@@ -94,8 +94,12 @@ export default function Chat() {
   const isMountedRef = useRef(true);
   const isLoadingConvoRef = useRef(false);
   const [convoLoadError, setConvoLoadError] = useState(null);
+  const mountKeyRef = useRef(0);
+  const [mountKey, setMountKey] = useState(0);
 
   useEffect(() => {
+    mountKeyRef.current += 1;
+    setMountKey(mountKeyRef.current);
     isMountedRef.current = true;
     return () => { isMountedRef.current = false; };
   }, []);
@@ -255,7 +259,7 @@ export default function Chat() {
       isLoadingConvoRef.current = false;
       setIsLoadingConvo(false);
     };
-  }, [characterId, character?.id, chatType, currentUser?.email]);
+  }, [characterId, character?.id, chatType, currentUser?.email, mountKey]);
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
