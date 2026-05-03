@@ -34,8 +34,8 @@ export default function ChatMessageList({
   setSendError,
   onLocationSignal,
 }) {
-  // Inject date separators — one per calendar day, based on message timestamps
   const itemsWithSeparators = injectDateSeparators(messages);
+  if (messages.length > 0) console.log(`[CHAT_TIMING] ChatMessageList_RENDER n=${messages.length} at=${Date.now()}`);
 
   return (
     <div className="flex-1 overflow-y-auto py-4 space-y-4 px-4" data-chat-container="true">
