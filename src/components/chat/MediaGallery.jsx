@@ -154,8 +154,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   };
 
   // ── MEDIA SOURCE OF TRUTH: fetch ALL images directly from DB when gallery opens.
-  // This is independent of the visible message feed window (which is limited to 50).
-  // Older images remain accessible in the gallery even when not rendered in chat.
+  // This is independent of the visible render window in the chat feed.
+  // Images attached to messages outside the current render window remain accessible here.
   const [allImages, setAllImages] = useState([]);
   const [isFetchingImages, setIsFetchingImages] = useState(false);
 
