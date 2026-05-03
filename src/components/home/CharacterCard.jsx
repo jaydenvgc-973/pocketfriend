@@ -81,7 +81,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
 
   const { data: conversations = [] } = useQuery({
     queryKey: ['conversations', character.id],
-    queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id], created_by: character.created_by }),
+    queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id] }),
     staleTime: 30000, // 30s — don't re-fetch on every render
   });
 
@@ -157,7 +157,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
     const prompt = `Portrait photo of a real person. ${character.age_range || "adult"}${ethnicityPart ? ", " + ethnicityPart : ""}. Gender: ${character.gender || "person"}. ${character.personality_traits?.join(", ") || ""} energy. ${character.archetype ? character.archetype + " personality." : ""} Natural lighting, realistic, photographic, candid feel. Not a model, a real everyday person.`;
     const result = await base44.integrations.Core.GenerateImage({ prompt });
     await base44.entities.Character.update(character.id, { avatar_url: result.url });
-    queryClient.invalidateQueries({ queryKey: ["characters", character.created_by] });
+    queryClient.invalidateQueries({ queryKey: ["characters", character.owner_email] });
     setIsGeneratingAvatar(false);
     setShowAvatarModal(false);
   };
@@ -461,7 +461,7 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
           </div>
         )}
         {!isMovedAway && !isDefault && (
-          <CharacterMovementStatus character={character} userEmail={character.owner_email || character.created_by} />
+          <CharacterMovementStatus character={character} userEmail={character.owner_email} />
         )}
       </motion.div>
     </>

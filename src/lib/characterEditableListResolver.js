@@ -133,18 +133,7 @@ function isCharacterOwnedByCurrentUser(character, currentUserId, currentUserEmai
     return true;
   }
 
-  // 3. created_by as last resort (only if it matches current user email)
-  // BUT: if created_by exists AND differs from owner fields, prefer owner fields
-  if (character.created_by === currentUserEmail && !character.owner_user_id && !character.owner_email) {
-    return true;
-  }
-
-  // 4. Explicitly scoped to user (data_scope: "private_user" implies direct ownership)
-  if (character.data_scope === 'private_user' && character.created_by === currentUserEmail) {
-    return true;
-  }
-
-  // 5. Check assigned_user_id or profile_owner (legacy migrations)
+  // 3. Check assigned_user_id or profile_owner (legacy migrations)
   if (character.assigned_user_id === currentUserId) {
     return true;
   }
