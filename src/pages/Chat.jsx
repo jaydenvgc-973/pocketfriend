@@ -102,24 +102,23 @@ export default function Chat() {
   const { data: currentUser = {} } = useQuery({
     queryKey: ["user"],
     queryFn: () => base44.auth.me(),
+    staleTime: 5 * 60 * 1000,
   });
 
   const { data: character } = useQuery({
-    queryKey: ["character", characterId, currentUser?.email, currentUser?.id],
+    queryKey: ["character", characterId],
     queryFn: async () => {
-      if (!characterId || !currentUser?.email) return null;
-      
-      // First try: user-scoped entity filter
-      const userChars = await base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date', 500);
-      const found = userChars.find(c => c.id === characterId);
-      if (found) return found;
-      
-      // Second try: fetch NPC fictitious records via service-role
+      if (!characterId) return null;
+      // Direct fetch by ID — RLS enforces ownership server-side, no need to filter all 500 chars first
+      const chars = await base44.entities.Character.filter({ id: characterId });
+      if (chars.length > 0) return chars[0];
+      // Fallback: NPC fictitious records (shared, not owner-scoped)
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
       const allNpcs = res?.data?.npcs || [];
       return allNpcs.find(c => c.id === characterId) || null;
     },
-    enabled: !!characterId && !!currentUser?.email,
+    enabled: !!characterId,
+    staleTime: 30 * 1000,
   });
 
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
