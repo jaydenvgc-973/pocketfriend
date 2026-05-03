@@ -85,11 +85,12 @@ export function resolveEmployment(character, locationList = []) {
 
     let schedule_days, start_time, end_time, source, is_default_schedule = false;
 
-    if (workerShift?.days?.length > 0) {
-      // Location has an explicit shift for this worker
-      schedule_days = workerShift.days;
-      start_time = workerShift.start;
-      end_time = workerShift.end;
+    if (workerShift?.start || workerShift?.end) {
+      // Location has a defined shift for this worker — use it as authoritative source.
+      // days may be empty/missing meaning "any day" — that is valid, not a fallback signal.
+      schedule_days = workerShift.days?.length > 0 ? workerShift.days : null;
+      start_time = workerShift.start || null;
+      end_time = workerShift.end || null;
       source = 'worker_shift';
     } else if (hasCharFileSchedule) {
       // Character file has explicit schedule fields
@@ -127,10 +128,11 @@ export function resolveEmployment(character, locationList = []) {
     const workerShift = loc?.worker_shifts?.[character.id];
 
     let schedule_days, start_time, end_time, source, is_default_schedule = false;
-    if (workerShift?.days?.length > 0) {
-      schedule_days = workerShift.days;
-      start_time = workerShift.start;
-      end_time = workerShift.end;
+    if (workerShift?.start || workerShift?.end) {
+      // Location has a defined shift — authoritative source.
+      schedule_days = workerShift.days?.length > 0 ? workerShift.days : null;
+      start_time = workerShift.start || null;
+      end_time = workerShift.end || null;
       source = 'worker_shift';
     } else {
       // No shift stored — leave null. Do NOT fabricate a default.

@@ -94,6 +94,8 @@ export default function Chat() {
     setConversationId(null);
     setIsTyping(false);
     setConvoLoadError(null);
+    setUserScrolledAway(false); // Reset scroll position tracking on character switch
+    setCatchupNarrativeText(null); // Don't carry over catchup from previous character
   }, [characterId]);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
@@ -1041,6 +1043,14 @@ export default function Chat() {
         base44.functions.invoke('performWebLookup', { characterId, searchQuery: query }).catch(() => {});
       }
 
+      // Fetch locations for BOTH spatial awareness AND employment schedule resolution.
+      // occupation_location_id triggers this fetch so worker_shifts are available.
+      // Without locations, buildEmploymentPromptBlock cannot read worker_shifts and
+      // the LLM falls back to training knowledge (9am-5pm default).
+      const needsLocationFetch = !!(character.occupation_location_id || character.current_activity ||
+        character.additional_occupation_locations?.length > 0);
+      let allLocationsForContext = [];
+
       const [memoryResult, progressionResult, pastLookupsResult, spatialResult] = await Promise.all([
         base44.functions.invoke('retrieveActiveMemory', {
           characterId,
@@ -1053,9 +1063,10 @@ export default function Chat() {
         }),
         base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }).catch(() => null),
         base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
-        (character.occupation_location_id || character.current_activity)
+        needsLocationFetch
           ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
               const allLocs = allLocRes?.data?.locations || [];
+              allLocationsForContext = allLocs; // capture for employment block below
               const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
               const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
               const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
@@ -1222,7 +1233,11 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
 • Only include information that DIRECTLY solves the current task. Do NOT inject unrelated memory or topics.
 • DO NOT drift into past topics, stored memories, or general summaries unless directly relevant to THIS request.`;
 
-      const employmentPresenceSeparation = buildEmploymentPromptBlock(character, []);
+      // Pass the locations fetched above (same fetch, no duplicate call).
+      // allLocationsForContext is populated when needsLocationFetch is true (character has a job).
+      // This gives buildEmploymentPromptBlock access to worker_shifts — the authoritative
+      // schedule source. Empty array only if character has no job at all.
+      const employmentPresenceSeparation = buildEmploymentPromptBlock(character, allLocationsForContext);
 
       // Build location share context for the prompt
       const locationShareInstruction = charLocationName ? `\n\nLOCATION SHARING: If the user asks where you are, or if you want to share your location naturally in conversation, you may set "share_location": true in your JSON response. Your current verified location is: "${charLocationName}". Only share when genuinely relevant. You may also include a short optional "location_share_note" field (max 1 sentence) to add a personal note about why you're there or what you're doing. Only set share_location:true when you have a real verified location — never fabricate one.` : "";

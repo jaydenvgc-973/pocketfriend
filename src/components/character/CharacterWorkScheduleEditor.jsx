@@ -27,7 +27,9 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
   const [saved, setSaved] = useState(false);
 
   const storedShift = location.worker_shifts?.[characterId];
-  const initialShift = storedShift || { start: '09:00', end: '17:00', days: [1, 2, 3, 4, 5] };
+  // CRITICAL: Do NOT default to 09:00–17:00. An empty shift means "not configured yet".
+  // Using 09:00–17:00 as default would write a false 9-5 schedule if user saves without editing.
+  const initialShift = storedShift || { start: '', end: '', days: [] };
   const payType = location.worker_pay_type?.[characterId] || 'hourly';
   const payRate = location.worker_pay_rates?.[characterId] || 0;
   const jobTitle = location.worker_job_titles?.[characterId] || '';
@@ -130,7 +132,7 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
               <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Shift Start</label>
               <Input
                 type="time"
-                value={form.shift.start || '09:00'}
+                value={form.shift.start || ''}
                 onChange={e => updateShift('start', e.target.value)}
                 className="h-9 rounded-lg text-sm"
               />
@@ -139,7 +141,7 @@ function WorkLocationEditor({ location, characterId, onSaved }) {
               <label className="text-xs text-muted-foreground uppercase tracking-wider block mb-1">Shift End</label>
               <Input
                 type="time"
-                value={form.shift.end || '17:00'}
+                value={form.shift.end || ''}
                 onChange={e => updateShift('end', e.target.value)}
                 className="h-9 rounded-lg text-sm"
               />

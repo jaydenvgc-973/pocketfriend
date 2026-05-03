@@ -100,9 +100,10 @@ export function isCharacterOnShift(characterId, location) {
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
 
-  // Check shift days — default Mon-Fri
-  const shiftDays = shift.days?.length > 0 ? shift.days : [1, 2, 3, 4, 5];
-  if (!shiftDays.includes(currentDay)) return false;
+  // CRITICAL: Only use stored shift.days. If no days are stored, do NOT default to Mon-Fri.
+  // A missing days array means the shift applies any day (always-active shift).
+  // Defaulting to Mon-Fri would fabricate a schedule for night/weekend workers.
+  if (shift.days?.length > 0 && !shift.days.includes(currentDay)) return false;
 
   return isInWindow(currentMinutes, shift.start, shift.end);
 }
@@ -169,12 +170,13 @@ export function isCharacterAtWork(character, workplaceLocation = null) {
   // No stored schedule — cannot determine if at work. Return false (do not assume).
   if (!workStart || !workEnd) return false;
 
-  const resolvedDays = workDays?.length > 0 ? workDays : [1, 2, 3, 4, 5]; // days default to Mon–Fri only if start/end ARE stored
   const currentMinutes = getLocalMinutes();
   const currentDay = getLocalDay();
 
-  // Not a work day — return false
-  if (!resolvedDays.includes(currentDay)) return false;
+  // CRITICAL: Only check days if they are explicitly stored. If work_days is empty/missing,
+  // do NOT default to Mon-Fri. A character with stored start/end but no days stored
+  // means "we know the hours but not which days" — treat as unknown days (skip day check).
+  if (workDays?.length > 0 && !workDays.includes(currentDay)) return false;
 
   // Is a work day AND within work hours — return true
   return isInWindow(currentMinutes, workStart, workEnd);
