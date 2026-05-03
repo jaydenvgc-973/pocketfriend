@@ -6,7 +6,7 @@ import { useEffect, useRef } from "react";
  * Handles scroll-to-bottom behavior for Chat and Text (phone) pages.
  *
  * Rules:
- * - On initial message load: jump to bottom once after layout settles (instant, no animation).
+ * - On initial message load: jump instantly to bottom after layout settles (deferred 150ms).
  * - On new incoming/outgoing message: smooth scroll to bottom ONLY if user is near the bottom.
  * - If user has scrolled up, never force-scroll them back down.
  *
@@ -14,31 +14,40 @@ import { useEffect, useRef } from "react";
  * @param {string} characterId - Current character (used to reset initial-load flag on navigation).
  * @param {boolean} userScrolledAway - True if the user has scrolled up from the bottom.
  * @param {React.RefObject} bottomRef - Ref attached to the sentinel div at the end of the message list.
+ * @param {number} messagesCount - Total messages count; used to detect first-render after character switch.
  */
-export function useChatScroll(lastMessageId, characterId, userScrolledAway, bottomRef) {
+export function useChatScroll(lastMessageId, characterId, userScrolledAway, bottomRef, messagesCount) {
   const isInitialLoadRef = useRef(true);
+  const hasDoneInitialScrollRef = useRef(false);
 
   // Reset initial-load flag whenever the user navigates to a different character
   useEffect(() => {
     isInitialLoadRef.current = true;
+    hasDoneInitialScrollRef.current = false;
   }, [characterId]);
 
+  // Initial scroll: fires when first batch of messages arrives after character load.
+  // Deferred 150ms so framer-motion and image heights have settled.
   useEffect(() => {
     if (!lastMessageId) return;
+    if (!isInitialLoadRef.current) return;
+    if (hasDoneInitialScrollRef.current) return;
 
-    if (isInitialLoadRef.current) {
-      // First batch of messages: defer scroll until after render + framer-motion settle.
-      // 150ms gives AnimatePresence time to mount all message bubbles before we jump.
-      isInitialLoadRef.current = false;
-      const timer = setTimeout(() => {
-        bottomRef.current?.scrollIntoView({ behavior: "auto" });
-      }, 150);
-      return () => clearTimeout(timer);
-    }
+    isInitialLoadRef.current = false;
+    hasDoneInitialScrollRef.current = true;
 
-    // Subsequent messages (new send/receive): smooth scroll only when near bottom
-    if (!userScrolledAway) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
+    const timer = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [lastMessageId, messagesCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Subsequent new messages: smooth scroll only when user is near bottom
+  useEffect(() => {
+    if (!lastMessageId) return;
+    if (!hasDoneInitialScrollRef.current) return; // initial scroll hasn't fired yet
+    if (userScrolledAway) return;
+
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [lastMessageId]); // eslint-disable-line react-hooks/exhaustive-deps
 }

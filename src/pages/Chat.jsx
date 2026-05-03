@@ -291,7 +291,8 @@ export default function Chat() {
     messages.length > 0 ? messages[messages.length - 1].id : null,
     characterId,
     userScrolledAway,
-    bottomRef
+    bottomRef,
+    messages.length
   );
 
   useEffect(() => {

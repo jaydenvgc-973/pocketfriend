@@ -84,8 +84,8 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       base44.functions.invoke('fetchAllLocationsForUser', {})
         .then(res => setLocations(res?.data?.locations || []))
         .catch(() => {}),
-      // ACCOUNT-SCOPED: filter by created_by so we never read another user's settings
-      base44.entities.UserSettings.filter({ created_by: userEmail })
+      // ACCOUNT-SCOPED: filter by owner_email
+      base44.entities.UserSettings.filter({ owner_email: userEmail })
         .then(settingsList => setUserSettings(settingsList?.[0] || null))
         .catch(() => {}),
       fetchUnifiedRoster(base44, userEmail)
