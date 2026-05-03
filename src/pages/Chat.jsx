@@ -154,10 +154,12 @@ export default function Chat() {
       isLoadingConvoRef.current = true;
       setIsLoadingConvo(true);
       try {
+        // Query by owner_email + type only, then filter locally for exact character match
+        // Array-value filters on character_ids are unreliable — local filter is the safe path
         const allConvos = await base44.entities.Conversation.filter(
-          { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
+          { type: chatType, owner_email: currentUser.email },
           "-updated_date",
-          20
+          100
         );
         const convos = allConvos.filter(c =>
           c.character_ids &&
@@ -1087,15 +1089,7 @@ export default function Chat() {
         }),
         base44.functions.invoke('buildProgressionFilteredContext', { characterId, currentMessage: text }).catch(() => null),
         base44.entities.WebLookup.filter({ character_id: characterId }, "-lookup_date", 10).catch(() => []),
-        (character.occupation_location_id || character.current_activity)
-          ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
-              const allLocs = allLocRes?.data?.locations || [];
-              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
-              const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
-              const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
-              return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
-            }).catch(() => null)
-          : Promise.resolve(null),
+        Promise.resolve(null),
       ]);
 
       let memoryContext = "";
