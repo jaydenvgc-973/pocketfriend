@@ -23,6 +23,7 @@ export function useChatLoadConvo({
   setIsTyping,
   setConvoLoadError,
   setIsLoadingConvo,
+  retryKey = 0,
 }) {
   const queryClient = useQueryClient();
   const isLoadingConvoRef = useRef(false);
@@ -178,7 +179,7 @@ export function useChatLoadConvo({
       isLoadingConvoRef.current = false;
       setIsLoadingConvo(false);
     };
-  }, [characterId, character?.id, chatType, currentUser?.email]);
+  }, [characterId, character?.id, chatType, currentUser?.email, retryKey]);
 
   return { isLoadingConvoRef };
 }

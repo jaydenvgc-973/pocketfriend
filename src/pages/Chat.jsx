@@ -82,6 +82,7 @@ export default function Chat() {
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
   const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
   const [isLoadingConvo, setIsLoadingConvo] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
@@ -185,6 +186,7 @@ export default function Chat() {
     setIsTyping,
     setConvoLoadError,
     setIsLoadingConvo,
+    retryKey,
   });
 
   useEffect(() => {
@@ -1785,7 +1787,7 @@ Reply with ONLY the single emoji or the word "none".`,
       {convoLoadError ? (
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
           <p className="text-sm font-medium text-foreground">{convoLoadError === 'rate_limited' ? 'Chat is temporarily rate limited. Please try again shortly.' : 'Failed to load chat. Check connection and retry.'}</p>
-          <button onClick={() => setConvoLoadError(null)} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
+          <button onClick={() => { setConvoLoadError(null); setRetryKey(k => k + 1); }} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
         </div>
       ) : isLoadingConvo ? (
         <div className="flex-1 flex items-center justify-center">
