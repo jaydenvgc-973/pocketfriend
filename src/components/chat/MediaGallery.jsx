@@ -153,9 +153,12 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     }
   };
 
-  // ── MEDIA SOURCE OF TRUTH: fetch ALL images directly from DB when gallery opens.
-  // This is independent of the visible render window in the chat feed.
-  // Images attached to messages outside the current render window remain accessible here.
+  // ── MEDIA GALLERY SOURCE: fetches up to 500 recent message records from the DB when gallery opens.
+  // This is a capped retrieval — not full historical coverage of all messages in the conversation.
+  // Images from messages older than the 500-record cap are not guaranteed to appear here.
+  // This cap is independent of the 200-message visible chat render window.
+  // Images outside the render window but within the 500-record cap will still appear in the gallery.
+  // No images are deleted — only the retrieval depth is capped for performance.
   const [allImages, setAllImages] = useState([]);
   const [isFetchingImages, setIsFetchingImages] = useState(false);
 
