@@ -106,24 +106,25 @@ export default function Chat() {
     queryFn: async () => { const t=Date.now(); const r=await base44.auth.me(); console.log(`[CHAT_TIMING] auth.me done +${t-chatRouteOpenTime.current}ms→+${Date.now()-chatRouteOpenTime.current}ms`); return r; },
     staleTime: 5 * 60 * 1000,
   });
-
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
       if (!characterId || !currentUser?.email) return null;
-      // First: check if already cached in Home's characters query to avoid a redundant fetch
+      console.log(`[CHAT_TIMING] char_query_START +${Date.now()-chatRouteOpenTime.current}ms`);
       const cachedAll = queryClient.getQueryData(["characters", currentUser.email]);
       if (Array.isArray(cachedAll)) {
         const found = cachedAll.find(c => c.id === characterId);
-        if (found) return found;
+        if (found) { console.log(`[CHAT_TIMING] char_CACHE_HIT +${Date.now()-chatRouteOpenTime.current}ms`); return found; }
       }
       const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
+      console.log(`[CHAT_TIMING] char_filter_DONE n=${chars.length} +${Date.now()-chatRouteOpenTime.current}ms`);
       if (chars.length > 0) return chars[0];
+      console.log(`[CHAT_TIMING] char_npc_START +${Date.now()-chatRouteOpenTime.current}ms`);
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      console.log(`[CHAT_TIMING] char_npc_DONE +${Date.now()-chatRouteOpenTime.current}ms`);
       const allNpcs = res?.data?.npcs || [];
       return allNpcs.find(c => c.id === characterId) || null;
     },
-    // Wait until user query has fully resolved (not just has a value) before fetching character
     enabled: !!characterId && !isUserLoading && !!currentUser?.email && !!currentUser,
     staleTime: 60 * 1000,
   });
@@ -131,7 +132,6 @@ export default function Chat() {
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
   const { settings: userSettings } = useUserSettings();
   const { playingAudioId, voiceErrors, playCharacterVoice } = useVoicePlayback(chatType);
-
   const { data: characterFinancial = null } = useQuery({
     queryKey: ["characterFinancial", characterId],
     queryFn: async () => {
