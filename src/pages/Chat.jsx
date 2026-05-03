@@ -52,6 +52,7 @@ import { parseCharacterResponse } from "@/lib/chatResponseParser";
 import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import ChatMessageList from "@/components/chat/ChatMessageList";
 import { useChatScroll } from "@/hooks/useChatScroll";
+import { useChatLoadConvo } from "@/hooks/useChatLoadConvo";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -93,7 +94,6 @@ export default function Chat() {
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
   const isMountedRef = useRef(true);
-  const isLoadingConvoRef = useRef(false);
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -103,7 +103,17 @@ export default function Chat() {
 
   const { data: currentUser, isLoading: isUserLoading } = useQuery({
     queryKey: ["user"],
-    queryFn: () => base44.auth.me(),
+    queryFn: async () => {
+      console.log(`[CHAT_LOAD] auth.me START t=${Date.now()}`);
+      try {
+        const u = await base44.auth.me();
+        console.log(`[CHAT_LOAD] auth.me DONE email=${u?.email} t=${Date.now()}`);
+        return u;
+      } catch (err) {
+        console.error(`[CHAT_LOAD] auth.me ERROR ${err?.message} t=${Date.now()}`);
+        throw err;
+      }
+    },
     staleTime: 5 * 60 * 1000,
   });
   const { data: character } = useQuery({
@@ -113,13 +123,32 @@ export default function Chat() {
       const cachedAll = queryClient.getQueryData(["characters", currentUser.email]);
       if (Array.isArray(cachedAll)) {
         const found = cachedAll.find(c => c.id === characterId);
-        if (found) return found;
+        if (found) {
+          console.log(`[CHAT_LOAD] Character CACHE_HIT name=${found.name} t=${Date.now()}`);
+          return found;
+        }
       }
-      const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
-      if (chars.length > 0) return chars[0];
-      const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      const allNpcs = res?.data?.npcs || [];
-      return allNpcs.find(c => c.id === characterId) || null;
+      console.log(`[CHAT_LOAD] Character.filter START charId=${characterId} t=${Date.now()}`);
+      try {
+        const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
+        if (chars.length > 0) {
+          console.log(`[CHAT_LOAD] Character.filter DONE name=${chars[0].name} t=${Date.now()}`);
+          return chars[0];
+        }
+        console.log(`[CHAT_LOAD] Character.filter EMPTY — fetchNPCsForUser fallback START t=${Date.now()}`);
+      } catch (err) {
+        console.error(`[CHAT_LOAD] Character.filter ERROR ${err?.message} t=${Date.now()}`);
+      }
+      try {
+        const res = await base44.functions.invoke('fetchNPCsForUser', {});
+        const allNpcs = res?.data?.npcs || [];
+        const found = allNpcs.find(c => c.id === characterId) || null;
+        console.log(`[CHAT_LOAD] fetchNPCsForUser FALLBACK DONE found=${!!found} npcCount=${allNpcs.length} t=${Date.now()}`);
+        return found;
+      } catch (err) {
+        console.error(`[CHAT_LOAD] fetchNPCsForUser FALLBACK ERROR ${err?.message} t=${Date.now()}`);
+        return null;
+      }
     },
     enabled: !!characterId && !isUserLoading && !!currentUser?.email && !!currentUser,
     staleTime: 60 * 1000,
@@ -145,118 +174,18 @@ export default function Chat() {
     base44.functions.invoke('initializeVoiceSettings', {}).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    if (!characterId || !character || !currentUser || !currentUser.email) return;
-    if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
-    isMountedRef.current = true;
-    setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null);
-    const loadConvo = async () => {
-      isLoadingConvoRef.current = true;
-      setIsLoadingConvo(true);
-      try {
-        const allConvos = await base44.entities.Conversation.filter(
-          { owner_email: currentUser.email },
-          "-last_message_date",
-          100
-        );
-        const convos = allConvos.filter(c =>
-          c.type === chatType &&
-          c.character_ids &&
-          Array.isArray(c.character_ids) &&
-          c.character_ids.includes(characterId)
-        );
-
-        let convoId = null;
-
-        if (convos.length > 0) {
-          // Select by last_message_date desc (real activity), fallback to created_date desc.
-          // Never use updated_date — automations refresh it on ghost conversations daily.
-          const withMsgs = convos.filter(c => c.last_message_date);
-          const withoutMsgs = convos.filter(c => !c.last_message_date);
-          withMsgs.sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
-          withoutMsgs.sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
-          const selectedConvo = [...withMsgs, ...withoutMsgs][0];
-          convoId = selectedConvo.id;
-          console.log(`[CONVO_SELECT] char=${characterId} candidates=${convos.length} withMsgs=${withMsgs.length} selected=${convoId} last_msg=${selectedConvo.last_message_date || 'none'}`);
-          const isProtected = ['69c0d59d7e382cc866ded9c9'].includes(characterId);
-          const msgLimit = isProtected ? 1000 : 50;
-          const loadedMsgs = await base44.entities.Message.filter(
-            { conversation_id: convoId },
-            "-created_date",
-            msgLimit
-          );
-          if (loadedMsgs && loadedMsgs.length > 0) {
-            setMessages(loadedMsgs.reverse());
-            setConversationId(convoId);
-
-            const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
-            if (unread.length > 0) {
-              unread.forEach(m => {
-                base44.entities.Message.update(m.id, { is_read: true }).catch(() => {});
-              });
-              queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-            }
-          } else {
-            setConversationId(convoId);
-          }
-        } else {
-          const convo = await base44.entities.Conversation.create({
-            title: `${chatType} with ${character.name}`,
-            type: chatType,
-            character_ids: [characterId],
-            owner_email: currentUser.email,
-          });
-          setConversationId(convo.id);
-        }
-
-        const pending = await base44.entities.PendingMessage.filter(
-          { character_id: characterId, delivered: false }
-        );
-
-        if (pending.length > 0 && convoId) {
-          for (const pm of pending) {
-            const charMsg = await base44.entities.Message.create({
-              conversation_id: convoId,
-              sender_type: "character",
-              character_id: characterId,
-              character_name: character.name,
-              content: pm.content,
-              image_url: pm.image_url || undefined,
-              emotional_state: pm.emotional_state || "calm",
-              timestamp: new Date().toISOString(),
-            });
-
-            setMessages(prev => prev.some(m => m.id === charMsg.id) ? prev : [...prev, charMsg]);
-            await base44.entities.PendingMessage.update(pm.id, { delivered: true });
-            await base44.entities.Conversation.update(convoId, {
-              last_message_preview: pm.content.substring(0, 100),
-              last_message_date: new Date().toISOString(),
-            });
-            
-            await new Promise(r => setTimeout(r, 500));
-          }
-          queryClient.invalidateQueries({ queryKey: ['pendingMessages'] });
-        }
-      } catch (err) {
-        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
-        if (isRateLimit) {
-          setConvoLoadError('rate_limited');
-        } else {
-          setConvoLoadError('error');
-        }
-      } finally {
-        isLoadingConvoRef.current = false;
-        setIsLoadingConvo(false);
-      }
-    };
-
-    const timer = setTimeout(() => loadConvo(), 300);
-    return () => {
-      clearTimeout(timer);
-      isLoadingConvoRef.current = false;
-      setIsLoadingConvo(false);
-    };
-  }, [characterId, character?.id, chatType, currentUser?.email]);
+  useChatLoadConvo({
+    characterId,
+    character,
+    chatType,
+    currentUser,
+    isMountedRef,
+    setMessages,
+    setConversationId,
+    setIsTyping,
+    setConvoLoadError,
+    setIsLoadingConvo,
+  });
 
   useEffect(() => {
     if (!conversationId || !characterId) return;
@@ -1856,7 +1785,7 @@ Reply with ONLY the single emoji or the word "none".`,
       {convoLoadError ? (
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
           <p className="text-sm font-medium text-foreground">{convoLoadError === 'rate_limited' ? 'Chat is temporarily rate limited. Please try again shortly.' : 'Failed to load chat. Check connection and retry.'}</p>
-          <button onClick={() => { setConvoLoadError(null); isLoadingConvoRef.current = false; }} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
+          <button onClick={() => setConvoLoadError(null)} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
         </div>
       ) : isLoadingConvo ? (
         <div className="flex-1 flex items-center justify-center">
