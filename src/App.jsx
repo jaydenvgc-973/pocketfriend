@@ -48,11 +48,13 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
   // Preserve current route across orientation changes and remounts (read-only — no navigate)
   useRoutePreservation();
 
-  // NOTE: ensureUserVGCTowers was removed from frontend mount.
-  // It was firing on every App mount, immediately saturating the rate limiter
-  // BEFORE auth.me could complete — causing 29-second chat load delays.
-  // The function should only be called from a scheduled automation or admin console,
-  // not on every user session start.
+  useEffect(() => {
+    // Session-gated: only run once per browser session to avoid 429 storms on repeated mounts.
+    const vgcInitKey = 'vgc_towers_initialized';
+    if (sessionStorage.getItem(vgcInitKey)) return;
+    sessionStorage.setItem(vgcInitKey, '1');
+    base44.functions.invoke('ensureUserVGCTowers', {}).catch(() => {});
+  }, []);
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (

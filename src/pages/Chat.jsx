@@ -141,9 +141,23 @@ export default function Chat() {
           console.log(`[CHAT_LOAD] Character.filter DONE name=${chars[0].name} t=${Date.now()}`);
           return chars[0];
         }
-        console.log(`[CHAT_LOAD] Character.filter EMPTY id=${characterId} t=${Date.now()}`);
+        console.log(`[CHAT_LOAD] Character.filter EMPTY — trying fetchNPCsForUser fallback id=${characterId} t=${Date.now()}`);
       } catch (err) {
-        console.error(`[CHAT_LOAD] Character.filter ERROR ${err?.message} t=${Date.now()}`);
+        console.error(`[CHAT_LOAD] Character.filter ERROR ${err?.message} — trying fetchNPCsForUser fallback t=${Date.now()}`);
+      }
+      // Fallback: character may be an NPC or legacy record not returned by id filter.
+      // fetchNPCsForUser returns all NPCs for the current user scoped by owner_email.
+      try {
+        const npcRes = await base44.functions.invoke('fetchNPCsForUser', {});
+        const npcs = npcRes?.data?.characters || [];
+        const found = npcs.find(c => c.id === characterId);
+        if (found) {
+          console.log(`[CHAT_LOAD] Character FOUND via fetchNPCsForUser fallback name=${found.name} t=${Date.now()}`);
+          return found;
+        }
+        console.log(`[CHAT_LOAD] Character NOT FOUND in fetchNPCsForUser fallback id=${characterId} t=${Date.now()}`);
+      } catch (fallbackErr) {
+        console.error(`[CHAT_LOAD] fetchNPCsForUser fallback ERROR ${fallbackErr?.message} t=${Date.now()}`);
       }
       return null;
     },
@@ -245,12 +259,12 @@ export default function Chat() {
           queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
         }
       }
-      if (isMounted && messages.length > 0) {
+      if (isMounted && conversationId && messages.length > 0) {
         const lastUserMsg = [...messages].reverse().find(m => m.sender_type === 'user');
         if (lastUserMsg) {
           const lastTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date);
           if ((new Date() - lastTime) / 60000 >= 30) {
-            base44.functions.invoke('generateCatchupNarrative', { characterId, lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date })
+            base44.functions.invoke('generateCatchupNarrative', { characterId, conversationId, lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date })
               .then(r => { if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText); })
               .catch(() => {});
           }
