@@ -86,14 +86,23 @@ export default function CharacterCard({ character, onDelete, onMoveAway, locatio
   const balance = financialRecords[0]?.current_balance;
 
   const { data: conversations = [] } = useQuery({
-    // Query key includes owner_email to prevent cross-user cache collisions.
-    // The filter uses character_ids only because existing Conversation records may not have owner_email yet.
-    // Platform RLS ensures the authenticated user only receives their own records.
-    // Once owner_email is backfilled on all Conversation records, add it to the filter as well.
+    // owner_email is the ownership source of truth. Both fields are required in the filter.
+    // Backfill (backfillConversationOwnerEmail) has been run — existing records are stamped.
+    // Orphaned conversations from deleted characters are unresolvable and excluded by design.
     queryKey: ['conversations', character.id, character.owner_email],
-    queryFn: () => base44.entities.Conversation.filter({ character_ids: [character.id] }),
+    queryFn: () => {
+      if (!character.owner_email) {
+        // Fail visibly — do not silently fall back to an under-scoped query.
+        console.error(`[CharacterCard] Cannot query conversations for character id=${character.id} name="${character.name}": owner_email is missing. This character record is invalid for ownership-scoped queries.`);
+        return [];
+      }
+      return base44.entities.Conversation.filter({
+        owner_email: character.owner_email,
+        character_ids: [character.id],
+      });
+    },
     staleTime: 30000,
-    enabled: !!character.id,
+    enabled: !!character.id && !!character.owner_email,
   });
 
 
