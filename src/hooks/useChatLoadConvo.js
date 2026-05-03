@@ -5,17 +5,28 @@ import { useQueryClient } from "@tanstack/react-query";
 /**
  * useChatLoadConvo
  *
- * Handles: Conversation.filter, Message.filter (50-message window), PendingMessage.filter,
- * conversation creation, and pending message delivery.
+ * Handles: Conversation.filter, Message.filter (initial visible render window),
+ * PendingMessage.filter, conversation creation, and pending message delivery.
  *
- * Exposes loadOlderMessages() for timestamp-based pagination (loads messages
- * strictly older than the oldest currently visible message, using created_date).
+ * STORAGE vs RENDER WINDOW DISTINCTION:
+ * - All messages remain stored in the database. Nothing is deleted.
+ * - Only the initial visible render window is limited to avoid UI overload.
+ * - Older messages outside the render window remain stored, retrievable via
+ *   the "Load older messages" pagination button, and accessible in the
+ *   Media Gallery and Life Journal/Archive systems.
+ * - New messages sent or received in the current session are NEVER excluded
+ *   from the visible feed — they are always appended to the front end of state.
  *
- * "Old message" definition: any message whose created_date timestamp is earlier
- * than the oldest timestamp in the current 50-message window. Never based on
- * array position or load order. New messages created in the current session
- * are never classified as old.
+ * MSG_WINDOW: Number of most recent messages shown on initial load.
+ * Increase if conversations feel thin. Decrease only if perf degrades.
+ *
+ * Pagination: loadOlderMessages() uses server-side $lt cursor on created_date
+ * (confirmed supported by Base44 MongoDB-compatible query layer).
  */
+
+const MSG_WINDOW = 200; // Initial visible render window — NOT a delete or archive limit
+const PAGINATION_PAGE = 100; // Messages per "load older" page
+
 export function useChatLoadConvo({
   characterId,
   character,
@@ -32,7 +43,7 @@ export function useChatLoadConvo({
 }) {
   const queryClient = useQueryClient();
   const isLoadingConvoRef = useRef(false);
-  // Stable refs for pagination — do not cause re-renders
+  // Stable refs for pagination — updated on load, never cause re-renders
   const convoIdRef = useRef(null);
   const oldestMsgTimestampRef = useRef(null);
   const isLoadingOlderRef = useRef(false);
@@ -50,7 +61,7 @@ export function useChatLoadConvo({
     if (isLoadingConvoRef.current) { isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
 
-    // Reset all state immediately on character switch
+    // Reset all visible state immediately on character switch
     setMessages([]);
     setConversationId(null);
     setIsTyping(false);
@@ -59,8 +70,6 @@ export function useChatLoadConvo({
     convoIdRef.current = null;
     oldestMsgTimestampRef.current = null;
 
-    const MSG_LIMIT = 50;
-
     const loadConvo = async () => {
       isLoadingConvoRef.current = true;
       setIsLoadingConvo(true);
@@ -68,7 +77,7 @@ export function useChatLoadConvo({
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
 
       try {
-        // ── STEP 1: Conversation.filter ──────────────────────────────────────
+        // ── STEP 1: Find the conversation for this character ─────────────────
         console.log(`[CHAT_LOAD] Conversation.filter START t=${Date.now()}`);
         let allConvos;
         try {
@@ -101,14 +110,17 @@ export function useChatLoadConvo({
           convoId = selectedConvo.id;
           console.log(`[CHAT_LOAD] CONVO_SELECTED id=${convoId} candidates=${convos.length} last_msg=${selectedConvo.last_message_date || 'none'} t=${Date.now()}`);
 
-          // ── STEP 2: Message.filter — most recent 50, sorted by timestamp ───
-          console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} limit=${MSG_LIMIT} t=${Date.now()}`);
+          // ── STEP 2: Load most recent MSG_WINDOW messages for initial render ──
+          // IMPORTANT: This controls the initial visible render window only.
+          // All other messages remain stored in the database.
+          // They are accessible via pagination, Media Gallery, and Life Journal.
+          console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
           let loadedMsgs;
           try {
             loadedMsgs = await base44.entities.Message.filter(
               { conversation_id: convoId },
               "-created_date",
-              MSG_LIMIT
+              MSG_WINDOW
             );
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
@@ -119,14 +131,16 @@ export function useChatLoadConvo({
           convoIdRef.current = convoId;
 
           if (loadedMsgs && loadedMsgs.length > 0) {
-            // Sort chronologically oldest→newest before rendering
+            // Sort chronologically oldest→newest for correct render order
             const sorted = [...loadedMsgs].sort((a, b) =>
               new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
             );
-            // Pagination cursor = oldest timestamp in current window
+
+            // Pagination cursor = oldest timestamp currently in the visible window
             oldestMsgTimestampRef.current = sorted[0]?.created_date || sorted[0]?.timestamp || null;
-            // Signal whether there are older messages available
-            const hasOlder = loadedMsgs.length >= MSG_LIMIT;
+
+            // Signal UI to show "Load older messages" button only if we hit the window ceiling
+            const hasOlder = loadedMsgs.length >= MSG_WINDOW;
             if (setHasOlderMessages) setHasOlderMessages(hasOlder);
 
             setMessages(sorted);
@@ -160,7 +174,7 @@ export function useChatLoadConvo({
           console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} t=${Date.now()}`);
         }
 
-        // ── STEP 3: PendingMessage.filter ──────────────────────────────────
+        // ── STEP 3: Deliver any pending messages queued during offline/away ──
         console.log(`[CHAT_LOAD] PendingMessage.filter START t=${Date.now()}`);
         let pending;
         try {
@@ -225,10 +239,15 @@ export function useChatLoadConvo({
   /**
    * loadOlderMessages
    *
-   * Fetches messages strictly older than the current oldest visible message.
-   * Uses created_date timestamp cursor — never array position or load order.
-   * Only fetches if there are known older messages (hasOlderMessages === true).
-   * New messages in the current session are never affected by this function.
+   * Fetches the next page of stored messages that are older than the oldest
+   * currently visible message. Uses a server-side $lt cursor on created_date
+   * (Base44 supports MongoDB comparison operators confirmed).
+   *
+   * STORAGE CONTRACT:
+   * - Does NOT delete, archive, or modify any messages.
+   * - Only prepends previously-stored messages into the visible render window.
+   * - New messages in the current session are never touched by this function.
+   * - The cursor is based on created_date timestamp, not array position.
    */
   const loadOlderMessages = useCallback(async () => {
     const convoId = convoIdRef.current;
@@ -236,42 +255,41 @@ export function useChatLoadConvo({
     if (!convoId || !cursor || isLoadingOlderRef.current) return false;
 
     isLoadingOlderRef.current = true;
-    console.log(`[CHAT_LOAD] loadOlderMessages cursor=${cursor} convoId=${convoId}`);
-    try {
-      // Fetch 50 messages older than the cursor timestamp
-      const older = await base44.entities.Message.filter(
-        { conversation_id: convoId },
-        "-created_date",
-        50
-      );
-      // Filter to only messages strictly before our cursor
-      const cursorTime = new Date(cursor).getTime();
-      const olderFiltered = older.filter(m => {
-        const t = new Date(m.created_date || m.timestamp || 0).getTime();
-        return t < cursorTime;
-      });
+    console.log(`[CHAT_LOAD] loadOlderMessages START cursor=${cursor} convoId=${convoId}`);
 
-      if (olderFiltered.length === 0) {
+    try {
+      // Server-side $lt cursor — only fetches messages strictly before the cursor timestamp
+      // $lt is confirmed supported by Base44's MongoDB-compatible query layer
+      const older = await base44.entities.Message.filter(
+        { conversation_id: convoId, created_date: { $lt: cursor } },
+        "-created_date",
+        PAGINATION_PAGE
+      );
+
+      if (!older || older.length === 0) {
         if (setHasOlderMessages) setHasOlderMessages(false);
+        console.log(`[CHAT_LOAD] loadOlderMessages: no more stored messages`);
         return false;
       }
 
-      // Sort chronologically
-      olderFiltered.sort((a, b) =>
+      // Sort chronologically for correct prepend order
+      const sorted = [...older].sort((a, b) =>
         new Date(a.created_date || a.timestamp || 0) - new Date(b.created_date || b.timestamp || 0)
       );
 
-      // Update cursor to oldest in this new batch
-      oldestMsgTimestampRef.current = olderFiltered[0]?.created_date || olderFiltered[0]?.timestamp || cursor;
+      // Advance cursor to the oldest message in this new page
+      oldestMsgTimestampRef.current = sorted[0]?.created_date || sorted[0]?.timestamp || cursor;
 
-      // Signal if more may exist
-      if (setHasOlderMessages) setHasOlderMessages(olderFiltered.length >= 50);
+      // Signal if there may be even older messages stored
+      if (setHasOlderMessages) setHasOlderMessages(older.length >= PAGINATION_PAGE);
 
-      // Prepend older messages to top of feed — do NOT affect current messages
+      console.log(`[CHAT_LOAD] loadOlderMessages DONE fetched=${older.length} newCursor=${oldestMsgTimestampRef.current}`);
+
+      // Prepend stored older messages to top of visible feed — deduplicate by id
       setMessages(prev => {
         const existingIds = new Set(prev.map(m => m.id));
-        const newOlder = olderFiltered.filter(m => !existingIds.has(m.id));
-        return [...newOlder, ...prev];
+        const newOnes = sorted.filter(m => !existingIds.has(m.id));
+        return [...newOnes, ...prev];
       });
 
       return true;
