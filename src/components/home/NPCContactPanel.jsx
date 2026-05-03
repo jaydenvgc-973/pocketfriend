@@ -16,7 +16,7 @@ export default function NPCContactPanel() {
     queryFn: () => base44.auth.me(),
   });
 
-  // Fetch RLS-scoped characters (owner_email)
+  // Fetch RLS-scoped characters (owner_email) — reuses Home's cached query
   const { data: regularCharacters = [] } = useQuery({
     queryKey: ['characters', currentUser?.email],
     queryFn: async () => {
@@ -26,11 +26,23 @@ export default function NPCContactPanel() {
     enabled: !!currentUser?.email,
   });
 
-  // npc_fictitious records are already included in the regularCharacters query (owner_email-scoped).
-  // No separate fetchNPCsForUser call needed — deduplication with the Home query prevents double API calls.
-  const npcFictitiousFromBackend = [];
+  // Safety net: some service-created npc_fictitious records may lack owner_email
+  // and therefore won't appear in the RLS-scoped query. fetchNPCsForUser uses
+  // service role and finds them by account association. Dedupe prevents duplicates.
+  const { data: npcBackendResult = null } = useQuery({
+    queryKey: ['npc-characters-backend', currentUser?.email],
+    queryFn: async () => {
+      if (!currentUser?.email) return null;
+      const res = await base44.functions.invoke('fetchNPCsForUser', {});
+      return res?.data?.npcs || [];
+    },
+    enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000, // 5 min — NPCs don't change frequently
+    gcTime: 10 * 60 * 1000,
+  });
+  const npcFictitiousFromBackend = npcBackendResult || [];
 
-  // Merge both sources (same as Settings) and dedupe by ID
+  // Merge both sources and dedupe by ID — owner_email records take precedence
   const mergedCharacters = (() => {
     const seen = new Set();
     return [...regularCharacters, ...npcFictitiousFromBackend].filter(c => {
