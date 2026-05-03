@@ -1086,6 +1086,55 @@ export default function CharacterProfile() {
           )}
         </div>
 
+        {/* Emotional Profile — triggers, baggage, reaction */}
+        {(character.emotional_baggage || character.upset_reaction || character.emotional_triggers_high?.length > 0 || character.emotional_triggers_medium?.length > 0 || character.emotional_triggers_deep?.length > 0) && (
+          <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Emotional Profile</p>
+            {character.emotional_baggage && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-1">What They Carry</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.emotional_baggage}</p>
+              </div>
+            )}
+            {character.upset_reaction && (
+              <div>
+                <p className="text-xs font-medium text-foreground mb-1">When They're Upset</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{character.upset_reaction}</p>
+              </div>
+            )}
+            {character.emotional_triggers_high?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-rose-400 mb-1.5">High Triggers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.emotional_triggers_high.map((t, i) => (
+                    <span key={i} className="px-2.5 py-1 rounded-full bg-rose-500/10 text-rose-400 text-xs border border-rose-500/20">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {character.emotional_triggers_medium?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-amber-400 mb-1.5">Medium Triggers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.emotional_triggers_medium.map((t, i) => (
+                    <span key={i} className="px-2.5 py-1 rounded-full bg-amber-500/10 text-amber-400 text-xs border border-amber-500/20">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+            {character.emotional_triggers_deep?.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-blue-400 mb-1.5">Deep Triggers</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {character.emotional_triggers_deep.map((t, i) => (
+                    <span key={i} className="px-2.5 py-1 rounded-full bg-blue-500/10 text-blue-400 text-xs border border-blue-500/20">{t}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Personality Traits */}
         {character.personality_traits && character.personality_traits.length > 0 && (
           <div className="bg-card border border-border rounded-2xl p-4">
