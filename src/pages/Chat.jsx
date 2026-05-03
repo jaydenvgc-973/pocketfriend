@@ -100,28 +100,23 @@ export default function Chat() {
     return () => { isMountedRef.current = false; };
   }, []);
 
-  const chatRouteOpenTime = useRef(Date.now());
   const { data: currentUser, isLoading: isUserLoading } = useQuery({
     queryKey: ["user"],
-    queryFn: async () => { const t=Date.now(); const r=await base44.auth.me(); console.log(`[CHAT_TIMING] auth.me done +${t-chatRouteOpenTime.current}ms→+${Date.now()-chatRouteOpenTime.current}ms`); return r; },
+    queryFn: () => base44.auth.me(),
     staleTime: 5 * 60 * 1000,
   });
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
       if (!characterId || !currentUser?.email) return null;
-      console.log(`[CHAT_TIMING] char_query_START +${Date.now()-chatRouteOpenTime.current}ms`);
       const cachedAll = queryClient.getQueryData(["characters", currentUser.email]);
       if (Array.isArray(cachedAll)) {
         const found = cachedAll.find(c => c.id === characterId);
-        if (found) { console.log(`[CHAT_TIMING] char_CACHE_HIT +${Date.now()-chatRouteOpenTime.current}ms`); return found; }
+        if (found) return found;
       }
       const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
-      console.log(`[CHAT_TIMING] char_filter_DONE n=${chars.length} +${Date.now()-chatRouteOpenTime.current}ms`);
       if (chars.length > 0) return chars[0];
-      console.log(`[CHAT_TIMING] char_npc_START +${Date.now()-chatRouteOpenTime.current}ms`);
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
-      console.log(`[CHAT_TIMING] char_npc_DONE +${Date.now()-chatRouteOpenTime.current}ms`);
       const allNpcs = res?.data?.npcs || [];
       return allNpcs.find(c => c.id === characterId) || null;
     },
@@ -158,13 +153,11 @@ export default function Chat() {
       isLoadingConvoRef.current = true;
       setIsLoadingConvo(true);
       try {
-        console.log(`[CHAT_TIMING] char_ready +${Date.now()-chatRouteOpenTime.current}ms | convo_filter_START`);
         const allConvos = await base44.entities.Conversation.filter(
           { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
-          "-updated_date",
+          "-last_message_date",
           20
         );
-        console.log(`[CHAT_TIMING] convo_filter_DONE n=${allConvos?.length} +${Date.now()-chatRouteOpenTime.current}ms`);
         const convos = allConvos.filter(c =>
           c.character_ids &&
           Array.isArray(c.character_ids) &&
@@ -174,16 +167,22 @@ export default function Chat() {
         let convoId = null;
 
         if (convos.length > 0) {
-          convoId = convos[0].id;
+          // Select by last_message_date desc (real activity), fallback to created_date desc.
+          // Never use updated_date — automations refresh it on ghost conversations daily.
+          const withMsgs = convos.filter(c => c.last_message_date);
+          const withoutMsgs = convos.filter(c => !c.last_message_date);
+          withMsgs.sort((a, b) => new Date(b.last_message_date) - new Date(a.last_message_date));
+          withoutMsgs.sort((a, b) => new Date(b.created_date) - new Date(a.created_date));
+          const selectedConvo = [...withMsgs, ...withoutMsgs][0];
+          convoId = selectedConvo.id;
+          console.log(`[CONVO_SELECT] char=${characterId} candidates=${convos.length} withMsgs=${withMsgs.length} selected=${convoId} last_msg=${selectedConvo.last_message_date || 'none'}`);
           const isProtected = ['69c0d59d7e382cc866ded9c9'].includes(characterId);
           const msgLimit = isProtected ? 1000 : 50;
-          console.log(`[CHAT_TIMING] msg_filter_START convoId=${convoId} +${Date.now()-chatRouteOpenTime.current}ms`);
           const loadedMsgs = await base44.entities.Message.filter(
             { conversation_id: convoId },
             "-created_date",
             msgLimit
           );
-          console.log(`[CHAT_TIMING] msg_filter_DONE n=${loadedMsgs?.length} +${Date.now()-chatRouteOpenTime.current}ms`);
           if (loadedMsgs && loadedMsgs.length > 0) {
             setMessages(loadedMsgs.reverse());
             setConversationId(convoId);
@@ -298,16 +297,12 @@ export default function Chat() {
     let isMounted = true;
 
     (async () => {
-      console.log(`[CHAT_TIMING] markThreadRead_START +${Date.now()-chatRouteOpenTime.current}ms`);
       try {
         const res = await base44.functions.invoke('markThreadRead', { conversationId, characterId });
 
         if (!isMounted) return;
 
         const markedCount = res?.data?.marked_read || 0;
-        const finalUnread = res?.data?.final_unread_count || 0;
-
-        console.log(`[CHAT_TIMING] markThreadRead_DONE +${Date.now()-chatRouteOpenTime.current}ms marked=${markedCount}`);
 
         setMessages(prev => prev.map(m =>
           m.sender_type === "character" ? { ...m, is_read: true } : m
