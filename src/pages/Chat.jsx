@@ -79,6 +79,7 @@ export default function Chat() {
   const [showShopping, setShowShopping] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
   const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
+  const [isLoadingConvo, setIsLoadingConvo] = useState(true);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
@@ -149,6 +150,7 @@ export default function Chat() {
     setConversationId(null);
     setIsTyping(false);
     setConvoLoadError(null);
+    setIsLoadingConvo(true);
     
     const loadConvo = async () => {
       if (isLoadingConvoRef.current) return;
@@ -240,6 +242,7 @@ export default function Chat() {
         }
       } finally {
         isLoadingConvoRef.current = false;
+        setIsLoadingConvo(false);
       }
     };
 
@@ -1851,6 +1854,10 @@ Reply with ONLY the single emoji or the word "none".`,
         <div className="flex-1 flex flex-col items-center justify-center px-8 text-center gap-3">
           <p className="text-sm font-medium text-foreground">{convoLoadError === 'rate_limited' ? 'Chat is temporarily rate limited. Please try again shortly.' : 'Failed to load chat. Check connection and retry.'}</p>
           <button onClick={() => { setConvoLoadError(null); isLoadingConvoRef.current = false; }} className="px-4 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:bg-primary/90 transition-colors">Retry</button>
+        </div>
+      ) : isLoadingConvo ? (
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-primary/20 border-t-primary rounded-full animate-spin" />
         </div>
       ) : (
         <ChatMessageList messages={messages} conversationId={conversationId} characterId={characterId} character={character} userSettings={userSettings} isTyping={isTyping} sendError={sendError} setSendError={setSendError} playingAudioId={playingAudioId} voiceErrors={voiceErrors} bottomRef={bottomRef} onReact={handleReact} onDelete={handleDeleteMessage} onDeleteImage={handleDeleteImage} onPlayVoice={playCharacterVoice} onForward={(msg) => setForwardTarget(msg)} onImageLoaded={(msgId, url) => setMessages(prev => prev.map(m => m.id === msgId ? { ...m, image_url: url } : m))} onLocationSignal={handleLocationSignal} />
