@@ -154,11 +154,12 @@ export default function Chat() {
       setIsLoadingConvo(true);
       try {
         const allConvos = await base44.entities.Conversation.filter(
-          { type: chatType, owner_email: currentUser.email, character_ids: [characterId] },
+          { owner_email: currentUser.email },
           "-last_message_date",
-          20
+          100
         );
         const convos = allConvos.filter(c =>
+          c.type === chatType &&
           c.character_ids &&
           Array.isArray(c.character_ids) &&
           c.character_ids.includes(characterId)
