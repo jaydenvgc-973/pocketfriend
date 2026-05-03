@@ -108,16 +108,16 @@ export default function Chat() {
   const { data: character } = useQuery({
     queryKey: ["character", characterId],
     queryFn: async () => {
-      if (!characterId) return null;
-      // Direct fetch by ID — RLS enforces ownership server-side, no need to filter all 500 chars first
-      const chars = await base44.entities.Character.filter({ id: characterId });
+      if (!characterId || !currentUser.email) return null;
+      // Scoped direct filter — owner_email + id, no full list fetch
+      const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
       if (chars.length > 0) return chars[0];
-      // Fallback: NPC fictitious records (shared, not owner-scoped)
+      // Fallback: NPC fictitious records scoped to current user via fetchNPCsForUser
       const res = await base44.functions.invoke('fetchNPCsForUser', {});
       const allNpcs = res?.data?.npcs || [];
       return allNpcs.find(c => c.id === characterId) || null;
     },
-    enabled: !!characterId,
+    enabled: !!characterId && !!currentUser.email,
     staleTime: 30 * 1000,
   });
 
