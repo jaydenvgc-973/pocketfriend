@@ -633,7 +633,7 @@ export default function Chat() {
         title: `${chatType} with ${character.name}`,
         type: chatType,
         character_ids: [characterId],
-        owner_email: currentUser?.email,
+        owner_email: currentUser.email,
       });
         convoId = convo.id;
         setConversationId(convoId);
@@ -820,7 +820,7 @@ export default function Chat() {
         title: `${chatType} with ${character.name}`,
         type: chatType,
         character_ids: [characterId],
-        owner_email: currentUser?.email,
+        owner_email: currentUser.email,
       });
       convoId = convo.id;
       setConversationId(convoId);
@@ -1677,7 +1677,7 @@ Reply with ONLY the single emoji or the word "none".`,
     if (responseText) {
       let allCharsForApproval = [];
       try {
-        allCharsForApproval = await base44.entities.Character.filter({ owner_email: currentUser?.email });
+        allCharsForApproval = await base44.entities.Character.filter({ owner_email: currentUser.email });
       } catch (approvalLoadError) {
         console.warn("[Approval] Character lookup failed. Continuing with current character only.", approvalLoadError);
       }
