@@ -123,8 +123,11 @@ Deno.serve(async (req) => {
     // ── GROUP BY USER (owner_email) TO ENFORCE USER SCOPE ───────────────────
     const byUser = {};
     for (const c of eligible) {
-      const email = c.owner_email || c.created_by;
-      if (!email) continue;
+      const email = c.owner_email;
+      if (!email) {
+        console.warn(`[organicInteractions] Character id=${c.id} name="${c.name}" missing owner_email — skipping`);
+        continue;
+      }
       if (!byUser[email]) byUser[email] = [];
       byUser[email].push(c);
     }

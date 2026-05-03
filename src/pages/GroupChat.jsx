@@ -60,6 +60,7 @@ export default function GroupChat() {
   const createGroupMutation = useMutation({
     mutationFn: async (args) => {
       const { characterIds, title } = args;
+      if (!currentUser?.email) throw new Error('Cannot create conversation: currentUser.email is missing');
       const selectedCharacters = characters.filter(c => characterIds.includes(c.id));
       const characterNames = selectedCharacters.map(c => c.name).join(', ');
       const chatTitle = title || characterNames;
@@ -67,6 +68,7 @@ export default function GroupChat() {
         title: chatTitle,
         type: 'group',
         character_ids: characterIds,
+        owner_email: currentUser.email,
       });
     },
     onSuccess: (conversation) => {

@@ -56,9 +56,11 @@ function shouldMessageNow(char, relationshipLevel) {
   return true;
 }
 
-async function getRecentConversationContext(base44, characterId) {
+async function getRecentConversationContext(base44, characterId, ownerEmail) {
+  if (!ownerEmail) return null;
   const convos = await base44.entities.Conversation.filter({
-    character_ids: characterId,
+    owner_email: ownerEmail,
+    character_ids: [characterId],
   });
   
   if (convos.length === 0) return null;
@@ -94,9 +96,15 @@ Deno.serve(async (req) => {
     const now = new Date();
     const today = now.toISOString().split('T')[0];
 
+    // owner_email is required — fail visible if missing
+    if (!char.owner_email) {
+      return Response.json({ error: `Character id=${char.id} missing owner_email — cannot scope conversation query` }, { status: 422 });
+    }
+
     // Check daily limit
     const todaysConvo = await base44.entities.Conversation.filter({
-      character_ids: char.id,
+      owner_email: char.owner_email,
+      character_ids: [char.id],
     });
 
     if (todaysConvo.length > 0) {
@@ -127,7 +135,7 @@ Deno.serve(async (req) => {
     }
 
     // Get context and generate
-    const recentContext = await getRecentConversationContext(base44, char.id);
+    const recentContext = await getRecentConversationContext(base44, char.id, char.owner_email);
     const et = getEasternTime();
     const hour = et.getHours();
     
@@ -152,10 +160,11 @@ Be authentic, not overly cheerful.`;
       prompt: systemPrompt,
     });
 
-    // Find or create conversation
+    // Find or create conversation — owner_email required on both filter and create
     const convos = await base44.entities.Conversation.filter({
       type: 'direct',
-      character_ids: char.id,
+      owner_email: char.owner_email,
+      character_ids: [char.id],
     });
 
     let conversationId;
@@ -166,6 +175,7 @@ Be authentic, not overly cheerful.`;
         title: char.name,
         type: 'direct',
         character_ids: [char.id],
+        owner_email: char.owner_email,
       });
       conversationId = newConvo.id;
     }

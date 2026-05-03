@@ -144,10 +144,13 @@ function getFrequencyPerDay(relationshipLevel) {
   return Math.floor(Math.random() * 3) + 5;
 }
 
-async function getRecentConversationContext(base44, characterId) {
+async function getRecentConversationContext(base44, characterId, ownerEmail) {
   // Fetch last 3-5 messages to understand recent conversation
+  // owner_email is required — do not fall back to character_ids-only query
+  if (!ownerEmail) return null;
   const convos = await base44.entities.Conversation.filter({
-    character_ids: characterId,
+    owner_email: ownerEmail,
+    character_ids: [characterId],
   });
   
   if (convos.length === 0) return null;
@@ -314,8 +317,13 @@ Deno.serve(async (req) => {
     // First pass: filter candidates
     const candidates = [];
     for (const char of characters) {
+      if (!char.owner_email) {
+        results.push({ characterId: char.id, status: 'skipped', reason: 'missing owner_email' });
+        continue;
+      }
       const todaysConvo = await base44.entities.Conversation.filter({
-        character_ids: char.id,
+        owner_email: char.owner_email,
+        character_ids: [char.id],
       });
 
       if (todaysConvo.length > 0) {
@@ -352,12 +360,13 @@ Deno.serve(async (req) => {
     // Second pass: generate and send messages (limit to 3 per call to avoid rate limits)
     const toMessage = candidates.slice(0, 3);
     for (const char of toMessage) {
-      const recentContext = await getRecentConversationContext(base44, char.id);
+      const recentContext = await getRecentConversationContext(base44, char.id, char.owner_email);
       const messageContent = await generateProactiveMessage(base44, char, user, recentContext);
 
       const convos = await base44.entities.Conversation.filter({
         type: 'direct',
-        character_ids: char.id,
+        owner_email: char.owner_email,
+        character_ids: [char.id],
       });
 
       let conversationId;
@@ -368,6 +377,7 @@ Deno.serve(async (req) => {
           title: char.name,
           type: 'direct',
           character_ids: [char.id],
+          owner_email: char.owner_email,
         });
         conversationId = newConvo.id;
       }
