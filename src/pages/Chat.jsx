@@ -131,25 +131,21 @@ export default function Chat() {
       }
       console.log(`[CHAT_LOAD] Character.filter START charId=${characterId} t=${Date.now()}`);
       try {
-        const chars = await base44.entities.Character.filter({ id: characterId, owner_email: currentUser.email });
+        // Query by id only — RLS enforces ownership scope server-side.
+        // Do NOT filter by owner_email here: many characters (Ethan, Matt Lopez, etc.)
+        // were created before owner_email was a required field and have it null/missing.
+        // Filtering by owner_email causes Character.filter to return 0 results for these
+        // characters, falling through to fetchNPCsForUser on EVERY chat open (+1.5-2s).
+        const chars = await base44.entities.Character.filter({ id: characterId });
         if (chars.length > 0) {
           console.log(`[CHAT_LOAD] Character.filter DONE name=${chars[0].name} t=${Date.now()}`);
           return chars[0];
         }
-        console.log(`[CHAT_LOAD] Character.filter EMPTY — fetchNPCsForUser fallback START t=${Date.now()}`);
+        console.log(`[CHAT_LOAD] Character.filter EMPTY id=${characterId} t=${Date.now()}`);
       } catch (err) {
         console.error(`[CHAT_LOAD] Character.filter ERROR ${err?.message} t=${Date.now()}`);
       }
-      try {
-        const res = await base44.functions.invoke('fetchNPCsForUser', {});
-        const allNpcs = res?.data?.npcs || [];
-        const found = allNpcs.find(c => c.id === characterId) || null;
-        console.log(`[CHAT_LOAD] fetchNPCsForUser FALLBACK DONE found=${!!found} npcCount=${allNpcs.length} t=${Date.now()}`);
-        return found;
-      } catch (err) {
-        console.error(`[CHAT_LOAD] fetchNPCsForUser FALLBACK ERROR ${err?.message} t=${Date.now()}`);
-        return null;
-      }
+      return null;
     },
     enabled: !!characterId && !isUserLoading && !!currentUser?.email && !!currentUser,
     staleTime: 60 * 1000,

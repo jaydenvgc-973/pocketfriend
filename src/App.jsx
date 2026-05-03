@@ -48,13 +48,11 @@ const AuthenticatedApp = ({ holidaysEnabled }) => {
   // Preserve current route across orientation changes and remounts (read-only — no navigate)
   useRoutePreservation();
 
-  // Ensure every authenticated user has VGC Towers — run once per session only
-  useEffect(() => {
-    const key = 'vgc_towers_ensured';
-    if (sessionStorage.getItem(key)) return;
-    sessionStorage.setItem(key, '1');
-    base44.functions.invoke('ensureUserVGCTowers', {}).catch(() => {});
-  }, []);
+  // NOTE: ensureUserVGCTowers was removed from frontend mount.
+  // It was firing on every App mount, immediately saturating the rate limiter
+  // BEFORE auth.me could complete — causing 29-second chat load delays.
+  // The function should only be called from a scheduled automation or admin console,
+  // not on every user session start.
 
   if (isLoadingPublicSettings || isLoadingAuth) {
     return (
