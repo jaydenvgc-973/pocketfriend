@@ -79,7 +79,7 @@ export default function Chat() {
   const [showShopping, setShowShopping] = useState(false);
   const [pendingAliasResolution, setPendingAliasResolution] = useState(null);
   const [catchupNarrativeText, setCatchupNarrativeText] = useState(null);
-  const [isLoadingConvo, setIsLoadingConvo] = useState(true);
+  const [isLoadingConvo, setIsLoadingConvo] = useState(false);
 
   const { isRegeneratingNarrative, handleNonsenseNarrative, handleSleepViolationNarrative } = useNarrativeCorrection({
     characterId, conversationId, messages, setMessages,
@@ -140,20 +140,12 @@ export default function Chat() {
   }, []);
 
   useEffect(() => {
-    if (!characterId || !character || !currentUser.email) return;
-
-    // Prevent concurrent runs — if already loading, do not re-enter
-    if (isLoadingConvoRef.current) return;
-
+    console.log(`[CHAT-LOAD] charId=${characterId} char=${!!character} email=${currentUser?.email} refLocked=${isLoadingConvoRef.current}`);
+    if (!characterId || !character || !currentUser.email) { console.log(`[CHAT-LOAD] Bailed early`); return; }
+    if (isLoadingConvoRef.current) { console.warn(`[CHAT-LOAD] ref stuck — resetting`); isLoadingConvoRef.current = false; }
     isMountedRef.current = true;
-    setMessages([]);
-    setConversationId(null);
-    setIsTyping(false);
-    setConvoLoadError(null);
-    setIsLoadingConvo(true);
-    
+    setMessages([]); setConversationId(null); setIsTyping(false); setConvoLoadError(null); setIsLoadingConvo(true);
     const loadConvo = async () => {
-      if (isLoadingConvoRef.current) return;
       isLoadingConvoRef.current = true;
       try {
         const allConvos = await base44.entities.Conversation.filter(
