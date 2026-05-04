@@ -79,10 +79,18 @@ export default function RegenerateImageModal({ isOpen, onClose, onSelect, isRege
     if (id === "wrong_location") {
       setShowLocationPicker(true);
       setLoadingLocations(true);
-      base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
+      const tryFetch = () => base44.functions.invoke('fetchAllLocationsForUser', {}).then(res => {
         const locs = res?.data?.locations || [];
         setLocations(locs);
-      }).catch(() => setLocations([])).finally(() => setLoadingLocations(false));
+      });
+      tryFetch().catch(err => {
+        const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
+        if (is429) {
+          // Retry once after 3s — same transient rate-limit pattern as chat load
+          return new Promise(r => setTimeout(r, 3000)).then(tryFetch).catch(() => setLocations([]));
+        }
+        setLocations([]);
+      }).finally(() => setLoadingLocations(false));
       return;
     }
     if (id === "dont_like") {
