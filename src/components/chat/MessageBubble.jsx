@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
-import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin } from "lucide-react";
+import { X, Volume2, ImageIcon, Loader2, RefreshCw, Trash2, Sparkles, Forward, MapPin, Pencil, Check } from "lucide-react";
 import { base44 } from "@/api/base44Client";
 import { filterDashes } from "@/lib/dashFilter";
 import RegenerateImageModal from "@/components/chat/RegenerateImageModal";
@@ -24,6 +24,9 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
   const time = message.timestamp ? format(new Date(message.timestamp), "h:mm a") : "";
   const hasReactions = message.reactions?.length > 0;
   const [showDelete, setShowDelete] = useState(false);
+  const [isEditingNarrative, setIsEditingNarrative] = useState(false);
+  const [editedNarrative, setEditedNarrative] = useState(message.content || "");
+  const [isSavingNarrative, setIsSavingNarrative] = useState(false);
   const [showImageDelete, setShowImageDelete] = useState(false);
   const [imageRetrying, setImageRetrying] = useState(false);
   const [imageRetryFailed, setImageRetryFailed] = useState(false);
@@ -75,6 +78,19 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
     } finally {
       setImageRetrying(false);
       setImageRetryStatus('idle');
+    }
+  };
+
+  const handleSaveNarrative = async () => {
+    if (!editedNarrative.trim()) return;
+    setIsSavingNarrative(true);
+    try {
+      await base44.entities.Message.update(message.id, { content: editedNarrative.trim() });
+      setIsEditingNarrative(false);
+    } catch (err) {
+      console.error('[MessageBubble] Failed to save narrative:', err.message);
+    } finally {
+      setIsSavingNarrative(false);
     }
   };
 
@@ -201,17 +217,55 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
 
         {/* Message bubble with reaction trigger */}
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
-          {/* Narrative delete button — shown on hover */}
-          {isNarrative && onDelete && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-              className="absolute -right-7 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40 z-50"
-              title="Remove narrative"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-            </button>
+          {/* Narrative action buttons — shown on hover */}
+          {isNarrative && !isEditingNarrative && (
+            <div className="absolute -right-14 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-50">
+              <button
+                onClick={(e) => { e.stopPropagation(); setEditedNarrative(message.content || ""); setIsEditingNarrative(true); }}
+                className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                title="Edit narrative"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+              {onDelete && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
+                  className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40"
+                  title="Remove narrative"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
           )}
           <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
+            {/* Narrative inline edit mode */}
+            {isNarrative && isEditingNarrative && (
+              <div className="flex flex-col gap-2 px-2" onClick={e => e.stopPropagation()}>
+                <textarea
+                  value={editedNarrative}
+                  onChange={e => setEditedNarrative(e.target.value)}
+                  className="w-full text-sm text-foreground bg-background border border-border rounded-xl px-3 py-2 resize-none focus:outline-none focus:border-primary min-h-[80px]"
+                  autoFocus
+                />
+                <div className="flex gap-2 justify-center">
+                  <button
+                    onClick={() => setIsEditingNarrative(false)}
+                    className="px-3 py-1.5 rounded-lg bg-secondary text-muted-foreground text-xs hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveNarrative}
+                    disabled={isSavingNarrative || !editedNarrative.trim()}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
+                  >
+                    {isSavingNarrative ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            )}
             {/* Image placeholder: character tried to send an image but URL never attached */}
             {isImagePlaceholder && (
               <div className="w-56 flex flex-col items-center justify-center gap-2 rounded-2xl border border-border/50 bg-secondary/60 p-4 py-5">
@@ -389,7 +443,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               error={regenError}
               originalPrompt={message.generation_context?.prompt || null}
             />
-            {message.content && typeof message.content === 'string' && message.content.trim() && message.content !== '[IMAGE_FAILED]' && (
+            {!isEditingNarrative && message.content && typeof message.content === 'string' && message.content.trim() && message.content !== '[IMAGE_FAILED]' && (
               message.is_forwarded ? (
                 <div className="px-4 py-2.5">
                   <div className="flex items-center gap-1 mb-1">
