@@ -60,6 +60,7 @@ import { useChatLocationSignal } from "@/hooks/useChatLocationSignal";
 import { useChatSongShare } from "@/hooks/useChatSongShare";
 import { useChatPostLoadEffects } from "@/hooks/useChatPostLoadEffects";
 import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
+import { useChatLocationShare } from "@/hooks/useChatLocationShare";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -299,6 +300,12 @@ export default function Chat() {
     characterId, character, conversationIdRef, queryClient, setSendError,
   });
 
+  const { tryHandleLocationShare } = useChatLocationShare({
+    character, characterId, chatType, currentUser, conversationIdRef, conversationId,
+    setConversationId, activeCharacter, setMessages, setIsTyping, setSendError,
+    isMountedRef, queryClient,
+  });
+
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
@@ -310,105 +317,8 @@ export default function Chat() {
     }
 
     // ── LOCATION SHARE DETECTION ───────────────────────────────────────────
-    // If the user explicitly asks the character to share/send their location,
-    // bypass image generation entirely and force a location card response.
-    const locationShareRequest =
-      /\b(send|share|drop|give|show)\s+(me\s+)?(your\s+)?(location|loc|whereabouts|geotag|geo tag|pin|coordinates)\b/i.test(text) ||
-      /\bdrop\s+(your\s+)?pin\b/i.test(text) ||
-      /\bsend\s+loc\b/i.test(text) ||
-      /\blocation\s+(tag|card|share|pin)\b/i.test(text) ||
-      /\b(tag\s+your\s+location|share\s+your\s+location|send\s+your\s+location)\b/i.test(text);
-
-    // Resolve location from character NOW (before any try block)
-    const earlyCharLocationName = character.resolved_current_location_name || null;
-    const earlyCharLocationId = character.resolved_current_location_id || null;
-
-    console.log(`[LOCATION-SHARE] detected=${locationShareRequest} | locationName=${earlyCharLocationName} | locationId=${earlyCharLocationId} | text="${text.substring(0, 60)}"`);
-
-    if (locationShareRequest && earlyCharLocationName && earlyCharLocationId) {
-    // Force the character to share their verified location — no image, no ambiguity
-    let convoId = conversationIdRef.current || conversationId;
-    if (!convoId) {
-      const convo = await base44.entities.Conversation.create({
-        title: `${chatType} with ${character.name}`,
-        type: chatType,
-        character_ids: [characterId],
-        owner_email: currentUser.email,
-      });
-        convoId = convo.id;
-        setConversationId(convoId);
-      }
-
-      // Save user message
-      const userMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "user",
-        content: text,
-        timestamp: new Date().toISOString(),
-        ...(activeCharacter ? { played_as_character_id: activeCharacter.id, played_as_character_name: activeCharacter.name } : {}),
-      });
-      if (!userMsg?.id) { setSendError("Message failed to save. Try again."); return; }
-      setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
-
-      if (isMountedRef.current) setIsTyping(true);
-
-      // Small delay to feel natural
-      await new Promise(r => setTimeout(r, 1200 + Math.random() * 800));
-
-      if (isMountedRef.current) setIsTyping(false);
-
-      // Generate a short natural text reply
-      const locationReplyRes = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are ${character.name}. ${character.personality_summary || ""} The user just asked you to share your location. Write a very short, casual 1-sentence text message acknowledging you're sharing it. Be natural — like a real text. No quotes, no labels.`,
-      }).catch(() => null);
-      const locationReplyText = (typeof locationReplyRes === 'string' ? locationReplyRes.trim() : '') || "Here's where I'm at 📍";
-
-      // Save text reply
-      const textMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: locationReplyText,
-        emotional_state: character.emotional_state || "calm",
-        is_read: true,
-        timestamp: new Date().toISOString(),
-      });
-      if (textMsg?.id) setMessages(prev => prev.some(m => m.id === textMsg.id) ? prev : [...prev, textMsg]);
-
-      // Fetch location record for category
-      const locs = await base44.entities.LocationReference.filter({ id: earlyCharLocationId }).catch(() => []);
-      const loc = locs?.[0];
-
-      // Save location card message
-      const locCardMsg = await base44.entities.Message.create({
-        conversation_id: convoId,
-        sender_type: "character",
-        character_id: characterId,
-        character_name: character.name,
-        content: "",
-        emotional_state: character.emotional_state || "calm",
-        is_read: true,
-        timestamp: new Date().toISOString(),
-        location_share: {
-          location_id: earlyCharLocationId,
-          location_name: earlyCharLocationName,
-          presence_status: character.resolved_presence_status || character.location_status || null,
-          location_category: loc?.category || null,
-          character_avatar_url: character.avatar_url || null,
-          note: null,
-          timestamp: new Date().toISOString(),
-        },
-      });
-      if (locCardMsg?.id) setMessages(prev => prev.some(m => m.id === locCardMsg.id) ? prev : [...prev, locCardMsg]);
-
-      await base44.entities.Conversation.update(convoId, {
-        last_message_preview: locationReplyText.substring(0, 100),
-        last_message_date: new Date().toISOString(),
-      });
-      queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-      return;
-    }
+    const locationShareResult = await tryHandleLocationShare(text);
+    if (locationShareResult.handled) return;
 
     const musicLinkMatch = text.match(/https?:\/\/[^\s]*(spotify\.com|apple\.com\/.*music|music\.apple\.com|music\.youtube\.com|amazon\.com\/music|music\.amazon|tidal\.com|soundcloud\.com|bandcamp\.com)[^\s]*/i);
     if (musicLinkMatch) {
