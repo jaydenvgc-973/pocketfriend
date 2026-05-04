@@ -119,6 +119,7 @@ export default function CharacterProfile() {
   const [editingNPCPhoto, setEditingNPCPhoto] = useState(null);
   const [lightboxSrc, setLightboxSrc] = useState(null);
   const [showOutfitSharer, setShowOutfitSharer] = useState(false);
+  const [expandedMemory, setExpandedMemory] = useState(null);
   
   const { data: character, isLoading, refetch } = useQuery({
     queryKey: ["character", characterId],
@@ -823,7 +824,7 @@ export default function CharacterProfile() {
             <div className="bg-card border border-border rounded-2xl p-4 space-y-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">What They've Been Through</p>
 
-              {/* Categorized preset memories — shown as grouped chips */}
+              {/* Categorized preset memories — expandable chips showing full details */}
               {hasAnyCategory && (
                 <div className="space-y-3">
                   {['challenges', 'positive', 'growth'].map(cat => {
@@ -834,11 +835,28 @@ export default function CharacterProfile() {
                       <div key={cat}>
                         <p className={`text-[10px] font-bold uppercase tracking-widest ${meta.color} mb-1.5`}>{meta.label}</p>
                         <div className="flex flex-wrap gap-1.5">
-                          {mems.map((m, i) => (
-                            <span key={i} className={`px-2.5 py-1 rounded-full text-xs font-medium border ${meta.bg} ${meta.color} ${meta.border}`}>
-                              {m.title}
-                            </span>
-                          ))}
+                          {mems.map((m, i) => {
+                            const key = `${cat}-${i}`;
+                            const isExpanded = expandedMemory === key;
+                            const hasDetails = m.description || m.emotional_impact || m.lesson_learned;
+                            return (
+                              <div key={i} className="w-full">
+                                <button
+                                  onClick={() => hasDetails && setExpandedMemory(isExpanded ? null : key)}
+                                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${meta.bg} ${meta.color} ${meta.border} ${hasDetails ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}`}
+                                >
+                                  {m.title}{hasDetails ? ' ›' : ''}
+                                </button>
+                                {isExpanded && hasDetails && (
+                                  <div className={`mt-1.5 mb-1 ml-1 p-3 rounded-xl border text-xs space-y-1 ${meta.bg} ${meta.border}`}>
+                                    {m.description && <p className="text-foreground/80 leading-relaxed">{m.description}</p>}
+                                    {m.emotional_impact && <p className={`${meta.color} mt-1`}><span className="font-medium">Impact: </span>{m.emotional_impact}</p>}
+                                    {m.lesson_learned && <p className="text-muted-foreground mt-1"><span className="font-medium">Lesson: </span>{m.lesson_learned}</p>}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     );
