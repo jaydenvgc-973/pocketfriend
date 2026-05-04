@@ -54,6 +54,10 @@ import NewPersonDetectedModal from "@/components/chat/NewPersonDetectedModal";
 import ChatMessageList from "@/components/chat/ChatMessageList";
 import { useChatScroll } from "@/hooks/useChatScroll";
 import { useChatLoadConvo } from "@/hooks/useChatLoadConvo";
+import { useChatDeleteActions } from "@/hooks/useChatDeleteActions";
+import { useChatReactionActions } from "@/hooks/useChatReactionActions";
+import { useChatLocationSignal } from "@/hooks/useChatLocationSignal";
+import { useChatSongShare } from "@/hooks/useChatSongShare";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -336,248 +340,21 @@ export default function Chat() {
 
   const [sendError, setSendError] = useState(null);
 
-  const handleDeleteMessage = (messageId) => {
-    const msg = messages.find(m => m.id === messageId);
-    if (!msg) return;
-    setDeleteTarget(msg);
-  };
+  const { handleDeleteMessage, handleDeleteRemember, handleDeleteForget, handleDeleteImage } = useChatDeleteActions({
+    messages, setMessages, deleteTarget, setDeleteTarget, conversationId, characterId, isPhone,
+  });
 
-  const handleDeleteRemember = async () => {
-    const msg = deleteTarget;
-    setDeleteTarget(null);
-    if (!msg) return;
+  const { handleReact } = useChatReactionActions({
+    messages, setMessages, conversationId, characterId, character, queryClient, setLastChangeReason,
+  });
 
-    console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=remember | removed_from_view=yes | retained_in_memory=yes`);
+  const { handleLocationSignal } = useChatLocationSignal({
+    characterId, character, queryClient, setPendingAliasResolution,
+  });
 
-    setMessages(prev => prev.filter(m => m.id !== msg.id));
-    await base44.entities.Message.update(msg.id, {
-      archived_date: new Date().toISOString(),
-    }).catch(() => {});
-  };
-
-  const handleDeleteForget = async () => {
-    const msg = deleteTarget;
-    setDeleteTarget(null);
-    if (!msg) return;
-
-    console.log(`[DELETE] messageId=${msg.id} | threadId=${conversationId} | pageType=${isPhone ? "text" : "chat"} | action=forget | removed_from_view=yes | retained_in_memory=no | memory_excluded=yes`);
-
-    setMessages(prev => prev.filter(m => m.id !== msg.id));
-
-    await base44.entities.Message.delete(msg.id).catch(() => {});
-
-    if (msg.content?.trim() && msg.sender_type === "character" && characterId) {
-      base44.entities.Memory.create({
-        character_id: characterId,
-        title: `[FORGOTTEN] Message deleted by user`,
-        description: `The user deleted and chose to FORGET this message. Do NOT reference or recall it: "${msg.content.substring(0, 200)}"`,
-        emotional_impact: "forgotten",
-        timestamp: new Date().toISOString(),
-        source_context: `forgotten_message_${msg.id}`,
-      }).catch(() => {});
-
-      console.log(`[DELETE] Forgotten memory marker created for characterId=${characterId}`);
-    }
-  };
-
-  const handleDeleteImage = async (messageId) => {
-    setMessages(prev => prev.map(msg => msg.id === messageId ? { ...msg, image_url: null } : msg));
-    try {
-      await base44.entities.Message.update(messageId, { image_url: null });
-    } catch {
-      // Update failed, UI will stay in sync with subscription
-    }
-  };
-
-  const handleReact = async (messageId, emoji) => {
-    const msg = messages.find(m => m.id === messageId);
-    if (!msg) return;
-
-    const currentReactions = msg.reactions || [];
-    const existingUserReaction = currentReactions.find(r => r.reactor_type === "user");
-    const isSameEmoji = existingUserReaction?.emoji === emoji;
-
-    const nonUserReactions = currentReactions.filter(r => r.reactor_type !== "user");
-    const updatedReactions = isSameEmoji
-      ? nonUserReactions
-      : [...nonUserReactions, { emoji, reactor_type: "user", reactor_id: "user" }];
-
-    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, reactions: updatedReactions } : m));
-    await base44.entities.Message.update(messageId, { reactions: updatedReactions });
-
-    if (msg.sender_type === "character" && !isSameEmoji && character) {
-      base44.functions.invoke("updateRelationshipLevels", {
-        characterId,
-        emojiReaction: emoji,
-        emojiMeaning: { "❤️": "love/care/appreciation", "👍": "acknowledgment/approval", "😢": "sadness/empathy", "😡": "anger/disapproval", "😲": "shock/surprise", "😂": "humor/laughter" }[emoji] || "general reaction",
-        reactedMessageContent: msg.content || "(image)",
-        reactedMessageSenderType: msg.sender_type,
-        recentMessages: messages.slice(-10),
-      }).then(res => {
-        if (res?.data?.reason) setLastChangeReason(res.data.reason);
-        queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-      }).catch(() => {});
-
-      // Character sometimes responds to the user reacting to their message
-      if (["❤️", "👍", "😂", "😢"].includes(emoji) && Math.random() < 0.45 && conversationId) {
-        setTimeout(async () => {
-          try {
-            const emojiMeanings = { "❤️": "a ❤️ (love/appreciation)", "👍": "a 👍 (thumbs up/approval)", "😂": "a 😂 (laughing reaction)", "😢": "a 😢 (sad/touched reaction)" };
-            const replyRes = await base44.integrations.Core.InvokeLLM({
-              prompt: `You are ${character.name}. ${character.personality_summary || ""} You just sent this message: "${msg.content?.substring(0, 150) || "(image)"}". The person you're talking to reacted to YOUR message with ${emojiMeanings[emoji] || "an emoji reaction"}. Write a SHORT, natural, casual response — as yourself, reacting to RECEIVING that reaction from them. 1 sentence max, like a real text. Express how you feel about their reaction to what YOU said. Do NOT speak as the user or assume what they meant. Be yourself. No quotes, no labels.`,
-            });
-            const replyText = typeof replyRes === "string" ? replyRes.trim() : "";
-            if (replyText && replyText.length > 2 && replyText.length < 200) {
-              await base44.entities.Message.create({
-                conversation_id: conversationId,
-                sender_type: "character",
-                character_id: characterId,
-                character_name: character.name,
-                content: replyText,
-                emotional_state: character.emotional_state || "calm",
-                timestamp: new Date().toISOString(),
-                is_read: true,
-              });
-            }
-          } catch { /* silent */ }
-        }, 1500 + Math.random() * 2000);
-      }
-    }
-  };
-
-  const handleLocationSignal = async (locationIdOrContent, charId) => {
-    if (!charId && !characterId) return;
-    const targetCharId = charId || characterId;
-    
-    try {
-      // If it looks like a location ID (UUID), use direct update
-      if (locationIdOrContent?.length > 20 && locationIdOrContent.includes('-')) {
-        const res = await base44.functions.invoke('updateCharacterLocation', {
-          characterId: targetCharId,
-          locationId: locationIdOrContent,
-          presenceStatus: 'visiting',
-          locationType: 'visit',
-          sourceReason: 'chat_signal',
-        });
-        if (res?.data?.success) {
-          queryClient.invalidateQueries({ queryKey: ["character", targetCharId] });
-          queryClient.invalidateQueries({ queryKey: ["characters"] });
-        }
-        return;
-      }
-      
-      // Otherwise, parse the content for location names
-      const res = await base44.functions.invoke('updateCharacterLocationFromMessage', {
-        characterId: targetCharId,
-        messageContent: locationIdOrContent,
-      });
-      if (res?.data?.updated || res?.data?.unresolved) {
-        queryClient.invalidateQueries({ queryKey: ["character", targetCharId] });
-        queryClient.invalidateQueries({ queryKey: ["characters"] });
-        queryClient.invalidateQueries({ queryKey: ["locationReferences"] });
-      }
-      if (res?.data?.unresolved && res.data.phrase) {
-        setPendingAliasResolution({
-          phrase: res.data.phrase,
-          sourceSentence: res.data.source_sentence || null,
-          characterId: targetCharId,
-          characterName: character?.name,
-        });
-      }
-    } catch { /* silent */ }
-  };
-
-  const handleShareSong = async (mediaLink, isVideo = false) => {
-  if (!character || !conversationIdRef.current) {
-   console.warn('[handleShareSong] Missing character or conversationId');
-   return;
-  }
-  console.log('[handleShareSong] Processing:', mediaLink, 'isVideo:', isVideo);
-  try {
-   const res = await base44.functions.invoke('processSongLink', {
-     characterId,
-     songLink: mediaLink,
-     isVideo
-   });
-   console.log('[handleShareSong] Full response:', res);
-
-   if (res?.data?.success) {
-    let msgData = {
-      conversation_id: conversationIdRef.current,
-      sender_type: 'user',
-      timestamp: new Date().toISOString(),
-      content: '',
-    };
-
-    if (isVideo) {
-      msgData.videos_watched = res.data.video ? [res.data.video] : [];
-    } else {
-      msgData.songs_heard = res.data.songs?.length > 0
-        ? res.data.songs
-        : res.data.song
-        ? [res.data.song]
-        : [];
-    }
-
-     console.log('[handleShareSong] Creating message with:', msgData);
-     const newMsg = await base44.entities.Message.create(msgData);
-     console.log('[handleShareSong] Message created:', newMsg?.id);
-
-     await base44.entities.Conversation.update(conversationIdRef.current, {
-       last_message_preview: msgData.content,
-       last_message_date: new Date().toISOString(),
-     });
-     queryClient.invalidateQueries({ queryKey: ['conversations', characterId] });
-
-     if (msgData.songs_heard?.length > 0) {
-       msgData.songs_heard.forEach(song => {
-         base44.functions.invoke('analyzeMediaUnderstanding', {
-           mediaObject: song,
-           sources: {},
-         }).then(res1 => {
-           const understanding = res1?.data?.understanding;
-           base44.functions.invoke('deepMediaResearch', {
-             mediaObject: song,
-             tracks: song.tracks || [],
-           }).then(res2 => {
-             const deepResearch = res2?.data?.deepResearch;
-             base44.functions.invoke('buildCharacterMediaKnowledge', {
-               character,
-               mediaObject: song,
-               understanding,
-               deepResearch,
-             }).then(res3 => {
-               const knowledge = res3?.data?.knowledge;
-               base44.entities.Message.update(newMsg.id, {
-                 songs_heard: msgData.songs_heard.map(s => 
-                   s.spotify_id === song.spotify_id 
-                     ? { ...s, _understanding: understanding, _deepResearch: deepResearch, _characterKnowledge: knowledge }
-                     : s
-                 ),
-               }).catch(() => {});
-               console.log(`[Media Research] Complete for "${song.title}": ${knowledge?.knowledgeLevel?.level || 'unknown'}`);
-             }).catch(err => console.error('[buildKnowledge] Failed:', err.message));
-           }).catch(err => console.error('[deepResearch] Failed:', err.message));
-         }).catch(err => console.error('[analyzeMedia] Failed:', err.message));
-       });
-     }
-
-     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-   } else {
-     console.error('[handleShareSong] processSongLink returned success=false');
-     setSendError(`Couldn't process the link. Try another.`);
-   }
-   } catch (err) {
-   console.error('[handleShareSong] Error:', err.message);
-   if (err.message.includes('timed out')) {
-     setSendError('Link processing took too long. Try a different link.');
-   } else if (err.message.includes('502') || err.message.includes('Bad gateway')) {
-     setSendError('Service temporarily unavailable. Try again in a moment.');
-   } else {
-     setSendError(`Couldn't process that link.`);
-   }
-   }
-   };
+  const { handleShareSong } = useChatSongShare({
+    characterId, character, conversationIdRef, queryClient, setSendError,
+  });
 
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
