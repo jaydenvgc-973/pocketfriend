@@ -3,8 +3,9 @@ import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Shirt, Plus, X, Star, Loader2, Wand2, Upload, Package,
-  Camera, ChevronDown, ChevronUp, Check
+  Camera, ChevronDown, ChevronUp, Check, Pencil
 } from "lucide-react";
+import OutfitEditModal from "@/components/character/OutfitEditModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -81,7 +82,7 @@ function PieceCard({ piece, onDelete, onToggleFavorite }) {
 }
 
 // ── Outfit Card ───────────────────────────────────────────────────────────────
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
   return (
@@ -102,6 +103,9 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite 
         <div className="flex items-center gap-1 flex-shrink-0">
           <button onClick={() => onToggleFavorite(outfit.outfit_id)} className={`p-1 rounded transition-colors ${outfit.is_favorite ? 'text-amber-400' : 'text-muted-foreground hover:text-amber-400'}`}>
             <Star className="w-3.5 h-3.5" fill={outfit.is_favorite ? "currentColor" : "none"} />
+          </button>
+          <button onClick={() => onEdit(outfit)} className="p-1 text-muted-foreground hover:text-primary rounded transition-colors" title="Edit outfit">
+            <Pencil className="w-3.5 h-3.5" />
           </button>
           <button onClick={() => setExpanded(v => !v)} className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors">
             {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -534,6 +538,7 @@ export default function CharacterClosetPanel({ character }) {
   const [tab, setTab] = useState("outfits"); // "outfits" | "pieces"
   const [showAddOutfit, setShowAddOutfit] = useState(false);
   const [showAddPiece, setShowAddPiece] = useState(false);
+  const [editingOutfit, setEditingOutfit] = useState(null); // outfit being edited
   const [saving, setSaving] = useState(false);
 
   const closet = character?.character_closet || [];
@@ -560,6 +565,18 @@ export default function CharacterClosetPanel({ character }) {
   const handleSaveOutfit = async (outfit) => {
     await saveCloset([...closet, outfit]);
     setShowAddOutfit(false);
+  };
+
+  // Edit existing outfit in-place — never creates a duplicate
+  const handleEditOutfit = async (updatedOutfit) => {
+    const newCloset = closet.map(o => o.outfit_id === updatedOutfit.outfit_id ? updatedOutfit : o);
+    // If this is the current outfit, keep current_outfit in sync
+    const isCurrentlyWorn = currentOutfit?.outfit_id === updatedOutfit.outfit_id;
+    const currentOutfitUpdate = isCurrentlyWorn
+      ? { ...updatedOutfit, last_changed_at: currentOutfit?.last_changed_at, change_reason: currentOutfit?.change_reason }
+      : null;
+    await saveCloset(newCloset, currentOutfitUpdate);
+    setEditingOutfit(null);
   };
 
   const handleSavePiece = async (piece) => {
@@ -690,14 +707,15 @@ export default function CharacterClosetPanel({ character }) {
                   </p>
                   <div className="grid gap-2">
                     {items.map(outfit => (
-                      <OutfitCard
-                        key={outfit.outfit_id}
-                        outfit={outfit}
-                        isActive={currentOutfit?.outfit_id === outfit.outfit_id}
-                        onSetActive={handleSetActive}
-                        onDelete={handleDeleteOutfit}
-                        onToggleFavorite={handleToggleFavoriteOutfit}
-                      />
+                       <OutfitCard
+                         key={outfit.outfit_id}
+                         outfit={outfit}
+                         isActive={currentOutfit?.outfit_id === outfit.outfit_id}
+                         onSetActive={handleSetActive}
+                         onDelete={handleDeleteOutfit}
+                         onToggleFavorite={handleToggleFavoriteOutfit}
+                         onEdit={setEditingOutfit}
+                       />
                     ))}
                   </div>
                 </div>
@@ -705,6 +723,15 @@ export default function CharacterClosetPanel({ character }) {
             })
           )}
         </div>
+      )}
+
+      {/* Outfit Edit Modal */}
+      {editingOutfit && (
+        <OutfitEditModal
+          outfit={editingOutfit}
+          onSave={handleEditOutfit}
+          onCancel={() => setEditingOutfit(null)}
+        />
       )}
 
       {/* Pieces Tab */}

@@ -1,6 +1,54 @@
-import { createClientFromRequest } from 'npm:@base44/sdk@0.8.23';
+import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
 const VGC_MOBILE_MONTHLY_COST = 50;
+const OFF_APP_RENT = 3000; // Default monthly rent for characters with no in-app home
+
+/**
+ * Determines if a character requires off-app rent:
+ * - Must be an active_created_character
+ * - Must have NO valid in-app home location (current_home_location_id is null/empty)
+ * - Must NOT be homeless, in a shelter, or in a hotel (housing_context checks)
+ */
+function requiresOffAppRent(character) {
+  if (character.character_type !== 'active_created_character') return false;
+  if (character.current_home_location_id) return false; // has a real in-app home
+  if (character.is_homeless) return false;
+  if (character.housing_context === 'temporary_shelter' || character.housing_context === 'homeless_unsheltered') return false;
+  if (character.temporary_housing_location_id) return false; // hotel/shelter
+  return true;
+}
+
+/**
+ * Charges off-app rent and updates CharacterFinancial.
+ * Returns the new balance.
+ */
+async function chargeOffAppRent(base44, character, financial, label) {
+  const amount = OFF_APP_RENT;
+  const newBalance = Math.max(0, (financial.current_balance || 6000) - amount);
+  await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+    current_balance: newBalance,
+    total_expenses: (financial.total_expenses || 0) + amount,
+    last_updated: new Date().toISOString(),
+  });
+  await base44.asServiceRole.entities.FinancialTransaction.create({
+    character_id: character.id,
+    character_name: character.name,
+    sender_id: 'rent_system',
+    sender_type: 'system',
+    sender_name: 'Rent System',
+    receiver_id: character.id,
+    receiver_type: 'character',
+    receiver_name: character.name,
+    amount,
+    direction: 'expense',
+    transaction_type: 'rent',
+    description: `Off-app living situation rent (${label})`,
+    timestamp: new Date().toISOString(),
+    balance_after: newBalance,
+  });
+  console.log(`[onCharacterCreated] Off-app rent charged $${amount} (${label}) to ${character.name} — new balance: $${newBalance}`);
+  return newBalance;
+}
 
 Deno.serve(async (req) => {
   try {
@@ -11,25 +59,21 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'No character data in payload' }, { status: 400 });
     }
 
-    const isNPC = ['npc', 'family_npc', 'background', 'promoted_npc', 'npc_fictitious_person'].includes(character.character_type);
-    const isActive = character.character_type === 'active';
+    // Ownership: use owner_email exclusively. created_by is FORBIDDEN.
+    const ownerEmail = character.owner_email;
+
+    const isNPC = ['npc_regular', 'npc_family_member', 'npc_fictitious'].includes(character.character_type);
+    const isActive = character.character_type === 'active_created_character';
 
     // ── NPC: Auto-assign VGC Towers as home (if not already set) ─────────────
     if (isNPC && !character.current_home_location_id) {
       try {
-        const ownerEmail = character.owner_email || character.created_by;
         if (ownerEmail) {
-          // Find this user's private VGC Towers instance
-          const [byCreated, byOwner] = await Promise.all([
-            base44.asServiceRole.entities.LocationReference.filter({ created_by: ownerEmail, name: 'VGC Towers' }),
-            base44.asServiceRole.entities.LocationReference.filter({ owner_email: ownerEmail, name: 'VGC Towers' }),
-          ]);
-          const seenIds = new Set();
-          const userVGC = [...byCreated, ...byOwner].find(l => {
-            if (seenIds.has(l.id)) return false;
-            seenIds.add(l.id);
-            return l.scope !== 'shared';
+          const userVGCList = await base44.asServiceRole.entities.LocationReference.filter({
+            owner_email: ownerEmail,
+            name: 'VGC Towers',
           });
+          const userVGC = userVGCList.find(l => l.scope !== 'shared') || userVGCList[0];
 
           if (userVGC) {
             const now = new Date().toISOString();
@@ -44,10 +88,8 @@ Deno.serve(async (req) => {
               location_status: 'home',
               travel_status: 'not_traveling',
               location_visibility_state: 'visible',
-              presence_state: 'home',
             });
 
-            // Add to VGC Towers resident lists
             const residentIds = Array.from(new Set([...(userVGC.resident_character_ids || []), character.id]));
             const residentNames = Array.from(new Set([...(userVGC.resident_character_names || []), character.name]));
             await base44.asServiceRole.entities.LocationReference.update(userVGC.id, {
@@ -64,7 +106,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Skip VGC Mobile charge and home linking for NPCs — only active characters get billed
+    // Skip billing for NPCs
     if (!isActive || character.status !== 'active') {
       return Response.json({ success: true, skipped: true, reason: isNPC ? 'NPC assigned home, no billing' : 'Not an active character' });
     }
@@ -95,70 +137,128 @@ Deno.serve(async (req) => {
       console.error('[onCharacterCreated] Failed to auto-link home location:', homeLinkErr.message);
     }
 
-    // ── ACTIVE CHARACTER: Charge VGC Mobile ──────────────────────────────────
+    // ── ACTIVE CHARACTER: Ensure CharacterFinancial record exists ─────────────
+    let financial = null;
     try {
       const financialRecs = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
-      let financial = financialRecs[0];
+      financial = financialRecs[0] || null;
 
       if (!financial) {
-        const transactions = await base44.asServiceRole.entities.FinancialTransaction.filter({ character_id: character.id }, null, 1);
-        let startingBalance = 6000;
-        if (transactions.length > 0) {
-          const allTxns = await base44.asServiceRole.entities.FinancialTransaction.filter({ character_id: character.id }, null, 500);
-          startingBalance = 6000;
-          for (const tx of allTxns) {
-            if (tx.direction === 'income') startingBalance += tx.amount || 0;
-            else if (tx.direction === 'expense') startingBalance -= tx.amount || 0;
-          }
-        }
         financial = await base44.asServiceRole.entities.CharacterFinancial.create({
           character_id: character.id,
           character_name: character.name,
-          current_balance: Math.max(0, startingBalance),
+          current_balance: 6000,
+          total_income: 0,
+          total_expenses: 0,
         });
       }
+    } catch (finErr) {
+      console.error('[onCharacterCreated] Failed to ensure CharacterFinancial:', finErr.message);
+    }
 
-      const newBalance = Math.max(0, (financial.current_balance || 6000) - VGC_MOBILE_MONTHLY_COST);
-      await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
-        current_balance: newBalance,
-        total_expenses: (financial.total_expenses || 0) + VGC_MOBILE_MONTHLY_COST,
-      });
+    // ── ACTIVE CHARACTER: Charge VGC Mobile ──────────────────────────────────
+    try {
+      if (financial) {
+        const newBalance = Math.max(0, (financial.current_balance || 6000) - VGC_MOBILE_MONTHLY_COST);
+        await base44.asServiceRole.entities.CharacterFinancial.update(financial.id, {
+          current_balance: newBalance,
+          total_expenses: (financial.total_expenses || 0) + VGC_MOBILE_MONTHLY_COST,
+        });
 
-      const now = new Date();
-      const billingMonth = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-      await base44.asServiceRole.entities.FinancialTransaction.create({
-        character_id: character.id,
-        character_name: character.name,
-        sender_id: 'vgc_mobile_system',
-        sender_type: 'system',
-        sender_name: 'VGC Mobile',
-        receiver_id: character.id,
-        receiver_type: 'character',
-        receiver_name: character.name,
-        amount: VGC_MOBILE_MONTHLY_COST,
-        direction: 'expense',
-        transaction_type: 'utilities',
-        description: `VGC Mobile monthly phone bill (${billingMonth})`,
-        timestamp: now.toISOString(),
-        balance_after: newBalance,
-      });
+        const now = new Date();
+        const billingMonth = now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        await base44.asServiceRole.entities.FinancialTransaction.create({
+          character_id: character.id,
+          character_name: character.name,
+          sender_id: 'vgc_mobile_system',
+          sender_type: 'system',
+          sender_name: 'VGC Mobile',
+          receiver_id: character.id,
+          receiver_type: 'character',
+          receiver_name: character.name,
+          amount: VGC_MOBILE_MONTHLY_COST,
+          direction: 'expense',
+          transaction_type: 'utilities',
+          description: `VGC Mobile monthly phone bill (${billingMonth})`,
+          timestamp: now.toISOString(),
+          balance_after: newBalance,
+        });
 
-      // User revenue from VGC Mobile
-      // Prefer owner_email for ownership; fall back to created_by for legacy records
-      const ownerEmailForRevenue = character.owner_email || character.created_by;
-      if (ownerEmailForRevenue) {
-        const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ created_by: ownerEmailForRevenue }, null, 1);
-        let userSettings = userSettingsList[0];
-        if (!userSettings) {
-          await base44.asServiceRole.entities.UserSettings.create({ vgc_mobile_revenue: VGC_MOBILE_MONTHLY_COST });
-        } else {
-          await base44.asServiceRole.entities.UserSettings.update(userSettings.id, {
-            vgc_mobile_revenue: (userSettings.vgc_mobile_revenue || 0) + VGC_MOBILE_MONTHLY_COST,
-          });
+        // Refresh financial record after VGC charge
+        financial = { ...financial, current_balance: newBalance, total_expenses: (financial.total_expenses || 0) + VGC_MOBILE_MONTHLY_COST };
+
+        // User revenue from VGC Mobile
+        if (ownerEmail) {
+          const userSettingsList = await base44.asServiceRole.entities.UserSettings.filter({ owner_email: ownerEmail }, null, 1);
+          const userSettings = userSettingsList[0];
+          if (!userSettings) {
+            await base44.asServiceRole.entities.UserSettings.create({
+              owner_email: ownerEmail,
+              vgc_mobile_revenue: VGC_MOBILE_MONTHLY_COST,
+            });
+          } else {
+            await base44.asServiceRole.entities.UserSettings.update(userSettings.id, {
+              vgc_mobile_revenue: (userSettings.vgc_mobile_revenue || 0) + VGC_MOBILE_MONTHLY_COST,
+            });
+          }
         }
       }
     } catch (chargeErr) {
       console.error('[onCharacterCreated] Failed to charge VGC Mobile:', chargeErr.message);
+    }
+
+    // ── ACTIVE CHARACTER: Off-app rent scheduling ─────────────────────────────
+    // Only charge if the character has NO in-app home and is not homeless/sheltered.
+    // Rule:
+    //   - Charge 2 days after creation (initial rent)
+    //   - UNLESS the 1st of next month falls within those 2 days → skip initial, charge on the 1st only.
+    //   - Recurring: 1st of each month via processRecurringExpenses.
+    try {
+      if (financial && requiresOffAppRent(character)) {
+        const now = new Date();
+        const creationDate = now;
+
+        // Compute the next 1st of month
+        const nextFirst = new Date(creationDate.getFullYear(), creationDate.getMonth() + 1, 1);
+        const msUntilFirst = nextFirst - creationDate;
+        const daysUntilFirst = msUntilFirst / (1000 * 60 * 60 * 24);
+
+        if (daysUntilFirst <= 2) {
+          // 1st arrives within 2 days — skip early charge, let monthly billing handle it
+          console.log(`[onCharacterCreated] Off-app rent: 1st of month is in ${daysUntilFirst.toFixed(1)} days — skipping 2-day charge, monthly billing will apply`);
+        } else {
+          // Charge now (creation = day 0, charge at 2-day mark = immediately for simplicity since
+          // we can't schedule a delayed function here — we charge on creation as the "initial" rent)
+          const chargeLabel = `initial — ${creationDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+          financial.current_balance = await chargeOffAppRent(base44, character, financial, chargeLabel);
+        }
+
+        // Register as a recurring_expense entry in CharacterFinancial so processRecurringExpenses
+        // picks it up on the 1st of every month automatically — using the existing recurring expense path.
+        const refreshed = await base44.asServiceRole.entities.CharacterFinancial.filter({ character_id: character.id });
+        const fin = refreshed[0];
+        if (fin) {
+          const existing = (fin.recurring_expenses || []);
+          const alreadyHasRent = existing.some(e => e.expense_type === 'rent' && e.description === 'Off-app living situation rent');
+          if (!alreadyHasRent) {
+            await base44.asServiceRole.entities.CharacterFinancial.update(fin.id, {
+              recurring_expenses: [
+                ...existing,
+                {
+                  expense_type: 'rent',
+                  description: 'Off-app living situation rent',
+                  monthly_cost: OFF_APP_RENT,
+                  total_paid: 0,
+                  last_payment_date: null,
+                },
+              ],
+            });
+            console.log(`[onCharacterCreated] Registered off-app rent ($${OFF_APP_RENT}/mo) as recurring expense for ${character.name}`);
+          }
+        }
+      }
+    } catch (rentErr) {
+      console.error('[onCharacterCreated] Failed to schedule off-app rent:', rentErr.message);
     }
 
     return Response.json({ success: true, characterId: character.id });

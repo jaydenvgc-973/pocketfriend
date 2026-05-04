@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { base44 } from "@/api/base44Client";
-import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp } from "lucide-react";
+import { Shirt, Plus, X, Star, Loader2, Wand2, Camera, ChevronDown, ChevronUp, Pencil } from "lucide-react";
+import OutfitEditModal from "@/components/character/OutfitEditModal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -22,7 +23,7 @@ function generateId() {
   return `outfit_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite }) {
+function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite, onEdit }) {
   const [expanded, setExpanded] = useState(false);
   const catDef = OUTFIT_CATEGORIES.find(c => c.value === outfit.category) || OUTFIT_CATEGORIES[0];
 
@@ -44,6 +45,9 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite 
         <div className="flex items-center gap-1 flex-shrink-0">
           <button onClick={() => onToggleFavorite(outfit.outfit_id)} className={`p-1 rounded transition-colors ${outfit.is_favorite ? 'text-amber-400' : 'text-muted-foreground hover:text-amber-400'}`}>
             <Star className="w-3.5 h-3.5" fill={outfit.is_favorite ? "currentColor" : "none"} />
+          </button>
+          <button onClick={() => onEdit(outfit)} className="p-1 text-muted-foreground hover:text-primary rounded transition-colors" title="Edit outfit">
+            <Pencil className="w-3.5 h-3.5" />
           </button>
           <button onClick={() => setExpanded(v => !v)} className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors">
             {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -80,6 +84,7 @@ function OutfitCard({ outfit, isActive, onSetActive, onDelete, onToggleFavorite 
           Set as Current Outfit
         </button>
       )}
+
     </div>
   );
 }
@@ -295,6 +300,7 @@ Return JSON:
 
 export default function UserClosetPanel({ settings, onUpdate, displayName, gender }) {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingOutfit, setEditingOutfit] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const closet = settings?.user_closet || [];
@@ -314,6 +320,17 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
   const handleSaveOutfit = async (outfit) => {
     await saveCloset([...closet, outfit]);
     setShowAddForm(false);
+  };
+
+  // Edit existing outfit in-place — never creates a duplicate
+  const handleEditOutfit = async (updatedOutfit) => {
+    const newCloset = closet.map(o => o.outfit_id === updatedOutfit.outfit_id ? updatedOutfit : o);
+    const isCurrentlyWorn = currentOutfit?.outfit_id === updatedOutfit.outfit_id;
+    const currentOutfitUpdate = isCurrentlyWorn
+      ? { ...updatedOutfit, last_changed_at: currentOutfit?.last_changed_at }
+      : null;
+    await saveCloset(newCloset, currentOutfitUpdate);
+    setEditingOutfit(null);
   };
 
   const handleDelete = async (outfit_id) => {
@@ -395,12 +412,21 @@ export default function UserClosetPanel({ settings, onUpdate, displayName, gende
                     onSetActive={handleSetActive}
                     onDelete={handleDelete}
                     onToggleFavorite={handleToggleFavorite}
+                    onEdit={setEditingOutfit}
                   />
                 ))}
               </div>
             </div>
           );
         })
+      )}
+
+      {editingOutfit && (
+        <OutfitEditModal
+          outfit={editingOutfit}
+          onSave={handleEditOutfit}
+          onCancel={() => setEditingOutfit(null)}
+        />
       )}
     </div>
   );
