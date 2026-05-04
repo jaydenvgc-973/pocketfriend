@@ -429,6 +429,44 @@
     "emotional_baggage": {
       "type": "string"
     },
+    "memories": {
+      "type": "array",
+      "description": "Experiences that shaped this character \u2014 selected or authored by the user. Used by profile, chat, prompt, and dashboard.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Short label for the experience"
+          },
+          "description": {
+            "type": "string",
+            "description": "Details about the experience"
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "challenges",
+              "positive",
+              "growth"
+            ],
+            "description": "Which experience group this belongs to. Absent for custom entries."
+          },
+          "emotional_impact": {
+            "type": "string",
+            "description": "How this experience affected the character emotionally"
+          },
+          "lesson_learned": {
+            "type": "string",
+            "description": "What the character took away from this experience"
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "default": []
+    },
     "occupation": {
       "type": "string"
     },
