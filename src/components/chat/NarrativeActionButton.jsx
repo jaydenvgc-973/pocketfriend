@@ -28,10 +28,7 @@ export default function NarrativeActionButton({
   const cooldownRef = useRef(null);
 
   useEffect(() => {
-    if (externalTrigger) {
-      setOpen(true);
-      onExternalClose?.();
-    }
+    if (externalTrigger) setOpen(true);
   }, [externalTrigger]);
 
   useEffect(() => {
@@ -299,7 +296,7 @@ Return ONLY the narrative text. No labels, no JSON, no extra commentary.`;
     <AnimatePresence>
       {open && (
         <>
-          <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-[200] bg-black/40" onClick={() => { setOpen(false); onExternalClose?.(); }} />
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}

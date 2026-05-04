@@ -17,7 +17,7 @@ export default function GameLauncher({ character, conversationId, onGameEnd, ext
   const [pickerOpen, setPickerOpen] = useState(false);
 
   useEffect(() => {
-    if (externalTrigger) { setPickerOpen(true); onExternalClose?.(); }
+    if (externalTrigger) setPickerOpen(true);
   }, [externalTrigger]);
   const [activeGame, setActiveGame] = useState(null);
 
@@ -41,7 +41,7 @@ export default function GameLauncher({ character, conversationId, onGameEnd, ext
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-[75] flex items-end justify-center bg-black/65 p-4"
-              onClick={() => setPickerOpen(false)}
+              onClick={() => { setPickerOpen(false); onExternalClose?.(); }}
             >
               <motion.div
                 initial={{ y: 60, opacity: 0 }}
@@ -57,7 +57,7 @@ export default function GameLauncher({ character, conversationId, onGameEnd, ext
                     <p className="text-xs text-muted-foreground">with {character?.name} · they'll remember the result</p>
                   </div>
                   <button
-                    onClick={() => setPickerOpen(false)}
+                    onClick={() => { setPickerOpen(false); onExternalClose?.(); }}
                     className="text-muted-foreground hover:text-foreground p-1.5 rounded-lg hover:bg-secondary transition-colors"
                   >
                     <X className="w-4 h-4" />

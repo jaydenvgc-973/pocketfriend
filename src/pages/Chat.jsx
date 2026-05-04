@@ -42,7 +42,7 @@ import {
   buildSleepInterruptionContext,
 } from "@/lib/responseTimingUtils";
 import { filterDashes } from "@/lib/dashFilter";
-import { stripCharacterNamePrefix, stripSelfReferenceName } from "@/lib/nameFilterUtils";
+import { stripCharacterNamePrefix } from "@/lib/nameFilterUtils";
 import { useUnifiedBehaviour } from "@/lib/useUnifiedBehaviour";
 import { buildNeedsContextBlock } from "@/lib/needsStateEngine";
 import { buildTemporalState, buildTemporalContextBlock } from "@/lib/temporalStateEngine";
@@ -177,7 +177,8 @@ export default function Chat() {
       return null;
     },
     enabled: !!characterId && !isUserLoading && !!currentUser?.email && !!currentUser,
-    staleTime: 60 * 1000,
+    staleTime: 5 * 60 * 1000,      // 5 min — character data is stable during a chat session
+    refetchOnWindowFocus: false,   // Prevents re-fetch storm when user switches tabs/apps
   });
 
   const behaviour = useUnifiedBehaviour(character, { isPhone, conversationId });
@@ -1604,8 +1605,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
           }).catch(() => {});
         });
     }
-
-    const charMsg = primaryTextMsg;
 
     if (emotionalState !== character.emotional_state) {
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
