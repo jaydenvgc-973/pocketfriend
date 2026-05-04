@@ -113,7 +113,7 @@ export function useChatLoadConvo({
             base44.entities.Conversation.filter(
               { owner_email: currentUser.email },
               "-last_message_date",
-              100
+              200
             )
           );
           console.log(`[CHAT_LOAD] Conversation.filter DONE count=${allConvos.length} t=${Date.now()}`);

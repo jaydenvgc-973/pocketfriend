@@ -173,12 +173,13 @@ export default function Chat() {
       }
       // Fallback: character may be an NPC or legacy record not returned by id filter.
       // fetchNPCsForUser returns all NPCs for the current user scoped by owner_email.
+      // NOTE: fetchNPCsForUser returns { npcs: [...] } — NOT { characters: [...] }
       try {
         const npcRes = await base44.functions.invoke('fetchNPCsForUser', {});
-        const npcs = npcRes?.data?.characters || [];
+        const npcs = npcRes?.data?.npcs || [];
         const found = npcs.find(c => c.id === characterId);
         if (found) {
-          console.log(`[CHAT_LOAD] Character FOUND via fetchNPCsForUser fallback name=${found.name} t=${Date.now()}`);
+          console.log(`[CHAT_LOAD] Character FOUND via fetchNPCsForUser fallback name=${found.name} type=${found.character_type} t=${Date.now()}`);
           return found;
         }
         console.log(`[CHAT_LOAD] Character NOT FOUND in fetchNPCsForUser fallback id=${characterId} t=${Date.now()}`);
