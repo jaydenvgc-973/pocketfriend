@@ -1,23 +1,11 @@
 /**
- * diagnoseAdobevgcOrphans
- * Examines the REAL conversations (the ones with messages) that belong to
- * Chris Brown, Alden Spencer, Jesse Arden — and determines their true ownership.
+ * diagnoseAdobevgcOrphans — compact summary version
+ * Returns only the summary fields needed, no verbose detail arrays.
  */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
 
-const REAL_CONVO_IDS = [
-  '69f4a5449c8a6cadc6050c05', // Chat with Jesse Arden — 19 msgs
-  '69e1d087f7d7d28359a14af1', // direct with Alden Spencer — 88 msgs
-  // Chris Brown convo id unknown — need to find it
-];
-
-const REFERENCED_CHAR_IDS = [
-  '69dfcd6c96f06a0babbef844', // Chris Brown
-  '69e1cbaf2dae540ad7f9042a', // Alden Spencer
-  '69f4a5447df393b107a193dc', // Jesse Arden
-];
-
 const TARGET_EMAIL = 'adobevgc@gmail.com';
+const TODAY = new Date().toISOString().split('T')[0];
 
 Deno.serve(async (req) => {
   try {
@@ -25,82 +13,119 @@ Deno.serve(async (req) => {
     const user = await base44.auth.me();
     if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
 
-    // Get ALL conversations in the DB
-    const allConvos = await base44.asServiceRole.entities.Conversation.list('-created_date', 500);
+    // 1. Characters owned by adobevgc
+    const ownedChars = await base44.asServiceRole.entities.Character.filter(
+      { owner_email: TARGET_EMAIL }, '-created_date', 200
+    );
+    const ownedCharIds = new Set(ownedChars.map(c => c.id));
 
-    // Find all conversations that reference the 3 deleted character IDs
-    const convosByCharId = allConvos.filter(c =>
-      (c.character_ids || []).some(id => REFERENCED_CHAR_IDS.includes(id))
+    // 2. Conversations owned by adobevgc
+    const ownedConvos = await base44.asServiceRole.entities.Conversation.filter(
+      { owner_email: TARGET_EMAIL }, '-created_date', 200
     );
 
-    // Full details on each — including raw DB fields
-    const convoReport = convosByCharId.map(c => ({
-      id: c.id,
-      title: c.title,
-      type: c.type,
-      character_ids: c.character_ids,
-      owner_email: c.owner_email || 'MISSING',
-      last_message_date: c.last_message_date,
-      last_message_preview: c.last_message_preview,
-      created_date: c.created_date,
-    }));
-
-    // Separate: which have owner_email set vs missing
-    const withOwner = convosByCharId.filter(c => !!c.owner_email);
-    const withoutOwner = convosByCharId.filter(c => !c.owner_email);
-
-    // For conversations WITHOUT owner_email, check message count
-    const orphanDetails = [];
-    for (const convo of withoutOwner) {
+    // 3. Messages inside owned conversations
+    let totalMessages = 0;
+    const convoSummary = [];
+    for (const convo of ownedConvos) {
       const msgs = await base44.asServiceRole.entities.Message.filter(
-        { conversation_id: convo.id }, '-created_date', 5
-      );
-      const totalMsgs = await base44.asServiceRole.entities.Message.filter(
         { conversation_id: convo.id }, '-created_date', 500
       );
-      orphanDetails.push({
+      totalMessages += msgs.length;
+      convoSummary.push({
         convo_id: convo.id,
         title: convo.title,
         type: convo.type,
         character_ids: convo.character_ids,
-        owner_email: convo.owner_email || 'MISSING',
-        message_count: totalMsgs.length,
-        last_message_date: convo.last_message_date,
+        message_count: msgs.length,
         created_date: convo.created_date,
-        sample: msgs.slice(0, 2).map(m => ({
-          sender_type: m.sender_type,
-          character_name: m.character_name,
-          content: (m.content || '').substring(0, 80),
-          timestamp: m.timestamp,
-        })),
+        owner_email: convo.owner_email,
+        char_ids_all_valid: (convo.character_ids || []).every(id => ownedCharIds.has(id)),
+        broken_char_ids: (convo.character_ids || []).filter(id => !ownedCharIds.has(id)),
       });
     }
 
-    // What useChatLoadConvo does: filter conversations by owner_email
-    // If owner_email is MISSING from these real convos, they will NEVER appear
-    // when the adobevgc user opens their Chat page
-    const summary = {
-      total_convos_referencing_these_chars: convosByCharId.length,
-      with_owner_email_set: withOwner.length,
-      without_owner_email: withoutOwner.length,
-      adobevgc_owned_convos: convosByCharId.filter(c => c.owner_email === TARGET_EMAIL).length,
-    };
+    // 4. Char ID resolution — for each broken char_id, look it up globally
+    const allBrokenIds = [...new Set(
+      convoSummary.flatMap(c => c.broken_char_ids)
+    )];
+    const brokenIdResolution = [];
+    for (const id of allBrokenIds) {
+      const results = await base44.asServiceRole.entities.Character.filter(
+        { id }, '-created_date', 1
+      );
+      const found = results[0] || null;
+      // Also count any messages tied to this character_id
+      const msgs = await base44.asServiceRole.entities.Message.filter(
+        { character_id: id }, '-created_date', 200
+      );
+      brokenIdResolution.push({
+        char_id: id,
+        exists_in_db: !!found,
+        owner_email: found?.owner_email || null,
+        name: found?.name || null,
+        messages_with_this_char_id: msgs.length,
+        sample_convo_ids: [...new Set(msgs.map(m => m.conversation_id))].slice(0, 5),
+      });
+    }
 
-    const conclusions = [];
-    if (withoutOwner.length > 0) {
-      conclusions.push(`ROOT CAUSE CONFIRMED: ${withoutOwner.length} conversation(s) with real message history have NO owner_email. useChatLoadConvo filters by owner_email — these conversations are INVISIBLE to adobevgc's UI. The chat page creates new empty conversations instead of finding these real ones.`);
-      conclusions.push(`FIX REQUIRED: Set owner_email = "adobevgc@gmail.com" on the ${withoutOwner.length} orphaned conversation(s). Also restore the 3 characters (Chris Brown, Alden Spencer, Jesse Arden) or ensure their IDs exist.`);
-    }
-    if (withOwner.filter(c => c.owner_email === TARGET_EMAIL).length > 0) {
-      conclusions.push(`${withOwner.filter(c => c.owner_email === TARGET_EMAIL).length} conversation(s) already owned by adobevgc — but their characters are missing from DB.`);
-    }
+    // 5. Characters with NO owner_email (read-only report)
+    const allChars = await base44.asServiceRole.entities.Character.filter(
+      {}, '-created_date', 500
+    );
+    const noOwnerChars = allChars.filter(c => !c.owner_email || c.owner_email.trim() === '');
+
+    // 6+7. Empty convos created today (loader artifacts)
+    const emptyToday = convoSummary.filter(c =>
+      c.message_count === 0 && c.created_date && c.created_date.startsWith(TODAY)
+    );
+
+    // 8. Convos with legacy name-based titles
+    const legacyTitled = convoSummary.filter(c =>
+      /^(npc_chat__|Chat with |Text with |direct with |phone with )/i.test(c.title || '')
+    );
 
     return Response.json({
       success: true,
-      summary,
-      all_convos_for_these_chars: convoReport,
-      orphaned_convos_full_detail: orphanDetails,
-      root_cause_conclusions: conclusions,
+      target: TARGET_EMAIL,
+      date: TODAY,
+
+      // ── SECTION 1 ──
+      owned_characters_total: ownedChars.length,
+      owned_characters: ownedChars.map(c => ({
+        id: c.id, name: c.name, status: c.status, character_type: c.character_type,
+      })),
+
+      // ── SECTION 2 ──
+      owned_conversations_total: ownedConvos.length,
+
+      // ── SECTION 3 ──
+      total_messages_in_owned_convos: totalMessages,
+      convo_summary: convoSummary,
+
+      // ── SECTION 4 ──
+      broken_char_id_resolution: brokenIdResolution,
+      convos_with_broken_char_ids: convoSummary.filter(c => !c.char_ids_all_valid).length,
+
+      // ── SECTION 5 ──
+      no_owner_email_chars_total: noOwnerChars.length,
+      no_owner_email_chars: noOwnerChars.map(c => ({
+        id: c.id, name: c.name, status: c.status, character_type: c.character_type,
+      })),
+
+      // ── SECTION 6+7 ──
+      empty_convos_created_today_total: emptyToday.length,
+      empty_convos_created_today: emptyToday.map(c => ({
+        convo_id: c.convo_id, title: c.title, character_ids: c.character_ids,
+        created_date: c.created_date,
+      })),
+
+      // ── SECTION 8 ──
+      legacy_titled_convos_total: legacyTitled.length,
+      legacy_titled_convos: legacyTitled.map(c => ({
+        convo_id: c.convo_id, title: c.title, type: c.type,
+        message_count: c.message_count, char_ids_valid: c.char_ids_all_valid,
+      })),
     });
 
   } catch (error) {
