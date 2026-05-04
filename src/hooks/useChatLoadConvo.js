@@ -220,8 +220,19 @@ export function useChatLoadConvo({
           );
           console.log(`[CHAT_LOAD] PendingMessage.filter DONE count=${pending?.length ?? 0} t=${Date.now()}`);
         } catch (err) {
-          console.error(`[CHAT_LOAD] PendingMessage.filter ERROR ${err?.message} t=${Date.now()}`);
-          throw err;
+          const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
+          if (is429) {
+            // Transient 429 — retry once after 3s; pending message delivery is non-fatal
+            console.warn(`[CHAT_LOAD] PendingMessage.filter 429 — retrying once in 3s t=${Date.now()}`);
+            await new Promise(r => setTimeout(r, 3000));
+            pending = await base44.entities.PendingMessage.filter(
+              { character_id: characterId, delivered: false }
+            );
+            console.log(`[CHAT_LOAD] PendingMessage.filter RETRY DONE count=${pending?.length ?? 0} t=${Date.now()}`);
+          } else {
+            console.error(`[CHAT_LOAD] PendingMessage.filter ERROR ${err?.message} t=${Date.now()}`);
+            throw err;
+          }
         }
 
         if (pending.length > 0 && convoId && loadingForCharacterIdRef.current === characterId) {
