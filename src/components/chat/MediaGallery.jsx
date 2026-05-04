@@ -25,10 +25,17 @@ function isProviderAccessible(url) {
 }
 
 export default function MediaGallery({ messages, onDeleteImage, character, conversationId, onImageGenerated, externalTrigger, onExternalClose }) {
-  const [isOpen, setIsOpen] = useState(false);
+  // Initialize open immediately if mounted with externalTrigger=true.
+  // This prevents a race where onExternalClose() resets the parent flag before
+  // isOpen has committed, which would unmount the component before it renders.
+  const [isOpen, setIsOpen] = useState(!!externalTrigger);
 
   useEffect(() => {
-    if (externalTrigger) { setIsOpen(true); onExternalClose?.(); }
+    if (externalTrigger) {
+      setIsOpen(true);
+      // Notify parent AFTER state is set, not before — prevents premature unmount
+      onExternalClose?.();
+    }
   }, [externalTrigger]);
 
   // Reset DB image cache when gallery closes so next open re-fetches fresh
