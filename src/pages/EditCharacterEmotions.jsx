@@ -110,12 +110,27 @@ Make it feel like a real person, not a description. No flowery language.`
     });
 
     const { voice_enabled, voice_name, voice_style_note, memories, ...formWithoutVoice } = form;
+
+    // Deduplicate memories by title (case-insensitive) before writing.
+    // This is a global safety net — applies to every character, every account.
+    // Last occurrence wins so that edits to an existing entry are preserved.
+    const seenTitles = new Map();
+    (memories || []).forEach((m, i) => {
+      const key = (m.title || '').trim().toLowerCase();
+      if (key) seenTitles.set(key, i);
+    });
+    const deduplicatedMemories = (memories || []).filter((m, i) => {
+      const key = (m.title || '').trim().toLowerCase();
+      if (!key) return true; // keep untitled (in-progress custom entries)
+      return seenTitles.get(key) === i;
+    });
+
     const updateData = {
       ...formWithoutVoice,
       voice_enabled,
       voice_name,
       voice_style_note,
-      memories,
+      memories: deduplicatedMemories,
       personality_summary: personality,
       // Clear the cached system_prompt_url so Chat.jsx rebuilds it live from
       // the updated character fields on next load (Chat already has a local
