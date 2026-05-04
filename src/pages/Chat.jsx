@@ -59,6 +59,7 @@ import { useChatReactionActions } from "@/hooks/useChatReactionActions";
 import { useChatLocationSignal } from "@/hooks/useChatLocationSignal";
 import { useChatSongShare } from "@/hooks/useChatSongShare";
 import { useChatPostLoadEffects } from "@/hooks/useChatPostLoadEffects";
+import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -278,18 +279,7 @@ export default function Chat() {
     messages.length
   );
 
-  useEffect(() => {
-    const container = document.querySelector('[data-chat-container="true"]');
-    if (!container) return;
-
-    const handleScroll = () => {
-      const isAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 50;
-      setUserScrolledAway(!isAtBottom);
-    };
-
-    container.addEventListener('scroll', handleScroll);
-    return () => container.removeEventListener('scroll', handleScroll);
-  }, []);
+  useChatScrollTracking(setUserScrolledAway);
 
   const [sendError, setSendError] = useState(null);
 
