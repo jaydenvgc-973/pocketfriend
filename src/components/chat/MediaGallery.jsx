@@ -34,10 +34,15 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
     if (externalTrigger) setIsOpen(true);
   }, [externalTrigger]);
 
-  // Reset DB image cache when gallery closes so next open re-fetches fresh
+  // Clear image cache only when the conversation changes — not on every close.
+  // This prevents a 500-message re-fetch every time the gallery is toggled open/closed.
+  const prevConversationIdRef = useRef(conversationId);
   useEffect(() => {
-    if (!isOpen) setAllImages([]);
-  }, [isOpen]);
+    if (prevConversationIdRef.current !== conversationId) {
+      prevConversationIdRef.current = conversationId;
+      setAllImages([]);
+    }
+  }, [conversationId]);
   const [selectedImage, setSelectedImage] = useState(null);
   const [regenTarget, setRegenTarget] = useState(null); // { id, url } of image to regenerate
   const [isRegenerating, setIsRegenerating] = useState(false);

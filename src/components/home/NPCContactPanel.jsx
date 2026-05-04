@@ -24,6 +24,7 @@ export default function NPCContactPanel() {
       return base44.entities.Character.filter({ owner_email: currentUser.email }, '-created_date');
     },
     enabled: !!currentUser?.email,
+    staleTime: 5 * 60 * 1000,
   });
 
   // Safety net: some service-created npc_fictitious records may lack owner_email

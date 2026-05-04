@@ -1,14 +1,18 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 
 /**
  * Hook to calculate unread message counts for World Contacts conversations.
  * Returns global unread count and per-contact unread counts.
- * Subscribes to real-time Message updates for live badge updates.
+ *
+ * Initial load fires immediately on mount.
+ * Subscription-triggered reloads are debounced 4 seconds to prevent
+ * N×2 API calls per active message event (rate-limit risk reduction).
  */
 export function useWorldContactsUnread(characterId, contacts = []) {
   const [unreadByContact, setUnreadByContact] = useState({});
   const [globalUnreadCount, setGlobalUnreadCount] = useState(0);
+  const debounceTimerRef = useRef(null);
 
   useEffect(() => {
     if (!characterId || contacts.length === 0) {
@@ -25,7 +29,6 @@ export function useWorldContactsUnread(characterId, contacts = []) {
       for (const contact of contacts) {
         const convoTitle = `npc_chat__${characterId}__${contact.person_name}`;
         try {
-          // Find conversation for this contact
           const convos = await base44.entities.Conversation.filter(
             { type: 'npc', character_ids: [characterId] },
             '-updated_date',
@@ -34,7 +37,6 @@ export function useWorldContactsUnread(characterId, contacts = []) {
           const convo = convos.find(c => c.title === convoTitle);
 
           if (convo) {
-            // Count unread incoming messages in this conversation
             const msgs = await base44.entities.Message.filter(
               { conversation_id: convo.id, sender_type: 'character', is_read: false }
             );
@@ -52,17 +54,23 @@ export function useWorldContactsUnread(characterId, contacts = []) {
       setGlobalUnreadCount(total);
     };
 
+    // Initial load fires immediately
     loadUnreadCounts();
 
-    // Subscribe to real-time Message updates to refresh counts
+    // Subscription re-runs are debounced to prevent storm on active chat
     const unsubscribe = base44.entities.Message.subscribe((event) => {
-      // Recount on any message create/update
       if (event.type === 'create' || event.type === 'update') {
-        loadUnreadCounts();
+        if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = setTimeout(() => {
+          loadUnreadCounts();
+        }, 4000);
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    };
   }, [characterId, contacts]);
 
   return {
