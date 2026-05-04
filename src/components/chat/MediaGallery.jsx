@@ -31,11 +31,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
   const [isOpen, setIsOpen] = useState(!!externalTrigger);
 
   useEffect(() => {
-    if (externalTrigger) {
-      setIsOpen(true);
-      // Notify parent AFTER state is set, not before — prevents premature unmount
-      onExternalClose?.();
-    }
+    if (externalTrigger) setIsOpen(true);
   }, [externalTrigger]);
 
   // Reset DB image cache when gallery closes so next open re-fetches fresh
@@ -387,6 +383,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
       setReferenceImagePurpose("general");
       setShowGridPicker(false);
       setIsOpen(false);
+      onExternalClose?.();
       if (onImageGenerated) onImageGenerated({ ...newMsg, image_url: genRes.data.imageUrl });
     } catch (err) {
       setGenerateError(err.message || "Failed to generate image");
@@ -407,7 +404,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
-              onClick={() => setIsOpen(false)}
+              onClick={() => { setIsOpen(false); onExternalClose?.(); }}
             >
               <div
                 className="bg-card rounded-2xl max-w-5xl w-full max-h-[99vh] flex flex-col overflow-hidden"
@@ -418,7 +415,7 @@ export default function MediaGallery({ messages, onDeleteImage, character, conve
                     Media {images.length > 0 ? `(${images.length})` : ""}
                     {isFetchingImages && <Loader2 className="w-4 h-4 text-muted-foreground animate-spin" />}
                   </h3>
-                  <button onClick={() => setIsOpen(false)} className="p-1 hover:bg-secondary rounded-lg transition-colors">
+                  <button onClick={() => { setIsOpen(false); onExternalClose?.(); }} className="p-1 hover:bg-secondary rounded-lg transition-colors">
                     <X className="w-5 h-5 text-muted-foreground" />
                   </button>
                 </div>
