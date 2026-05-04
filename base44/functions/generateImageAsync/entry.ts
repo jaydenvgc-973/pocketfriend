@@ -377,42 +377,53 @@ REFERENCE IMAGE INSTRUCTIONS
 
     if (hasEnv) {
       preamble += `Images ${envRefStart}–${envEnd}: ZONE SPATIAL DATA — 3D ROOM MODEL, NOT A SCREENSHOT TEMPLATE.
-These photos of "${place}" define the room's identity: materials, furniture, layout, palette, style.
+These photos of "${place}" are a SPATIAL GUIDE. They define the room's identity: architecture, materials, furniture types, layout logic, color palette, wall/window/door placement.
 
-THIS IS A 3D SPACE. The camera has physically moved to: ${cameraPos}
-From this position, the scene will look COMPLETELY DIFFERENT from the reference photos.
+════════════════════════════════════════════════════════════
+GLOBAL 3D ZONE RULE — APPLIES TO ALL LOCATIONS AND ROOM TYPES
+════════════════════════════════════════════════════════════
+The reference image is NOT the required camera angle.
+The reference image is NOT the required frame.
+The reference image is NOT a checklist where every object must appear.
 
-WHAT THIS MEANS FOR VISIBLE OBJECTS:
-  • Nearby objects appear LARGER and may dominate the foreground
-  • Far objects may DISAPPEAR from the frame entirely
-  • Some furniture may be CROPPED partially or not visible at all
-  • Only part of the zone needs to be visible — that is correct and expected
-  • Walls may appear from a different side than in the reference
-  • Foreground objects may partially block the view — that is realistic
+The reference image is a SPATIAL GUIDE only.
 
-ZONE IDENTITY PRESERVATION RULES (required):
-  ✅ Preserve: the zone's visual style, color palette, materials
-  ✅ Preserve: the main layout logic (e.g., where the couch faces, which wall has windows)
-  ✅ Show at least 1–2 recognizable zone anchors (depending on camera angle)
-  ✅ The room must FEEL like the same space even if different objects are visible
+From that guide, extract:
+  • The room's layout logic (where walls, doors, windows are placed)
+  • Furniture types and their spatial relationships
+  • Color palette and materials
+  • The zone's overall identity and style
 
-ZONE IDENTITY FAILURE (only reject if these are wrong):
-  🚫 Zone style/palette is completely different from reference
-  🚫 Completely unrelated furniture or architecture present
-  🚫 Zero recognizable elements from the reference zone
+Then RECOMPOSE the scene from the camera position: ${cameraPos}
 
-DO NOT FAIL FOR:
-  ✓ Some furniture not visible (camera moved — this is correct)
-  ✓ Partial cropping of objects (correct for new angle)
-  ✓ Fewer objects visible than in reference (expected)
-  ✓ Different wall visible than in reference (camera moved)
+From this new camera position, the image will naturally show only PART of the room.
+That is correct. That is expected. That is realistic.
+
+WHAT IS ALLOWED (do not fight these):
+  ✓ Only part of the room is visible — correct, camera moved
+  ✓ Some furniture is off-frame or partially cropped — correct
+  ✓ A different wall is visible than in the reference — correct
+  ✓ Foreground objects partially block background — correct, adds depth
+  ✓ The character is close to camera with less room behind them — correct
+  ✓ Only 1 or 2 furniture pieces appear — correct if that's what this angle shows
+
+ZONE IDENTITY IS PRESERVED WHEN:
+  ✅ The visual style, materials, and color palette match the reference space
+  ✅ The spatial logic is consistent (e.g. window is still where it was, couch still faces the same wall)
+  ✅ The space FEELS like the same room, even if a different part of it is shown
+
+ZONE IDENTITY FAILS ONLY WHEN:
+  🚫 The room style/palette is completely different from the reference
+  🚫 Completely unrelated architecture or furniture is present
+  🚫 The room has zero visual connection to the reference zone
 
 ⛔ Do NOT reproduce the reference photo's camera angle.
 ⛔ Do NOT use the reference photo as a flat background layer.
+⛔ Do NOT composite the character onto the reference photo.
+⛔ Do NOT require every object in the reference to appear in every image.
 ⛔ Do NOT copy the reference photo's lighting — lighting comes from: ${timeLighting.period} (${timeLighting.desc})
-⛔ Do NOT require every reference object to appear in the frame.
-✅ Use reference photos ONLY to understand what the room contains and how it looks.
-✅ RE-RENDER the room from ${cameraPos} as a 3D space — only what would be visible from there.
+✅ Use reference photos ONLY to understand the space. Then re-render from the chosen camera position.
+✅ The character must be physically inside the re-rendered space — same floor, same light, same perspective.
 
 `;
     }
@@ -592,11 +603,12 @@ RENDER FROM THIS EXACT CAMERA POSITION ONLY: ${cameraPos}`;
     const place = [locationName, zoneName].filter(Boolean).join(' → ');
     envLock = `
 
-  FINAL REMINDER — 3D ZONE: "${place}"
-  The background is a 3D space, not a photo. Camera: ${cameraPos}. Lighting: ${timeLighting.period}.
-  Only show what would naturally be visible from that camera position — some objects will be cropped or hidden. That is correct.
-  If the scene action requires a specific object (table, bed, couch), move the camera to frame it — do NOT duplicate or invent furniture.
-  Zone identity = preserved style, palette, and 1–2 anchors. Not every object needs to appear.`;
+  FINAL REMINDER — GLOBAL 3D ZONE RULE: "${place}"
+  The reference images are a spatial guide. The camera is at: ${cameraPos}. Lighting: ${timeLighting.period}.
+  Show only what is naturally visible from that camera position. Partial room views, cropped furniture, and off-frame objects are all correct.
+  Do NOT force every reference object into the frame. Do NOT copy the reference photo's angle or treat it as a background layer.
+  Zone identity means: same style, same palette, same spatial logic — not the same photo reproduced.
+  This rule applies to bedrooms, living rooms, kitchens, bathrooms, offices, businesses, outdoor spaces, and all zones.`;
   }
 
   let refImageOverride = `
@@ -689,13 +701,14 @@ YOUR JOB:
 2. DETERMINE what would be VISIBLE directly behind the subject given the selfie camera angle and body position described in the prompt (e.g. lying in bed → pillows, headboard, wall behind them; seated at desk → wall, shelving, window beside them).
 3. RE-RENDER only the portion of the room that appears in that angle as the background.
 
-RULES:
-✅ Background must show real elements from images ${envRefStart}–${envEnd} (correct wall color, correct furniture, correct materials)
-✅ Perspective and depth of background must match the selfie camera angle exactly — close-up selfie = compressed background, overhead selfie = ceiling/bedding visible
-✅ The room background adapts to the camera angle — it is NOT a flat copy of the reference photo
+RULES — GLOBAL 3D ZONE RULE APPLIES HERE TOO:
+✅ The reference images are a SPATIAL GUIDE — extract layout, materials, colors, and furniture types
+✅ Show only what is naturally visible from this selfie angle and body position — partial room is correct
+✅ Background perspective must match the selfie camera angle exactly — close-up = compressed background, overhead = ceiling/bedding visible
 ✅ Time-of-day lighting: ${timeLighting.desc} — apply to background too
-⛔ Do NOT copy the reference photo camera angle as the background
-⛔ Do NOT invent a generic room — use what's in images ${envRefStart}–${envEnd}
+⛔ Do NOT copy the reference photo's camera angle as the background
+⛔ Do NOT require every reference object to appear — only what this angle would show
+⛔ Do NOT invent a generic room — use the spatial identity from images ${envRefStart}–${envEnd}
 ⛔ Do NOT show parts of the room that wouldn't be visible from this selfie angle`;
     }
 
