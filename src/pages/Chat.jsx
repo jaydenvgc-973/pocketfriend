@@ -1192,6 +1192,12 @@ export default function Chat() {
         ? `The user asked for ${requestedQuantity} images. Provide exactly ${requestedQuantity} entries in "image_generation_prompts" array.`
         : "";
 
+      // Extract last image prompt from recent messages for anti-repetition context
+      const lastImageMsg = [...messages].reverse().find(m => m.sender_type === "character" && m.image_url && m.generation_context?.prompt);
+      const lastImagePromptSnippet = lastImageMsg?.generation_context?.prompt
+        ? lastImageMsg.generation_context.prompt.substring(0, 200)
+        : null;
+
       const imageRule = allowImageThisTurn
         ? `MESSAGE TYPE RULES — read carefully:
 You MUST choose exactly ONE of these message_type values:
@@ -1215,15 +1221,11 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
 ${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.\n- CRITICAL: If the user's name "${userNameForPrompts}" appears in the prompt as a subject of the photo, start the image prompt with "[USER]" — NOT "[CHARACTER]".` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}
 
-3D ROOM + ZONE SPATIAL VARIATION RULE — MANDATORY FOR ALL IMAGE PROMPTS:
-Every image prompt you write must treat the room as a 3D space with depth, foreground, midground, and background.
-You MUST specify: (1) the character's action/pose, (2) an explicit camera position inside the room, and (3) the camera distance.
-CAMERA POSITION OPTIONS: from the doorway looking in | from beside the bed looking across | from a corner angle | near a window looking toward the character | from across the room | from a wider room view | from a close candid angle | overhead from above | low angle from near the floor | over-the-shoulder side view.
-BEDROOM RULE — A bedroom is NOT always "lying in bed close-up":
-- If sleeping: use varied compositions — wide view from doorway, bed visible within the whole room, character partially under covers from across the room, side view from across the space. NOT always close-up face on pillow.
-- If awake: sitting on edge of bed | standing near dresser | sitting by window | leaning near doorway | sitting on floor | looking through a drawer.
-ANTI-REPETITION: Never write the same pose + camera combination twice in a row. Vary the composition every time.
-REQUIRED FORMAT for every image prompt: "[CHARACTER] [action/pose]. [camera position, e.g. Camera from the doorway looking in]. [distance, e.g. Wide room view]. [lighting hint based on time of day]. [location context — room, zone, relevant furniture visible]."`
+3D ROOM SPATIAL RULE — MANDATORY:
+The room is a 3D space. Treat it as one. Every image prompt must include: (1) character action/pose, (2) explicit camera position inside the room, (3) camera distance. Use the room reference images to understand the space — do NOT copy their angle. Move the camera: doorway looking in | corner wide shot | beside furniture | across the room | low angle | overhead | over-the-shoulder | near window looking toward character.
+BEDROOM RULE: bedroom is NOT always "lying in bed close-up". Sleeping: wide doorway view, character under covers from across the room, side view at distance. Awake: sitting on bed edge | by the window | standing near dresser | on the floor | folding clothes.
+${lastImagePromptSnippet ? `ANTI-REPETITION — last image used: "${lastImagePromptSnippet.substring(0, 120)}..." — use a DIFFERENT camera position, distance, and pose.` : `ANTI-REPETITION: vary camera, distance, and pose every time.`}
+FORMAT: [CHARACTER] [action]. Camera [position]. [Wide/Medium/Close]. [Time-of-day lighting]. [Zone — 1-2 furniture anchors]."`
         : explicitImageRequest && !isPhotogenic
         ? `MESSAGE TYPE RULES: The user asked for a photo but you've already sent several recently. Politely acknowledge you're not available to send one right now, and use message_type "text_only".`
         : `MESSAGE TYPE RULES: You MUST use message_type "text_only" this turn. Do NOT include any image fields. Images are rate-limited and you have sent enough recently.`;
