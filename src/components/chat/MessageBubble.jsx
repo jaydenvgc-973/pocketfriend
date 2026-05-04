@@ -219,10 +219,10 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
           {/* Narrative action buttons — shown on hover */}
           {isNarrative && !isEditingNarrative && (
-            <div className="absolute -left-14 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-50">
+            <>
               <button
                 onClick={(e) => { e.stopPropagation(); setEditedNarrative(message.content || ""); setIsEditingNarrative(true); }}
-                className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
+                className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
                 title="Edit narrative"
               >
                 <Pencil className="w-3.5 h-3.5" />
@@ -230,13 +230,13 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
               {onDelete && (
                 <button
                   onClick={(e) => { e.stopPropagation(); onDelete(message.id); }}
-                  className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40"
+                  className="absolute -right-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity z-50 p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-destructive hover:border-destructive/40"
                   title="Remove narrative"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               )}
-            </div>
+            </>
           )}
           <div className={`${isNarrative ? "bg-transparent text-muted-foreground italic text-center py-3" : `${bgColor} ${isUser ? "rounded-2xl rounded-br-sm text-primary-foreground" : "rounded-2xl rounded-bl-sm text-foreground"} overflow-hidden`}`}>
             {/* Narrative inline edit mode */}
