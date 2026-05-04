@@ -5,7 +5,7 @@ import { X, Wand2, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { createPortal } from 'react-dom';
 
-export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, conversationId, chatHistory, onNarrativeSubmitted }) {
+export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, conversationId, chatHistory, onNarrativeSubmitted, onNarrativeCreated }) {
   const [narrativeText, setNarrativeText] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -43,6 +43,10 @@ export default function NarrativeBuilderPopup({ isOpen, onClose, characterId, co
 
       if (res?.data?.success) {
         setNarrativeText('');
+        // Inject the created message into local chat state immediately — do not wait for subscription
+        if (res.data.message) {
+          onNarrativeCreated?.(res.data.message);
+        }
         onNarrativeSubmitted?.();
         onClose();
       }
