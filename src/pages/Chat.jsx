@@ -1213,7 +1213,17 @@ IMAGE SUBJECT RULES (for image_generation_prompt / image_generation_prompts):
 - "Send me a pic of us / together" → subject is BOTH. Start prompt with "[JOINT]".
 - Default (no explicit subject): "[CHARACTER]".
 - image_generation_prompt is INTERNAL ONLY — it is never shown to the user.
-${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.\n- CRITICAL: If the user's name "${userNameForPrompts}" appears in the prompt as a subject of the photo, start the image prompt with "[USER]" — NOT "[CHARACTER]".` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}`
+${userNameForPrompts ? `- WORLD NAME RULE: When referencing the person you're talking to in an image prompt (e.g. for [USER] or [JOINT] shots), always use their name "${userNameForPrompts}" — NEVER write "the user" or "user" in any image prompt.\n- CRITICAL: If the user's name "${userNameForPrompts}" appears in the prompt as a subject of the photo, start the image prompt with "[USER]" — NOT "[CHARACTER]".` : `- WORLD NAME RULE: You don't know their name yet. For [USER] or [JOINT] shots, describe them by appearance only — NEVER write "the user" or "user".`}
+
+3D ROOM + ZONE SPATIAL VARIATION RULE — MANDATORY FOR ALL IMAGE PROMPTS:
+Every image prompt you write must treat the room as a 3D space with depth, foreground, midground, and background.
+You MUST specify: (1) the character's action/pose, (2) an explicit camera position inside the room, and (3) the camera distance.
+CAMERA POSITION OPTIONS: from the doorway looking in | from beside the bed looking across | from a corner angle | near a window looking toward the character | from across the room | from a wider room view | from a close candid angle | overhead from above | low angle from near the floor | over-the-shoulder side view.
+BEDROOM RULE — A bedroom is NOT always "lying in bed close-up":
+- If sleeping: use varied compositions — wide view from doorway, bed visible within the whole room, character partially under covers from across the room, side view from across the space. NOT always close-up face on pillow.
+- If awake: sitting on edge of bed | standing near dresser | sitting by window | leaning near doorway | sitting on floor | looking through a drawer.
+ANTI-REPETITION: Never write the same pose + camera combination twice in a row. Vary the composition every time.
+REQUIRED FORMAT for every image prompt: "[CHARACTER] [action/pose]. [camera position, e.g. Camera from the doorway looking in]. [distance, e.g. Wide room view]. [lighting hint based on time of day]. [location context — room, zone, relevant furniture visible]."`
         : explicitImageRequest && !isPhotogenic
         ? `MESSAGE TYPE RULES: The user asked for a photo but you've already sent several recently. Politely acknowledge you're not available to send one right now, and use message_type "text_only".`
         : `MESSAGE TYPE RULES: You MUST use message_type "text_only" this turn. Do NOT include any image fields. Images are rate-limited and you have sent enough recently.`;
