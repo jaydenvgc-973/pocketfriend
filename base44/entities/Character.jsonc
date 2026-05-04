@@ -431,39 +431,37 @@
     },
     "memories": {
       "type": "array",
-      "description": "Experiences that shaped this character \u2014 selected or authored by the user. Used by profile, chat, prompt, and dashboard.",
+      "description": "Formative experiences that shaped the character \u2014 displayed in profile, injected into chat prompt, and used by system prompt builder.",
       "items": {
         "type": "object",
         "properties": {
           "title": {
             "type": "string",
-            "description": "Short label for the experience"
+            "description": "Short label for this memory (e.g. 'First heartbreak')"
           },
           "description": {
             "type": "string",
-            "description": "Details about the experience"
+            "description": "Full scene or narrative description of what happened"
           },
           "category": {
             "type": "string",
             "enum": [
               "challenges",
               "positive",
-              "growth"
+              "growth",
+              "custom"
             ],
-            "description": "Which experience group this belongs to. Absent for custom entries."
+            "description": "Thematic category: challenges, positive, growth, or custom for uncategorized"
           },
           "emotional_impact": {
             "type": "string",
-            "description": "How this experience affected the character emotionally"
+            "description": "How this event affected the character emotionally and how it still shapes them"
           },
           "lesson_learned": {
             "type": "string",
-            "description": "What the character took away from this experience"
+            "description": "The takeaway or belief this experience embedded in them"
           }
-        },
-        "required": [
-          "title"
-        ]
+        }
       },
       "default": []
     },
