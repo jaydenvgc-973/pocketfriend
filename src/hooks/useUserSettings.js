@@ -29,7 +29,8 @@ export function useUserSettings() {
   const { data: settings = null, isLoading } = useQuery({
     queryKey,
     queryFn: () => fetchAndConsolidate(user?.email),
-    staleTime: 30_000,
+    staleTime: 5 * 60 * 1000,    // 5 min — settings are stable; mutation invalidates on explicit save
+    refetchOnWindowFocus: false,  // Prevents refetch storm on tab switch
     enabled: !!user?.email,
   });
 
