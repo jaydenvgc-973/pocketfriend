@@ -219,7 +219,7 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         <div className="group relative" onClick={() => !isNarrative && setShowDelete(!showDelete)} onKeyDown={() => {}}>
           {/* Narrative action buttons — shown on hover */}
           {isNarrative && !isEditingNarrative && (
-            <div className="absolute -right-14 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-50">
+            <div className="absolute -left-14 top-1/2 -translate-y-1/2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-50">
               <button
                 onClick={(e) => { e.stopPropagation(); setEditedNarrative(message.content || ""); setIsEditingNarrative(true); }}
                 className="p-1.5 rounded-full bg-card border border-border text-muted-foreground hover:text-primary hover:border-primary/40"
