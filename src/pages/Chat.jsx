@@ -1269,6 +1269,8 @@ Reply with ONLY the single emoji or the word "none".`,
         isPhone={isPhone}
         conversationId={conversationId}
         setMessages={setMessages}
+        messages={messages}
+        userSettings={userSettings}
         onMediaGalleryToggle={() => setShowMediaGallery(true)}
         onGameLauncherToggle={() => setShowGameLauncher(true)}
         onNarrativeActionToggle={() => setShowNarrativeAction(true)}

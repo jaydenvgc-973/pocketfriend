@@ -1,14 +1,15 @@
 import { useState } from "react";
-import { MoreVertical, Image, Gamepad2, Sparkles, Wrench, Globe, BookOpen, DollarSign, Grid3x3, ShoppingBag, X, Radio } from "lucide-react";
+import { MoreVertical, Image, Gamepad2, Sparkles, Wrench, Globe, BookOpen, DollarSign, Grid3x3, ShoppingBag, X, Radio, PersonStanding } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 
 const topLevelItems = [
-  { id: "narrative",    icon: Sparkles,  label: "Action" },
-  { id: "right_now",   icon: Radio,     label: "Right Now" },
-  { id: "story",        icon: BookOpen,  label: "Add Story Event" },
-  { id: "game",         icon: Gamepad2,  label: "Play a Game" },
-  { id: "apps",         icon: Grid3x3,   label: "Apps" },
-  { id: "troubleshoot", icon: Wrench,    label: "Troubleshoot" },
+  { id: "narrative",        icon: Sparkles,        label: "Action" },
+  { id: "action_narration", icon: PersonStanding,  label: "Show Action" },
+  { id: "right_now",        icon: Radio,           label: "Right Now" },
+  { id: "story",            icon: BookOpen,        label: "Add Story Event" },
+  { id: "game",             icon: Gamepad2,        label: "Play a Game" },
+  { id: "apps",             icon: Grid3x3,         label: "Apps" },
+  { id: "troubleshoot",     icon: Wrench,          label: "Troubleshoot" },
 ];
 
 const appsDrawerItems = [

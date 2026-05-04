@@ -5,6 +5,7 @@ import CharacterAvatar from "@/components/chat/CharacterAvatar";
 import ChatActionsMenu from "@/components/chat/ChatActionsMenu";
 import BackfillNarrativesWrapper from "@/components/chat/BackfillNarrativesWrapper";
 import { base44 } from "@/api/base44Client";
+import { useActionNarrationMode } from "@/hooks/useActionNarrationMode";
 
 export default function ChatHeader({
   character,
@@ -12,6 +13,8 @@ export default function ChatHeader({
   isPhone,
   conversationId,
   setMessages,
+  messages,
+  userSettings,
   onMediaGalleryToggle,
   onGameLauncherToggle,
   onNarrativeActionToggle,
@@ -22,6 +25,10 @@ export default function ChatHeader({
   onShoppingToggle,
 }) {
   const [isGeneratingRightNow, setIsGeneratingRightNow] = useState(false);
+
+  const { triggerActionNarration, isGenerating: isGeneratingActionNarration } = useActionNarrationMode({
+    character, characterId, conversationId, messages: messages || [], setMessages, userSettings,
+  });
 
   // Right Now — instant user-controlled narrative based on current state.
   // Creates placeholder immediately, then generates real narrative in background.
@@ -86,6 +93,7 @@ export default function ChatHeader({
           media: !!character,
           game: !!character && !isPhone,
           narrative: !!character && !!conversationId,
+          action_narration: !!character && !!conversationId,
           contacts: !!character && (character.fictional_relationships || []).length > 0,
           story: !!character,
           money: !!character,
@@ -103,6 +111,7 @@ export default function ChatHeader({
           if (id === "shopping") onShoppingToggle();
           if (id === "troubleshoot") onTroubleshootingToggle();
           if (id === "right_now") handleRightNow();
+          if (id === "action_narration") triggerActionNarration();
         }}
       />
       </div>
