@@ -23,29 +23,34 @@ Deno.serve(async (req) => {
 
     const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 
-    // Load all characters for this user
-    let characters = [];
-    try {
-      characters = await base44.entities.Character.filter({ owner_email: user.email });
-    } catch {
-      characters = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email });
-    }
-    
-    // Load all locations
-    let locations = [];
-    try {
-      locations = await base44.entities.LocationReference.filter({ owner_email: user.email });
-    } catch {
-      locations = await base44.asServiceRole.entities.LocationReference.filter({ owner_email: user.email });
-    }
-    const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
+    // Load all characters for this user — single call, no fallback retry (retry on 429 makes it worse)
+    const characters = await base44.entities.Character.filter({ owner_email: user.email });
 
-    // Identify characters in travel
-    const inTravel = characters.filter(c => 
+    // Identify characters in travel BEFORE loading locations
+    // This avoids loading locations entirely when nothing needs fixing
+    const inTravel = characters.filter(c =>
       c.travel_status && c.travel_status !== 'not_traveling'
     );
 
     console.log(`[forceTravelStateResolution] Found ${inTravel.length} characters in travel state`);
+
+    // EARLY EXIT: nothing to do — skip all further reads and writes
+    if (inTravel.length === 0) {
+      return Response.json({
+        status: 'CRITICAL_SUCCESS',
+        timestamp: new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' })).toISOString(),
+        total_in_travel_initially: 0,
+        total_corrected: 0,
+        total_still_traveling: 0,
+        home_returns: [],
+        forced_arrivals: [],
+        remaining_issue: null,
+      });
+    }
+
+    // Only load locations when there is actually something to resolve
+    const locations = await base44.entities.LocationReference.filter({ owner_email: user.email });
+    const locationMap = Object.fromEntries(locations.map(l => [l.id, l]));
 
     const corrections = [];
     const homeReturns = [];
@@ -100,13 +105,9 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Apply correction (owner-scoped write)
+      // Apply correction — single owner-scoped write, no fallback retry
       try {
-        try {
-          await base44.entities.Character.update(char.id, correction);
-        } catch {
-          await base44.asServiceRole.entities.Character.update(char.id, correction);
-        }
+        await base44.entities.Character.update(char.id, correction);
         corrections.push({ character: char.name, success: true });
       } catch (writeErr) {
         console.error(`[forceTravelStateResolution] Failed to update ${char.name}:`, writeErr.message);
@@ -114,16 +115,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Verify zero remaining (owner-scoped verification)
-    let afterCorrection = [];
-    try {
-      afterCorrection = await base44.entities.Character.filter({ owner_email: user.email });
-    } catch {
-      afterCorrection = await base44.asServiceRole.entities.Character.filter({ owner_email: user.email });
-    }
-    const stillTraveling = afterCorrection.filter(c => 
-      c.travel_status && c.travel_status !== 'not_traveling'
-    );
+    // Derive still-traveling from in-memory corrections — no second full scan
+    const failedCorrections = corrections.filter(c => !c.success).map(c => c.character);
+    const stillTraveling = inTravel.filter(c => failedCorrections.includes(c.name));
 
     const status = stillTraveling.length === 0 ? 'CRITICAL_SUCCESS' : 'SYSTEM_STILL_BROKEN';
 
