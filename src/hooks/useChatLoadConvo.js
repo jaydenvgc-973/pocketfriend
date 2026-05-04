@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -50,6 +51,9 @@ export function useChatLoadConvo({
   const convoIdRef = useRef(null);
   const oldestMsgTimestampRef = useRef(null);
   const isLoadingOlderRef = useRef(false);
+  // Tracks whether we've already shown messages for the current character.
+  // Used to decide whether a 429 failure blocks the screen or just warns.
+  const hasShownMessagesRef = useRef(false);
 
   useEffect(() => {
     // If character came back null (query done, not found), fail visibly
@@ -72,6 +76,7 @@ export function useChatLoadConvo({
     if (setHasOlderMessages) setHasOlderMessages(false);
     convoIdRef.current = null;
     oldestMsgTimestampRef.current = null;
+    hasShownMessagesRef.current = false;
 
     const loadConvo = async () => {
       isLoadingConvoRef.current = true;
@@ -80,34 +85,53 @@ export function useChatLoadConvo({
       const t0 = Date.now();
       console.log(`[CHAT_LOAD] loadConvo START charId=${characterId} chatType=${chatType} t=${t0}`);
 
+      // Helper: check if a 429 error
+      const is429 = (err) =>
+        err?.message?.includes('429') ||
+        err?.message?.includes('Rate limit') ||
+        err?.message?.includes('rate limit');
+
+      // Helper: retry once after 3s on 429
+      const retryAfter3s = async (fn) => {
+        try {
+          return await fn();
+        } catch (err) {
+          if (is429(err)) {
+            console.warn(`[CHAT_LOAD] 429 — retrying once in 3s t=${Date.now()}`);
+            await new Promise(r => setTimeout(r, 3000));
+            return await fn(); // throws if still failing
+          }
+          throw err;
+        }
+      };
+
       try {
         // ── STEP 1: Find the conversation for this character ─────────────────
         console.log(`[CHAT_LOAD] Conversation.filter START t=${Date.now()}`);
         let allConvos;
         try {
-          allConvos = await base44.entities.Conversation.filter(
-            { owner_email: currentUser.email },
-            "-last_message_date",
-            100
-          );
-          console.log(`[CHAT_LOAD] Conversation.filter DONE count=${allConvos.length} t=${Date.now()}`);
-        } catch (err) {
-          const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
-          if (is429) {
-            // Transient platform-wide rate limit — retry once after 3s before surfacing error screen.
-            // This prevents unrelated scheduled automation 429s from killing the chat load.
-            console.warn(`[CHAT_LOAD] Conversation.filter 429 — retrying once in 3s t=${Date.now()}`);
-            await new Promise(r => setTimeout(r, 3000));
-            allConvos = await base44.entities.Conversation.filter(
+          allConvos = await retryAfter3s(() =>
+            base44.entities.Conversation.filter(
               { owner_email: currentUser.email },
               "-last_message_date",
               100
-            );
-            console.log(`[CHAT_LOAD] Conversation.filter RETRY DONE count=${allConvos.length} t=${Date.now()}`);
-          } else {
-            console.error(`[CHAT_LOAD] Conversation.filter ERROR ${err?.message} t=${Date.now()}`);
-            throw err;
+            )
+          );
+          console.log(`[CHAT_LOAD] Conversation.filter DONE count=${allConvos.length} t=${Date.now()}`);
+        } catch (err) {
+          // If Conversation.filter fully fails (both attempts) and we have NO messages yet,
+          // show the rate-limit screen. If we somehow have cached state, preserve it.
+          if (is429(err)) {
+            console.error(`[CHAT_LOAD] Conversation.filter EXHAUSTED after retry t=${Date.now()}`);
+            if (!hasShownMessagesRef.current) {
+              setConvoLoadError('rate_limited');
+            } else {
+              console.warn(`[CHAT_LOAD] 429 on Conversation.filter but messages already shown — suppressing screen`);
+              setConvoLoadError('rate_limited_soft');
+            }
+            return;
           }
+          throw err;
         }
 
         const convos = allConvos.filter(c =>
@@ -129,34 +153,28 @@ export function useChatLoadConvo({
           console.log(`[CHAT_LOAD] CONVO_SELECTED id=${convoId} candidates=${convos.length} last_msg=${selectedConvo.last_message_date || 'none'} t=${Date.now()}`);
 
           // ── STEP 2: Load most recent MSG_WINDOW messages for initial render ──
-          // IMPORTANT: This controls the initial visible render window only.
-          // All other messages remain stored in the database.
-          // They are accessible via pagination, Media Gallery, and Life Journal.
           console.log(`[CHAT_LOAD] Message.filter START convoId=${convoId} window=${MSG_WINDOW} t=${Date.now()}`);
           let loadedMsgs;
           try {
-            loadedMsgs = await base44.entities.Message.filter(
-              { conversation_id: convoId },
-              "-created_date",
-              MSG_WINDOW
-            );
-            console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
-          } catch (err) {
-            const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
-            if (is429) {
-              // Transient 429 on message load — retry once after 3s before surfacing error screen.
-              console.warn(`[CHAT_LOAD] Message.filter 429 — retrying once in 3s t=${Date.now()}`);
-              await new Promise(r => setTimeout(r, 3000));
-              loadedMsgs = await base44.entities.Message.filter(
+            loadedMsgs = await retryAfter3s(() =>
+              base44.entities.Message.filter(
                 { conversation_id: convoId },
                 "-created_date",
                 MSG_WINDOW
-              );
-              console.log(`[CHAT_LOAD] Message.filter RETRY DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
-            } else {
-              console.error(`[CHAT_LOAD] Message.filter ERROR ${err?.message} t=${Date.now()}`);
-              throw err;
+              )
+            );
+            console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
+          } catch (err) {
+            if (is429(err)) {
+              // Message.filter exhausted — we know the convoId so set it and show a soft warning.
+              // Do NOT wipe the screen. The user can still send messages once recovered.
+              console.error(`[CHAT_LOAD] Message.filter EXHAUSTED after retry — showing soft warning t=${Date.now()}`);
+              convoIdRef.current = convoId;
+              setConversationId(convoId);
+              setConvoLoadError('rate_limited_soft');
+              return; // skip to finally — no full-page block
             }
+            throw err;
           }
 
           convoIdRef.current = convoId;
@@ -182,6 +200,9 @@ export function useChatLoadConvo({
 
             setMessages(sorted);
             setConversationId(convoId);
+            hasShownMessagesRef.current = true;
+            // Clear any lingering soft error once messages load successfully
+            setConvoLoadError(null);
 
             const unread = loadedMsgs.filter(m => m.sender_type === "character" && !m.is_read);
             if (unread.length > 0) {
@@ -194,6 +215,7 @@ export function useChatLoadConvo({
             if (setHasOlderMessages) setHasOlderMessages(false);
             oldestMsgTimestampRef.current = null;
             setConversationId(convoId);
+            setConvoLoadError(null);
           }
         } else {
           // No conversation found — create one
@@ -208,31 +230,25 @@ export function useChatLoadConvo({
           convoIdRef.current = convo.id;
           convoId = convo.id;
           if (setHasOlderMessages) setHasOlderMessages(false);
+          setConvoLoadError(null);
           console.log(`[CHAT_LOAD] Conversation CREATED id=${convoId} t=${Date.now()}`);
         }
 
         // ── STEP 3: Deliver any pending messages queued during offline/away ──
+        // PendingMessage failure is non-fatal — silently skip if 429 exhausted.
         console.log(`[CHAT_LOAD] PendingMessage.filter START t=${Date.now()}`);
-        let pending;
+        let pending = [];
         try {
-          pending = await base44.entities.PendingMessage.filter(
-            { character_id: characterId, delivered: false }
+          pending = await retryAfter3s(() =>
+            base44.entities.PendingMessage.filter(
+              { character_id: characterId, delivered: false }
+            )
           );
           console.log(`[CHAT_LOAD] PendingMessage.filter DONE count=${pending?.length ?? 0} t=${Date.now()}`);
         } catch (err) {
-          const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
-          if (is429) {
-            // Transient 429 — retry once after 3s; pending message delivery is non-fatal
-            console.warn(`[CHAT_LOAD] PendingMessage.filter 429 — retrying once in 3s t=${Date.now()}`);
-            await new Promise(r => setTimeout(r, 3000));
-            pending = await base44.entities.PendingMessage.filter(
-              { character_id: characterId, delivered: false }
-            );
-            console.log(`[CHAT_LOAD] PendingMessage.filter RETRY DONE count=${pending?.length ?? 0} t=${Date.now()}`);
-          } else {
-            console.error(`[CHAT_LOAD] PendingMessage.filter ERROR ${err?.message} t=${Date.now()}`);
-            throw err;
-          }
+          // Non-fatal: pending message delivery skipped on 429 — will retry next load
+          console.warn(`[CHAT_LOAD] PendingMessage.filter failed (non-fatal) — skipping pending delivery error="${err?.message}" t=${Date.now()}`);
+          pending = [];
         }
 
         if (pending.length > 0 && convoId && loadingForCharacterIdRef.current === characterId) {
@@ -262,10 +278,17 @@ export function useChatLoadConvo({
 
         console.log(`[CHAT_LOAD] loadConvo COMPLETE elapsed=${Date.now() - t0}ms t=${Date.now()}`);
       } catch (err) {
-        const isRateLimit = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
-        console.error(`[CHAT_LOAD] loadConvo FAILED isRateLimit=${isRateLimit} error="${err?.message}" t=${Date.now()}`);
-        if (isRateLimit) {
-          setConvoLoadError('rate_limited');
+        const rateLimited = is429(err);
+        console.error(`[CHAT_LOAD] loadConvo FAILED isRateLimit=${rateLimited} error="${err?.message}" t=${Date.now()}`);
+        // Only show full-page error screen if NO messages have been shown yet.
+        // If messages are already visible, preserve them and show a soft non-blocking warning.
+        if (rateLimited) {
+          if (hasShownMessagesRef.current) {
+            console.warn(`[CHAT_LOAD] 429 outer catch but messages already shown — suppressing full-page screen`);
+            setConvoLoadError('rate_limited_soft');
+          } else {
+            setConvoLoadError('rate_limited');
+          }
         } else {
           setConvoLoadError('error');
         }
