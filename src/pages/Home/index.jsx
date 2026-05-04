@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { base44 } from "@/api/base44Client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useUserSettings } from "@/hooks/useUserSettings";
@@ -94,14 +94,28 @@ export default function Home() {
     retry: 2,
   });
 
-  // Real-time: invalidate locations when any LocationReference changes
+  // Real-time: invalidate locations when any LocationReference changes.
+  // DEBOUNCED — minimum 30s between re-fetches to prevent 429 storms from bulk
+  // location writes (presence enforcement, home assignments, etc.) firing
+  // one fetchAllLocationsForUser call per event.
+  const locationInvalidateTimerRef = useRef(null);
   useEffect(() => {
     const unsubscribe = base44.entities.LocationReference.subscribe((event) => {
       if (event.type === "create" || event.type === "update" || event.type === "delete") {
-        queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+        if (locationInvalidateTimerRef.current) return; // already scheduled — skip
+        locationInvalidateTimerRef.current = setTimeout(() => {
+          locationInvalidateTimerRef.current = null;
+          queryClient.invalidateQueries({ queryKey: ["locationReferences", currentUser?.email] });
+        }, 30000); // 30s debounce — location map data is stable within a session
       }
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      if (locationInvalidateTimerRef.current) {
+        clearTimeout(locationInvalidateTimerRef.current);
+        locationInvalidateTimerRef.current = null;
+      }
+    };
   }, [currentUser?.email, queryClient]);
 
   // Build location map — ready when loading completes, regardless of whether result is empty.
