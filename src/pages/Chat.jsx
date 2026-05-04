@@ -873,10 +873,7 @@ export default function Chat() {
 
     if (isMountedRef.current) setIsTyping(true);
 
-    // needsInternet: only pass add_context_from_internet=true for weather/news/cultural lookups.
-    // The main character reply prompt does NOT need live internet — it uses cached context built above.
-    // This eliminates a web search call on every single message, which was a primary rate limit driver.
-    const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3, needsInternet = false) => {
+    const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 1, needsInternet = false) => {
       let retryCount = 0;
       while (retryCount <= maxRetries) {
         try {
@@ -1083,7 +1080,8 @@ export default function Chat() {
           ? base44.functions.invoke('fetchAllLocationsForUser', {}).then(async (allLocRes) => {
               const allLocs = allLocRes?.data?.locations || [];
               allLocationsForContext = allLocs; // capture for employment block below
-              const allActiveChars = await base44.entities.Character.filter({ owner_email: currentUser.email, status: 'active' });
+              const cachedAllChars = queryClient.getQueryData(["characters", currentUser.email]);
+              const allActiveChars = Array.isArray(cachedAllChars) ? cachedAllChars.filter(c => c.status === 'active') : [character];
               const { buildSpatialOccupancyMap, buildSpatialContextString } = await import('@/lib/spatialAwareness.js');
               const occupancyMap = buildSpatialOccupancyMap(allActiveChars, allLocs);
               return buildSpatialContextString(characterId, occupancyMap, allLocs) || null;
@@ -1611,7 +1609,7 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
     
-    if (Math.random() > 0.5) {
+    if (Math.random() > 0.8) {
       setTimeout(async () => {
         const isImage = !!userImageUrl;
         const messageDesc = isImage
@@ -1798,7 +1796,7 @@ Reply with ONLY the single emoji or the word "none".`,
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
       />
       {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
-      {character && conversationId && (
+      {character && conversationId && showNarrativeAction && (
         <NarrativeActionButton
           character={character}
           conversationId={conversationId}
@@ -1808,7 +1806,7 @@ Reply with ONLY the single emoji or the word "none".`,
           onExternalClose={() => setShowNarrativeAction(false)}
         />
       )}
-      {character && !isPhone && (
+      {character && !isPhone && showGameLauncher && (
         <GameLauncher
           character={character}
           conversationId={conversationId}
