@@ -252,43 +252,48 @@ export default function Chat() {
   useEffect(() => {
     if (!conversationId || !characterId) return;
 
-    // Guard: capture the characterId at the time this effect fires.
-    // If the user switches characters before the async work completes, we abort.
     const snapshotCharacterId = characterId;
     let isMounted = true;
 
     (async () => {
-      try {
-        const res = await base44.functions.invoke('markThreadRead', { conversationId, characterId: snapshotCharacterId });
-
-        // Stale check: if characterId changed since this effect started, discard
+      // ── MARK THREAD READ ─────────────────────────────────────────────────────
+      // Only fire the backend function if there are actually unread character messages.
+      // Skipping this call when nothing is unread eliminates a redundant request on every open.
+      const hasUnread = messages.some(m => m.sender_type === "character" && !m.is_read);
+      if (hasUnread) {
+        try {
+          await base44.functions.invoke('markThreadRead', { conversationId, characterId: snapshotCharacterId });
+        } catch {
+          // Silent — inline read marks already applied by useChatLoadConvo
+        }
         if (!isMounted || snapshotCharacterId !== characterId) return;
-
         setMessages(prev => prev.map(m =>
           m.sender_type === "character" ? { ...m, is_read: true } : m
         ));
-
         queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId] });
-
-      } catch (err) {
-        if (isMounted && snapshotCharacterId === characterId) {
-          setMessages(prev => prev.map(m => m.sender_type === "character" && !m.is_read ? { ...m, is_read: true } : m));
-          queryClient.invalidateQueries({ queryKey: ['conversations', snapshotCharacterId] });
-        }
       }
 
-      // Catchup narrative: only fire if still on same character and messages are loaded
-      if (isMounted && snapshotCharacterId === characterId && conversationId && messages.length > 0) {
+      // ── CATCHUP NARRATIVE ────────────────────────────────────────────────────
+      // Deferred 3s to avoid competing with initial message render and markThreadRead.
+      // Only fires if user has been away 30+ minutes and is still on the same character.
+      if (isMounted && snapshotCharacterId === characterId && messages.length > 0) {
         const lastUserMsg = [...messages].reverse().find(m => m.sender_type === 'user');
         if (lastUserMsg) {
           const lastTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date);
           if ((new Date() - lastTime) / 60000 >= 30) {
-            base44.functions.invoke('generateCatchupNarrative', { characterId: snapshotCharacterId, conversationId, lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date })
-              .then(r => {
-                if (!isMounted || snapshotCharacterId !== characterId) return;
-                if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText);
+            setTimeout(() => {
+              if (!isMounted || snapshotCharacterId !== characterId) return;
+              base44.functions.invoke('generateCatchupNarrative', {
+                characterId: snapshotCharacterId,
+                conversationId,
+                lastUserMessageTime: lastUserMsg.timestamp || lastUserMsg.created_date,
               })
-              .catch(() => {});
+                .then(r => {
+                  if (!isMounted || snapshotCharacterId !== characterId) return;
+                  if (r?.data?.success && r?.data?.catchupText) setCatchupNarrativeText(r.data.catchupText);
+                })
+                .catch(() => {});
+            }, 3000);
           }
         }
       }
@@ -860,14 +865,17 @@ export default function Chat() {
 
     if (isMountedRef.current) setIsTyping(true);
 
-    const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3) => {
+    // needsInternet: only pass add_context_from_internet=true for weather/news/cultural lookups.
+    // The main character reply prompt does NOT need live internet — it uses cached context built above.
+    // This eliminates a web search call on every single message, which was a primary rate limit driver.
+    const callLLMWithRetry = async (prompt, model = 'gemini_3_flash', maxRetries = 3, needsInternet = false) => {
       let retryCount = 0;
       while (retryCount <= maxRetries) {
         try {
           return await base44.integrations.Core.InvokeLLM({
             prompt,
-            add_context_from_internet: true,
-            model
+            ...(needsInternet ? { add_context_from_internet: true } : {}),
+            model,
           });
         } catch (err) {
           const isRateLimit = err?.message?.includes('rate') || err?.message?.includes('429') || err?.message?.includes('Rate limit');
@@ -987,7 +995,7 @@ export default function Chat() {
             weatherContext = `\n\nCURRENT WEATHER (for ${[character.city, character.state].filter(Boolean).join(", ")}): ${character.weather_summary}. You are aware of this. ONLY reference it if the user directly asked about weather or is making outdoor plans — do NOT volunteer it into unrelated topics.`;
           } else if (weatherKeywords.test(text)) {
             try {
-              const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature and conditions briefly.`);
+              const weatherRes = await callLLMWithRetry(`What is the current weather right now in ${[character.city, character.state].filter(Boolean).join(", ")}? Include temperature and conditions briefly.`, 'gemini_3_flash', 3, true);
               weatherContext = `\n\nCURRENT WEATHER: ${weatherRes}. Reference this ONLY because the user asked about it.`;
             } catch (weatherErr) {
               // Weather lookup failed, continue without it
@@ -1000,7 +1008,7 @@ export default function Chat() {
       const newsKeywords = /\b(news|heard about|did you see|what's going on|what happened|current events|trending|politics|election|sports|game|match|celebrity|scandal|viral|social media|twitter|tiktok|instagram)\b/i;
       if (newsKeywords.test(text)) {
         try {
-          const eventsRes = await callLLMWithRetry(`What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`);
+          const eventsRes = await callLLMWithRetry(`What are the top 2-3 most relevant recent news events, cultural moments, or trending topics happening right now (current date: ${new Date().toLocaleDateString()})? Focus on general interest stories that a typical person might naturally bring up in casual conversation. Include brief details about each.`, 'gemini_3_flash', 3, true);
           recentEventsContext = `\n\nRECENT EVENTS: Here are current events happening now: ${eventsRes}. You can naturally reference these if they fit the conversation, but don't force it. Only mention them if they genuinely relate to what you're discussing.`;
         } catch (eventsErr) {
           // Events lookup failed, continue without it
@@ -1011,7 +1019,7 @@ export default function Chat() {
       const culturalKeywords = /\b(show|shows|watch|watching|netflix|hulu|disney|prime|streaming|movie|film|music|song|artist|singer|actor|actress|celebrity|famous|viral|tiktok|youtube|podcast|album|concert|tour|coachella|grammy|oscar|emmy|celebrity|star|band|rapper|actor|influencer|meme|trend|trending|cardi|taylor|drake|beyonce|kanye|rihanna|dua|weekend|post|malone|billie|ariana|this is us|stranger|breaking bad|game of thrones)\b/i;
       if (culturalKeywords.test(text) || culturalKeywords.test(recentMsgs.slice(-3).map(m => m.content).join(" "))) {
         try {
-          const culturalRes = await callLLMWithRetry(`What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`);
+          const culturalRes = await callLLMWithRetry(`What are currently trending in entertainment and culture right now (current date: ${new Date().toLocaleDateString()})? Include: popular TV shows, streaming content, music releases or artists, celebrities making headlines, viral trends. Keep it to what a socially aware person would naturally know. Be concise.`, 'gemini_3_flash', 3, true);
           culturalContext = `\n\nCULTURAL AWARENESS: Current entertainment & culture trends: ${culturalRes}. You're aware of these topics and can discuss them naturally if they come up. Recognize references to celebrities, shows, and music without confusion.`;
         } catch (culturalErr) {
           // Cultural awareness lookup failed, continue without it
@@ -1663,13 +1671,11 @@ Reply with ONLY the single emoji or the word "none".`,
     }).catch(() => {});
 
     if (responseText) {
-      let allCharsForApproval = [];
-      try {
-        allCharsForApproval = await base44.entities.Character.filter({ owner_email: currentUser.email });
-      } catch (approvalLoadError) {
-        console.warn("[Approval] Character lookup failed. Continuing with current character only.", approvalLoadError);
-      }
-      checkForApprovalEvents(responseText, character, allCharsForApproval || [], text);
+      // Use the cached characters list from React Query instead of a fresh full-account scan.
+      // This avoids a Character.filter({ owner_email }) call on every single message sent.
+      const cachedChars = queryClient.getQueryData(["characters", currentUser.email]);
+      const allCharsForApproval = Array.isArray(cachedChars) ? cachedChars : [character];
+      checkForApprovalEvents(responseText, character, allCharsForApproval, text);
     }
 
     base44.functions.invoke("classifyConversationEvent", {
@@ -1785,7 +1791,7 @@ Reply with ONLY the single emoji or the word "none".`,
         onShoppingToggle={() => setShowShopping(true)}
         onTroubleshootingToggle={() => setShowTroubleshooting(true)}
       />
-      {character && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
+      {character && showMediaGallery && <MediaGallery messages={messages} onDeleteImage={handleDeleteImage} character={character} conversationId={conversationId} onImageGenerated={(newMsg) => setMessages(prev => prev.some(m => m.id === newMsg.id) ? prev : [...prev, newMsg])} externalTrigger={showMediaGallery} onExternalClose={() => setShowMediaGallery(false)} />}
       {character && conversationId && (
         <NarrativeActionButton
           character={character}
