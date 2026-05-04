@@ -92,8 +92,22 @@ export function useChatLoadConvo({
           );
           console.log(`[CHAT_LOAD] Conversation.filter DONE count=${allConvos.length} t=${Date.now()}`);
         } catch (err) {
-          console.error(`[CHAT_LOAD] Conversation.filter ERROR ${err?.message} t=${Date.now()}`);
-          throw err;
+          const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
+          if (is429) {
+            // Transient platform-wide rate limit — retry once after 3s before surfacing error screen.
+            // This prevents unrelated scheduled automation 429s from killing the chat load.
+            console.warn(`[CHAT_LOAD] Conversation.filter 429 — retrying once in 3s t=${Date.now()}`);
+            await new Promise(r => setTimeout(r, 3000));
+            allConvos = await base44.entities.Conversation.filter(
+              { owner_email: currentUser.email },
+              "-last_message_date",
+              100
+            );
+            console.log(`[CHAT_LOAD] Conversation.filter RETRY DONE count=${allConvos.length} t=${Date.now()}`);
+          } else {
+            console.error(`[CHAT_LOAD] Conversation.filter ERROR ${err?.message} t=${Date.now()}`);
+            throw err;
+          }
         }
 
         const convos = allConvos.filter(c =>
@@ -128,8 +142,21 @@ export function useChatLoadConvo({
             );
             console.log(`[CHAT_LOAD] Message.filter DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
           } catch (err) {
-            console.error(`[CHAT_LOAD] Message.filter ERROR ${err?.message} t=${Date.now()}`);
-            throw err;
+            const is429 = err?.message?.includes('429') || err?.message?.includes('Rate limit') || err?.message?.includes('rate limit');
+            if (is429) {
+              // Transient 429 on message load — retry once after 3s before surfacing error screen.
+              console.warn(`[CHAT_LOAD] Message.filter 429 — retrying once in 3s t=${Date.now()}`);
+              await new Promise(r => setTimeout(r, 3000));
+              loadedMsgs = await base44.entities.Message.filter(
+                { conversation_id: convoId },
+                "-created_date",
+                MSG_WINDOW
+              );
+              console.log(`[CHAT_LOAD] Message.filter RETRY DONE count=${loadedMsgs?.length ?? 0} t=${Date.now()}`);
+            } else {
+              console.error(`[CHAT_LOAD] Message.filter ERROR ${err?.message} t=${Date.now()}`);
+              throw err;
+            }
           }
 
           convoIdRef.current = convoId;
