@@ -109,6 +109,7 @@ export default function Chat() {
   const conversationIdRef = useRef(null);
   const unsubscribeRef = useRef(null);
   const isMountedRef = useRef(true);
+  const catchupTimerRef = useRef(null);
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -281,7 +282,7 @@ export default function Chat() {
         if (lastUserMsg) {
           const lastTime = new Date(lastUserMsg.timestamp || lastUserMsg.created_date);
           if ((new Date() - lastTime) / 60000 >= 30) {
-            setTimeout(() => {
+            catchupTimerRef.current = setTimeout(() => {
               if (!isMounted || snapshotCharacterId !== characterId) return;
               base44.functions.invoke('generateCatchupNarrative', {
                 characterId: snapshotCharacterId,
@@ -298,7 +299,13 @@ export default function Chat() {
         }
       }
     })();
-    return () => { isMounted = false; };
+    return () => {
+      isMounted = false;
+      if (catchupTimerRef.current) {
+        clearTimeout(catchupTimerRef.current);
+        catchupTimerRef.current = null;
+      }
+    };
   }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useChatScroll(
