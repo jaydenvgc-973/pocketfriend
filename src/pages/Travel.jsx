@@ -24,6 +24,7 @@ import { canCharacterTravelToLocation } from "@/lib/characterEditableListResolve
 import { resolveTravelPresenceEntities, getPresenceAtLocation, isLocationEmpty } from "@/lib/travelPresenceResolver";
 import { shouldVGCResidentBeAtHome } from "@/lib/vgcTowersPresenceEngine";
 import { useUserPresence } from "@/hooks/useUserPresence";
+import { useUserSettings } from "@/hooks/useUserSettings";
 import { useOwnedCharacters } from "@/hooks/useOwnedCharacters";
 
 
@@ -52,15 +53,10 @@ export default function Travel() {
     queryFn: () => base44.auth.me(),
   });
 
-  const { data: settingsList } = useQuery({
-    queryKey: ["userSettings", currentUser?.email],
-    queryFn: () => currentUser?.email
-      ? base44.entities.UserSettings.filter({ owner_email: currentUser.email })
-      : [],
-    enabled: !!currentUser?.email,
-    placeholderData: [],
-  });
-  const safeSettingsList = Array.isArray(settingsList) ? settingsList : [];
+  // Use the same hook as Home — single object shape, shared cache key ["userSettings", email]
+  // This eliminates the array/object shape mismatch that caused writeToCache to produce an object
+  // while Travel tried to read it as an array, resulting in safeSettings = null.
+  const { settings: settingsObj } = useUserSettings();
 
   // Single shared character source — same cache keys as Home, never flickers
   const {
@@ -82,8 +78,10 @@ export default function Travel() {
   });
 
   const locationMap = Object.fromEntries(locationsData.map(l => [l.id, l]));
-  const safeSettings = safeSettingsList[0] || null;
-  const settings = safeSettings || {};
+  // settingsObj is the single UserSettings record (object shape) from useUserSettings
+  // It shares the same React Query cache key as Home, so writeToCache patches propagate here instantly.
+  const safeSettings = settingsObj?.id ? settingsObj : null;
+  const settings = settingsObj || {};
 
   // useUserPresence: gives optimistic-aware presence (survives cache staleness and optimistic UI)
   const { userPresence } = useUserPresence(currentUser, safeSettings, safeSettings?.id);
