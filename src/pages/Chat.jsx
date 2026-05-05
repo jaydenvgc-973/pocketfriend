@@ -521,10 +521,16 @@ export default function Chat() {
       }
 
       recentMsgs = [...messages.slice(-50), userMsg];
+      // Each message carries its own speaker identity at send time.
+      // For user messages: use the stored played_as_character_name if it exists (historical accuracy),
+      // otherwise fall back to the user's world name or "User".
+      // Do NOT use the current activeCharacter to label all historical messages — that causes identity bleeding.
       const chatHistory = recentMsgs.map(m => ({
         role: m.sender_type === "user" ? "user" : "assistant",
         content: m.content,
-        _speakerName: m.sender_type === "user" ? (activeCharacter?.name || "User") : character.name,
+        _speakerName: m.sender_type === "user"
+          ? (m.played_as_character_name || userSettings.fictional_world_name || "User")
+          : character.name,
       }));
 
       const toneFromBehaviour = behaviour?.tone || 'neutral';
@@ -673,6 +679,7 @@ export default function Chat() {
 
       let playAsInstruction = "";
       if (activeCharacter) {
+        // PLAY-AS MODE: user is currently speaking as activeCharacter
         const senderRelEntry = (character.fictional_relationships || []).find(
           r => r.related_character_id === activeCharacter.id
         );
@@ -689,11 +696,32 @@ export default function Chat() {
            ? `\nMemories involving ${activeCharacter.name}:\n${relevantMemories.map(m => `- ${m.title}: ${m.description}`).join("\n")}`
            : "";
 
-        playAsInstruction = `\n\n🔴 CRITICAL — WHO IS SPEAKING: The message is DEFINITELY NOT from the app user. It is FROM another character: ${activeCharacter.name} (${activeCharacter.personality_summary || activeCharacter.archetype || "someone you know"}).
+        playAsInstruction = `\n\n🔴 CRITICAL — CURRENT SPEAKER IDENTITY:
+CURRENT SPEAKER: ${activeCharacter.name}
+MODE: play_as_character
+CHARACTER TYPE: ${activeCharacter.character_type || "active_created_character"}
+IS USER WORLD SELF: false
 
-        ${relContext}${memoryContext2}
+The message you just received is FROM ${activeCharacter.name} — NOT from the app user, NOT from a narrator, NOT from anyone else.
+${relContext}${memoryContext2}
 
-        Your response must: 1. Treat ${activeCharacter.name} as a REAL CHARACTER in your life, not as "the user" 2. Recognize them immediately — you know who they are 3. Have a conversation with THEM, not about them 4. NEVER explain "I thought you were someone else" or act confused about their identity. This is character-to-character interaction.`;
+Your response MUST:
+1. Treat ${activeCharacter.name} as a REAL PERSON you know in your life — respond to THEM directly.
+2. Recognize them by name and relationship — you know who they are.
+3. NEVER refer to them as "the user" or treat them as the app operator.
+4. IGNORE any prior speaker labels in conversation history for this response — the CURRENT speaker is ${activeCharacter.name} and only ${activeCharacter.name}.
+5. This is character-to-character interaction. Respond accordingly.`;
+      } else {
+        // REGULAR USER MODE: user is speaking as their world self
+        const worldName = userSettings.fictional_world_name || "the person you're talking to";
+        playAsInstruction = `\n\n🟢 CURRENT SPEAKER IDENTITY:
+CURRENT SPEAKER: ${worldName}
+MODE: user_world_self
+IS USER WORLD SELF: true
+
+The message you just received is from the user's world self (${worldName}). This is NOT a character-to-character interaction.
+Do NOT attribute this message to any previously seen play-as character. The current speaker is ${worldName} only.
+Respond to ${worldName} naturally as you normally would.`;
       }
 
       const totalMsgsInConvo = messages.length;
@@ -739,6 +767,7 @@ export default function Chat() {
         lastImagePromptSnippet,
       });
 
+      // conversationLog uses per-message speaker names — historical accuracy, no bleeding
       const conversationLog = chatHistory.map(m => `${m._speakerName}: ${m.content}`).join("\n");
 
       const evidenceInstruction = `\n\nEVIDENCE PRIORITY & CONTEXT RULES:
