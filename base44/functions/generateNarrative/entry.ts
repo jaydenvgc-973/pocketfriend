@@ -28,7 +28,7 @@ const DAYPART_ENV = {
   late_night:    { awake: 'Late night. Quiet streets, the hours running toward midnight.',                 asleep: 'Late night. The room is still and dark — well past midnight, deep into the night hours.' },
 };
 
-function buildTemporalBlock(char, lastMsgTimestamp) {
+function buildTemporalBlock(char, lastMsgTimestamp, sunriseTime, sunsetTime) {
   const nowET    = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
   const hourET   = nowET.getHours();
   const minET    = nowET.getMinutes();
@@ -343,7 +343,8 @@ No adult emotional complexity in narrative. Reflect their developmental stage ac
     const weatherConditions = cachedWeather.conditions || 'clear';
 
     // ── BUILD TEMPORAL BLOCK — after sunriseTime/sunsetTime are resolved ──────
-    const temporalBlock = buildTemporalBlock(char, lastMsgTimestamp);
+    // Pass sunrise/sunset as explicit params — they are not in buildTemporalBlock's closure scope.
+    const temporalBlock = buildTemporalBlock(char, lastMsgTimestamp, sunriseTime, sunsetTime);
 
     // ── RESOLVE ACTIVE CHARACTER IDENTITY (who is the user acting as?) ──────
     // If the most recent user messages reference a played_as_character_name, use that.
