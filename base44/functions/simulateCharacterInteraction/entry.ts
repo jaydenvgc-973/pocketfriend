@@ -66,117 +66,173 @@ const MILESTONES = [
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
 
+  // Trace object — records each completed step for diagnostics on failure
+  const trace = {
+    auth_loaded: false,
+    payload_received: false,
+    character_ids_received: [],
+    character_lookup_started: false,
+    character_lookup_results: [],
+    ownership_verified: false,
+    type_verified: false,
+    prompt_built: false,
+    ai_response_started: false,
+    ai_response_completed: false,
+    character_write_started: false,
+    character_write_completed: false,
+    memory_write_started: false,
+    memory_write_completed: false,
+  };
+
+  // ── STAGE: auth ────────────────────────────────────────────────────────────
+  let user;
   try {
-    const user = await base44.auth.me();
-    if (!user) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+    user = await base44.auth.me();
+    if (!user) return Response.json({ error: 'Unauthorized', stage: 'auth', trace }, { status: 401 });
+    trace.auth_loaded = true;
+  } catch (authErr) {
+    return Response.json({ error: authErr?.message || String(authErr), stage: 'auth', trace }, { status: 500 });
+  }
 
-    const { character_ids, userPrompt } = await req.json();
+  // ── STAGE: payload ─────────────────────────────────────────────────────────
+  let character_ids, userPrompt;
+  try {
+    const body = await req.json();
+    character_ids = body.character_ids;
+    userPrompt = body.userPrompt;
     if (!character_ids || character_ids.length < 2) {
-      return Response.json({ error: 'At least 2 character IDs required' }, { status: 400 });
+      return Response.json({ error: 'At least 2 character IDs required', stage: 'payload', trace }, { status: 400 });
+    }
+    trace.payload_received = true;
+    trace.character_ids_received = character_ids;
+  } catch (payloadErr) {
+    return Response.json({ error: payloadErr?.message || String(payloadErr), stage: 'payload', trace }, { status: 400 });
+  }
+
+  const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
+
+  // ── STAGE: character_lookup ────────────────────────────────────────────────
+  const characters = [];
+  trace.character_lookup_started = true;
+
+  for (const id of character_ids) {
+    if (characters.length > 0) await new Promise(r => setTimeout(r, 150));
+
+    let char = null;
+    let lookupError = null;
+    let getMethodExists = false;
+
+    try {
+      // Test whether .get() exists before calling it
+      getMethodExists = typeof base44.asServiceRole.entities.Character.get === 'function';
+
+      if (!getMethodExists) {
+        trace.character_lookup_results.push({ id, outcome: 'get_method_missing' });
+        return Response.json({
+          error: `Character.get(id) is not available on this SDK version. Cannot perform direct ID lookup.`,
+          stage: 'character_lookup_method_invalid',
+          character_id: id,
+          get_method_type: typeof base44.asServiceRole.entities.Character.get,
+          current_user_email: user.email,
+          trace
+        }, { status: 500 });
+      }
+
+      char = await base44.asServiceRole.entities.Character.get(id);
+    } catch (lookupErr) {
+      lookupError = lookupErr?.message || String(lookupErr);
+      char = null;
     }
 
-    // Direct per-ID resolution — safe for 2–4 characters (no rate limit risk from large list scans).
-    // Fetches each selected character directly by id using service role, then verifies ownership.
-    // This avoids false 404s caused by batch scans missing valid characters (e.g. NPC records
-    // that do not appear in the first N results of a filter({ owner_email }) query).
-    const SUPPORTED_TYPES = ['active_created_character', 'npc_fictitious', 'npc_family_member', 'npc_regular'];
+    trace.character_lookup_results.push({
+      id,
+      found: !!char,
+      name: char?.name || null,
+      owner_email: char?.owner_email || null,
+      character_type: char?.character_type || null,
+      get_method_exists: getMethodExists,
+      lookup_error: lookupError,
+    });
 
-    const characters = [];
-    for (const id of character_ids) {
-      // Small sequential delay between lookups to be kind to the rate limiter
-      if (characters.length > 0) await new Promise(r => setTimeout(r, 150));
-
-      // Use .get(id) — the correct SDK method for direct entity ID lookup.
-      // filter({ id }) does NOT work because `id` is a built-in system field,
-      // not a queryable schema property. filter({ id }) returns 0 results for
-      // any valid character, causing false 404s.
-      let char = null;
-      let lookupMethod = 'get';
-      let lookupError = null;
-      try {
-        char = await base44.asServiceRole.entities.Character.get(id);
-      } catch (err) {
-        lookupError = err?.message || String(err);
-        char = null;
-      }
-
-      // SAFETY VERIFICATION 1: Direct id fetch must return a record
-      if (!char) {
-        return Response.json({
-          error: `Simulation failed while resolving character id "${id}". The selected character could not be loaded directly.`,
-          stage: 'character_fetch',
-          character_id: id,
-          lookup_method: lookupMethod,
-          lookup_error: lookupError,
-          current_user_email: user.email
-        }, { status: 404 });
-      }
-
-      // SAFETY VERIFICATION 2: Resolved character must be owned by the current user
-      if (char.owner_email !== user.email) {
-        return Response.json({
-          error: `Ownership mismatch for "${char.name}" (id=${id}): owner_email=${char.owner_email}, expected=${user.email}`,
-          stage: 'ownership_verification',
-          character_id: id,
-          expected_owner: user.email
-        }, { status: 403 });
-      }
-
-      // SAFETY VERIFICATION 3: Resolved character must be a supported type
-      if (!SUPPORTED_TYPES.includes(char.character_type)) {
-        return Response.json({
-          error: `Unsupported character type for "${char.name}" (${char.character_type}). Supported: ${SUPPORTED_TYPES.join(', ')}`,
-          stage: 'type_eligibility',
-          character_id: id
-        }, { status: 400 });
-      }
-
-      characters.push(char);
+    if (!char) {
+      return Response.json({
+        error: `Simulation failed while resolving character id "${id}". The selected character could not be loaded directly. lookup_error: ${lookupError || 'none'}`,
+        stage: 'character_fetch',
+        character_id: id,
+        get_method_exists: getMethodExists,
+        lookup_error: lookupError,
+        current_user_email: user.email,
+        trace
+      }, { status: 404 });
     }
 
-    const getRelationshipContext = (fromChar, toChar) => {
-      const rel = (fromChar.fictional_relationships || []).find(r => r.related_character_id === toChar.id);
-      if (rel) {
-        const levels = `Friendship: ${rel.friendship_level ?? 'unknown'}, Attraction: ${rel.attraction_level ?? 'unknown'}, Romantic: ${rel.romantic_level ?? 'unknown'}`;
-        return `${fromChar.name} views ${toChar.name} as a ${rel.relationship_type}. ${rel.description || ''} Current status: ${rel.current_status || 'unknown'}. Levels — ${levels}.`;
-      }
-      return `${fromChar.name} and ${toChar.name} haven't established a formal relationship yet.`;
-    };
+    if (char.owner_email !== user.email) {
+      return Response.json({
+        error: `Ownership mismatch for "${char.name}" (id=${id}): owner_email=${char.owner_email}, expected=${user.email}`,
+        stage: 'ownership_verification',
+        character_id: id,
+        expected_owner: user.email,
+        trace
+      }, { status: 403 });
+    }
+    trace.ownership_verified = true;
 
-    const characterProfiles = characters.map(char => ({
-      id: char.id,
-      name: char.name,
-      gender: char.gender || 'unknown',
-      sexual_orientation: char.sexual_orientation || 'not specified',
-      personality: char.personality_summary || '',
-      traits: (char.personality_traits || []).join(', '),
-      emotionalState: char.emotional_state || 'calm',
-      currentSituation: char.current_life_event || char.current_situation || '',
-      archetype: char.archetype || 'unknown',
-      emotional_baggage: char.emotional_baggage || '',
-      emotional_triggers_deep: (char.emotional_triggers_deep || []).join(', '),
-    }));
+    if (!SUPPORTED_TYPES.includes(char.character_type)) {
+      return Response.json({
+        error: `Unsupported character type for "${char.name}" (${char.character_type}). Supported: ${SUPPORTED_TYPES.join(', ')}`,
+        stage: 'type_eligibility',
+        character_id: id,
+        trace
+      }, { status: 400 });
+    }
+    trace.type_verified = true;
 
-    const interactionContext = characters.length === 2
-      ? `${getRelationshipContext(characters[0], characters[1])}\n${getRelationshipContext(characters[1], characters[0])}`
-      : characters.map((char, i) => {
-          const others = characters.filter((_, j) => j !== i);
-          return others.map(other => getRelationshipContext(char, other)).join('\n');
-        }).join('\n');
+    characters.push(char);
+  }
 
-    const nowISO = new Date().toISOString();
-    const nowDisplay = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' });
+  const getRelationshipContext = (fromChar, toChar) => {
+    const rel = (fromChar.fictional_relationships || []).find(r => r.related_character_id === toChar.id);
+    if (rel) {
+      const levels = `Friendship: ${rel.friendship_level ?? 'unknown'}, Attraction: ${rel.attraction_level ?? 'unknown'}, Romantic: ${rel.romantic_level ?? 'unknown'}`;
+      return `${fromChar.name} views ${toChar.name} as a ${rel.relationship_type}. ${rel.description || ''} Current status: ${rel.current_status || 'unknown'}. Levels — ${levels}.`;
+    }
+    return `${fromChar.name} and ${toChar.name} haven't established a formal relationship yet.`;
+  };
 
-    const userDirection = userPrompt
-      ? `\n\nCURRENT SITUATION — THIS IS ALREADY HAPPENING RIGHT NOW:\n"${userPrompt}"\nThis is not a suggestion or a direction — it is an established fact. This event is actively occurring or has just occurred. The characters are in the middle of this situation. They are aware of it, affected by it, and must react to it directly. The entire scene, dialogue, and outcome must flow FROM this event. Do not introduce a separate scenario — build entirely on top of this one.\n`
-      : '';
+  const characterProfiles = characters.map(char => ({
+    id: char.id,
+    name: char.name,
+    gender: char.gender || 'unknown',
+    sexual_orientation: char.sexual_orientation || 'not specified',
+    personality: char.personality_summary || '',
+    traits: (char.personality_traits || []).join(', '),
+    emotionalState: char.emotional_state || 'calm',
+    currentSituation: char.current_life_event || char.current_situation || '',
+    archetype: char.archetype || 'unknown',
+    emotional_baggage: char.emotional_baggage || '',
+    emotional_triggers_deep: (char.emotional_triggers_deep || []).join(', '),
+  }));
 
-    const TIME_CONTEXT = `CURRENT DATE & TIME: ${nowDisplay} (${nowISO})\nWhen the user's prompt or the scene references a specific time (e.g. "1:00 PM", "tonight at 8", "tomorrow morning"), resolve that to an exact ISO 8601 UTC datetime and include it in the scheduled_events output array.\n`;
+  const interactionContext = characters.length === 2
+    ? `${getRelationshipContext(characters[0], characters[1])}\n${getRelationshipContext(characters[1], characters[0])}`
+    : characters.map((char, i) => {
+        const others = characters.filter((_, j) => j !== i);
+        return others.map(other => getRelationshipContext(char, other)).join('\n');
+      }).join('\n');
 
-    const WORLD_CONTEXT = `WORLD CONTEXT (the real world these characters live in):
+  const nowISO = new Date().toISOString();
+  const nowDisplay = new Date().toLocaleString('en-US', { timeZone: 'America/New_York', dateStyle: 'full', timeStyle: 'short' });
+
+  const userDirection = userPrompt
+    ? `\n\nCURRENT SITUATION — THIS IS ALREADY HAPPENING RIGHT NOW:\n"${userPrompt}"\nThis is not a suggestion or a direction — it is an established fact. This event is actively occurring or has just occurred. The characters are in the middle of this situation. They are aware of it, affected by it, and must react to it directly. The entire scene, dialogue, and outcome must flow FROM this event. Do not introduce a separate scenario — build entirely on top of this one.\n`
+    : '';
+
+  const TIME_CONTEXT = `CURRENT DATE & TIME: ${nowDisplay} (${nowISO})\nWhen the user's prompt or the scene references a specific time (e.g. "1:00 PM", "tonight at 8", "tomorrow morning"), resolve that to an exact ISO 8601 UTC datetime and include it in the scheduled_events output array.\n`;
+
+  const WORLD_CONTEXT = `WORLD CONTEXT (the real world these characters live in):
 The average American sleeps ~9 hours, spends ~5 hours on leisure (TV, socializing, gaming), works 3.5–8 hours, and checks their phone ~58 times/day. About 24% work remotely. ~1 in 5 Americans has an STI at any given time; ages 15–24 account for half of new STIs. The U.S. incarcerates over 2 million people; racial disparities are significant; innocent Black people are 7x more likely to be wrongly convicted. Religion often serves as a coping mechanism under systemic stress. Youth join gangs due to poverty, instability, and the pull of belonging and protection. The homelessness-jail cycle deepens instability. 74% of high school seniors aspire to college but only ~61% enroll — cost is the #1 barrier.`.trim();
 
-    const prompt = `Simulate a realistic interaction between these characters. Pay close attention to their sexual orientations and genders when determining how attraction develops.
+  const aiPrompt = `Simulate a realistic interaction between these characters. Pay close attention to their sexual orientations and genders when determining how attraction develops.
 
 ${TIME_CONTEXT}
 ${WORLD_CONTEXT}
@@ -255,8 +311,14 @@ Return a JSON object with:
   ]
 }`;
 
-    const response = await base44.asServiceRole.integrations.Core.InvokeLLM({
-      prompt,
+  trace.prompt_built = true;
+
+  // ── STAGE: ai_response ─────────────────────────────────────────────────────
+  let response;
+  try {
+    trace.ai_response_started = true;
+    response = await base44.asServiceRole.integrations.Core.InvokeLLM({
+      prompt: aiPrompt,
       response_json_schema: {
         type: 'object',
         properties: {
@@ -285,8 +347,20 @@ Return a JSON object with:
       },
       model: 'gemini_3_flash'
     });
+    trace.ai_response_completed = true;
+  } catch (aiErr) {
+    return Response.json({
+      error: aiErr?.message || String(aiErr),
+      stage: 'ai_response',
+      character_ids,
+      character_names: characters.map(c => c.name),
+      trace
+    }, { status: 500 });
+  }
 
-    // Update each character with interaction data, apply orientation multipliers, check milestones
+  // ── STAGE: character_write + memory_write ──────────────────────────────────
+  try {
+    trace.character_write_started = true;
     for (const character of characters) {
       const updates = response.relationship_updates?.[character.name];
       if (!updates) continue;
@@ -295,7 +369,6 @@ Return a JSON object with:
       const otherChar = characters.find(c => c.id === otherCharId);
       if (!otherChar) continue;
 
-      // Apply orientation multiplier to attraction delta
       const multiplier = getAttractionMultiplier(
         character.sexual_orientation,
         character.gender,
@@ -307,42 +380,24 @@ Return a JSON object with:
         ? rawAttractionDelta * multiplier
         : rawAttractionDelta;
 
-      // Update fictional relationships with new levels
       const updatedRelationships = (character.fictional_relationships || []).map(rel => {
         if (rel.related_character_id === otherCharId) {
           const currentFriendship = rel.friendship_level ?? 50;
           const currentAttraction = rel.attraction_level ?? 0;
           const currentRomantic = rel.romantic_level ?? 0;
-
-          const newFriendship = Math.min(100, Math.max(0, currentFriendship + (updates.friendship_level_change || 0)));
-          const newAttraction = Math.min(100, Math.max(0, Math.round(currentAttraction + adjustedAttractionDelta)));
-          const newRomantic = Math.min(100, Math.max(0, currentRomantic + (updates.romantic_level_change || 0)));
-
-          // Check milestones for this relationship
-          for (const milestone of MILESTONES) {
-            const before = milestone.field === 'friendship_level' ? currentFriendship
-              : milestone.field === 'attraction_level' ? currentAttraction
-              : currentRomantic;
-            const after = milestone.field === 'friendship_level' ? newFriendship
-              : milestone.field === 'attraction_level' ? newAttraction
-              : newRomantic;
-            // Milestone tracking per relationship is logged in memory below
-          }
-
           return {
             ...rel,
             last_interaction_summary: updates.last_interaction_summary,
             current_status: updates.updated_status,
             emotional_impact: updates.emotional_impact,
-            friendship_level: newFriendship,
-            attraction_level: newAttraction,
-            romantic_level: newRomantic,
+            friendship_level: Math.min(100, Math.max(0, currentFriendship + (updates.friendship_level_change || 0))),
+            attraction_level: Math.min(100, Math.max(0, Math.round(currentAttraction + adjustedAttractionDelta))),
+            romantic_level: Math.min(100, Math.max(0, currentRomantic + (updates.romantic_level_change || 0))),
           };
         }
         return rel;
       });
 
-      // If no existing relationship, create one
       if (!updatedRelationships.some(r => r.related_character_id === otherCharId)) {
         const newAttraction = Math.min(100, Math.max(0, Math.round(adjustedAttractionDelta)));
         updatedRelationships.push({
@@ -360,36 +415,48 @@ Return a JSON object with:
         });
       }
 
-      // Check for orientation shift in this character's relationship to otherChar
       const thisRel = updatedRelationships.find(r => r.related_character_id === otherCharId);
-      const currentAttractionForShift = thisRel?.attraction_level ?? 0;
       const orientationShift = checkOrientationShift(
         character.sexual_orientation,
-        currentAttractionForShift,
+        thisRel?.attraction_level ?? 0,
         character.gender,
         otherChar.gender
       );
 
-      const newEncounter = {
-        description: `Interaction with ${otherChar.name}: ${response.scene_summary}`,
-        context: 'character interaction simulation',
-        emotional_reaction: response.emotional_shifts?.[character.name] || 'neutral',
-        date: new Date().toISOString()
-      };
-
       const characterUpdatePayload = {
-        transient_encounters: [...(character.transient_encounters || []), newEncounter],
+        transient_encounters: [...(character.transient_encounters || []), {
+          description: `Interaction with ${otherChar.name}: ${response.scene_summary}`,
+          context: 'character interaction simulation',
+          emotional_reaction: response.emotional_shifts?.[character.name] || 'neutral',
+          date: new Date().toISOString()
+        }],
         fictional_relationships: updatedRelationships,
         emotional_state: response.emotional_shifts?.[character.name]?.split(' ')[0] || character.emotional_state,
       };
-
-      if (orientationShift) {
-        characterUpdatePayload.sexual_orientation = orientationShift;
-      }
+      if (orientationShift) characterUpdatePayload.sexual_orientation = orientationShift;
 
       await base44.entities.Character.update(character.id, characterUpdatePayload);
+    }
+    trace.character_write_completed = true;
+  } catch (writeErr) {
+    return Response.json({
+      error: writeErr?.message || String(writeErr),
+      stage: 'character_write',
+      character_ids,
+      character_names: characters.map(c => c.name),
+      trace
+    }, { status: 500 });
+  }
 
-      // Create memory of this interaction
+  // ── STAGE: memory_write ────────────────────────────────────────────────────
+  try {
+    trace.memory_write_started = true;
+    for (const character of characters) {
+      const updates = response.relationship_updates?.[character.name];
+      if (!updates) continue;
+      const otherChar = characters.find(c => c.id === updates.other_character_id);
+      if (!otherChar) continue;
+
       const dialogueText = (response.dialogue || []).map(d => `${d.speaker}: ${d.text}`).join('\n');
       const situationPrefix = userPrompt ? `Situation: ${userPrompt}\n\n` : '';
       const memoryPromises = [
@@ -402,8 +469,6 @@ Return a JSON object with:
           source_context: 'character interaction simulation'
         })
       ];
-
-      // Store emotional milestone and shared secret in memory
       if (response.emotional_milestone) {
         memoryPromises.push(base44.entities.Memory.create({
           character_id: character.id,
@@ -424,26 +489,23 @@ Return a JSON object with:
           source_context: 'inter-character interaction - confidential',
         }));
       }
-
       await Promise.all(memoryPromises);
     }
+    trace.memory_write_completed = true;
+  } catch (memErr) {
+    // Memory write failure is non-fatal — simulation already succeeded; log and continue
+    console.error('[simulateCharacterInteraction] memory_write failed:', memErr?.message);
+  }
 
-    // Persist any scheduled events extracted by the LLM
-    const scheduledEventRecords = [];
-    if (response.scheduled_events?.length > 0) {
-      for (const ev of response.scheduled_events) {
-        if (!ev.trigger_time || !ev.description) continue;
-
-        // Resolve character IDs from names
-        const involvedIds = characters
-          .filter(c => (ev.character_names || []).includes(c.name))
-          .map(c => c.id);
-        const involvedNames = characters
-          .filter(c => (ev.character_names || []).includes(c.name))
-          .map(c => c.name);
-
-        if (involvedIds.length === 0) continue;
-
+  // ── STAGE: scheduled_events ────────────────────────────────────────────────
+  const scheduledEventRecords = [];
+  if (response.scheduled_events?.length > 0) {
+    for (const ev of response.scheduled_events) {
+      if (!ev.trigger_time || !ev.description) continue;
+      const involvedIds = characters.filter(c => (ev.character_names || []).includes(c.name)).map(c => c.id);
+      const involvedNames = characters.filter(c => (ev.character_names || []).includes(c.name)).map(c => c.name);
+      if (involvedIds.length === 0) continue;
+      try {
         const record = await base44.entities.ScheduledEvent.create({
           character_ids: involvedIds,
           character_names: involvedNames,
@@ -455,22 +517,21 @@ Return a JSON object with:
           primary_character_id: involvedIds[0]
         });
         scheduledEventRecords.push(record);
+      } catch (evErr) {
+        console.error('[simulateCharacterInteraction] scheduled_event create failed:', evErr?.message);
       }
     }
-
-    return Response.json({
-      success: true,
-      interaction: {
-        characters: characterProfiles.map(p => p.name),
-        scene_summary: response.scene_summary,
-        dialogue: response.dialogue,
-        outcome: response.outcome,
-        timestamp: new Date().toISOString(),
-        scheduled_events: scheduledEventRecords
-      }
-    });
-  } catch (error) {
-    console.error('Interaction simulation error:', error);
-    return Response.json({ error: error.message }, { status: 500 });
   }
+
+  return Response.json({
+    success: true,
+    interaction: {
+      characters: characterProfiles.map(p => p.name),
+      scene_summary: response.scene_summary,
+      dialogue: response.dialogue,
+      outcome: response.outcome,
+      timestamp: new Date().toISOString(),
+      scheduled_events: scheduledEventRecords
+    }
+  });
 });

@@ -44,12 +44,15 @@ export default function CharacterInteractionSimulator({ characters, currentUser 
   };
 
   const parseError = (err, res) => {
-    // Try to extract structured error from backend response
-    const data = res?.data || {};
-    if (data.stage && data.error) {
-      return `[${data.stage}] ${data.error}`;
-    }
-    if (data.error) return data.error;
+    // When Axios throws on non-2xx, the response body is in err.response.data — NOT res.data.
+    // res may be undefined or contain only the last successful partial response.
+    // Always check err.response.data first to surface the real backend stage/error.
+    const errBody = err?.response?.data || {};
+    const resBody = res?.data || {};
+    const data = (errBody.stage || errBody.error) ? errBody : resBody;
+
+    const stage = data.stage ? `[${data.stage}] ` : '';
+    if (data.error) return `${stage}${data.error}`;
     if (err?.message) return err.message;
     return 'Unknown error occurred.';
   };
