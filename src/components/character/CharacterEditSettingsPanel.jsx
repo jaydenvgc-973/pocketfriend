@@ -307,8 +307,12 @@ function WorldPeopleEditor({ character, allCharacters, onMoveToKnown }) {
         return true;
       });
     }
-    await base44.entities.Character.update(character.id, { fictional_relationships: finalRels });
-    queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    try {
+      await base44.entities.Character.update(character.id, { fictional_relationships: finalRels });
+      queryClient.invalidateQueries({ queryKey: ["character", character.id] });
+    } catch (err) {
+      console.warn('[CharacterEditSettingsPanel] linkNpcToCharacter: permission denied or update failed:', err.message);
+    }
     setLinkingNpc(null);
   };
 
