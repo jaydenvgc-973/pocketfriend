@@ -1,6 +1,3 @@
-import { Moon } from "lucide-react";
-import { isCharacterAsleep } from "@/lib/sleepUtils";
-
 const stateRings = {
   calm: "ring-emerald-500/40",
   irritated: "ring-orange-500/40",
@@ -80,7 +77,6 @@ const stateRings = {
 };
 
 export default function CharacterAvatar({ character, size = "md" }) {
-  const asleep = isCharacterAsleep(character);
   const sizeClasses = {
     sm: "w-8 h-8 text-xs",
     md: "w-10 h-10 text-sm",
@@ -93,16 +89,11 @@ export default function CharacterAvatar({ character, size = "md" }) {
   return (
     <div className={`relative ${sizeClasses[size]} rounded-full bg-primary/20 ring-2 ${ringClass} flex items-center justify-center flex-shrink-0 overflow-hidden`}>
       {(character?.avatar_url || character?.image_avatar_url) ? (
-        <img src={character.avatar_url || character.image_avatar_url} alt={character.name} className={`w-full h-full object-cover ${asleep ? "brightness-50" : ""}`} />
+        <img src={character.avatar_url || character.image_avatar_url} alt={character.name} className="w-full h-full object-cover" />
       ) : (
-        <span className={`font-semibold text-primary ${asleep ? "opacity-40" : ""}`}>
+        <span className="font-semibold text-primary">
           {character?.name?.[0]?.toUpperCase() || "?"}
         </span>
-      )}
-      {asleep && (
-        <div className="absolute inset-0 flex items-center justify-center">
-          <Moon className="w-1/2 h-1/2 text-blue-300 opacity-90" />
-        </div>
       )}
     </div>
   );

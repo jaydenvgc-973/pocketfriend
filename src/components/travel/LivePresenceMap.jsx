@@ -508,11 +508,7 @@ function CharacterPin({ marker, onClick, offset }) {
           {marker.initials || marker.name?.slice(0, 1)?.toUpperCase() || '?'}
         </div>
       )}
-      {marker.isAsleep && (
-        <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0,0,0,0.4)" }}>
-          <Moon style={{ width: 11, height: 11, color: "#93c5fd" }} />
-        </div>
-      )}
+      {/* Sleep face overlay removed per UI rule: no icons covering avatar faces */}
       <AnimatePresence>
         {hovered && (
           <motion.div
@@ -678,20 +674,9 @@ function buildMarkers(entities, locations, gridCoords) {
       locationId: locId,
       locationName: location.name,
       coordinates,
-      // isAsleep: only show moon overlay when sleep is backed by enforcement source_reason, not stale DB status
-      isAsleep: (
-        entity.resolved_presence_status === "napping" ||
-        (
-          (entity.resolved_presence_status === "sleeping") &&
-          (
-            entity.resolved_source_reason === 'adaptive_sleep_location_lock' ||
-            entity.resolved_source_reason === 'sleep_location_correction' ||
-            entity.resolved_source_reason === 'home_sleeping' ||
-            entity.resolved_source_reason === 'pass_out_recovery' ||
-            entity.resolved_source_reason === 'sleep_return_home'
-          )
-        )
-      ),
+      // isAsleep: only show moon on map pin when backend confirmed sleep state.
+      // SLEEP TRUTH: resolved_presence_status is the single source of truth — no schedule inference.
+      isAsleep: entity.resolved_presence_status === 'sleeping' || entity.resolved_presence_status === 'napping',
       isFamilyMember: entity.effective_presence_type === 'npc_family_member',
     });
   }
