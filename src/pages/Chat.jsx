@@ -61,6 +61,7 @@ import { useChatSongShare } from "@/hooks/useChatSongShare";
 import { useChatPostLoadEffects } from "@/hooks/useChatPostLoadEffects";
 import { useChatScrollTracking } from "@/hooks/useChatScrollTracking";
 import { useChatLocationShare } from "@/hooks/useChatLocationShare";
+import { useChatBackgroundTasks } from "@/hooks/useChatBackgroundTasks.js";
 
 export default function Chat() {
   const { characterId } = useParams();
@@ -127,10 +128,6 @@ export default function Chat() {
   // Cleared when characterId changes (new character may have different job location context).
   // This prevents a full location fetch on EVERY message send for characters with occupation_location_id.
   const locationsSessionCacheRef = useRef({ data: null, fetchedForCharacterId: null });
-  // Emoji reaction cooldown — max once every 3 messages per character per session.
-  // Without this, every 50%-chance message fires a concurrent LLM call alongside the main response.
-  const emojiMsgCountRef = useRef(0);
-  const lastEmojiMsgIndexRef = useRef(-3);
   const [convoLoadError, setConvoLoadError] = useState(null);
 
   useEffect(() => {
@@ -317,6 +314,27 @@ export default function Chat() {
     isMountedRef, queryClient,
   });
 
+  const { dispatchPostSend, clearCharacterCooldowns } = useChatBackgroundTasks({
+    queryClient, setNewPeopleDetected, setPendingAliasResolution, setLastChangeReason, setMessages,
+  });
+
+  // Clear per-character cooldowns on character switch so stale state doesn't bleed
+  useEffect(() => {
+    if (characterId) clearCharacterCooldowns(characterId);
+  }, [characterId]); // eslint-disable-line
+
+  // Approval events from background hook — dispatched as CustomEvent to avoid circular deps
+  useEffect(() => {
+    const handler = (e) => {
+      const { responseText: rt, character: ch, cachedChars, userText } = e.detail || {};
+      if (!rt || !ch) return;
+      const allCharsForApproval = Array.isArray(cachedChars) ? cachedChars : [ch];
+      checkForApprovalEvents(rt, ch, allCharsForApproval, userText);
+    };
+    window.addEventListener('chat:checkApprovals', handler);
+    return () => window.removeEventListener('chat:checkApprovals', handler);
+  }, [checkForApprovalEvents]);
+
   const sendMessage = async (text, userImageUrl) => {
     if (!character) return;
     setSendError(null);
@@ -464,8 +482,7 @@ export default function Chat() {
     }
     setMessages(prev => prev.some(m => m.id === userMsg.id) ? prev : [...prev, userMsg]);
 
-    // Fire processUserIncome after a short delay — not critical path, doesn't need to block anything
-    setTimeout(() => base44.functions.invoke('processUserIncome', { mode: 'message' }).catch(() => {}), 2000);
+    // processUserIncome is dispatched via useChatBackgroundTasks (Tier 4, 7s, with cooldown)
 
     if (isPhone) {
       const sysMsg = getTextSystemMessage(character);
@@ -1153,58 +1170,6 @@ ${userImageUrl ? `• NEW EVIDENCE (this image) is the PRIMARY source of truth f
       await base44.entities.Character.update(characterId, { emotional_state: emotionalState });
       queryClient.invalidateQueries({ queryKey: ["characters"] });
     }
-    
-    // EMOJI REACTION COOLDOWN: max once every 3 messages per character per session.
-    // Without this guard, 50% of messages fire a concurrent LLM call alongside the main LLM response,
-    // directly competing for quota. The cooldown reduces emoji LLM calls by ~67%.
-    emojiMsgCountRef.current += 1;
-    const shouldRunEmoji = Math.random() > 0.5 && (emojiMsgCountRef.current - lastEmojiMsgIndexRef.current) >= 3;
-    if (shouldRunEmoji) {
-      lastEmojiMsgIndexRef.current = emojiMsgCountRef.current;
-      setTimeout(async () => {
-        const isImage = !!userImageUrl;
-        const messageDesc = isImage
-          ? `The user sent an image${text ? ` with caption: "${text}"` : ""}.`
-          : `The user said: "${text}"`;
-
-        const emojiRes = await base44.integrations.Core.InvokeLLM({
-          prompt: `You are ${character.name}. ${character.personality_summary ? `Your personality: ${character.personality_summary}.` : ""} Your relationship with the user: friendship level ${character.friendship_level ?? 75}/100, romantic level ${character.romantic_level ?? 0}/100.
-
-${messageDesc}
-
-Based on how this message makes YOU feel — its emotional impact on you — choose ONE emoji reaction from this list, or respond with "none" if no strong reaction fits:
-- ❤️ (love, care, appreciation, warmth — "this means something to me / I love this")
-- 👍 (acknowledgment, approval, agreement — "got it / looks good / that works")
-- 😢 (sadness, empathy, being touched — "this is sad / I feel for you")
-- 😡 (anger, frustration, disapproval — "this upset me / this is wrong")
-- 😲 (shock, surprise, being impressed — "I didn't expect this / that's wild")
-
-Consider:
-- Is this a positive message that makes you feel warmth or love? → ❤️
-- Is it neutral information or approval-seeking? → 👍
-- Is it sad or touching? → 😢
-- Is it upsetting or wrong? → 😡
-- Is it shocking or unexpected? → 😲
-- Does it not warrant any strong reaction? → none
-
-Reply with ONLY the single emoji or the word "none".`,
-        });
-
-        const picked = emojiRes?.trim();
-        const validEmojis = ["❤️", "👍", "😢", "😡", "😲"];
-        if (picked && validEmojis.includes(picked)) {
-          // Guard: message may have been deleted while the LLM was running
-          setMessages(prev => {
-            const stillExists = prev.some(m => m.id === userMsg.id);
-            if (!stillExists) return prev;
-            const nonCharReactions = (userMsg.reactions || []).filter(r => r.reactor_type !== "character");
-            const updatedUserMsgReactions = [...nonCharReactions, { emoji: picked, reactor_type: "character", reactor_id: characterId }];
-            base44.entities.Message.update(userMsg.id, { reactions: updatedUserMsgReactions }).catch(() => {});
-            return prev.map(m => m.id === userMsg.id ? { ...m, reactions: updatedUserMsgReactions } : m);
-          });
-        }
-      }, 2000 + Math.random() * 3000);
-    }
 
     const prevLevels = {
       user_respect_level: character.user_respect_level ?? 50,
@@ -1215,125 +1180,13 @@ Reply with ONLY the single emoji or the word "none".`,
     };
     setPreviousLevels(prevLevels);
 
-    // ── POST-SEND BACKGROUND CALLS ─────────────────────────────────────────────
-    // STAGGERED to prevent concurrent API burst. Chat response is already saved above.
-    // These are all fire-and-forget — none block the UI. Delays prevent quota contention.
-    //
-    // Tier 1 (0ms) — location/activity updates: lightest, purely writes, no LLM
-    base44.functions.invoke("updateCharacterActivityFromMessage", {
-      characterId,
-      messageContent: text,
-    }).catch(() => {});
-
-    if (responseText) {
-      base44.functions.invoke("updateCharacterLocationFromMessage", {
-        characterId,
-        messageContent: responseText,
-      }).then(res => {
-        if (res?.data?.unresolved && res.data.phrase) {
-          setPendingAliasResolution({
-            phrase: res.data.phrase,
-            sourceSentence: res.data.source_sentence || null,
-            characterId: res.data.characterId || characterId,
-            characterName: res.data.characterName || character?.name,
-          });
-        } else if (res?.data?.updated) {
-          queryClient.invalidateQueries({ queryKey: ["character", characterId] });
-        }
-      }).catch(() => {});
-    }
-
-    // Tier 2 (1.5s) — approval check (local, no API) + classify event (LLM-light)
-    setTimeout(() => {
-      if (responseText) {
-        const cachedChars = queryClient.getQueryData(["characters", currentUser.email]);
-        const allCharsForApproval = Array.isArray(cachedChars) ? cachedChars : [character];
-        checkForApprovalEvents(responseText, character, allCharsForApproval, text);
-      }
-
-      base44.functions.invoke("classifyConversationEvent", {
-        characterId,
-        characterName: character.name,
-        conversationId: convoId,
-        userMessage: text,
-        characterReply: responseText || "(image sent)",
-        recentMessages: recentMsgs.slice(-8),
-        characterState: {
-          emotional_state: character.emotional_state,
-          health_status: character.health_status,
-          current_activity: character.current_activity,
-          personality_summary: character.personality_summary,
-          fictional_relationships: (character.fictional_relationships || []).map(r => ({ person_name: r.person_name, related_character_id: r.related_character_id, relationship_type: r.relationship_type })),
-        },
-      }).catch(() => {});
-    }, 1500);
-
-    // Tier 3 (3s) — memory extraction + relationship levels (LLM-heavy, most expensive)
-    setTimeout(() => {
-      if (responseText) {
-        base44.functions.invoke("extractMemoriesFromTurn", {
-          characterId,
-          conversationId: convoId,
-          userMessage: text,
-          characterReply: responseText,
-          playingAsCharacterId: activeCharacter?.id || null,
-        }).then(res => {
-          const detected = res?.data?.newPeopleDetected?.relationships;
-          if (detected?.length > 0) setNewPeopleDetected(detected);
-        }).catch(() => {});
-
-        if (activeCharacter?.id) {
-          base44.functions.invoke("syncWorldPhoneMemory", {
-            senderCharacterId: activeCharacter.id,
-            receiverCharacterId: characterId,
-            messageContent: text,
-            context: isPhone ? 'world_phone' : 'character_chat',
-            conversationId: convoId,
-          }).catch(() => {});
-        }
-      }
-    }, 3000);
-
-    // Tier 4 (5s) — relationship levels + achievements (lowest urgency, heaviest LLM)
-    setTimeout(() => {
-      base44.functions.invoke("checkAchievements", {
-        characterId,
-        characterName: character.name,
-        userMessage: text,
-        characterState: {
-          health_status: character.health_status,
-          current_education_activity: character.current_education_activity,
-          future_life_goals: character.future_life_goals,
-          emotional_state: character.emotional_state,
-          friendship_level: character.friendship_level,
-          romantic_level: character.romantic_level,
-          chosen_family_level: character.chosen_family_level,
-        },
-      }).catch(() => {});
-
-      base44.functions.invoke("updateRelationshipLevels", {
-        characterId,
-        userMessage: text,
-        characterReply: responseText || "(image)",
-        recentMessages: recentMsgs,
-        playingAsCharacterId: activeCharacter?.id || null,
-      }).then(async res => {
-        if (res?.data?.reason) setLastChangeReason(res.data.reason);
-        if (res?.data?.milestone_messages?.length > 0) {
-          for (const milestone of res.data.milestone_messages) {
-            await base44.entities.Message.create({
-              conversation_id: convoId,
-              sender_type: "character",
-              character_id: characterId,
-              character_name: character.name,
-              content: milestone.text,
-              is_narrative: true,
-              timestamp: new Date().toISOString(),
-            });
-          }
-        }
-      }).catch(() => {});
-    }, 5000);
+    // ── ALL POST-SEND BACKGROUND WORK delegated to useChatBackgroundTasks ──────
+    // Governed by: per-function cooldowns, in-flight guards, staggered tiers (0/2/4/7/10s),
+    // emoji cooldown (once per 5 messages), and visible skip logging.
+    dispatchPostSend({
+      characterId, convoId, character, text, responseText, recentMsgs,
+      activeCharacter, isPhone, currentUser, isTyping: false, userMsg,
+    });
 
     queryClient.invalidateQueries({ queryKey: ["character", characterId] });
 
