@@ -155,10 +155,12 @@ export default function MessageBubble({ message, showName = false, onReact, onDe
         directLocationName: directLocationName || null,
       });
       if (res?.data?.filtered) {
-        setRegenError(res.data.error || 'Content policy block — try rephrasing the scene description.');
+        // Only shown when provider actually returned a content policy block
+        setRegenError(res.data.error || 'Content policy block — try a different scene description.');
         return;
       }
       if (res?.data?.success === false) {
+        // Accurate error from backend — display as-is, not re-labeled
         setRegenError(res.data.error || 'Regeneration failed. Please try again.');
         return;
       }
