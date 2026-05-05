@@ -90,8 +90,12 @@ Deno.serve(async (req) => {
     const { characterId } = await req.json();
     if (!characterId) return Response.json({ error: 'characterId required' }, { status: 400 });
 
-    const char = await base44.asServiceRole.entities.Character.get(characterId);
-    if (!char) return Response.json({ error: 'Character not found' }, { status: 404 });
+    // Use user-scoped filter — asServiceRole.get() has a platform visibility gap for
+    // user-owned characters and will return null or 403 on accounts where the caller
+    // is not the record owner. User-scoped filter({ id }) uses the same RLS path as Chat.
+    const charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
+    const char = charList?.[0];
+    if (!char) return Response.json({ error: 'Character not found', characterId }, { status: 404 });
 
     const now = new Date();
     const today = now.toISOString().split('T')[0];

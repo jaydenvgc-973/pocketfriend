@@ -14,8 +14,24 @@ Deno.serve(async (req) => {
       return Response.json({ error: 'characterId required' }, { status: 400 });
     }
 
+    // ── DETECT CALLER CONTEXT ─────────────────────────────────────────────
+    // This function is called two ways:
+    //   1. User-triggered (Chat page "Right Now", Narrative Builder) — has user auth token
+    //   2. Scheduled orchestrator (runAutomaticNarrativesForAllCharacters) — no user token
+    // We detect which path we're on and use the appropriate write scope.
+    let callerUser = null;
+    try { callerUser = await base44.auth.me(); } catch { /* scheduled — no token */ }
+    const isUserTriggered = !!callerUser;
+
     // ── FETCH CHARACTER ───────────────────────────────────────────────────
-    const charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
+    // User-triggered: use user-scoped filter (correct RLS path, same as Chat page).
+    // Scheduled: no user token available, use asServiceRole.
+    let charList;
+    if (isUserTriggered) {
+      charList = await base44.entities.Character.filter({ id: characterId }, null, 1);
+    } else {
+      charList = await base44.asServiceRole.entities.Character.filter({ id: characterId }, null, 1);
+    }
     const character = charList?.[0];
 
     if (!character) {
@@ -364,21 +380,34 @@ If no actions occur, return empty action_effects array.`;
         }
       }
 
-      // Save character updates if any changes were made
+      // Save character updates if any changes were made.
+      // ROUTING RULE:
+      //   User-triggered: use user-scoped client (satisfies Character RLS via owner_email).
+      //   Scheduled (no token): use asServiceRole — no user token available to satisfy RLS,
+      //   and asServiceRole is required. The owner_email on the character record was already
+      //   verified above, so this is safe.
       if (Object.keys(characterUpdatePayload).length > 0) {
         try {
-          await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
-          console.log(`[generateAutomaticNarrative] ✓ Character needs updated.`);
+          if (isUserTriggered) {
+            await base44.entities.Character.update(characterId, characterUpdatePayload);
+          } else {
+            await base44.asServiceRole.entities.Character.update(characterId, characterUpdatePayload);
+          }
+          console.log(`[generateAutomaticNarrative] ✓ Character needs updated (${isUserTriggered ? 'user-scoped' : 'service-role'}).`);
         } catch (updateErr) {
           console.warn(`[generateAutomaticNarrative] Character needs update skipped (non-blocking):`, updateErr.message);
         }
       }
     }
 
-    // Persist reconciliation updates if any
+    // Persist reconciliation updates if any — same routing rule as above.
     if (Object.keys(reconciliationUpdates).length > 0) {
       try {
-        await base44.asServiceRole.entities.Character.update(characterId, reconciliationUpdates);
+        if (isUserTriggered) {
+          await base44.entities.Character.update(characterId, reconciliationUpdates);
+        } else {
+          await base44.asServiceRole.entities.Character.update(characterId, reconciliationUpdates);
+        }
         console.log(`[generateAutomaticNarrative] ✓ Persisted reconciliation updates.`);
       } catch (updateErr) {
         console.warn(`[generateAutomaticNarrative] Failed to persist reconciliation:`, updateErr.message);
