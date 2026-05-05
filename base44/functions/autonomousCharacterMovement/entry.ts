@@ -337,51 +337,174 @@ Deno.serve(async (req) => {
       for (const char of userChars) {
         const status = char.resolved_presence_status || '';
         const reason = char.resolved_source_reason || '';
-
-        // ── SLEEP HARD BLOCKS ────────────────────────────────────────────────
-        // Block if currently sleeping, napping, pre-sleep return, or returning home for sleep
         const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-        if (
-          status === 'sleeping'              ||
-          status === 'napping'               ||
-          status === 'returning_home_for_sleep' ||
-          status === 'passed_out'            ||
-          status === 'hospitalized'          ||
-          reason === 'sleep_return_home'     ||
-          reason === 'sleep_location_correction' ||
-          reason === 'adaptive_sleep_location_lock' ||
-          reason === 'adaptive_sleep_location_correction' ||
-          reason === 'adaptive_pre_sleep_return' ||
-          reason === 'no_valid_sleep_location' ||
-          isInPreSleepWindow(char, nowET)    ||
-          isScheduledSleeping(char, nowET)   ||
-          char.is_jailed
-        ) {
-          console.log(`[autonomousMovement] ${char.name}: SLEEP/HARD BLOCK (${reason || status})`);
+        const vals = needValues(char);
+        const energyUrgency = urgencyLevel(vals.energy);
+
+        // ── TIER 0: EMERGENCY / HOSPITALIZED — hard stop, nothing overrides ──
+        if (status === 'hospitalized' || char.is_jailed) {
+          console.log(`[autonomousMovement] ${char.name}: EMERGENCY BLOCK (${status})`);
           continue;
         }
 
-        // ── PRESENCE STAY LOCK ─────────────────────────────────────────────
+        // ── TIER 1: ZERO ENERGY — PASS OUT ──────────────────────────────────
+        // energy < 10 → character passes out at current location regardless of
+        // toggle, stay-lock, schedule, or personality. Overrides everything
+        // except hospitalization/jail.
+        if (energyUrgency >= 4) {
+          if (status !== 'passed_out') {
+            const passOutPayload = {
+              resolved_presence_status:   'passed_out',
+              resolved_source_reason:     'energy_depleted_pass_out',
+              energy_value:               0,
+              last_arrived_time:          new Date().toISOString(),
+            };
+            try {
+              await base44.entities.Character.update(char.id, passOutPayload);
+            } catch {
+              await base44.asServiceRole.entities.Character.update(char.id, passOutPayload);
+            }
+            moveLog.push(`${char.name}: PASSED OUT at ${char.resolved_current_location_name || 'current location'} [energy depleted]`);
+            console.log(`[autonomousMovement] ⚠️ ${char.name}: PASSED OUT`);
+          } else {
+            console.log(`[autonomousMovement] ${char.name}: already passed_out — no change`);
+          }
+          continue;
+        }
+
+        // ── TIER 2: ALREADY PASSED OUT — RECOVERY ────────────────────────────
+        // Character is passed out but energy > 10 (has recovered enough).
+        // Route to home for full recovery. Overrides toggle.
+        if (status === 'passed_out') {
+          if (energyUrgency < 4 && char.current_home_location_id) {
+            const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
+            if (ownHome) {
+              const recoveryPayload = {
+                resolved_current_location_id:   ownHome.id,
+                resolved_current_location_name: ownHome.name,
+                resolved_presence_status:       'sleeping',
+                resolved_location_type:         'home',
+                resolved_source_reason:         'pass_out_recovery',
+                last_arrived_time:              new Date().toISOString(),
+              };
+              try {
+                await base44.entities.Character.update(char.id, recoveryPayload);
+              } catch {
+                await base44.asServiceRole.entities.Character.update(char.id, recoveryPayload);
+              }
+              moveLog.push(`${char.name} → ${ownHome.name} [PASS_OUT_RECOVERY]`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: recovering → ${ownHome.name}`);
+            }
+          }
+          continue;
+        }
+
+        // ── TIER 3: SLEEP WINDOW ENFORCEMENT ────────────────────────────────
+        // Character is in their sleep window. If already at the right sleep location → block further movement.
+        // If NOT at a valid sleep location → FORCE return home. This overrides toggle, stay-lock, personality.
+        const sleeping = isScheduledSleeping(char, nowET);
+        const inPreSleep = isInPreSleepWindow(char, nowET);
+
+        if (
+          status === 'sleeping'                   ||
+          status === 'napping'                     ||
+          status === 'returning_home_for_sleep'    ||
+          reason === 'sleep_return_home'           ||
+          reason === 'sleep_location_correction'   ||
+          reason === 'adaptive_sleep_location_lock' ||
+          reason === 'adaptive_sleep_location_correction' ||
+          reason === 'adaptive_pre_sleep_return'   ||
+          reason === 'no_valid_sleep_location'
+        ) {
+          // Already in a confirmed sleep state — do not disturb
+          console.log(`[autonomousMovement] ${char.name}: SLEEP STATE — no disturbance (${reason || status})`);
+          continue;
+        }
+
+        if (sleeping || inPreSleep) {
+          // Sleep window is active. Character must be at home or a valid sleep location.
+          const homeId = char.current_home_location_id;
+          const alreadyHome = homeId && char.resolved_current_location_id === homeId;
+          if (!alreadyHome && homeId) {
+            // Force return to sleep location — overrides toggle, stay-lock, wandering
+            const sleepHome = userLocations.find(loc => loc.id === homeId);
+            if (sleepHome) {
+              const sleepReturnPayload = {
+                resolved_current_location_id:   sleepHome.id,
+                resolved_current_location_name: sleepHome.name,
+                resolved_presence_status:       sleeping ? 'sleeping' : 'returning_home_for_sleep',
+                resolved_location_type:         'home',
+                resolved_source_reason:         sleeping ? 'adaptive_sleep_location_lock' : 'adaptive_pre_sleep_return',
+                last_arrived_time:              new Date().toISOString(),
+                presence_stay_lock:             false,
+                presence_stay_lock_location_id: null,
+              };
+              try {
+                await base44.entities.Character.update(char.id, sleepReturnPayload);
+              } catch {
+                await base44.asServiceRole.entities.Character.update(char.id, sleepReturnPayload);
+              }
+              totalMoved++;
+              moveLog.push(`${char.name} → ${sleepHome.name} [SLEEP_ENFORCEMENT${sleeping ? '' : '_PRE_SLEEP'}]`);
+              console.log(`[autonomousMovement] ✓ ${char.name}: sleep return → ${sleepHome.name}`);
+            } else {
+              blockedLog.push(`${char.name}: sleep time but home location not found (id=${homeId})`);
+            }
+          } else {
+            console.log(`[autonomousMovement] ${char.name}: sleep window — already home`);
+          }
+          continue;
+        }
+
+        // ── TIER 4: CRITICAL ENERGY (< 25) — force home regardless of toggle ─
+        // Not at pass-out level but critically low. Must go home NOW.
+        // Overrides stay-lock and toggle.
+        if (energyUrgency >= 3 && char.current_home_location_id) {
+          const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
+          if (ownHome && char.resolved_current_location_id !== ownHome.id) {
+            const critPayload = {
+              resolved_current_location_id:   ownHome.id,
+              resolved_current_location_name: ownHome.name,
+              resolved_presence_status:       'home',
+              resolved_location_type:         'home',
+              resolved_source_reason:         'energy_critical_return_home',
+              last_arrived_time:              new Date().toISOString(),
+              presence_stay_lock:             false,
+              presence_stay_lock_location_id: null,
+            };
+            try {
+              await base44.entities.Character.update(char.id, critPayload);
+            } catch {
+              await base44.asServiceRole.entities.Character.update(char.id, critPayload);
+            }
+            totalMoved++;
+            moveLog.push(`${char.name} → ${ownHome.name} [ENERGY_CRITICAL] energy(${Math.round(vals.energy)})`);
+            console.log(`[autonomousMovement] ✓ ${char.name}: critical energy → ${ownHome.name}`);
+          } else if (ownHome) {
+            console.log(`[autonomousMovement] ${char.name}: critical energy, already home`);
+          }
+          continue;
+        }
+
+        // ── TIER 5: PRESENCE STAY LOCK ────────────────────────────────────────
         // User explicitly chose STAY for this character at a scene exit.
-        // Automation must not override until the lock is cleared.
+        // Only checked AFTER sleep and energy-critical enforcement above.
         if (char.presence_stay_lock === true) {
           console.log(`[autonomousMovement] ${char.name}: STAY_LOCK active — skipping (locked at ${char.presence_stay_lock_location_id})`);
           skippedLog.push(`${char.name}: STAY_LOCK active`);
           continue;
         }
 
-        // ── AUTONOMOUS TRAVEL TOGGLE ────────────────────────────────────────
-        // When autonomous travel is OFF, only allow mandatory movement (needs < 50 or emergency).
-        // Personality-driven wandering (optional movement at urgency 0-1) is blocked.
-        // Schedule-based and needs-emergency movement still allowed.
-        const topNeedCheck = highestUrgencyEntry(needValues(char));
+        // ── TIER 6: AUTONOMOUS TRAVEL TOGGLE ─────────────────────────────────
+        // When OFF, only energy urgency >= 2 (< 50) or above triggers movement.
+        // Sleep, pass-out, and critical energy are already handled above.
+        const topNeedCheck = highestUrgencyEntry(vals);
         if (!autonomousTravelEnabled && topNeedCheck.urgency < 2) {
-          // Not urgent enough to force movement when autonomous travel is disabled
           skippedLog.push(`${char.name}: autonomous travel OFF, needs not urgent enough`);
           continue;
         }
 
-        // ── OTHER HARD BLOCKS ────────────────────────────────────────────────
+        // ── HARD BLOCKS (schedule-based) ─────────────────────────────────────
         if (
           reason === 'work_schedule'   ||
           reason === 'school_schedule' ||
@@ -391,24 +514,18 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── READ RAW NEED VALUES ────────────────────────────────────────────
-        const vals = needValues(char);
+        // ── READ FULL NEEDS + DECIDE IF MOVEMENT IS REQUIRED ─────────────────
         const top = highestUrgencyEntry(vals);
 
-        // ── DECIDE IF MOVEMENT IS REQUIRED ─────────────────────────────────
-        // < 50 on any need = mandatory. 50-70 = probabilistic. > 70 = skip/rare.
         let shouldAttempt = false;
         let isMandatory = false;
 
         if (top.urgency >= 2) {
-          // Below 50 on at least one need — MANDATORY
           shouldAttempt = true;
           isMandatory = true;
         } else if (top.urgency === 1) {
-          // 50–70 awareness window — 50% chance to evaluate
           shouldAttempt = Math.random() < 0.50;
         } else {
-          // All needs above 70 — 25% chance for personality-driven optional movement
           shouldAttempt = Math.random() < 0.25;
         }
 
@@ -418,29 +535,11 @@ Deno.serve(async (req) => {
           continue;
         }
 
-        // ── FILTER OUT CLOSED LOCATIONS ─────────────────────────────────────
+        // ── FILTER OUT CLOSED LOCATIONS ───────────────────────────────────────
         const openLocations = userLocations.filter(loc => isLocationOpen(loc));
 
-        // ── SELECT BEST LOCATION ────────────────────────────────────────────
-        const bestLocation = selectBestLocation(openLocations, char, vals);
-
-        if (!bestLocation) {
-          // SYSTEM MUST REPORT: mandatory trigger, no valid location
-          const urgentNeeds = Object.entries(vals)
-            .filter(([, v]) => urgencyLevel(v) >= 2)
-            .map(([k, v]) => `${k}(${Math.round(v)})`)
-            .join(', ');
-          const msg = `${char.name}: URGENT [${urgentNeeds}] — NO valid location in scope`;
-          blockedLog.push(msg);
-          console.warn(`[autonomousMovement] BLOCK: ${msg}`);
-          continue;
-        }
-
-        // ── ENERGY URGENCY → ROUTE HOME FIRST ───────────────────────────────
-        // If energy is urgent (< 50), the character needs rest. Send them to their own home
-        // before trying social/recreational locations. This prevents tired characters from
-        // being moved to bars or gyms when they should be resting.
-        if (urgencyLevel(vals.energy) >= 2 && char.current_home_location_id) {
+        // ── LOW ENERGY (urgent, < 50) → route home before scoring ────────────
+        if (energyUrgency >= 2 && char.current_home_location_id) {
           const ownHome = userLocations.find(loc => loc.id === char.current_home_location_id);
           if (ownHome && char.resolved_current_location_id !== ownHome.id) {
             try {
@@ -471,6 +570,20 @@ Deno.serve(async (req) => {
             console.log(`[autonomousMovement] ${char.name}: low energy, already home`);
             continue;
           }
+        }
+
+        // ── SELECT BEST LOCATION ──────────────────────────────────────────────
+        const bestLocation = selectBestLocation(openLocations, char, vals);
+
+        if (!bestLocation) {
+          const urgentNeeds = Object.entries(vals)
+            .filter(([, v]) => urgencyLevel(v) >= 2)
+            .map(([k, v]) => `${k}(${Math.round(v)})`)
+            .join(', ');
+          const msg = `${char.name}: URGENT [${urgentNeeds}] — NO valid location in scope`;
+          blockedLog.push(msg);
+          console.warn(`[autonomousMovement] BLOCK: ${msg}`);
+          continue;
         }
 
         // ── ALREADY THERE — no-op ───────────────────────────────────────────
